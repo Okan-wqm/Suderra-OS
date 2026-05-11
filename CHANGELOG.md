@@ -5,6 +5,13 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 
 ## [Unreleased]
 
+### Changed — Faz 1 doğrulama PR'ı için CI tetikleyici
+
+- Tüm 5 katman birikmiş `claude/hardened-linux-edge-os-cDH7d` branch'inde
+- main branch yaratıldı (`mcp__github__create_branch` ile) ki PR diff sağlansın
+- Bu commit PR diff'i için yapay tetikleyici (CHANGELOG note); ana iş önceki commit'lerde
+- PR sonrası GitHub Actions runs subscribe edilecek
+
 ### Added — Faz 1 (CI Boot Smoke Test) — Katman 4
 
 - `.github/workflows/build.yml` — `qemu-smoke-test` job eklendi:
