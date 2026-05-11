@@ -12,7 +12,7 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 - Root files: README, LICENSE (Apache-2.0), SECURITY, CONTRIBUTING, CHANGELOG, CODEOWNERS
 - Buildroot scaffolding: external.desc, external.mk, Config.in
 - Defconfig placeholder'lar: suderra_qemu_x86_64, suderra_x86_64, suderra_aarch64
-- 5 başlangıç ADR'ı (Buildroot vs Yocto, systemd minimal, multi-arch, RAUC, dm-verity+secboot)
+- 6 ADR (Buildroot vs Yocto, systemd minimal, multi-arch, RAUC, dm-verity+secboot, IEC 62443 SL2 vs SL3)
 - Doküman iskeleti: architecture, security, operations, dev, compliance
 - CI: lint workflow (shellcheck, markdownlint, gitleaks)
 - Issue ve PR şablonları
