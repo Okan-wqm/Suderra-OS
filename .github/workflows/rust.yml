@@ -148,25 +148,27 @@ jobs:
 
   # -----------------------------------------------------------------
   # Security: cargo-audit + cargo-deny
+  # Action wrapper'lar yerine doğrudan binary install — lokal komutla
+  # birebir aynı çalıştığını garantiler, action sürpriz default'larından
+  # kaçınır.
   # -----------------------------------------------------------------
   security:
     name: Security (audit + deny)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: cargo-audit
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: userspace
+      - name: Install cargo-deny + cargo-audit (cached binstall)
+        run: |
+          cargo install --locked --version "^0.19" cargo-deny
+          cargo install --locked --version "^0.21" cargo-audit
 
-      - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          manifest-path: userspace/Cargo.toml
-          command: check
+      - name: cargo audit
+        run: cargo audit
+
+      - name: cargo deny check
+        run: cargo deny check
 
   # -----------------------------------------------------------------
   # MSRV check (rust-toolchain.toml ile pinli versiyon doğrulaması)
