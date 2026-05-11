@@ -5,6 +5,37 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 
 ## [Unreleased]
 
+### Added — Faz 1.5 (Rust Userspace Workspace) — Katman 1
+
+**Userspace iskelet:**
+- `userspace/` Cargo workspace (resolver=2, 7 member crate)
+- `userspace/Cargo.toml` — workspace metadata + paylaşılan dependency'ler (tokio, rustls, serde, tracing)
+- `userspace/.cargo/config.toml` — musl cross-compile (x86_64 + aarch64), linker config, alias'lar
+- `userspace/rust-toolchain.toml` — Rust 1.85.0 pinned (reproducible build için)
+- `userspace/deny.toml` — cargo-deny config: lisans whitelist (Apache/MIT/BSD), GPL/OpenSSL ban, CVE check
+- `userspace/README.md` — workspace açıklama + cross-compile rehberi
+
+**7 crate iskelet (her birinde Cargo.toml + main.rs/lib.rs + README):**
+- `suderra-config` (lib) — ortak config parser + validation (faz 2'de doldurulur)
+- `suderra-firstboot` (binary) — ilk boot provisioning (faz 2)
+- `suderra-ota` (binary) — RAUC orchestrator (faz 4)
+- `suderra-telemetry` (binary) — metrics push (faz 5)
+- `suderra-watchdog` (binary) — hw watchdog + health monitor (faz 5)
+- `suderra-factory-reset` (binary) — GPIO/cloud reset handler (faz 5)
+- `suderra-attestation` (binary) — TPM PCR remote attestation (faz 8+)
+
+**CI/CD:**
+- `.github/workflows/rust.yml` — 4 job: check (fmt+clippy+test), build-musl (x86_64+aarch64), security (audit+deny), msrv
+- Binary boyut raporu (GitHub Step Summary)
+
+**Buildroot entegrasyonu:**
+- `package/suderra-firstboot/suderra-firstboot.mk` — userspace/suderra-firstboot referansına güncellendi
+- Cargo workspace içinde build, BR2_RUSTC_TARGET_NAME ile musl cross-compile
+
+**Dokümantasyon:**
+- `docs/dev/rust-workspace.md` — detaylı geliştirici rehberi (cross-compile, test stratejisi, Buildroot entegrasyon)
+- README repo yapısı güncellendi (userspace/ eklendi)
+
 ### Added — Faz 0 (Proje İskeleti)
 
 **Core scaffolding:**

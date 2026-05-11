@@ -1,0 +1,26 @@
+[package]
+name = "suderra-firstboot"
+description = "İlk boot provisioning: machine-id, /data init, TPM seal, cloud enroll"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "suderra-firstboot"
+path = "src/main.rs"
+
+[dependencies]
+suderra-config = { workspace = true }
+
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+libc = { workspace = true }
+nix = { workspace = true }
+sd-notify = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }

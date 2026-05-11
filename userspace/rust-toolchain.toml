@@ -1,0 +1,29 @@
+# Suderra OS Rust toolchain pinning
+#
+# Bu dosya repo'yu klonlayan herkesin aynı Rust versiyonunu kullanmasını sağlar.
+# rustup otomatik olarak bu versiyonu indirir.
+#
+# Neden pinning:
+# - Reproducible build (CRA + SLSA gereksinimi)
+# - "Bende çalışıyor" durumunu engeller
+# - Toolchain drift (CI ile geliştirici farkı) yok
+#
+# Güncelleme prosedürü:
+# 1. Yeni stable Rust çıktığında ADR (architecture/) içinde tartış
+# 2. Tüm crate'lerde clippy + test yeşil olmalı
+# 3. CHANGELOG'a kayıt
+# 4. Bu dosyayı güncelle, PR aç
+
+[toolchain]
+channel = "1.85.0"
+components = [
+    "rustfmt",        # kod formatlama (cargo fmt)
+    "clippy",         # lint (cargo clippy)
+    "rust-src",       # std source (debug + bazı target'lar için gerekli)
+]
+targets = [
+    "x86_64-unknown-linux-musl",   # production target (x86 endüstriyel)
+    "aarch64-unknown-linux-musl",  # production target (ARM SBC)
+    # "x86_64-unknown-linux-gnu",  # geliştirme host'ta default, eklemeye gerek yok
+]
+profile = "minimal"   # docs, sample tarball yok — CI hızlandırır

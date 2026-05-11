@@ -1,0 +1,85 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "suderra-firstboot",
+    "suderra-ota",
+    "suderra-telemetry",
+    "suderra-watchdog",
+    "suderra-factory-reset",
+    "suderra-attestation",
+    "suderra-config",
+]
+
+# Tüm crate'ler için ortak metadata
+[workspace.package]
+version = "0.1.0-alpha"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Suderra OS Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/Okan-wqm/suderra-os"
+readme = "README.md"
+
+# Ortak bağımlılıklar — tek versiyon, tüm crate'ler aynısını kullanır
+# Bu pinning supply-chain tutarlılığını sağlar (CRA + reproducible build için)
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Sistem entegrasyonu
+libc = "0.2"
+nix = { version = "0.29", features = ["fs", "mount", "user", "process", "signal"] }
+
+# systemd notify (Type=notify için)
+sd-notify = "0.4"
+
+# TLS (rustls only — OpenSSL yok, musl uyumlu)
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2.2"
+
+# HTTP client (rustls backend)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+
+# Crypto
+sha2 = "0.10"
+hmac = "0.12"
+ed25519-dalek = "2.1"
+
+# Suderra internal (yerel paylaşımlı lib)
+suderra-config = { path = "suderra-config" }
+
+# Release profile — production builds için optimize
+# musl static link + LTO + stripped → ~1-3MB binary
+[profile.release]
+opt-level = "z"          # boyut için optimize
+lto = "fat"              # link-time optimization (cross-crate inlining)
+codegen-units = 1        # tek codegen unit (LTO maksimum verim)
+strip = "symbols"        # debug sembolleri çıkar
+panic = "abort"          # panic'te abort (unwind tablosunu kaldır, binary küçülür)
+overflow-checks = false  # release'de runtime overflow check yok (perf)
+
+# Debug profile — hızlı iterasyon için
+[profile.dev]
+opt-level = 0
+debug = true
+overflow-checks = true   # dev'de overflow yakalanmalı
+
+# Bench profile — performance testing için
+[profile.bench]
+inherits = "release"
+debug = true             # benchmark için symbols gerekli

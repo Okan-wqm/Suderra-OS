@@ -1,0 +1,25 @@
+[package]
+name = "suderra-watchdog"
+description = "Hardware watchdog + health monitor — donanım/uygulama donarsa otomatik reboot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "suderra-watchdog"
+path = "src/main.rs"
+
+[dependencies]
+suderra-config = { workspace = true }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+libc = { workspace = true }
+nix = { workspace = true }
+sd-notify = { workspace = true }

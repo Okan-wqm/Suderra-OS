@@ -1,0 +1,168 @@
+name: Rust Userspace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'userspace/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'userspace/**'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+
+# Permissions: minimum gerekli
+permissions:
+  contents: read
+  security-events: write   # SARIF upload için
+
+# Eski koşumları cancel et — yeni commit gelirse
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ./userspace
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-D warnings"
+  # Reproducible build için sabit timestamp
+  SOURCE_DATE_EPOCH: 1704067200
+
+jobs:
+  # -----------------------------------------------------------------
+  # Format + Clippy + Test (host glibc, hızlı geri bildirim)
+  # -----------------------------------------------------------------
+  check:
+    name: Format + Clippy + Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            userspace/target
+          key: rust-check-${{ runner.os }}-${{ hashFiles('userspace/Cargo.lock', 'userspace/rust-toolchain.toml') }}
+          restore-keys: |
+            rust-check-${{ runner.os }}-
+
+      - name: rust-toolchain (pinned)
+        run: rustup show
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (host)
+        run: cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+
+      - name: cargo test (host)
+        run: cargo test --workspace --target x86_64-unknown-linux-gnu
+
+  # -----------------------------------------------------------------
+  # Cross-compile (musl static, production target)
+  # -----------------------------------------------------------------
+  build-musl:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            userspace/target
+          key: rust-build-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('userspace/Cargo.lock') }}
+          restore-keys: |
+            rust-build-${{ runner.os }}-${{ matrix.target }}-
+
+      - name: Install musl toolchain (x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install musl cross toolchain (aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
+          tar -xf aarch64-linux-musl-cross.tgz
+          echo "$PWD/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+
+      - name: cargo build --release (${{ matrix.target }})
+        run: cargo build --workspace --release --target ${{ matrix.target }}
+
+      - name: Binary boyut raporu
+        run: |
+          echo "## Binary boyutları (${{ matrix.target }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Binary | Boyut |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for b in target/${{ matrix.target }}/release/suderra-*; do
+            if [ -x "$b" ] && [ ! -d "$b" ]; then
+              size=$(du -h "$b" | cut -f1)
+              echo "| $(basename "$b") | $size |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: suderra-userspace-${{ matrix.target }}
+          path: |
+            userspace/target/${{ matrix.target }}/release/suderra-*
+            !userspace/target/${{ matrix.target }}/release/*.d
+            !userspace/target/${{ matrix.target }}/release/*.rlib
+          retention-days: 7
+
+  # -----------------------------------------------------------------
+  # Security: cargo-audit + cargo-deny
+  # -----------------------------------------------------------------
+  security:
+    name: Security (audit + deny)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo-audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: userspace
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: userspace/Cargo.toml
+          command: check
+          arguments: --all-features
+
+  # -----------------------------------------------------------------
+  # MSRV check (rust-toolchain.toml ile pinli versiyon doğrulaması)
+  # -----------------------------------------------------------------
+  msrv:
+    name: MSRV check (Rust 1.85)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show   # rust-toolchain.toml otomatik kurulur
+      - run: cargo check --workspace --target x86_64-unknown-linux-gnu

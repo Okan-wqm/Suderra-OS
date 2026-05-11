@@ -1,0 +1,67 @@
+# Suderra OS Rust workspace — Cargo konfigürasyonu
+#
+# Bu dosya tüm cargo komutları için varsayılan ayarları belirler.
+# musl static link cross-compile'ı için kritik.
+
+[build]
+# Varsayılan target — `cargo build` musl için derler.
+# Override: `cargo build --target x86_64-unknown-linux-gnu` (geliştirme için, glibc host'ta)
+# Production: musl statik = tek binary, dependency yok
+target = "x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-musl]
+# musl-gcc linker — Buildroot host toolchain ile uyumlu
+# Ubuntu/Debian'da: apt install musl-tools
+# Cross repo: https://github.com/cross-rs/cross alternatifi
+linker = "x86_64-linux-musl-gcc"
+rustflags = [
+    "-C", "target-feature=+crt-static",         # static link C runtime
+    "-C", "link-arg=-static",                   # tam static
+    "-C", "link-arg=-Wl,--no-eh-frame-hdr",     # binary boyutu azalt
+    "-C", "relocation-model=pie",               # PIE (ASLR uyumlu)
+]
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=-static",
+    "-C", "link-arg=-Wl,--no-eh-frame-hdr",
+    "-C", "relocation-model=pie",
+]
+
+# x86_64 native (geliştirme makinesinde testler için)
+# Geliştirici `cargo test --target x86_64-unknown-linux-gnu` ile glibc'li test edebilir
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "relocation-model=pie",
+]
+
+# Network ayarları
+[net]
+git-fetch-with-cli = true   # git2 yerine git CLI kullan (SSH key, https auth daha güvenilir)
+retry = 3                    # network hatasında 3 kere dene
+
+# Registry
+[registries]
+crates-io = { protocol = "sparse" }    # sparse protocol — hızlı index sync
+
+# Alias'lar — sık kullanılan komutlar
+[alias]
+# Build aliases
+b = "build"
+bm = "build --target x86_64-unknown-linux-musl --release"   # production build
+bma = "build --target aarch64-unknown-linux-musl --release" # aarch64 production build
+
+# Test aliases (host'ta glibc ile, hızlı iterasyon)
+t = "test --target x86_64-unknown-linux-gnu"
+tw = "test --workspace --target x86_64-unknown-linux-gnu"
+
+# Lint aliases
+c = "check --workspace --all-targets"
+cl = "clippy --workspace --all-targets -- -D warnings"
+fmt = "fmt --all"
+
+# Security
+audit = "audit"
+deny = "deny check"

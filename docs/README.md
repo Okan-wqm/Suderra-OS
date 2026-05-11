@@ -53,6 +53,7 @@ docs/
 - [docker-build.md](dev/docker-build.md) — reproducible CI build
 - [qemu-test.md](dev/qemu-test.md) — QEMU'da test
 - [coding-standards.md](dev/coding-standards.md) — kod standartları
+- [rust-workspace.md](dev/rust-workspace.md) — Rust userspace workspace rehberi
 - [branch-protection.md](dev/branch-protection.md) — GitHub branch protection rules
 
 ### Uyumluluk

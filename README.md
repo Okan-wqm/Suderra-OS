@@ -85,18 +85,24 @@ Detaylar: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
 | `configs/` | Buildroot defconfig'leri (x86_64, aarch64, qemu) |
 | `board/suderra/` | Bootloader, kernel config, rootfs overlay, image layout |
 | `package/` | Custom Buildroot paketleri (edge-agent, firstboot, keys) |
+| `userspace/` | **Rust workspace** — Suderra-spesifik tools (firstboot, ota, telemetry, watchdog, ...) |
 | `docs/` | Mimari, güvenlik, operasyon, uyumluluk dokümantasyonu |
 | `scripts/` | Build, sign, flash, qemu, sbom yardımcıları |
 | `ci/` | Reproducible build container |
 | `tests/` | QEMU, security, OTA testleri |
+| `vex/` | Vulnerability Exploitability eXchange dokümanları |
 | `.github/` | Workflows, issue/PR şablonları |
+| `LICENSES/` | REUSE 3.3 lisans dosyaları |
+| `.well-known/` | RFC 9116 security.txt |
 
 ## Dokümantasyon
 
 Tam doküman indeksi: [docs/README.md](docs/README.md)
 
 Hızlı linkler:
+- **Roadmap:** [ROADMAP.md](ROADMAP.md) — 7 fazlı 5-7 aylık plan
 - **Mimari:** [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
+- **Rust workspace:** [docs/dev/rust-workspace.md](docs/dev/rust-workspace.md) + [userspace/README.md](userspace/README.md)
 - **Güvenlik:** [docs/security/threat-model.md](docs/security/threat-model.md), [SECURITY.md](SECURITY.md)
 - **Build:** [docs/operations/build.md](docs/operations/build.md)
 - **Geliştirici kurulumu:** [docs/dev/setup.md](docs/dev/setup.md)
