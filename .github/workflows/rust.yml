@@ -134,8 +134,8 @@ jobs:
 
   # -----------------------------------------------------------------
   # Security: cargo-audit + cargo-deny
-  # taiki-e/install-action ile prebuilt binary (Rust ecosystem standardı,
-  # ~5 saniye install). cargo install yerine — kaynaktan derleme yok.
+  # Her tool ayrı step — sürpriz versiyon syntax veya install hatasında
+  # hangisinin fail ettiği net görünür.
   # -----------------------------------------------------------------
   security:
     name: Security (audit + deny)
@@ -147,16 +147,23 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
-      - name: Install cargo-deny + cargo-audit (prebuilt)
+      - name: Install cargo-deny (prebuilt)
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny@0.19,cargo-audit@0.21
+          tool: cargo-deny
 
-      - name: cargo audit
-        run: cargo audit
+      - name: Install cargo-audit (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
 
       - name: cargo deny check
         run: cargo deny check
+
+      # cargo-audit advisory-db'yi GitHub'dan klonlar (~1-2s). Fail ederse
+      # log net olur (ayrı step).
+      - name: cargo audit
+        run: cargo audit
 
   # -----------------------------------------------------------------
   # MSRV check (rust-toolchain.toml ile pinli versiyon doğrulaması)
