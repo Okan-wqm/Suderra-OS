@@ -2,9 +2,9 @@ name: Security Scan
 
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "claude/**"]
   schedule:
     # Her gece 03:00 UTC — yeni CVE'ler için
     - cron: '0 3 * * *'

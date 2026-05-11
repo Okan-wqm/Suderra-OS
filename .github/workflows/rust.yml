@@ -2,12 +2,12 @@ name: Rust Userspace
 
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
     paths:
       - 'userspace/**'
       - '.github/workflows/rust.yml'
   pull_request:
-    branches: [main]
+    branches: [main, "claude/**"]
     paths:
       - 'userspace/**'
       - '.github/workflows/rust.yml'
