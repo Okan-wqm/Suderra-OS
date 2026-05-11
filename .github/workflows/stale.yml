@@ -1,0 +1,39 @@
+name: Mark stale issues and PRs
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # Her gece 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: |
+            Bu issue 60 gündür aktivite olmadı. 14 gün içinde
+            yorum gelmezse otomatik kapatılacak. `pinned`, `security`,
+            veya `roadmap` label'ları varsa kapatılmaz.
+          stale-pr-message: |
+            Bu PR 30 gündür aktivite olmadı. 14 gün içinde
+            rebase / yorum gelmezse otomatik kapatılacak.
+          close-issue-message: |
+            Bu issue inaktif kaldığı için kapatıldı. Sorun devam ediyorsa
+            yeni bilgiyle tekrar açabilirsiniz.
+          close-pr-message: |
+            Bu PR inaktif kaldığı için kapatıldı. Çalışma devam ediyorsa
+            yeniden açabilirsiniz.
+          days-before-issue-stale: 60
+          days-before-pr-stale: 30
+          days-before-issue-close: 14
+          days-before-pr-close: 14
+          exempt-issue-labels: 'pinned,security,roadmap,help-wanted'
+          exempt-pr-labels: 'pinned,security,dependencies'
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'

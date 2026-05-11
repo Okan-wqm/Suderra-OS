@@ -1,0 +1,47 @@
+{
+    "name": "Suderra OS Dev",
+    "build": {
+        "context": "..",
+        "dockerfile": "../ci/Dockerfile"
+    },
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "remoteUser": "builder",
+    "containerEnv": {
+        "SOURCE_DATE_EPOCH": "1704067200",
+        "LC_ALL": "C",
+        "TZ": "UTC"
+    },
+    "mounts": [
+        "source=suderra-dl,target=/workspace/dl,type=volume",
+        "source=suderra-ccache,target=/workspace/.ccache,type=volume"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-azuretools.vscode-docker",
+                "timonwong.shellcheck",
+                "DavidAnson.vscode-markdownlint",
+                "redhat.vscode-yaml",
+                "rust-lang.rust-analyzer",
+                "editorconfig.editorconfig",
+                "GitHub.vscode-pull-request-github",
+                "yzhang.markdown-all-in-one"
+            ],
+            "settings": {
+                "files.eol": "\n",
+                "editor.formatOnSave": true,
+                "editor.tabSize": 4,
+                "editor.insertSpaces": true,
+                "files.trimTrailingWhitespace": true
+            }
+        }
+    },
+    "postCreateCommand": "pre-commit install && echo 'Suderra OS dev container hazır. ./scripts/build-in-docker.sh --help'",
+    "forwardPorts": [5555, 8080],
+    "portsAttributes": {
+        "5555": {
+            "label": "QEMU HTTP forward"
+        }
+    }
+}

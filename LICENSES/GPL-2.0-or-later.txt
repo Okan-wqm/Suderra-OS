@@ -1,0 +1,12 @@
+GNU GENERAL PUBLIC LICENSE
+Version 2, June 1991
+
+(Suderra OS scaffold'unun kendisi Apache-2.0'dır.)
+
+Defconfig'ler ve Buildroot/Linux Kconfig kompozisyonları Buildroot/kernel
+ekosistemi içinde GPL-2.0-or-later olarak işaretlenmiştir.
+
+Tam GPL-2.0 metni:
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+SPDX-License-Identifier: GPL-2.0-or-later

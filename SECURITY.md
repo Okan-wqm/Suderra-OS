@@ -4,11 +4,16 @@
 
 Suderra OS bir endüstriyel edge işletim sistemidir. Bulduğunuz güvenlik açıkları (kernel, paket, OTA, secure boot, RAUC, dm-verity, edge-agent paketleme, kayıp/zayıf imza vb.) için **public GitHub issue açmayın**.
 
-Bunun yerine:
+> Detaylı Coordinated Vulnerability Disclosure süreci: [docs/security/cvd-policy.md](docs/security/cvd-policy.md)
 
-- **E-posta:** `security@suderra.example` (production'da değiştirilecek)
-- **PGP key:** [docs/security/pgp-key.asc](docs/security/pgp-key.asc) — TODO Faz 0.5'te eklenecek
-- **Beklenen yanıt:** 72 saat içinde alındı onayı, 14 gün içinde değerlendirme
+Bildirim kanalları (tercih sırası):
+
+1. **GitHub Security Advisory** (private): https://github.com/Okan-wqm/suderra-os/security/advisories/new
+2. **PGP-encrypted E-posta:** `security@suderra.example`
+   - PGP key: [docs/security/pgp-key.asc](docs/security/pgp-key.asc) — TODO Faz 0.5'te eklenecek
+3. **`.well-known/security.txt`** (RFC 9116): https://github.com/Okan-wqm/suderra-os/.well-known/security.txt
+
+**Beklenen yanıt:** 72 saat içinde alındı onayı, 14 gün içinde değerlendirme.
 
 Lütfen şu bilgileri içerin:
 1. Etkilenen bileşen (kernel CONFIG, paket adı, dosya yolu, RAUC bundle versiyonu, vb.)

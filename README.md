@@ -106,12 +106,30 @@ Hızlı linkler:
 
 ## Katkıda Bulunma
 
-[CONTRIBUTING.md](CONTRIBUTING.md) — conventional commits, branch stratejisi, code review.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — conventional commits, DCO sign-off, branch stratejisi, code review
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1
+- [GOVERNANCE.md](GOVERNANCE.md) — karar mekanizması, roller, sürdürülebilirlik
+- [MAINTAINERS.md](MAINTAINERS.md) — aktif maintainer listesi
 
-## Güvenlik Açığı Bildirme
+## Güvenlik
 
-Lütfen public issue açmadan önce [SECURITY.md](SECURITY.md) dosyasındaki disclosure prosedürünü izleyin.
+- [SECURITY.md](SECURITY.md) — Vulnerability bildirme (public issue açmadan önce oku!)
+- [docs/security/cvd-policy.md](docs/security/cvd-policy.md) — Coordinated Vulnerability Disclosure policy
+- [docs/security/incident-response.md](docs/security/incident-response.md) — Incident response runbook
+- [`.well-known/security.txt`](.well-known/security.txt) — RFC 9116 machine-readable contact
+
+## Uyumluluk (Compliance)
+
+- [docs/compliance/cra-annex-i-checklist.md](docs/compliance/cra-annex-i-checklist.md) — EU CRA Annex I madde-madde checklist
+- [docs/compliance/iec-62443-4-2-component-requirements.md](docs/compliance/iec-62443-4-2-component-requirements.md) — IEC 62443-4-2 CR mapping
+- [docs/compliance/support-period.md](docs/compliance/support-period.md) — Vendor support commitment (5+ yıl)
+- [docs/compliance/eu-doc-template.md](docs/compliance/eu-doc-template.md) — CE Declaration of Conformity şablonu
 
 ## Lisans
 
-[Apache-2.0](LICENSE). Buildroot, Linux kernel ve gömülü paketler kendi lisanslarına tabidir; SPDX raporu için: [docs/compliance/licenses.md](docs/compliance/licenses.md).
+[Apache-2.0](LICENSE). Buildroot, Linux kernel ve gömülü paketler kendi lisanslarına tabidir;
+[REUSE 3.3](https://reuse.software/spec-3.3/) uyumlu (bkz. [REUSE.toml](REUSE.toml)).
+
+SPDX raporu için: [docs/compliance/licenses.md](docs/compliance/licenses.md)
+SBOM (CycloneDX, her release ile): `output/sbom.cyclonedx.json`
+VEX (Vulnerability Exploitability eXchange): [vex/](vex/)

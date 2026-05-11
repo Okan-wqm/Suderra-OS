@@ -7,10 +7,12 @@ on:
 
 permissions:
   contents: write
+  id-token: write       # Sigstore keyless signing için
+  attestations: write   # SLSA attestation için
 
 jobs:
   release:
-    name: Build & Release
+    name: Build & Sign & Release
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -26,6 +28,14 @@ jobs:
             exit 1
           fi
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0.17.7
+
       - name: Build container
         run: docker build -t suderra-builder ci/
 
@@ -33,30 +43,60 @@ jobs:
         run: |
           for d in configs/suderra_*_defconfig; do
             name=$(basename "$d")
-            echo "Building $name"
+            echo "::group::Building $name"
             # Faz 1'de aktif:
             # ./scripts/build-in-docker.sh "$name"
+            echo "::endgroup::"
           done
           echo "::notice::Build Faz 1'de aktif olur"
 
-      - name: Sign artifacts (Faz 4'te aktif)
+      - name: Sign RAUC bundles (Faz 4'te aktif)
+        env:
+          SUDERRA_KEYS_DIR: ${{ secrets.SUDERRA_KEYS_PATH }}
         run: |
-          echo "::notice::Bundle signing Faz 4'te eklenir"
-          # for img in output/*/images/*.raucb; do
-          #   ./scripts/sign-bundle.sh "$img"
-          # done
+          for img in output/*/images/*.raucb; do
+            [ -f "$img" ] || continue
+            ./scripts/sign-bundle.sh "$img"
+          done
 
-      - name: Generate SBOM (Faz 5'te aktif)
+      - name: Generate SBOM (CycloneDX + SPDX) — Faz 5'te aktif
         run: |
-          echo "::notice::SBOM Faz 5'te eklenir"
-          # ./scripts/gen-sbom.sh
+          for d in configs/suderra_*_defconfig; do
+            name=$(basename "$d")
+            # ./scripts/gen-sbom.sh "$name"
+          done
+          echo "::notice::SBOM Faz 5'te aktif olur"
 
-      - name: Create release
+      - name: Cosign keyless sign — release artifacts (SLSA L2+)
+        run: |
+          for f in output/**/images/*.img output/**/images/*.raucb output/sbom.cyclonedx.json; do
+            [ -f "$f" ] || continue
+            cosign sign-blob \
+              --yes \
+              --output-signature="${f}.sig" \
+              --output-certificate="${f}.cert" \
+              "${f}"
+          done
+
+      - name: SLSA build attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            output/**/images/*.img
+            output/**/images/*.raucb
+
+      - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           draft: true
           files: |
             output/**/images/*.raucb
+            output/**/images/*.raucb.sig
+            output/**/images/*.raucb.cert
             output/**/images/disk.img
+            output/**/images/disk.img.sig
+            output/**/images/disk.img.cert
             output/sbom.cyclonedx.json
+            output/sbom.cyclonedx.json.sig
+            output/sbom.spdx.json

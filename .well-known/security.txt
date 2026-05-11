@@ -1,0 +1,9 @@
+Contact: mailto:security@suderra.example
+Contact: https://github.com/Okan-wqm/suderra-os/security/advisories/new
+Expires: 2027-12-31T23:59:59.000Z
+Encryption: https://github.com/Okan-wqm/suderra-os/raw/main/docs/security/pgp-key.asc
+Acknowledgments: https://github.com/Okan-wqm/suderra-os/security/advisories
+Preferred-Languages: tr, en
+Canonical: https://github.com/Okan-wqm/suderra-os/.well-known/security.txt
+Policy: https://github.com/Okan-wqm/suderra-os/blob/main/docs/security/cvd-policy.md
+CSAF: https://github.com/Okan-wqm/suderra-os/security/advisories

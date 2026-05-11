@@ -1,0 +1,38 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/Okan-wqm/suderra-os/vex/suderra-os-sample",
+  "author": "Suderra OS Security Team",
+  "role": "Document Creator",
+  "timestamp": "2026-05-11T00:00:00Z",
+  "version": 1,
+  "tooling": "manual / faz 5'te otomasyona geçecek",
+  "statements": [
+    {
+      "vulnerability": {
+        "@id": "CVE-EXAMPLE-0001",
+        "name": "CVE-EXAMPLE-0001",
+        "description": "Bluetooth stack RCE (örnek)"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/suderra-os@v0.1.0-alpha"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Suderra OS kernel'inde Bluetooth desteği derlenmemiştir (CONFIG_BLUETOOTH=n)."
+    },
+    {
+      "vulnerability": {
+        "@id": "CVE-EXAMPLE-0002",
+        "name": "CVE-EXAMPLE-0002"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/suderra-os@v0.1.0-alpha"
+        }
+      ],
+      "status": "under_investigation"
+    }
+  ]
+}

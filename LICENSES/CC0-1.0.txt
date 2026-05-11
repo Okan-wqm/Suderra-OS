@@ -1,0 +1,10 @@
+Creative Commons CC0 1.0 Universal
+
+CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE LEGAL
+SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN ATTORNEY-CLIENT
+RELATIONSHIP.
+
+The full text of CC0 1.0 is available at:
+https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+SPDX-License-Identifier: CC0-1.0

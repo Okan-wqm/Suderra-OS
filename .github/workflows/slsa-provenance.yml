@@ -1,0 +1,67 @@
+name: SLSA Provenance
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Defconfig to build with provenance'
+        required: true
+        default: 'suderra_qemu_x86_64_defconfig'
+
+permissions: read-all
+
+jobs:
+  build:
+    name: Build with provenance
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build container
+        run: docker build -t suderra-builder ci/
+
+      - name: Build artifact
+        run: |
+          DEFCONFIG="${{ github.event.inputs.defconfig || 'suderra_qemu_x86_64_defconfig' }}"
+          # Faz 1'de aktif olur — şu an placeholder
+          # ./scripts/build-in-docker.sh "${DEFCONFIG}"
+          echo "::notice::SLSA provenance Faz 4 (OTA) ile birlikte tam aktif olur"
+          mkdir -p output/
+          echo "placeholder" > output/disk.img
+
+      - name: Generate artifact hashes
+        id: hash
+        run: |
+          cd output
+          echo "hashes=$(sha256sum *.img | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: suderra-os-image
+          path: output/*.img
+
+  provenance:
+    name: Generate SLSA Provenance
+    needs: [build]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    # Resmi SLSA generator (SLSA L3)
+    # https://github.com/slsa-framework/slsa-github-generator
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "${{ needs.build.outputs.hashes }}"
+      upload-assets: true
+      provenance-name: suderra-os.intoto.jsonl

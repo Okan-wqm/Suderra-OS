@@ -1,0 +1,48 @@
+version = 1
+
+# REUSE 3.3 toplu annotation
+# https://reuse.software/spec-3.3/
+#
+# Suderra OS scaffold kodu için varsayılan: Apache-2.0
+# Yapılandırma dosyaları (yml, json, vb.) için: CC0-1.0 (kreatif olmayan, salt-fonksiyonel)
+
+[[annotations]]
+path = [
+    "**/*.md",
+    "**/*.sh",
+    "**/*.mk",
+    "**/Makefile",
+    "**/Config.in",
+    "**/Dockerfile",
+    "**/*.service",
+    "**/*.conf",
+    "**/*.config",
+    "**/*.cfg",
+    "external.desc",
+    "external.mk",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Suderra OS Contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.json",
+    "**/*.toml",
+    ".editorconfig",
+    ".gitignore",
+    ".markdownlint-cli2.yaml",
+    ".yamllint.yml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Suderra OS Contributors"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Defconfig'ler (Buildroot Kconfig formatı)
+[[annotations]]
+path = "configs/*_defconfig"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Suderra OS Contributors"
+SPDX-License-Identifier = "GPL-2.0-or-later"
