@@ -1,34 +1,109 @@
 #
-# Suderra OS — QEMU x86_64 defconfig (Faz 1 placeholder)
+# Suderra OS — QEMU x86_64 defconfig
 #
-# Bu defconfig şu anda boş bir iskelettir. Faz 1'de aşağıdaki bileşenler doldurulacak:
+# Faz 1 (ilk bootable imaj) için minimal çalışan içerik.
+# Faz 3'te dm-verity, secure boot, lockdown ile sertleştirilir.
 #
-#   - Architecture: x86_64
-#   - Toolchain: Buildroot, musl libc
-#   - Kernel: Linux 6.12 LTS (custom config)
-#   - Init: systemd minimal (BR2_INIT_SYSTEMD=y)
-#   - Filesystem: ext4 (Faz 1) -> erofs+verity (Faz 3)
-#   - Bootloader: GRUB2 (Faz 1) -> shim + signed (Faz 3)
-#   - Userspace: BusyBox minimal + systemd core
-#
-# Faz 1 implementasyonu için referans:
-#   docs/operations/build.md
-#   board/suderra/common/kernel-fragment.config
-#
-# Kullanım (Faz 1 sonrası):
-#   make build-qemu
+# Build:
+#   ./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig
+# Çalıştır:
 #   ./scripts/qemu-run.sh
 #
-# TODO Faz 1:
-#   BR2_x86_64=y
-#   BR2_TOOLCHAIN_BUILDROOT_MUSL=y
-#   BR2_LINUX_KERNEL=y
-#   BR2_LINUX_KERNEL_CUSTOM_VERSION=y
-#   BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.x"
-#   BR2_INIT_SYSTEMD=y
-#   BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
-#   BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
-#   BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
-#   BR2_PACKAGE_SUDERRA_EDGE_AGENT=y
-#   BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
-#   BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/kernel-fragment.config"
+# Hedef: ~80-120 MB ilk denemede, Faz 3 sonu ~50 MB
+#
+
+# Architecture
+BR2_x86_64=y
+BR2_x86_corei7=y
+
+# Toolchain — musl static (küçük + audit-friendly + tek binary)
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_LIBC="musl"
+BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_BINUTILS_VERSION_2_43_X=y
+BR2_GCC_VERSION_13_X=y
+BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
+BR2_TOOLCHAIN_BUILDROOT_USE_SSP=y
+
+# Kernel — Linux 6.12 LTS (Edge Agent memfd_secret gereksinimi)
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.6"
+BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
+BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+BR2_LINUX_KERNEL_BZIMAGE=y
+BR2_LINUX_KERNEL_INSTALL_TARGET=y
+
+# Kernel hardening fragment (Faz 1: light, Faz 3: strict)
+# Şu an Faz 1'de pasif — Faz 3'te aktive edilir
+# BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/kernel-fragment.config"
+
+# Init system — systemd minimal
+# Edge Agent Type=notify + sd-notify zorunlu kıldığı için sysvinit/finit alternatif değil
+BR2_INIT_SYSTEMD=y
+BR2_PACKAGE_SYSTEMD_JOURNAL_GATEWAYD=n
+BR2_PACKAGE_SYSTEMD_LOGIND=y
+BR2_PACKAGE_SYSTEMD_NETWORKD=y
+BR2_PACKAGE_SYSTEMD_RESOLVED=n
+BR2_PACKAGE_SYSTEMD_TIMESYNCD=y
+BR2_PACKAGE_SYSTEMD_TIMEDATED=y
+BR2_PACKAGE_SYSTEMD_HOSTNAMED=y
+BR2_PACKAGE_SYSTEMD_BOOTCTL=y
+# Faz 3'te aktive: BR2_PACKAGE_SYSTEMD_BOOT=y (UEFI Secure Boot için)
+
+# Filesystem — Faz 1: ext4 (kolay debug), Faz 3: erofs + dm-verity
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_GEN=4
+BR2_TARGET_ROOTFS_EXT2_BLOCKS=0
+BR2_TARGET_ROOTFS_EXT2_INODES=0
+BR2_TARGET_ROOTFS_EXT2_RESBLKS=1
+
+# Bootloader — GRUB2 (BIOS+UEFI), Faz 3'te shim ile signed boot
+BR2_TARGET_GRUB2=y
+BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="boot linux ext2 fat squash4 part_msdos part_gpt normal biosdisk search"
+BR2_TARGET_GRUB2_BUILTIN_CONFIG_PC="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/grub.cfg"
+
+# QEMU host modules için (gerçek HW'de gereksiz)
+BR2_PACKAGE_QEMU=n
+BR2_PACKAGE_HOST_QEMU=n
+
+# Rootfs overlay — /etc/os-release, hostname, init configs
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
+
+# Post-build: rootfs içinde dosya manipülasyonu (os-release populate)
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
+
+# Post-image: image dosyaları hazır, bundle/sign aşaması (Faz 4'te aktif)
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
+BR2_ROOTFS_POST_SCRIPT_ARGS="suderra_qemu_x86_64"
+
+# Suderra environment variables (post-build/image script'lerine geçer)
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users.txt"
+
+# BusyBox — Faz 5+'da uutils ile değiştirilebilir
+BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
+
+# Network tools (Faz 3'te nftables aktive)
+BR2_PACKAGE_IPROUTE2=y
+BR2_PACKAGE_DBUS=y
+
+# Time sync
+BR2_PACKAGE_CHRONY=y
+
+# Suderra custom paketleri
+# Faz 2'de aktive: BR2_PACKAGE_SUDERRA_EDGE_AGENT=y
+# Faz 2'de aktive: BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
+# BR2_PACKAGE_SUDERRA_KEYS=y  # Faz 3'te (signing keys)
+
+# Build optimizations
+BR2_TARGET_GENERIC_HOSTNAME="suderra"
+BR2_TARGET_GENERIC_ISSUE="Welcome to Suderra OS — Industrial Edge"
+BR2_TARGET_GENERIC_GETTY=y
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+
+# Reproducible build
+BR2_REPRODUCIBLE=y
+BR2_PER_PACKAGE_DIRECTORIES=y

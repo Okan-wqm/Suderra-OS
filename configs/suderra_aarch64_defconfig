@@ -1,14 +1,86 @@
 #
-# Suderra OS — aarch64 (ARM64) defconfig (Faz 1 placeholder)
+# Suderra OS — aarch64 (ARM64) defconfig
 #
 # Hedef donanım: Revolution Pi / Raspberry Pi CM4 / endüstriyel ARM SBC
-# Tam hedef Faz 0'ın açık sorularından — kullanıcı seçecek.
+# (kesin model Faz 1 sonunda netleşir).
 #
-# Faz 1'de doldurulacak. x86_64'ten farklı olarak:
+# x86_64'ten farklı olarak:
 #   - U-Boot bootloader (UEFI değil — extlinux.conf veya FIT image)
 #   - Device tree (DTB) — board'a özel
-#   - GPIO/I2C/SPI overlay'ler (uygulamanın gerektirdiği gibi)
+#   - GPIO/I2C/SPI overlay'ler
 #   - Watchdog: BCM2835 (Pi CM4) veya board-specific
-#   - RPMB / TrustZone (varsa)
 #
-# Bu defconfig PROD varyantıyla birlikte kullanılır.
+
+# Architecture
+BR2_aarch64=y
+BR2_cortex_a72=y
+
+# Toolchain — musl static
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_LIBC="musl"
+BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_BINUTILS_VERSION_2_43_X=y
+BR2_GCC_VERSION_13_X=y
+BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
+BR2_TOOLCHAIN_BUILDROOT_USE_SSP=y
+
+# Kernel — Linux 6.12 LTS
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.6"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64/linux-aarch64.config"
+BR2_LINUX_KERNEL_IMAGE=y
+BR2_LINUX_KERNEL_INSTALL_TARGET=y
+
+# Device tree — Faz 1 sonu (board kararı sonrası)
+# BR2_LINUX_KERNEL_DTS_SUPPORT=y
+# BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-cm4"  # CM4 örnek
+
+# Bootloader — U-Boot
+BR2_TARGET_UBOOT=y
+BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
+BR2_TARGET_UBOOT_FORMAT_BIN=y
+# BR2_TARGET_UBOOT_BOARD_DEFCONFIG="rpi_4"  # CM4 örnek (board kararına göre)
+
+# Init system
+BR2_INIT_SYSTEMD=y
+BR2_PACKAGE_SYSTEMD_LOGIND=y
+BR2_PACKAGE_SYSTEMD_NETWORKD=y
+BR2_PACKAGE_SYSTEMD_TIMESYNCD=y
+BR2_PACKAGE_SYSTEMD_HOSTNAMED=y
+
+# Filesystem (Faz 3'te erofs+verity)
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+
+# Rootfs overlay
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
+BR2_ROOTFS_POST_SCRIPT_ARGS="suderra_aarch64"
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users.txt"
+
+# Network tools
+BR2_PACKAGE_IPROUTE2=y
+BR2_PACKAGE_DBUS=y
+BR2_PACKAGE_NFTABLES=y
+
+# Time sync
+BR2_PACKAGE_CHRONY=y
+
+# Suderra custom paketleri (Faz 2+)
+# BR2_PACKAGE_SUDERRA_EDGE_AGENT=y
+# BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
+
+# Build optimizations
+BR2_TARGET_GENERIC_HOSTNAME="suderra"
+BR2_TARGET_GENERIC_ISSUE="Suderra OS — Industrial Edge (ARM64)"
+BR2_TARGET_GENERIC_GETTY=y
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+
+# Reproducible build
+BR2_REPRODUCIBLE=y
+BR2_PER_PACKAGE_DIRECTORIES=y

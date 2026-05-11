@@ -1,5 +1,7 @@
 # Buildroot
-/buildroot/
+# buildroot/ is tracked as a git submodule — only its output is ignored
+/buildroot/output/
+/buildroot/dl/
 /output/
 /dl/
 /build/

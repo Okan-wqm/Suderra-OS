@@ -13,9 +13,12 @@
 ## Hızlı Kurulum (Docker tabanlı)
 
 ```bash
-# 1. Repo clone
-git clone git@github.com:Okan-wqm/suderra-os.git
+# 1. Repo clone (submodule'lerle birlikte)
+git clone --recurse-submodules git@github.com:Okan-wqm/suderra-os.git
 cd suderra-os
+
+# Eğer submodule'siz klonladıysan:
+git submodule update --init --recursive
 
 # 2. Docker kurulu mu?
 docker --version || sudo apt-get install -y docker.io
@@ -31,6 +34,29 @@ docker build -t suderra-builder ci/
 # 5. QEMU'da test
 ./scripts/qemu-run.sh
 ```
+
+## Buildroot Submodule
+
+Buildroot 2024.11.x LTS `buildroot/` dizininde git submodule olarak pinli.
+
+```bash
+# İlk klonlamada otomatik gelmesi için:
+git clone --recurse-submodules ...
+
+# Sonradan eklemek/güncellemek için:
+git submodule update --init --recursive
+
+# Submodule pin SHA'sını güncellemek için (yeni LTS patch geldiğinde):
+cd buildroot
+git fetch
+git checkout 2024.11.x
+cd ..
+git add buildroot
+git commit -s -m "build: bump Buildroot to <new-sha>"
+```
+
+**Neden submodule:** SHA pin = reproducible build (CRA + SLSA gereksinimi).
+Upstream main'in kırılmaları bizi etkilemez.
 
 ## Host Kurulum (Docker olmadan)
 
@@ -76,10 +102,11 @@ ln -sf $(pwd)/.githooks/* .git/hooks/
 
 ## Build Bağımlılıkları (Buildroot)
 
-İlk build sırasında otomatik indirilir. Önceden indirmek için:
-```bash
-git clone https://gitlab.com/buildroot.org/buildroot.git -b 2024.11 buildroot
-```
+Buildroot artık `buildroot/` dizininde **submodule** olarak gelir
+(yukarıdaki "Buildroot Submodule" bölümüne bakın).
+
+İlk paket download'ları (~2-3 GB tar.gz) Buildroot tarafından otomatik
+indirilir, `dl/` dizininde cache'lenir.
 
 ## QEMU Test Akışı
 

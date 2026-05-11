@@ -1,16 +1,93 @@
 #
-# Suderra OS — x86_64 endüstriyel PC defconfig (Faz 1 placeholder)
+# Suderra OS — x86_64 endüstriyel PC defconfig
 #
-# Hedef donanım: Endüstriyel x86_64 PC (Advantech UNO, Siemens IPC, vb.)
-# Tam hedef Faz 0'ın açık sorularından — kullanıcı seçecek.
+# Hedef donanım: Endüstriyel x86_64 PC (Advantech UNO-2271G, Siemens IPC227G,
+# Kontron, vb.) — kesin model Faz 1 başında netleşir.
 #
-# Faz 1'de doldurulacak. QEMU defconfig'den farklı olarak:
+# QEMU defconfig'inden farklar:
 #   - Gerçek NIC driver'ları (Intel I210/I225, Realtek)
-#   - Gerçek storage (NVMe, eMMC, SATA)
-#   - Watchdog driver'ları (iTCO/SoftDog)
-#   - TPM 2.0 (TPM_TIS, TPM_CRB)
-#   - UEFI + Secure Boot zinciri
-#   - dm-verity zorunlu (CONFIG_DM_VERITY=y, signed)
-#   - RAUC A/B partition layout
+#   - NVMe / eMMC / SATA storage
+#   - iTCO watchdog
+#   - TPM 2.0 (TPM_TIS)
+#   - UEFI Secure Boot (Faz 3)
+#   - dm-verity zorunlu (Faz 3)
 #
-# Bu defconfig PROD varyantıyla birlikte kullanılır.
+
+# Architecture
+BR2_x86_64=y
+BR2_x86_corei7=y
+
+# Toolchain — qemu defconfig ile aynı musl static
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_LIBC="musl"
+BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_BINUTILS_VERSION_2_43_X=y
+BR2_GCC_VERSION_13_X=y
+BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
+BR2_TOOLCHAIN_BUILDROOT_USE_SSP=y
+
+# Kernel — Linux 6.12 LTS
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.6"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/linux-x86_64.config"
+BR2_LINUX_KERNEL_BZIMAGE=y
+BR2_LINUX_KERNEL_INSTALL_TARGET=y
+
+# Init system
+BR2_INIT_SYSTEMD=y
+BR2_PACKAGE_SYSTEMD_LOGIND=y
+BR2_PACKAGE_SYSTEMD_NETWORKD=y
+BR2_PACKAGE_SYSTEMD_TIMESYNCD=y
+BR2_PACKAGE_SYSTEMD_HOSTNAMED=y
+BR2_PACKAGE_SYSTEMD_BOOTCTL=y
+
+# Filesystem (Faz 3'te erofs+verity'e geçiş)
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+
+# Bootloader — GRUB2 (Faz 3'te shim chain)
+BR2_TARGET_GRUB2=y
+BR2_TARGET_GRUB2_X86_64_EFI=y
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_msdos part_gpt normal search efi_gop efi_uga"
+BR2_TARGET_GRUB2_BUILTIN_CONFIG_EFI="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/grub.cfg"
+
+# Rootfs overlay + post-build/image
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
+BR2_ROOTFS_POST_SCRIPT_ARGS="suderra_x86_64"
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users.txt"
+
+# TPM 2.0 (Faz 3+)
+# BR2_PACKAGE_TPM2_TSS=y
+# BR2_PACKAGE_TPM2_TOOLS=y
+
+# RAUC — Faz 4'te aktif
+# BR2_PACKAGE_RAUC=y
+
+# Network tools
+BR2_PACKAGE_IPROUTE2=y
+BR2_PACKAGE_DBUS=y
+BR2_PACKAGE_NFTABLES=y
+
+# Time sync (PTP destekli, endüstriyel için kritik)
+BR2_PACKAGE_CHRONY=y
+BR2_PACKAGE_LINUXPTP=y
+
+# Suderra custom paketleri (Faz 2+)
+# BR2_PACKAGE_SUDERRA_EDGE_AGENT=y
+# BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
+
+# Build optimizations
+BR2_TARGET_GENERIC_HOSTNAME="suderra"
+BR2_TARGET_GENERIC_ISSUE="Suderra OS — Industrial Edge"
+BR2_TARGET_GENERIC_GETTY=y
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+
+# Reproducible build
+BR2_REPRODUCIBLE=y
+BR2_PER_PACKAGE_DIRECTORIES=y

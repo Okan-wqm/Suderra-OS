@@ -5,6 +5,30 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 
 ## [Unreleased]
 
+### Added — Faz 1 başı (Buildroot Submodule + Defconfig Fill) — Katman 2
+
+**Buildroot integration:**
+- `buildroot/` git submodule (gitlab.com/buildroot.org/buildroot, branch 2024.11.x LTS)
+- `.gitmodules` — submodule pin (SHA = reproducible build için kritik)
+- `.gitignore` — `/buildroot/output/` ve `/buildroot/dl/` ignore (kaynak tracked)
+
+**Defconfig'ler doldurulduk:**
+- `configs/suderra_qemu_x86_64_defconfig` — minimal çalışan içerik:
+  - musl static + Rust 6.12 LTS kernel + minimal systemd
+  - GRUB2 BIOS (QEMU için), ext4 rootfs
+  - Reproducible build (BR2_REPRODUCIBLE=y)
+  - chrony NTP, networkd, journald
+- `configs/suderra_x86_64_defconfig` — endüstriyel x86 PC:
+  - Custom kernel config (board-spesifik driver'lar Faz 1'de)
+  - GRUB2 EFI (UEFI Secure Boot Faz 3'te), nftables, linuxptp
+- `configs/suderra_aarch64_defconfig` — ARM SBC:
+  - U-Boot + custom kernel config + DTB
+  - Cortex-A72 (Pi CM4 / Revolution Pi default)
+
+**Dokümantasyon:**
+- `docs/dev/setup.md` — git clone --recurse-submodules talimatı + submodule güncelleme prosedürü
+- `docs/operations/build.md` — Buildroot submodule kullanımı + doğrudan make komutları
+
 ### Added — Faz 1.5 (Rust Userspace Workspace) — Katman 1
 
 **Userspace iskelet:**

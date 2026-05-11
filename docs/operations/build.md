@@ -26,11 +26,20 @@ ls output/suderra_qemu_x86_64_defconfig/images/disk.img
 sudo apt-get install -y build-essential git libncurses-dev rsync \
     bc cpio python3 unzip wget bison flex gettext libssl-dev
 
-# İlk seferde Buildroot clone (Faz 1)
-git clone https://gitlab.com/buildroot.org/buildroot.git -b 2024.11 buildroot/
+# Buildroot artık submodule olarak gelir — clone sırasında:
+git submodule update --init --recursive
 
 # Build
 make build-qemu                  # veya make build-x86, make build-arm
+
+# Buildroot'u doğrudan çağırmak için:
+make -C buildroot \
+    BR2_EXTERNAL=$(pwd) \
+    O=$(pwd)/output/qemu \
+    suderra_qemu_x86_64_defconfig
+make -C buildroot \
+    BR2_EXTERNAL=$(pwd) \
+    O=$(pwd)/output/qemu
 ```
 
 ## Defconfig'ler
