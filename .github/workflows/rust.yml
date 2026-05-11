@@ -159,7 +159,7 @@ jobs:
   # MSRV check (rust-toolchain.toml ile pinli versiyon doğrulaması)
   # -----------------------------------------------------------------
   msrv:
-    name: MSRV check (Rust 1.85)
+    name: MSRV check (Rust 1.86)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

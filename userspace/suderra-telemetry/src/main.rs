@@ -25,7 +25,10 @@ async fn main() -> Result<()> {
         .json()
         .init();
 
-    info!("suderra-telemetry v{} başlatılıyor", env!("CARGO_PKG_VERSION"));
+    info!(
+        "suderra-telemetry v{} başlatılıyor",
+        env!("CARGO_PKG_VERSION")
+    );
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
 
     // TODO Faz 5:

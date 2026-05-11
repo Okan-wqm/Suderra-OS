@@ -29,7 +29,10 @@ async fn main() -> Result<()> {
         .json()
         .init();
 
-    info!("suderra-attestation v{} başlatılıyor", env!("CARGO_PKG_VERSION"));
+    info!(
+        "suderra-attestation v{} başlatılıyor",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // TODO Faz 8+:
     // - tss-esapi crate ile TPM2 erişim

@@ -38,7 +38,7 @@ endef
 
 # Kullanıcı + dizin oluşturma (Buildroot users + permissions framework)
 define SUDERRA_EDGE_AGENT_USERS
-	suderra-edge -1 suderra-edge -1 * /var/lib/suderra /sbin/nologin - Suderra Edge Agent daemon user
+	suderra-edge -1 suderra-edge -1 * /var/lib/suderra /sbin/nologin - Suderra_Edge_Agent_runtime
 endef
 
 define SUDERRA_EDGE_AGENT_PERMISSIONS

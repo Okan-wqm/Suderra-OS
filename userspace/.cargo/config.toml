@@ -60,7 +60,8 @@ tw = "test --workspace --target x86_64-unknown-linux-gnu"
 # Lint aliases
 c = "check --workspace --all-targets"
 cl = "clippy --workspace --all-targets -- -D warnings"
-fmt = "fmt --all"
+# NOT: `fmt` alias kullanılamaz — cargo-fmt subcommand'i ile çakışır
+# (recursive alias hatası). Bunun yerine `cargo fmt --all` doğrudan çağır.
 
 # Security
 audit = "audit"

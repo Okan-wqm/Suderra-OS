@@ -18,7 +18,7 @@ members = [
 [workspace.package]
 version = "0.1.0-alpha"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 authors = ["Suderra OS Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/Okan-wqm/suderra-os"
