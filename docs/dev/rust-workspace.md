@@ -212,6 +212,26 @@ Sonuç: ~50-80% boyut azalması debug build'e göre.
 | 5 | suderra-factory-reset impl | TODO |
 | 8+ | suderra-attestation impl | TODO |
 
+## Dependency Updates (Dependabot)
+
+`userspace/` Cargo.toml'ları **günlük** Dependabot taramasında:
+- Minor + patch update'leri **grup PR** olarak gelir (rust-minor-patch)
+- Major version bump'lar (tokio, axum, rustls) **manuel review** gerektirir
+  (ignore listesinde)
+- Max 10 açık Dependabot PR aynı anda
+- Etiketler: `dependencies`, `rust`, `security`
+
+Buildroot submodule da `gitsubmodule` ecosystem ile **aylık** kontrol edilir.
+
+## SPDX / REUSE Compliance
+
+Tüm `Cargo.toml` + `*.rs` dosyaları başında:
+
+```rust
+// SPDX-FileCopyrightText: 2026 Suderra OS contributors
+// SPDX-License-Identifier: Apache-2.0
+```
+
 ## Referanslar
 
 - [ROADMAP.md](../../ROADMAP.md)

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Suderra OS contributors
+// SPDX-License-Identifier: Apache-2.0
+
 //! `suderra-firstboot` — Suderra OS ilk boot provisioning aracı.
 //!
 //! Lifecycle: `systemd` Type=oneshot, `Before=suderra-edge-agent.service`,

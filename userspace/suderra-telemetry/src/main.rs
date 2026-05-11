@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Suderra OS contributors
+// SPDX-License-Identifier: Apache-2.0
+
 //! `suderra-telemetry` — Cihaz sağlık + uygulama metrikleri cloud push.
 //!
 //! Metrikler:

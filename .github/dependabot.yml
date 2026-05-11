@@ -29,9 +29,49 @@ updates:
       include: "scope"
     open-pull-requests-limit: 3
 
-  # Faz 2'de Rust app paketleme eklenince aktive et:
+  # Rust workspace (userspace/) — Faz 1.5'te aktif
+  - package-ecosystem: "cargo"
+    directory: "/userspace"
+    schedule:
+      interval: "daily"
+    labels:
+      - "dependencies"
+      - "rust"
+      - "security"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    open-pull-requests-limit: 10
+    # Grup minor+patch için tek PR (CVE patch'ler ayrı kalır)
+    groups:
+      rust-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Major bump'lar manuel review gerektirir
+    ignore:
+      - dependency-name: "tokio"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "axum"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "rustls"
+        update-types: ["version-update:semver-major"]
+
+  # Faz 2'de eklenince: suderra-edge-agent kendi repo'sundan vendored
   # - package-ecosystem: "cargo"
   #   directory: "/package/suderra-edge-agent"
-  #   schedule:
-  #     interval: "daily"
-  #   labels: ["dependencies", "rust", "security"]
+  #   schedule: { interval: "daily" }
+  #   labels: ["dependencies", "rust", "security", "edge-agent"]
+
+  # Faz 1 sonu: git submodule (Buildroot) updates
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "buildroot"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    open-pull-requests-limit: 2

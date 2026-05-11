@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Suderra OS contributors
+// SPDX-License-Identifier: Apache-2.0
+
 //! Suderra OS — Ortak konfigürasyon kütüphanesi
 //!
 //! Bu lib crate diğer Suderra userspace crate'leri tarafından kullanılır.

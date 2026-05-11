@@ -5,6 +5,50 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 
 ## [Unreleased]
 
+### Added — Faz 1 (CI Boot Smoke Test) — Katman 4
+
+- `.github/workflows/build.yml` — `qemu-smoke-test` job eklendi:
+  - `build` job tamamlandıktan sonra image artifact'i indirir
+  - KVM acceleration tespit (`/dev/kvm`); yoksa QEMU TCG fallback
+    (timeout cömertçe 180s)
+  - `tests/qemu/boot-test.sh` ile boot doğrulama
+  - Boot fail'inde serial log artifact upload (7 gün)
+- GitHub Actions runner'larında nested KVM destekli (Ubuntu 24.04, 2023+)
+
+### Added — Faz 1 (Altyapı Tamamlama) — Katman 5
+
+**Boot için kritik eksiklikler dolduruldu:**
+- `board/suderra/common/users.txt` — defconfig'lerin referans verdiği dosya
+  (yokken Buildroot kırılıyordu); `suderra-edge` UID 200 reproducible
+- `board/suderra/x86_64/genimage-qemu.cfg` — QEMU için tek-rootfs layout
+  (EFI 32M + rootfs 256M); production'ın A/B+/data karmaşıklığı smoke test'i
+  90s timeout'a sığmıyor
+- `post-image.sh` — placeholder yorum yerine **çalışan genimage çağrısı**,
+  defconfig adına göre QEMU vs production layout otomatik seçer
+
+**Systemd unit'leri:**
+- `rootfs-overlay/etc/systemd/system/suderra-firstboot.service` — oneshot,
+  ConditionPathExists ile bir kere çalışır:
+  - `/etc/machine-id` üretir
+  - `/data` partition mkfs (varsa)
+  - `/var/lib/suderra` dizini + sahiplik
+  - `/etc/suderra/config.yaml` skeleton
+
+**Dependabot:**
+- Cargo ecosystem (`/userspace`) **günlük** tarama (önceden yorumda)
+- Minor+patch grup PR (rust-minor-patch); major bump'lar (tokio/axum/rustls)
+  manuel review
+- `gitsubmodule` ecosystem ile Buildroot submodule **aylık** kontrol
+
+**REUSE compliance:**
+- Tüm `userspace/**/Cargo.toml` + `userspace/**/*.rs` dosyalarına SPDX header
+  (Apache-2.0)
+
+**Dokümantasyon:**
+- `docs/operations/build.md`: Disk image layout tablosu + users.txt formatı
+- `docs/dev/qemu-test.md`: QEMU disk layout + firstboot davranışı
+- `docs/dev/rust-workspace.md`: Dependabot kuralları + SPDX/REUSE bölümleri
+
 ### Added — Faz 1 (QEMU Boot Hazırlığı) — Katman 3
 
 **Kernel config (Faz 1 minimal):**

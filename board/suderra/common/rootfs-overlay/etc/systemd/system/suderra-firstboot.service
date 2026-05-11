@@ -1,0 +1,76 @@
+#
+# Suderra OS — firstboot servisi
+#
+# İlk boot'ta çalışır:
+#   1. /data partition mkfs (zaten ext4 değilse)
+#   2. /var/lib/suderra dizinini /data altında bind-mount için hazırla
+#   3. /etc/machine-id üret (Buildroot empty bırakır)
+#   4. Edge Agent için config skeleton oluştur (yoksa)
+#   5. Tamamlandı flag'i koy: /var/lib/suderra/.firstboot-done
+#
+# Bu unit `suderra-firstboot` Rust binary'sini çağırır (Faz 2). Faz 1'de
+# inline shell ile minimum işlevsellik sağlanır.
+#
+# ConditionPathExists ile bir kere çalışır (idempotent).
+#
+
+[Unit]
+Description=Suderra OS firstboot initialization
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=sysinit.target suderra-edge-agent.service
+ConditionPathExists=!/var/lib/suderra/.firstboot-done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Faz 2'de Rust binary: /usr/bin/suderra-firstboot
+# Faz 1 minimum: inline shell (data partition mkfs + dizin hazırlama)
+ExecStart=/bin/sh -c ' \
+    set -e; \
+    echo "==> Suderra firstboot başlatılıyor"; \
+    \
+    # 1. /etc/machine-id (Buildroot empty bırakır) \
+    if [ ! -s /etc/machine-id ]; then \
+        systemd-machine-id-setup; \
+    fi; \
+    \
+    # 2. /data partition mkfs (eğer raw ise) \
+    if [ -b /dev/disk/by-partlabel/data ]; then \
+        if ! blkid /dev/disk/by-partlabel/data >/dev/null 2>&1; then \
+            echo "==> /data mkfs.ext4"; \
+            mkfs.ext4 -L data -F /dev/disk/by-partlabel/data; \
+        fi; \
+    fi; \
+    \
+    # 3. /var/lib/suderra hazırla \
+    mkdir -p /var/lib/suderra /etc/suderra; \
+    chown -R 200:200 /var/lib/suderra 2>/dev/null || true; \
+    \
+    # 4. Config skeleton (yoksa) \
+    if [ ! -f /etc/suderra/config.yaml ]; then \
+        echo "# Faz 2: Edge Agent config" > /etc/suderra/config.yaml; \
+        chmod 0640 /etc/suderra/config.yaml; \
+    fi; \
+    \
+    # 5. Done flag \
+    touch /var/lib/suderra/.firstboot-done; \
+    echo "==> Suderra firstboot tamamlandı"; \
+'
+
+# Hardening (oneshot bile olsa)
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc /var/lib /var/log
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suderra-firstboot
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,22 @@
+# Suderra OS — Buildroot users table
+#
+# Format:
+#   username uid group gid password home shell groups comment
+#
+# Şifreler ENCRYPTED (mkpasswd -m sha-512). Boş şifre için "*", disabled için "!".
+#
+# Buildroot tarafından `BR2_ROOTFS_USERS_TABLES` ile okunur.
+#
+# DEV variant: root login açık (suderra/suderra şifresi)
+# PROD variant: tüm interactive login disabled (firstboot OOB key ile)
+#
+# UID range:
+#   1-99      sistem (Buildroot default)
+#   100-999   Suderra reserved (edge agent, monitoring, vb)
+#   1000+     gerçek kullanıcılar (PROD'da yok)
+#
+# NOT: $6$ = SHA-512 hash. mkpasswd -m sha-512 -S "saltsuderra" "suderra"
+
+# Edge Agent runtime user — interactive login disabled, sadece systemd unit kullanır
+# UID 200 sabit (reproducible) — Buildroot'un auto-assign (-1) yerine
+suderra-edge 200 suderra-edge 200 ! /var/lib/suderra /sbin/nologin - Suderra_Edge_Agent_runtime

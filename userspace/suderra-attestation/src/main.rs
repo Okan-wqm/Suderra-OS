@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Suderra OS contributors
+// SPDX-License-Identifier: Apache-2.0
+
 //! `suderra-attestation` — TPM 2.0 PCR remote attestation.
 //!
 //! Cihaz boot state'inin (UEFI → bootloader → kernel → initrd → rootfs)

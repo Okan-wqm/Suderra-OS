@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "suderra-watchdog"
 description = "Hardware watchdog + health monitor — donanım/uygulama donarsa otomatik reboot"

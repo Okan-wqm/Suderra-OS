@@ -102,6 +102,31 @@ qemu-system-x86_64 \
     ...
 ```
 
+## QEMU Disk Image Layout
+
+QEMU defconfig `board/suderra/x86_64/genimage-qemu.cfg` ile **tek-rootfs**:
+
+```
+disk.img (GPT)
+├── EFI partition  (32M)  → /EFI/BOOT/BOOTX64.EFI + grub.cfg + bzImage
+└── rootfs partition (256M) → ext4, mount=/
+```
+
+Bu production layout'tan farklı (A/B + /data yok). Smoke test 90s'de boot edebilsin
+diye sadeleştirildi. RAUC update test'i için Faz 4'te ayrı bir defconfig eklenecek.
+
+## firstboot Davranışı
+
+`/etc/systemd/system/suderra-firstboot.service` ilk boot'ta bir kere çalışır:
+
+1. `/etc/machine-id` üretir (Buildroot empty bırakır)
+2. `/data` partition varsa mkfs.ext4 yapar (QEMU layout'ta yok, no-op)
+3. `/var/lib/suderra` dizini hazırlar (suderra-edge:suderra-edge sahipliği)
+4. `/etc/suderra/config.yaml` skeleton oluşturur
+5. `/var/lib/suderra/.firstboot-done` flag'i koyar → bir daha çalışmaz
+
+Faz 2'de inline shell yerine `/usr/bin/suderra-firstboot` Rust binary çağrılır.
+
 ## CI Headless Test
 
 `tests/qemu/boot-test.sh` artık **çalışır** durumda:

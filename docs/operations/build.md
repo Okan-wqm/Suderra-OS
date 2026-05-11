@@ -67,6 +67,30 @@ output/<defconfig>/
 └── build/                    # Build artifacts (geçici)
 ```
 
+## Disk Image Layout
+
+`board/suderra/common/post-image.sh` defconfig adına göre genimage config seçer:
+
+| Defconfig | genimage config | Partition layout |
+|---|---|---|
+| `suderra_qemu_x86_64_defconfig` | `x86_64/genimage-qemu.cfg` | EFI (32M) + rootfs (256M) — tek slot, debug için |
+| `suderra_x86_64_defconfig` | `x86_64/genimage.cfg` | EFI (64M) + rootfs-a (512M) + rootfs-b (512M) + data (2G) — A/B + persistent |
+| `suderra_aarch64_defconfig` | `aarch64/genimage.cfg` | BOOT (32M) + rootfs-a + rootfs-b + data |
+
+QEMU layout production'dan ayrı çünkü:
+- A/B partition QEMU smoke test için gereksiz karmaşıklık
+- `/data` partition firstboot mkfs gerektirir, smoke test 90s timeout'a sığmaz
+- Faz 4'te RAUC bundle test'i için ayrı `suderra_qemu_x86_64_ab_defconfig` eklenebilir
+
+## Buildroot Users Table
+
+`board/suderra/common/users.txt` Buildroot'un user/group tablosu:
+- `suderra-edge` (UID 200) — Edge Agent runtime user, login disabled
+- Root şifresi DEV variant'ta `suderra` (mkpasswd ile production'da değişir)
+
+Format: `username uid group gid password home shell groups comment`
+(Boşluk yerine `_` kullanılmalı, Buildroot satırı space-split eder.)
+
 ## Reproducible Build
 
 Iki ayrı geliştirici / makinada **aynı SHA256** elde etmek için:

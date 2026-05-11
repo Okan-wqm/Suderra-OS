@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "suderra-firstboot"
 description = "İlk boot provisioning: machine-id, /data init, TPM seal, cloud enroll"

@@ -19,40 +19,62 @@ set -euo pipefail
 IFS=$'\n\t'
 
 BINARIES_DIR="${1:?BINARIES_DIR not set}"
+# BR2_ROOTFS_POST_SCRIPT_ARGS'tan gelen defconfig adı (suderra_qemu_x86_64,
+# suderra_x86_64, suderra_aarch64). Layout seçimi için kullanılır.
+DEFCONFIG_NAME="${2:-suderra_x86_64}"
 BR2_EXTERNAL_SUDERRA_PATH="${BR2_EXTERNAL_SUDERRA_PATH:?BR2_EXTERNAL_SUDERRA_PATH not set}"
 
 echo "==> Suderra OS post-image hook"
+echo "    Defconfig: ${DEFCONFIG_NAME}"
+echo "    Binaries:  ${BINARIES_DIR}"
 
-# Mimari tespit (BR2_ARCH env'inden gelir)
-ARCH="${BR2_ARCH:-unknown}"
-echo "==> Arch: ${ARCH}"
+# Mimari tespit (BR2_ARCH env'inden gelir, fallback defconfig adından)
+ARCH="${BR2_ARCH:-}"
+if [ -z "${ARCH}" ]; then
+    case "${DEFCONFIG_NAME}" in
+        *aarch64*) ARCH="aarch64" ;;
+        *x86_64*)  ARCH="x86_64"  ;;
+    esac
+fi
+echo "    Arch: ${ARCH}"
 
-# 1. genimage çağrısı — disk.img oluştur (Faz 1)
+# 1. genimage config seçimi — QEMU için tek-rootfs, prod için A/B+/data
 GENIMAGE_CFG=""
-case "${ARCH}" in
-    x86_64)
+case "${DEFCONFIG_NAME}" in
+    suderra_qemu_x86_64*)
+        GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage-qemu.cfg"
+        ;;
+    suderra_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage.cfg"
         ;;
-    aarch64)
+    suderra_aarch64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64/genimage.cfg"
         ;;
     *)
-        echo "ERROR: Unsupported arch: ${ARCH}"
+        echo "ERROR: Unsupported defconfig: ${DEFCONFIG_NAME}"
         exit 1
         ;;
 esac
 
-if [ -f "${GENIMAGE_CFG}" ]; then
-    echo "==> genimage çağrılıyor: ${GENIMAGE_CFG}"
-    # Faz 1'de aktive edilecek
-    # genimage --config "${GENIMAGE_CFG}" \
-    #     --rootpath "${BINARIES_DIR}/.." \
-    #     --inputpath "${BINARIES_DIR}" \
-    #     --outputpath "${BINARIES_DIR}"
-    echo "==> [TODO Faz 1] genimage çağrısı aktive et"
-else
-    echo "WARNING: genimage.cfg yok: ${GENIMAGE_CFG} (Faz 1'de oluşturulacak)"
+if [ ! -f "${GENIMAGE_CFG}" ]; then
+    echo "ERROR: genimage.cfg yok: ${GENIMAGE_CFG}"
+    exit 1
 fi
+
+# genimage host tool'u Buildroot'ta otomatik kurulur (BR2_PACKAGE_HOST_GENIMAGE)
+GENIMAGE_TMP="${BUILD_DIR:-${BINARIES_DIR}/..}/genimage.tmp"
+rm -rf "${GENIMAGE_TMP}"
+
+echo "==> genimage çağrılıyor: $(basename "${GENIMAGE_CFG}")"
+genimage \
+    --config "${GENIMAGE_CFG}" \
+    --rootpath "${TARGET_DIR:-${BINARIES_DIR}/../target}" \
+    --inputpath "${BINARIES_DIR}" \
+    --outputpath "${BINARIES_DIR}" \
+    --tmppath "${GENIMAGE_TMP}"
+
+echo "==> disk.img üretildi: ${BINARIES_DIR}/disk.img"
+ls -la "${BINARIES_DIR}/disk.img" 2>/dev/null || true
 
 # 2-4. Faz 3 — dm-verity + imzalama
 # TODO Faz 3:

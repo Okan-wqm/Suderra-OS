@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "suderra-telemetry"
 description = "Cihaz sağlık metrikleri + uygulama metriklerini cloud'a push eder"
