@@ -19,8 +19,12 @@ set -euo pipefail
 IFS=$'\n\t'
 
 BINARIES_DIR="${1:?BINARIES_DIR not set}"
-# BR2_ROOTFS_POST_SCRIPT_ARGS'tan gelen defconfig adı (suderra_qemu_x86_64,
-# suderra_x86_64, suderra_aarch64). Layout seçimi için kullanılır.
+# BR2_ROOTFS_POST_SCRIPT_ARGS'tan gelen defconfig adı:
+#   - suderra_qemu_x86_64        -> QEMU disk image (test)
+#   - suderra_x86_64             -> Endüstriyel x86 PC (UEFI + GRUB)
+#   - suderra_aarch64            -> Generic aarch64 (template)
+#   - suderra_aarch64_rpi4       -> Raspberry Pi 4 / CM4 (SD card)
+#   - suderra_aarch64_revpi      -> Revolution Pi (Faz 2-B)
 DEFCONFIG_NAME="${2:-suderra_x86_64}"
 BR2_EXTERNAL_SUDERRA_PATH="${BR2_EXTERNAL_SUDERRA_PATH:?BR2_EXTERNAL_SUDERRA_PATH not set}"
 
@@ -38,17 +42,29 @@ if [ -z "${ARCH}" ]; then
 fi
 echo "    Arch: ${ARCH}"
 
-# 1. genimage config seçimi — QEMU için tek-rootfs, prod için A/B+/data
+# 1. genimage config seçimi — defconfig'e göre dispatch
 GENIMAGE_CFG=""
+IMAGE_OUTPUT_NAME=""
 case "${DEFCONFIG_NAME}" in
     suderra_qemu_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage-qemu.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
         ;;
     suderra_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
+        ;;
+    suderra_aarch64_rpi4*)
+        GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/genimage.cfg"
+        IMAGE_OUTPUT_NAME="sdcard.img"
+        ;;
+    suderra_aarch64_revpi*)
+        GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi/genimage.cfg"
+        IMAGE_OUTPUT_NAME="sdcard.img"
         ;;
     suderra_aarch64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64/genimage.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
         ;;
     *)
         echo "ERROR: Unsupported defconfig: ${DEFCONFIG_NAME}"
@@ -73,8 +89,26 @@ genimage \
     --outputpath "${BINARIES_DIR}" \
     --tmppath "${GENIMAGE_TMP}"
 
-echo "==> disk.img üretildi: ${BINARIES_DIR}/disk.img"
-ls -la "${BINARIES_DIR}/disk.img" 2>/dev/null || true
+IMAGE_PATH="${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}"
+echo "==> ${IMAGE_OUTPUT_NAME} üretildi: ${IMAGE_PATH}"
+ls -la "${IMAGE_PATH}" 2>/dev/null || true
+
+# Release artifact: xz sıkıştırma + SHA256 manifest (CI'da release.yml kullanır)
+if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ]; then
+    echo "==> ${IMAGE_OUTPUT_NAME}.xz üretiliyor"
+    xz -k -T0 -9 -f "${IMAGE_PATH}"
+
+    {
+        echo "# Suderra OS — release manifest"
+        echo "# Build: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# Defconfig: ${DEFCONFIG_NAME}"
+        echo "# Arch: ${ARCH}"
+        echo ""
+        echo "# SHA256 checksums:"
+        ( cd "${BINARIES_DIR}" && sha256sum "${IMAGE_OUTPUT_NAME}" "${IMAGE_OUTPUT_NAME}.xz" )
+    } > "${BINARIES_DIR}/MANIFEST.txt"
+    cat "${BINARIES_DIR}/MANIFEST.txt"
+fi
 
 # 2-4. Faz 3 — dm-verity + imzalama
 # TODO Faz 3:

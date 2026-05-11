@@ -21,9 +21,10 @@ jobs:
       matrix:
         defconfig:
           - suderra_qemu_x86_64_defconfig
-          # Faz 1'de aktif olur:
+          - suderra_aarch64_rpi4_defconfig
+          # Faz 2-B/C'de aktif olur:
           # - suderra_x86_64_defconfig
-          # - suderra_aarch64_defconfig
+          # - suderra_aarch64_revpi_defconfig
     steps:
       - name: Show runner environment
         run: |

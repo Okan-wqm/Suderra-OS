@@ -41,10 +41,30 @@ make build-qemu
 # 3. QEMU'da çalıştır
 ./scripts/qemu-run.sh
 
-# 4. Gerçek donanım için
-make build-x86_64
-./scripts/flash-usb.sh /dev/sdX output/images/x86_64/suderra-os.img
+# 4. Raspberry Pi 4 / CM4 için
+./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
+sudo ./scripts/flash-sd.sh /dev/sdX \
+  output/suderra_aarch64_rpi4_defconfig/images/sdcard.img.xz
+
+# 5. Endüstriyel x86 için (Faz 2-C)
+./scripts/build-in-docker.sh suderra_x86_64_defconfig
+sudo ./scripts/flash-sd.sh /dev/sdX \
+  output/suderra_x86_64_defconfig/images/disk.img.xz
 ```
+
+**Kurulum rehberi (adım adım, sıfırdan):** [docs/operations/install.md](docs/operations/install.md)
+
+## Desteklenen Hardware
+
+| Platform | Durum | Defconfig | Image |
+|---|---|---|---|
+| QEMU x86_64 (test) | ✅ Faz 1 | `suderra_qemu_x86_64_defconfig` | `disk.img` |
+| Raspberry Pi 4 Model B | ✅ Faz 2-A | `suderra_aarch64_rpi4_defconfig` | `sdcard.img.xz` |
+| Compute Module 4 (CM4) | ✅ Faz 2-A | `suderra_aarch64_rpi4_defconfig` | `sdcard.img.xz` |
+| Endüstriyel x86 PC (UEFI+TPM) | ⏳ Faz 2-C | `suderra_x86_64_defconfig` | `disk.img.xz` |
+| Revolution Pi | ⏳ Faz 2-B | `suderra_aarch64_revpi_defconfig` | `sdcard.img.xz` |
+
+Hardware detayı: [docs/hardware/rpi4-cm4.md](docs/hardware/rpi4-cm4.md)
 
 ## Mimari
 
