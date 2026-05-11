@@ -47,7 +47,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Sistem entegrasyonu
 libc = "0.2"
-nix = { version = "0.29", features = ["fs", "mount", "user", "process", "signal"] }
+nix = { version = "0.31", features = ["fs", "mount", "user", "process", "signal"] }
 
 # systemd notify (Type=notify için)
 sd-notify = "0.4"
