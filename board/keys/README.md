@@ -54,6 +54,7 @@ chmod 0600 *.key
 ## Build Sırasında Anahtar Bulma
 
 Build script'leri `SUDERRA_KEYS_DIR` env var arar:
+
 ```bash
 export SUDERRA_KEYS_DIR=~/.suderra-keys/dev
 ./scripts/build-in-docker.sh suderra_x86_64_defconfig
@@ -64,6 +65,7 @@ export SUDERRA_KEYS_DIR=~/.suderra-keys/dev
 **ASLA repo'ya commit etme. ASLA dev laptop'unda saklama.**
 
 Üretim için:
+
 - YubiHSM 2 (önerilen, ~650 USD)
 - AWS KMS (cloud)
 - Thales/Utimaco HSM (yüksek bütçe)
@@ -73,10 +75,12 @@ Detay: [../../docs/security/key-management.md](../../docs/security/key-managemen
 ## Anahtar Kaybı / Sızıntı
 
 Kayıp:
+
 - Tüm fleet recovery zor → yedek anahtar (cold storage) zorunlu
 - Yedek de kayıp ise → ürün hayat döngüsü sonu (yeni firmware imkansız)
 
 Sızıntı:
+
 1. Compromise tespiti (audit log)
 2. Yeni anahtar yayınla
 3. OTA ile fleet'e yeni keyring

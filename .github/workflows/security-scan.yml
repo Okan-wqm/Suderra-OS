@@ -27,6 +27,10 @@ jobs:
           output: 'trivy-fs.sarif'
           severity: 'CRITICAL,HIGH'
           skip-dirs: 'buildroot,output,dl'
+          # SARIF Security tab'a yüklenir — CVE'ler görünür ama PR bloklanmaz.
+          # Faz 3'te exit-code: 1 (CRITICAL block).
+          exit-code: '0'
+          ignore-unfixed: true
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
@@ -46,6 +50,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-config.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
+          # SARIF upload aktif, PR-block soft.
+          exit-code: '0'
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3

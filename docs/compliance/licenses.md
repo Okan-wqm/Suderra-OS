@@ -19,6 +19,7 @@
 ## SPDX SBOM
 
 Buildroot her build sonunda otomatik üretir:
+
 ```
 output/<defconfig>/legal-info/
 ├── manifest.csv              # Tüm paketler, versiyon, lisans, URL
@@ -31,11 +32,13 @@ output/<defconfig>/legal-info/
 ## GPL Kaynak Sunma Yükümlülüğü
 
 Müşteriye satılan her cihaz ile birlikte:
+
 1. **Yazılı teklif** veya
 2. **CD/USB ile kaynak** veya
 3. **HTTPS link** ile 3 yıl boyunca erişilebilir kaynak
 
 Önerilen: GitHub'da kalıcı bir tag her release ile:
+
 ```
 https://github.com/Okan-wqm/suderra-os/releases/tag/v1.0.0
 └── source-bundle.tar.xz       (GPL kaynaklar + patches)
@@ -44,6 +47,7 @@ https://github.com/Okan-wqm/suderra-os/releases/tag/v1.0.0
 ## OpenChain / REUSE
 
 Düşünülmesi gerekenler (Faz 5+):
+
 - [REUSE Specification](https://reuse.software/) — her dosyada SPDX header
   - Suderra'nın kendi kodu için faydalı
   - Buildroot upstream'i kirletmeden
@@ -58,6 +62,7 @@ Düşünülmesi gerekenler (Faz 5+):
 ## Patent Trolling Koruması
 
 Apache-2.0'ın patent clause'u önemli:
+
 - Suderra kodu Apache-2.0 → patent grant
 - GPL bileşenleri kendi koruması (GPL v2 implicit, v3 explicit)
 

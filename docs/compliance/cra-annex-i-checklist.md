@@ -99,6 +99,7 @@ Suderra OS'in beklenen sınıfı: **Class II (default)**
 - Class III (Important): Third-party Notified Body zorunlu (mesela kritik altyapı)
 
 Self-assessment seçimi:
+
 - Daha hızlı (Notified Body yok)
 - Vendor sorumluluğu yüksek
 - AB ürün denetimleri sırasında dokümantasyon zorunlu

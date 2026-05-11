@@ -10,6 +10,7 @@ sudo ./scripts/flash-usb.sh /dev/sdX output/suderra_x86_64_defconfig/images/disk
 ```
 
 `flash-usb.sh` içeriği:
+
 1. Hedef cihaz kontrol (mount edilmiş mi?)
 2. `dd if=disk.img of=/dev/sdX bs=4M conv=fsync status=progress`
 3. `sync`
@@ -18,6 +19,7 @@ sudo ./scripts/flash-usb.sh /dev/sdX output/suderra_x86_64_defconfig/images/disk
 ## Endüstriyel Cihaza Yazma (x86_64)
 
 Seçenekler:
+
 1. **USB stick'ten flash** (yukarıdaki) → cihazda BIOS'tan USB boot
 2. **Network boot** (PXE/iPXE) — toplu deployment için
 3. **eMMC programmer** (factory) — üretim hattında
@@ -33,6 +35,7 @@ sudo ./scripts/flash-emmc.sh output/suderra_aarch64_defconfig/images/disk.img
 ## Doğrulama
 
 Flash sonrası:
+
 1. Cihazı boot et
 2. Seri konsoldan `Suderra OS v0.1.0-alpha` banner görmeli
 3. `journalctl -b 0 -u suderra-edge-agent` → READY

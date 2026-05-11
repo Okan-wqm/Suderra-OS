@@ -7,6 +7,7 @@
 Production cihazda **SSH yok, shell yok, debugger yok**. Bu kasıtlı bir tasarım kararı (saldırı yüzeyi azaltma).
 
 Debug yolları:
+
 1. **Serial console** (UART) — sadece fiziksel erişim ile
 2. **Remote telemetry** (journald → upstream syslog) — uzaktan
 3. **Crash dumps** (kernel panic → upstream) — uzaktan
@@ -15,10 +16,12 @@ Debug yolları:
 ## Serial Console
 
 Hardware:
+
 - x86 endüstriyel PC: çoğunda DB9 veya RJ45 serial
 - ARM SBC: GPIO UART (USB-TTL adaptör)
 
 Bağlantı:
+
 ```bash
 sudo screen /dev/ttyUSB0 115200
 # veya
@@ -62,17 +65,20 @@ curl -k https://localhost:8080/health    # Eğer health endpoint açıksa
 ## Remote Telemetry (Faz 5)
 
 journald → rsyslog → upstream (cloud):
+
 - log shipping interval: 1-5 sn
 - buffering: 50 MB local (network down olursa)
 - format: JSON structured
 
 Cloud tarafında:
+
 - Grafana Loki / ELK / Datadog
 - Dashboard: app health, system metrics, error rate
 
 ## Crash Dumps (Faz 5)
 
 Kernel panic veya app crash:
+
 1. Kernel: `pstore` ile RAM → reboot sonrası dosya
 2. App: systemd `coredump` (yalnız dev), upstream rapor (prod)
 3. Otomatik upload: `suderra-crashreport` service
@@ -80,6 +86,7 @@ Kernel panic veya app crash:
 ## Yaygın Sorunlar
 
 ### Cihaz boot etmiyor (siyah ekran)
+
 1. Serial console aç
 2. UEFI POST mesajları görünüyor mu? → BIOS settings, secure boot
 3. Bootloader mesajı? → boot order, USB
@@ -87,6 +94,7 @@ Kernel panic veya app crash:
 5. systemd? → emergency.target
 
 ### Edge agent başlamıyor
+
 ```bash
 journalctl -u suderra-edge-agent --since "1 hour ago"
 systemctl status suderra-edge-agent
@@ -94,6 +102,7 @@ systemctl status suderra-edge-agent
 ```
 
 ### Update başarısız
+
 ```bash
 rauc status
 journalctl -u rauc
@@ -103,6 +112,7 @@ journalctl -u rauc
 ## Production'da Debug Erişim
 
 Mümkün değil (kasıtlı). Süreç:
+
 1. Cihaz fiziksel olarak alınır (RMA)
 2. Lab ortamında dev variant ile boot edilir
 3. /data partition decrypt edilir (TPM bypass debug key ile)

@@ -5,6 +5,7 @@ Cihaz sağlık ve uygulama metriklerini cloud'a push eden daemon.
 ## Metrikler
 
 **System:**
+
 - CPU %, load average
 - RAM (total/free/cached)
 - Disk (per mount: total/free, I/O wait)
@@ -13,12 +14,14 @@ Cihaz sağlık ve uygulama metriklerini cloud'a push eden daemon.
 - Network rx/tx, interface state
 
 **Edge Agent (Modbus/OPC-UA proxy):**
+
 - Modbus read rate per slave
 - MQTT publish success/failure
 - Error count, last error timestamp
 - Backlog (offline queue size)
 
 **OS:**
+
 - Boot partition (rootfs.A / rootfs.B)
 - RAUC durumu (last update, slot state)
 - systemd unit failures

@@ -11,7 +11,7 @@
 - **Ad:** [Şirket adı]
 - **Adres:** [Tam adres]
 - **Yetkilendirilmiş temsilci (AB içinde):** [Yetkilendirilmiş kurum, varsa]
-- **İletişim:** support@suderra.example
+- **İletişim:** <support@suderra.example>
 
 ## 2. Ürün
 
@@ -48,6 +48,7 @@ Aşağıdaki harmonize standartlara veya teknik şartnamelere uyum sağlanmışt
 - [ ] Third-party (Notified Body — varsa)
 
 Notified Body (yoksa boş bırak):
+
 - **Ad:**
 - **Numara:**
 - **Sertifika no:**

@@ -72,6 +72,7 @@ cargo bma                 # aarch64 musl release
 ```
 
 Çıktı:
+
 ```
 target/x86_64-unknown-linux-musl/release/
 ├── suderra-firstboot       # ~1-3 MB, static
@@ -106,21 +107,25 @@ CI'da `cargo audit` + `cargo deny check` her PR'da koşar.
 ### Linker
 
 `.cargo/config.toml` linker'ı pinler:
+
 - `x86_64-linux-musl-gcc` (apt: `musl-tools`)
 - `aarch64-linux-musl-gcc` (musl.cc'den)
 
 ### Yaygın Hatalar
 
 **`linker not found: x86_64-linux-musl-gcc`**
+
 ```bash
 sudo apt install musl-tools
 ```
 
 **`could not find native static library 'ssl'`**
+
 - Bizim workspace OpenSSL kullanmamalı (deny.toml ile yasak)
 - Eğer transitive dep zorluyorsa: o crate'i değiştir veya `rustls` feature'ı seç
 
 **SQLCipher / vendored OpenSSL (Edge Agent için)**
+
 - Bizim workspace'imizi etkilemez (Edge Agent ayrı repo)
 - Buildroot tarafında `BR2_PACKAGE_OPENSSL` ile çözülür
 
@@ -158,6 +163,7 @@ package/suderra-firstboot/
 ```
 
 Reçete:
+
 ```makefile
 SUDERRA_FIRSTBOOT_VERSION = $(SUDERRA_OS_VERSION)
 SUDERRA_FIRSTBOOT_SITE = $(BR2_EXTERNAL_SUDERRA_PATH)/userspace
@@ -190,6 +196,7 @@ $(eval $(generic-package))
 ## Performans + Boyut
 
 Release profile `Cargo.toml`'da:
+
 ```toml
 opt-level = "z"     # boyut için
 lto = "fat"         # link-time optimization
@@ -215,6 +222,7 @@ Sonuç: ~50-80% boyut azalması debug build'e göre.
 ## Dependency Updates (Dependabot)
 
 `userspace/` Cargo.toml'ları **günlük** Dependabot taramasında:
+
 - Minor + patch update'leri **grup PR** olarak gelir (rust-minor-patch)
 - Major version bump'lar (tokio, axum, rustls) **manuel review** gerektirir
   (ignore listesinde)

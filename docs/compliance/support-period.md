@@ -31,6 +31,7 @@ Suderra OS satılan her sürüm için en az **5 yıl** güvenlik güncellemesi v
 ## Security-Only Mode
 
 Bir LTS sürümün feature support'u biter ama security support'u devam eder. Bu dönemde:
+
 - CVE patch'leri uygulanır (CVSS 4.0+)
 - Backwards-incompatible değişiklik yok
 - API stability garantili
@@ -39,6 +40,7 @@ Bir LTS sürümün feature support'u biter ama security support'u devam eder. Bu
 ## End-of-Life (EOL)
 
 EOL anlamına gelir:
+
 - Yeni güncelleme yayınlanmaz
 - CVE patch'leri yayınlanmaz
 - Müşteri yeni LTS'e geçiş zorunlu
@@ -48,6 +50,7 @@ EOL anlamına gelir:
 ## Migration Path
 
 Major sürüm geçişi (v1 → v2):
+
 1. v2 yayınlanır
 2. v1 LTS support azalmış mod'a geçer (sadece security)
 3. 12 ay overlap (her iki sürüm de destekli)
@@ -73,6 +76,7 @@ CRA Article 13(8):
 > "Manufacturers shall determine the support period in a way that reflects the time during which the product is expected to be in use."
 
 Suderra OS:
+
 - Endüstriyel cihazlar 7-10+ yıl çalışır
 - Hedef support period: 5 yıl minimum, 7 yıl tavsiyeli
 - Müşteri sözleşmesiyle uzatılabilir (extended support contract)
@@ -82,11 +86,12 @@ Suderra OS:
 - Her release'de support deadline net belirtilir (CHANGELOG)
 - Yıllık support özet raporu
 - EOL 12 ay öncesinden mailing
-- Public dashboard: https://suderra.example/support-lifecycle
+- Public dashboard: <https://suderra.example/support-lifecycle>
 
 ## Üçüncü Taraf Bağımlılıklar
 
 Bizim support'umuz upstream LTS ile sınırlı:
+
 - Linux kernel: LTS cycle takip (~6 yıl her sürüm)
 - Buildroot: 6 aylık release, ama 2 yıllık LTS
 - Eğer upstream EOL olursa, biz kendi backport yaparız (best effort)

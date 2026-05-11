@@ -10,6 +10,7 @@ assignees: ''
 > Bunun yerine [SECURITY.md](../../SECURITY.md) dosyasını oku ve özel kanaldan ilet.
 >
 > Bu şablon **genel güvenlik soruları** için:
+>
 > - "Şu config neden böyle?"
 > - "Bu best practice'i Suderra OS nasıl karşılıyor?"
 > - "Bu yaklaşımı önerebilir miyim?"

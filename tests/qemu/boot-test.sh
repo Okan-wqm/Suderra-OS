@@ -65,15 +65,15 @@ echo
 LOG=$(mktemp -t suderra-boot-test-XXXXXX.log)
 trap 'rm -f "${LOG}"' EXIT
 
-# QEMU komut argümanları
+# QEMU args — quoted because commas are QEMU key=value syntax (SC2054).
 QEMU_ARGS=(
-    -machine q35
-    -m 256M
-    -smp 2
-    -cpu max,+pdpe1gb
+    -machine "q35"
+    -m "256M"
+    -smp "2"
+    -cpu "max,+pdpe1gb"
     -drive "file=${DISK_IMG},format=raw,if=virtio"
-    -netdev user,id=net0
-    -device virtio-net-pci,netdev=net0
+    -netdev "user,id=net0"
+    -device "virtio-net-pci,netdev=net0"
     -nographic
     -serial "file:${LOG}"
     -no-reboot

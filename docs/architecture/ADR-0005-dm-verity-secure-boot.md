@@ -8,11 +8,13 @@
 ## Context
 
 Suderra OS, sahada fiziksel veya yazılım saldırılarına karşı korunmalı. CRA ve IEC 62443-4-2 gereği:
+
 - Boot zinciri kriptografik doğrulanmalı (FR3.4 — software integrity)
 - Rootfs çalışma anında değiştirilmemeli (FR3.4)
 - Saldırgan root olsa bile diskteki kodu kalıcı değiştirememeli (anti-persistence)
 
 İki ana mekanizma:
+
 1. **dm-verity** — Linux kernel'in blok-seviyesi Merkle tree hash doğrulaması
 2. **UEFI Secure Boot** — firmware-seviyesi imza doğrulama zinciri
 
@@ -39,6 +41,7 @@ suderra-edge-agent (Cargo build, statik link)
 ```
 
 Anahtarlar:
+
 - **Platform Key (PK)** — UEFI firmware, OEM'de saklı
 - **Key Exchange Key (KEK)** — Suderra root signing key
 - **Database (db)** — Suderra image signing key
@@ -46,6 +49,7 @@ Anahtarlar:
 - **Verity root hash** — kernel cmdline'a embed edilir, kernel imzasında korunur
 
 Filesystem:
+
 - **erofs** + dm-verity (read-only optimize, küçük, hızlı)
 - ext4 alternatifi (eğer erofs sorun çıkarırsa fallback)
 
@@ -62,6 +66,7 @@ Filesystem:
 ## Consequences
 
 ### Positive
+
 - **Anti-persistence garantisi:** Saldırgan root olsa bile rootfs'i kalıcı değiştiremez (reboot = saldırgan gitti)
 - **Evil maid attack koruması:** Fiziksel erişim ile bile kodu değiştirmek için Suderra signing key gerekir
 - **Compliance:** IEC 62443-4-2 FR3.4 (software integrity) doğrudan karşılanır
@@ -69,6 +74,7 @@ Filesystem:
 - **Forensic:** TPM PCR'lar boot ölçümlerini saklar — manipülasyon tespit edilebilir
 
 ### Negative
+
 - **Anahtar yönetimi katmanlı ve kritik:**
   - Kayıp: Tüm cihaz fleet'i güncellenemez (signing key kaybolursa)
   - Sızıntı: Tüm fleet manipüle edilebilir → fleet rotation gerekir
@@ -79,6 +85,7 @@ Filesystem:
   - Alternatif: kullanıcı Secure Boot'u kendisi enroll eder (MOK)
 
 ### Neutral / Trade-offs
+
 - Geliştirme varyantında dm-verity disabled (debug için)
 - PROD varyantında dm-verity ZORUNLU (Config.in'de `BR2_PACKAGE_SUDERRA_VARIANT_PROD`)
 - erofs vs ext4: erofs daha küçük (~30% saving) ama eğer Buildroot/kernel'de sorun olursa ext4 fallback
@@ -86,6 +93,7 @@ Filesystem:
 ## Implementation Notes
 
 ### Kernel CONFIG (`kernel-fragment.config`)
+
 ```
 CONFIG_DM_VERITY=y
 CONFIG_BLK_DEV_DM=y
@@ -107,15 +115,18 @@ CONFIG_KEXEC=n                # Saldırı yüzeyi azaltma
 ```
 
 ### Verity setup
+
 - `scripts/gen-verity-hash.sh` rootfs.img → root hash + verity tree
 - Root hash kernel cmdline'a embed: `root=/dev/sda2 dm-verity.hash=...`
 - Bütün cmdline kernel image'a baked (signed) → değiştirilemez
 
 ### Secure Boot enroll (üretim)
+
 - OEM ile koordine: PK enrollment factory'de
 - Eğer OEM PK enroll edemiyorsa: müşteri kurulum sırasında MOK enroll
 
 ### Geliştirme vs Üretim
+
 | Variant | dm-verity | Secure Boot | SSH |
 |---|---|---|---|
 | DEV | Disabled | Disabled (test) | Açık (anahtarla) |

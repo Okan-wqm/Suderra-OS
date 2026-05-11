@@ -17,6 +17,7 @@ Sıradan Linux dağıtımları (Ubuntu, Debian) endüstriyel sahalarda çalışa
 | Supply chain | Geniş (binlerce paket) | Dar (~30-50 paket, pinli) |
 
 Suderra OS şunları sağlar:
+
 - **Immutable rootfs** + `dm-verity` ile kriptografik bütünlük
 - **UEFI Secure Boot** zinciri (shim → kernel → initramfs)
 - **A/B partition + RAUC OTA** — bozuk update otomatik geri döner
@@ -100,6 +101,7 @@ Detaylar: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
 Tam doküman indeksi: [docs/README.md](docs/README.md)
 
 Hızlı linkler:
+
 - **Roadmap:** [ROADMAP.md](ROADMAP.md) — 7 fazlı 5-7 aylık plan
 - **Mimari:** [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
 - **Rust workspace:** [docs/dev/rust-workspace.md](docs/dev/rust-workspace.md) + [userspace/README.md](userspace/README.md)

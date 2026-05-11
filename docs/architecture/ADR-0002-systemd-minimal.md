@@ -19,6 +19,7 @@ Init sistemi seçimi, OS'in temel yapı taşıdır. Suderra Edge Agent (Rust uyg
 Önceki master planda "systemd yerine finit veya s6" yazıyordu. Ancak bu, uygulamanın **temelden refactor edilmesini** gerektirir (sd-notify, hardening directives, journald log akışı, vb. — hepsi yeniden yazılır).
 
 Diğer seçenekler:
+
 - s6 / s6-rc — küçük, modüler, ama sd-notify yok
 - finit — küçük, embedded'a yönelik, ama Type=notify ekosistemi yok
 - BusyBox init + custom shell — primitive, watchdog/hardening manuel
@@ -55,6 +56,7 @@ Diğer seçenekler:
 ## Consequences
 
 ### Positive
+
 - Mevcut uygulama **değiştirmeden** çalışır — Faz 2 süresi 2-3 ay kısalır
 - systemd hardening directives güçlü (ProtectSystem, NoNewPrivileges, vb.)
 - `systemd-analyze security` ile her unit'in skoru ölçülebilir
@@ -63,12 +65,14 @@ Diğer seçenekler:
 - Endüstriyel ekosistemde yaygın (debug bilgisi bol)
 
 ### Negative
+
 - systemd "küçük" değil — minimal kurulumda bile 8-15MB
 - systemd CVE'leri (CVE-2022-3821 vb.) — patch disiplini şart
 - Geçmişte 38xx CVE → kernel'le birlikte takip
 - Boot süresi s6'ya göre 2-3x yavaş (1-2 sn fark)
 
 ### Neutral / Trade-offs
+
 - "systemd-free" pazarlama hikayesinden vazgeçildi → "hardened minimal systemd" hikayesine geçildi
 - Eğer ileride app refactor edilirse s6'ya geçiş düşünülebilir, ama bu büyük bir karar (yeni ADR ile)
 

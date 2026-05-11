@@ -7,6 +7,7 @@
 ## Genel Bakış
 
 CIS DIL Benchmark Linux sistemleri için en geniş kabul gören sertleştirme rehberidir. Suderra OS hedefi:
+
 - **Level 1:** ≥95% pass (zorunlu, üretim için)
 - **Level 2:** ≥85% pass (yüksek güvenlik)
 
@@ -85,6 +86,7 @@ oscap xccdf eval \
 ```
 
 CI'da otomatik (Faz 3'te aktive olur):
+
 ```yaml
 - name: CIS DIL benchmark
   run: |

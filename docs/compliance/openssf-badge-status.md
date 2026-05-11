@@ -4,7 +4,7 @@
 
 ## Badge URL'leri (Faz 0.5'te başvurulacak)
 
-- Passing: https://www.bestpractices.dev/projects/XXXX/badge
+- Passing: <https://www.bestpractices.dev/projects/XXXX/badge>
 - Silver: ...
 - Gold: ...
 
@@ -76,17 +76,18 @@ Tahmini: **Gold Faz 6+** elde edilir.
 ## Otomatik Tracking
 
 `.github/workflows/scorecard.yml` her hafta:
+
 - OpenSSF Scorecard skoru
 - Branch protection check
 - Pinned dependencies check
 - Security policy check
 - Vulnerability disclosure check
 
-Skor: https://api.securityscorecards.dev/projects/github.com/Okan-wqm/suderra-os
+Skor: <https://api.securityscorecards.dev/projects/github.com/Okan-wqm/suderra-os>
 
 ## Başvuru Adımları (Faz 0.5)
 
-1. https://www.bestpractices.dev/en/signup adresinden hesap aç
+1. <https://www.bestpractices.dev/en/signup> adresinden hesap aç
 2. Proje URL'sini ekle
 3. Kriterleri tek tek doldur
 4. Badge URL'ini README.md'ye ekle

@@ -36,6 +36,7 @@ Suderra OS için endüstriyel-grade, sertleştirilmiş, OTA-güncellenebilir bir
 ## Consequences
 
 ### Positive
+
 - Düşük öğrenme eğrisi → tek geliştirici sürdürebilir
 - Hızlı iterasyon (build 15-30 dk QEMU defconfig)
 - ~30-50 MB imaj realistik
@@ -45,12 +46,14 @@ Suderra OS için endüstriyel-grade, sertleştirilmiş, OTA-güncellenebilir bir
 - Reproducible build görece kolay (Yocto'ya göre)
 
 ### Negative
+
 - Yocto layer sistemi yok → eğer ileride çok board desteklenmeli ise BR2_EXTERNAL'da iç organizasyon zorlaşır
 - Yocto kadar zengin meta-security/meta-virtualization layer'ları yok
 - Buildroot 6 ayda bir LTS değişikliği (2024.11 → 2025.11) — major upgrade planlanmalı
 - Kernel CONFIG fragment yönetimi manuel (Yocto'da meta-secureboot var)
 
 ### Neutral / Trade-offs
+
 - Eğer 5+ farklı board desteklenecek ise Yocto'ya geçiş düşünülebilir (ADR-NNNN ile yeniden değerlendirilir)
 - Buildroot'tan Yocto'ya geçiş yapılabilir ama Faz 4+ sonrası ciddi efor
 

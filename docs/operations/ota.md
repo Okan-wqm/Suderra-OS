@@ -58,6 +58,7 @@ filename=hook
 ## Cihazda Update
 
 > Üretim varyantında cihaza shell yok — update tetikleme:
+>
 > 1. Cihaz periodic olarak update sunucusunu kontrol eder
 > 2. Cloud command (`update-now`) ile remote tetikleme
 > 3. Manuel: serial console (sadece dev mode)
@@ -71,6 +72,7 @@ systemctl reboot
 ## Health Check ve Rollback
 
 `suderra-firstboot.service` ilk boot'tan sonra 5 dk timer ile:
+
 1. Edge agent active mi? (`systemctl is-active`)
 2. Network connection ok? (cloud broker'a ulaşılabiliyor mu?)
 3. Health check başarılı mı? (HTTP /ready endpoint)
@@ -82,6 +84,7 @@ Failure threshold: 3 deneme → kalıcı rollback.
 ## Update Sunucusu
 
 İlk versiyonda basit HTTPS file server:
+
 - Nginx + Let's Encrypt
 - Cihaz başına unique mTLS client cert ile authentication
 - Bundle storage: S3-compatible (Minio veya AWS S3)
@@ -98,6 +101,7 @@ Faz 5+: bundle metadata API, fleet management, canary rollouts.
 ## Test
 
 `tests/ota/update-rollback-test.sh`:
+
 - 10× başarılı update + 1 bozuk update = otomatik rollback
 - Imza tampering reddedilir
 - Downgrade reddedilir

@@ -5,6 +5,7 @@
 ## Amaç
 
 CRA Article 13(2) ve NIST SSDF PS.3.2 her release için SBOM zorunlu kılar. SBOM:
+
 - Imajdaki tüm yazılım bileşenlerini listeler
 - CVE eşleştirme yapabilmek için makine-okunabilir format
 - Müşteriye + denetleyiciye sunulur
@@ -14,6 +15,7 @@ CRA Article 13(2) ve NIST SSDF PS.3.2 her release için SBOM zorunlu kılar. SBO
 **CycloneDX 1.5+** (JSON). Alternatif: SPDX 2.3+.
 
 Neden CycloneDX:
+
 - VEX (Vulnerability Exploitability eXchange) desteği
 - Daha hafif, daha modern
 - OWASP arkasında

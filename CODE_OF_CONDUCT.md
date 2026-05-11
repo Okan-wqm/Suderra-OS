@@ -7,6 +7,7 @@ Açık ve davetkâr bir ortamı teşvik etmek için, biz katkıda bulunanlar ve 
 ## Standartlarımız
 
 Pozitif ortama katkıda bulunan davranış örnekleri:
+
 - Empati ve nezaket göstermek
 - Farklı görüş, bakış açısı ve deneyime saygı göstermek
 - Yapıcı geri bildirim vermek ve almak
@@ -14,6 +15,7 @@ Pozitif ortama katkıda bulunan davranış örnekleri:
 - Topluluğun tamamı için iyi olana odaklanmak
 
 Kabul edilemez davranış örnekleri:
+
 - Cinsel imalar veya cinsel içerik
 - Trolling, hakaret veya kişisel saldırı
 - Public veya private taciz

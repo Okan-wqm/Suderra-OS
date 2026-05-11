@@ -11,6 +11,7 @@ Açıkları bulanlarla işbirliği yaparak, son kullanıcıya zarar verme süres
 ## Kapsam
 
 **Bu policy şu ürünleri kapsar:**
+
 - Suderra OS imajları (tüm sürümler)
 - Suderra OS build sistemi (Buildroot config, custom paketler)
 - RAUC OTA mekanizması
@@ -18,6 +19,7 @@ Açıkları bulanlarla işbirliği yaparak, son kullanıcıya zarar verme süres
 - Bu repo içindeki tüm kod ve dokümantasyon
 
 **Kapsam dışı (lütfen ilgili upstream'e bildirin):**
+
 - Linux kernel CVE'leri → kernel.org
 - Buildroot paket CVE'leri → upstream proje
 - systemd / nftables / rauc CVE'leri → upstream
@@ -27,16 +29,17 @@ Açıkları bulanlarla işbirliği yaparak, son kullanıcıya zarar verme süres
 **Tercih sırası:**
 
 1. **GitHub Security Advisory** (private)
-   - https://github.com/Okan-wqm/suderra-os/security/advisories/new
+   - <https://github.com/Okan-wqm/suderra-os/security/advisories/new>
 
 2. **PGP-encrypted E-mail**
    - `security@suderra.example`
    - PGP key: [docs/security/pgp-key.asc](pgp-key.asc) (TODO Faz 0.5'te eklenecek)
 
 3. **`.well-known/security.txt`** (machine-readable)
-   - https://github.com/Okan-wqm/suderra-os/.well-known/security.txt
+   - <https://github.com/Okan-wqm/suderra-os/.well-known/security.txt>
 
 **Asla:**
+
 - Public GitHub issue açmayın
 - Public Slack/Discord'da yayınlamayın
 - Twitter/social media'da bahsetmeyin (henüz)
@@ -102,6 +105,7 @@ Lütfen bildiriminizde şunları içerin:
 **Mevcut durumda:** Yok (proje henüz pilot aşamada)
 
 **Faz 6+:** Düşünülüyor. Tahmini skala:
+
 - Critical: 5000-10000 USD
 - High: 1000-3000 USD
 - Medium: 200-500 USD
@@ -114,6 +118,7 @@ Bildirilen ve düzeltilen zafiyetlerin credit'i [GitHub Security Advisories](htt
 ## "Yapma" Listesi
 
 Lütfen şunları YAPMAYIN:
+
 - Production sistemlerinde test
 - Müşteri verilerine erişme (test ortamında bile)
 - DoS testleri (canlı sistemde)
@@ -123,6 +128,7 @@ Lütfen şunları YAPMAYIN:
 ## Yasal
 
 Suderra OS, **iyi niyetli** güvenlik araştırmacılarına karşı yasal aksiyon almayacaktır. "İyi niyetli" şu anlama gelir:
+
 - Bu CVD policy'ye uyum
 - Veri minimum (sadece exploit kanıtı için)
 - Veriyi üçüncü kişilerle paylaşmama
@@ -131,6 +137,7 @@ Suderra OS, **iyi niyetli** güvenlik araştırmacılarına karşı yasal aksiyo
 ## Müşteri Bildirimi
 
 Düzeltme yayınlanınca:
+
 1. Mailing liste (subscribe: `security-announce@suderra.example`)
 2. Release notes
 3. CHANGELOG.md

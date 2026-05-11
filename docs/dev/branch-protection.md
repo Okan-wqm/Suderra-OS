@@ -34,6 +34,7 @@ GitHub branch protection ayarları. Bu doküman maintainer tarafından GitHub UI
 ## `release/v*.x` Branch'leri
 
 Aynı kurallar + ek:
+
 - Require approval: 2 (release manager + maintainer)
 - Hotfix için bypass yok
 
@@ -67,19 +68,22 @@ EOF
 ## DCO Bot
 
 GitHub App `DCO` (dco-app) etkinleştirilmeli:
-- https://github.com/apps/dco
+
+- <https://github.com/apps/dco>
 - Her PR'da Signed-off-by olmayan commit'leri işaretler
 - Lint workflow'undaki DCO check yedek
 
 ## Doğrulama
 
 Maintainer ayda en az 1 kez:
+
 - Yukarıdaki ayarların aktif olduğunu kontrol etmeli
 - Audit log'a bak (kim ayarları değiştirdi)
 
 ## OpenSSF Scorecard ile İzleme
 
 `.github/workflows/scorecard.yml` her hafta:
+
 - "Branch-Protection" check skoru
 - Hedef: ≥7/10
 

@@ -7,6 +7,7 @@
 ## Sınıflandırma
 
 Suderra OS bileşen tipi: **Embedded Device Requirement (EDR)**
+
 - Edge device (sensör veri toplama + kontrol)
 - Sınırlı I/O, dedicated function
 - Yerel network'ten ulaşılabilir

@@ -48,12 +48,13 @@ echo "suderra-edge" > "${TARGET_DIR}/etc/hostname"
 
 # 3. suid binary temizleme — sadece beyaz liste kalır
 echo "==> suid binary'ler temizleniyor"
+# Faz 3'te aktif olacak (find -perm /4000 + allowlist filtreleme).
+# shellcheck disable=SC2034  # Faz 3'te post-build.sh içinde kullanılır
 SUID_ALLOWLIST=(
     "/bin/su"          # eğer gerekiyorsa (DEV variant)
     "/usr/bin/sudo"    # eğer gerekiyorsa (DEV variant)
     # PROD variant'ta hiçbiri olmamalı
 )
-# TODO Faz 3'te: find $TARGET_DIR -perm /4000 -type f kontrolü ve whitelist dışı olanları temizle
 
 # 4. Gereksiz dosyaları sil
 echo "==> Gereksiz dosyalar siliniyor"

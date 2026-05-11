@@ -26,6 +26,7 @@ do_thing "$@"
 ```
 
 Kurallar:
+
 - `shellcheck` temiz olmalı
 - `set -euo pipefail` zorunlu
 - Quoted: `"${var}"`, asla `$var`
@@ -70,6 +71,7 @@ $(eval $(generic-package))
 ```
 
 Kurallar:
+
 - 4 space → tab (Buildroot konvansiyonu, `.editorconfig`'de tanımlı)
 - `<PKG>_VERSION`, `<PKG>_LICENSE`, `<PKG>_LICENSE_FILES` zorunlu
 - Hash file (`.hash`) zorunlu (supply chain)
@@ -80,6 +82,7 @@ Kurallar:
 Suderra Edge Agent kodu ayrı repo'da. Suderra OS sadece **paketleme** yapar.
 
 Paketleme kuralları:
+
 - musl target zorunlu: `--target x86_64-unknown-linux-musl`
 - Release profile: LTO + opt-level=3 + strip
 - `cargo audit` CI'da temiz olmalı
