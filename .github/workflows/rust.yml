@@ -133,9 +133,11 @@ jobs:
           retention-days: 7
 
   # -----------------------------------------------------------------
-  # Security: cargo-audit + cargo-deny
-  # Her tool ayrı step — sürpriz versiyon syntax veya install hatasında
-  # hangisinin fail ettiği net görünür.
+  # Security: cargo-deny (advisories + bans + licenses + sources)
+  #
+  # cargo-deny'nin [advisories] config'i zaten RustSec/advisory-db ile
+  # CVE check yapar (cargo-audit ile aynı kaynak). cargo-audit ayrı step
+  # eklemek duplicate iş — kaldırıldı, cargo deny check yeterli.
   # -----------------------------------------------------------------
   security:
     name: Security (audit + deny)
@@ -152,18 +154,8 @@ jobs:
         with:
           tool: cargo-deny
 
-      - name: Install cargo-audit (prebuilt)
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-
-      - name: cargo deny check
+      - name: cargo deny check (advisories + bans + licenses + sources)
         run: cargo deny check
-
-      # cargo-audit advisory-db'yi GitHub'dan klonlar (~1-2s). Fail ederse
-      # log net olur (ayrı step).
-      - name: cargo audit
-        run: cargo audit
 
   # -----------------------------------------------------------------
   # MSRV check (rust-toolchain.toml ile pinli versiyon doğrulaması)
