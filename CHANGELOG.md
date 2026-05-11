@@ -5,6 +5,37 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 
 ## [Unreleased]
 
+### Added — Faz 1 (QEMU Boot Hazırlığı) — Katman 3
+
+**Kernel config (Faz 1 minimal):**
+- `board/suderra/x86_64/linux-x86_64.config` — placeholder'dan ~150 satır gerçek config'e:
+  - QEMU desteği: virtio-net, virtio-blk, virtio-pci, virtio-rng
+  - Gerçek HW desteği: Intel I210/I225/I226 (TSN/PTP), iTCO watchdog, TPM TIS/CRB
+  - UEFI + EFI_STUB
+  - SLAB hardening, FORTIFY_SOURCE, KASLR, KPTI, RANDOMIZE_KSTACK
+  - memfd_secret (Edge Agent zorunlu)
+  - Disable: Bluetooth, WLAN, NFC, RDS, DCCP, SCTP, X25 (saldırı yüzeyi)
+  - AES-NI hardware crypto acceleration
+
+**Bootloader:**
+- `board/suderra/x86_64/grub-qemu.cfg` — QEMU için single-rootfs (vs production A/B)
+- Kernel cmdline: slab_nomerge, init_on_alloc, randomize_kstack_offset, oops=panic
+
+**Boot test (CI-ready):**
+- `tests/qemu/boot-test.sh` — 90s timeout, 4 doğrulama:
+  - "Suderra OS" banner var
+  - Kernel panic yok
+  - systemd başlatma görüldü
+  - Login prompt / target hazır
+- CI'da regression detection (her PR'da koşar)
+
+**Dokümantasyon:**
+- `docs/dev/qemu-test.md` — gerçek talimatlar:
+  - Beklenen boot output örneği
+  - Boot aşaması süre tablosu (~30-60s cold boot)
+  - Kernel config kritik açıklamaları
+  - swtpm + UEFI Secure Boot test setup
+
 ### Added — Faz 1 başı (Buildroot Submodule + Defconfig Fill) — Katman 2
 
 **Buildroot integration:**

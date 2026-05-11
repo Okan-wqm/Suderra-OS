@@ -1,13 +1,55 @@
 # QEMU'da Test
 
-> **Status:** Skeleton.
+> **Status:** Active. İlk QEMU boot için tam talimatlar (Katman 3).
 
 ## Hızlı Test
 
 ```bash
-make build-qemu
+# 1. Buildroot submodule güncel mi?
+git submodule update --init --recursive
+
+# 2. Build (~30-45 dk ilk seferde)
+./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig
+
+# 3. QEMU'da çalıştır
 ./scripts/qemu-run.sh
+
+# 4. Otomatik smoke test (CI'da kullanılır)
+./tests/qemu/boot-test.sh
 ```
+
+## Beklenen Davranış
+
+İlk başarılı boot:
+```
+... (UEFI / GRUB ekranı)
+Suderra OS — Industrial Edge
+
+[    0.000000] Linux version 6.12.6 (...) #1 SMP ...
+[    0.123456] Command line: console=ttyS0,115200n8 root=/dev/vda1 ro ...
+... (kernel boot logları)
+
+Welcome to Suderra OS v0.1.0-alpha!
+
+[ OK ] Reached target Multi-User System.
+
+Suderra OS v0.1.0-alpha suderra ttyS0
+
+suderra login: root
+Password: suderra        # DEV variant only
+```
+
+## Boot Aşamaları (Beklenen Süre)
+
+| Aşama | Süre | Doğrulama |
+|---|---|---|
+| QEMU başlatma | <1s | qemu binary çalışır |
+| BIOS/UEFI POST | ~2s | Firmware logo veya text |
+| GRUB | ~2s | Menüden 0 saniye sonra otomatik boot |
+| Kernel + initrd | ~5-10s | "Linux version" + driver init logları |
+| systemd init | ~5-15s | "Welcome to Suderra OS" banner |
+| systemd target | ~10-30s | "Reached target Multi-User" |
+| **Toplam (cold)** | **~30-60s** | login prompt |
 
 ## QEMU Komutu (manuel)
 
@@ -62,13 +104,39 @@ qemu-system-x86_64 \
 
 ## CI Headless Test
 
+`tests/qemu/boot-test.sh` artık **çalışır** durumda:
+
+- 90s timeout
+- Banner doğrulama: "Suderra OS"
+- Kernel panic yok kontrolü
+- systemd başlatma kontrolü
+- Login prompt veya target hazır
+
 ```bash
-# tests/qemu/boot-test.sh
-#!/bin/bash
-# QEMU başlat (timeout 60s), boot logunu yakala
-# Beklenen string: "Suderra OS v"
-# Beklenen exit code: 0
+# Manuel
+./tests/qemu/boot-test.sh
+
+# CI (build.yml)
+- name: QEMU smoke test
+  run: ./tests/qemu/boot-test.sh suderra_qemu_x86_64_defconfig
 ```
+
+Çevre değişkenleri:
+- `BOOT_TEST_TIMEOUT=90` (default 90s)
+- `SUDERRA_DISK_IMG=/path/to/disk.img` (override)
+
+## Kernel Config Detayı
+
+QEMU için kritik CONFIG'ler (`board/suderra/x86_64/linux-x86_64.config`):
+
+| CONFIG | Neden |
+|---|---|
+| `CONFIG_VIRTIO_NET=y` | QEMU virtio-net |
+| `CONFIG_VIRTIO_BLK=y` | QEMU disk |
+| `CONFIG_VIRTIO_PCI=y` | virtio bus |
+| `CONFIG_SERIAL_8250=y` | ttyS0 console |
+| `CONFIG_RTC_DRV_CMOS=y` | RTC (zaman) |
+| `CONFIG_HW_RANDOM_VIRTIO=y` | virtio-rng (entropi) |
 
 ## Sorun Giderme
 
