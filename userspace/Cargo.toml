@@ -57,7 +57,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2.2"
 
 # HTTP client (rustls backend)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-tls", "json", "stream"] }
 
 # Crypto
 sha2 = "0.10"
