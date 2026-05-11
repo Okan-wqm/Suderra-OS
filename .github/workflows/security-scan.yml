@@ -17,52 +17,67 @@ jobs:
   trivy-fs:
     name: Trivy (filesystem)
     runs-on: ubuntu-24.04
-    # Faz 1: bilgilendirme amaçlı — Security tab'a SARIF gönderir,
-    # PR'ı bloklamaz. Faz 3'te continue-on-error kaldırılır + CRITICAL block.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Trivy binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          trivy --version
+
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'fs'
-          format: 'sarif'
-          output: 'trivy-fs.sarif'
-          severity: 'CRITICAL,HIGH'
-          skip-dirs: 'buildroot,output,dl'
-          exit-code: '0'
-          ignore-unfixed: true
-        continue-on-error: true
+        run: |
+          trivy fs \
+            --format sarif \
+            --output trivy-fs.sarif \
+            --severity CRITICAL,HIGH \
+            --skip-dirs buildroot,output,dl \
+            --ignore-unfixed \
+            --exit-code 0 \
+            .
+
       - name: Upload SARIF
         if: always() && hashFiles('trivy-fs.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-fs.sarif'
           category: 'trivy-fs'
-        continue-on-error: true
 
   trivy-config:
     name: Trivy (config / Dockerfile)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Trivy config scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'config'
-          format: 'sarif'
-          output: 'trivy-config.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          exit-code: '0'
-        continue-on-error: true
+
+      - name: Install Trivy binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Run Trivy config scan
+        run: |
+          trivy config \
+            --format sarif \
+            --output trivy-config.sarif \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --exit-code 0 \
+            .
+
       - name: Upload SARIF
         if: always() && hashFiles('trivy-config.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-config.sarif'
           category: 'trivy-config'
-        continue-on-error: true
 
   gitleaks:
     name: Gitleaks (secret scan)

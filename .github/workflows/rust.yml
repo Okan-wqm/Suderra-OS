@@ -82,12 +82,6 @@ jobs:
         target:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
-        # aarch64 musl cross-compile musl.cc download'a bağımlı.
-        # Network/upstream sorununda PR'ı bloklamasın (Faz 1 sonu zorunlu).
-        include:
-          - target: aarch64-unknown-linux-musl
-            continue-on-error: true
-    continue-on-error: ${{ matrix.continue-on-error == true }}
     steps:
       - uses: actions/checkout@v4
 
@@ -102,27 +96,19 @@ jobs:
           restore-keys: |
             rust-build-${{ runner.os }}-${{ matrix.target }}-
 
-      - name: Install musl toolchain (x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Install musl cross toolchain (aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          # musl.cc bazen yavaş, retry ile
-          for i in 1 2 3; do
-            wget -q --timeout=30 https://musl.cc/aarch64-linux-musl-cross.tgz && break
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-          tar -xf aarch64-linux-musl-cross.tgz
-          echo "$PWD/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
-
-      - name: Install rust target
+      - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
 
-      - name: cargo build --release (${{ matrix.target }})
-        run: cargo build --workspace --release --target ${{ matrix.target }}
+      # cross-rs Docker container ile build (musl toolchain dahil, network
+      # bağımsız). x86 + aarch64 musl için tek mekanizma — musl.cc retry
+      # gibi sürprizler olmadan.
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross@0.2.5
+
+      - name: cross build --release (${{ matrix.target }})
+        run: cross build --workspace --release --target ${{ matrix.target }}
 
       - name: Binary boyut raporu
         run: |
@@ -148,21 +134,23 @@ jobs:
 
   # -----------------------------------------------------------------
   # Security: cargo-audit + cargo-deny
-  # Action wrapper'lar yerine doğrudan binary install — lokal komutla
-  # birebir aynı çalıştığını garantiler, action sürpriz default'larından
-  # kaçınır.
+  # taiki-e/install-action ile prebuilt binary (Rust ecosystem standardı,
+  # ~5 saniye install). cargo install yerine — kaynaktan derleme yok.
   # -----------------------------------------------------------------
   security:
     name: Security (audit + deny)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cargo-deny + cargo-audit (cached binstall)
-        run: |
-          cargo install --locked --version "^0.19" cargo-deny
-          cargo install --locked --version "^0.21" cargo-audit
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Install cargo-deny + cargo-audit (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.19,cargo-audit@0.21
 
       - name: cargo audit
         run: cargo audit

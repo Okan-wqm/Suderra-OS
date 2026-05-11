@@ -16,9 +16,6 @@ jobs:
     name: Build ${{ matrix.defconfig }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # Buildroot full build ~45dk + ilk koşuda neden fail ettiğini
-    # bilmediğimiz için PR'ı bloklamasın (Faz 1 sonu zorunlu olur).
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
