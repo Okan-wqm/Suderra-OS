@@ -17,6 +17,9 @@ jobs:
   trivy-fs:
     name: Trivy (filesystem)
     runs-on: ubuntu-24.04
+    # Faz 1: bilgilendirme amaçlı — Security tab'a SARIF gönderir,
+    # PR'ı bloklamaz. Faz 3'te continue-on-error kaldırılır + CRITICAL block.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Run Trivy filesystem scan
@@ -27,20 +30,21 @@ jobs:
           output: 'trivy-fs.sarif'
           severity: 'CRITICAL,HIGH'
           skip-dirs: 'buildroot,output,dl'
-          # SARIF Security tab'a yüklenir — CVE'ler görünür ama PR bloklanmaz.
-          # Faz 3'te exit-code: 1 (CRITICAL block).
           exit-code: '0'
           ignore-unfixed: true
+        continue-on-error: true
       - name: Upload SARIF
-        if: always()
+        if: always() && hashFiles('trivy-fs.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-fs.sarif'
           category: 'trivy-fs'
+        continue-on-error: true
 
   trivy-config:
     name: Trivy (config / Dockerfile)
     runs-on: ubuntu-24.04
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Trivy config scan
@@ -50,14 +54,15 @@ jobs:
           format: 'sarif'
           output: 'trivy-config.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
-          # SARIF upload aktif, PR-block soft.
           exit-code: '0'
+        continue-on-error: true
       - name: Upload SARIF
-        if: always()
+        if: always() && hashFiles('trivy-config.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-config.sarif'
           category: 'trivy-config'
+        continue-on-error: true
 
   gitleaks:
     name: Gitleaks (secret scan)

@@ -11,6 +11,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
+publish = false
 
 [[bin]]
 name = "suderra-attestation"

@@ -63,6 +63,7 @@ cl = "clippy --workspace --all-targets -- -D warnings"
 # NOT: `fmt` alias kullanılamaz — cargo-fmt subcommand'i ile çakışır
 # (recursive alias hatası). Bunun yerine `cargo fmt --all` doğrudan çağır.
 
-# Security
-audit = "audit"
-deny = "deny check"
+# Security — NOT: cargo-audit + cargo-deny external subcommand'ları kendi
+# isimlerinde alias edilemez (recursive). Doğrudan çağrılır:
+#   cargo audit
+#   cargo deny check --all-features
