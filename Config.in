@@ -1,0 +1,54 @@
+#
+# Suderra OS — BR2_EXTERNAL Kconfig giriş noktası
+#
+# Bu dosya `make menuconfig` çalıştırıldığında "External options"
+# menüsünde Suderra OS-özel seçeneklerini ortaya çıkarır.
+#
+# Buildroot manuel:
+#   https://buildroot.org/downloads/manual/manual.html#outside-br-custom
+#
+
+menu "Suderra OS"
+
+config BR2_EXTERNAL_SUDERRA_PATH
+	string
+	default "$(BR2_EXTERNAL_SUDERRA_PATH)"
+
+#
+# Custom paketler — package/<name>/Config.in dosyaları
+#
+source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-edge-agent/Config.in"
+source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-firstboot/Config.in"
+source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
+
+#
+# Profil seçimi — hangi varyant build ediliyor
+#
+choice
+	prompt "Suderra OS variant"
+	default BR2_PACKAGE_SUDERRA_VARIANT_DEV
+
+config BR2_PACKAGE_SUDERRA_VARIANT_DEV
+	bool "Development (debug, ssh açık, dm-verity disabled)"
+	help
+	  Sadece geliştirme için. Production'da KULLANMA.
+
+config BR2_PACKAGE_SUDERRA_VARIANT_PROD
+	bool "Production (dm-verity, secure boot, no shell)"
+	help
+	  Üretim varyantı. SSH yok, debug yok, dm-verity zorunlu.
+
+endchoice
+
+#
+# Versiyon bilgisi (os-release dosyasına yazılır)
+#
+config BR2_PACKAGE_SUDERRA_VERSION
+	string "Suderra OS version string"
+	default "v0.1.0-alpha"
+
+config BR2_PACKAGE_SUDERRA_BUILD_ID
+	string "Build identifier (CI/CD pipeline'dan gelir)"
+	default "local-dev"
+
+endmenu

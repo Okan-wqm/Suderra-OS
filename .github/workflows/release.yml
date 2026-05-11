@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Validate tag format (SemVer)
+        run: |
+          if [[ ! "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$ ]]; then
+            echo "::error::Tag '${{ github.ref_name }}' SemVer formatında değil"
+            exit 1
+          fi
+
+      - name: Build container
+        run: docker build -t suderra-builder ci/
+
+      - name: Build all defconfigs
+        run: |
+          for d in configs/suderra_*_defconfig; do
+            name=$(basename "$d")
+            echo "Building $name"
+            # Faz 1'de aktif:
+            # ./scripts/build-in-docker.sh "$name"
+          done
+          echo "::notice::Build Faz 1'de aktif olur"
+
+      - name: Sign artifacts (Faz 4'te aktif)
+        run: |
+          echo "::notice::Bundle signing Faz 4'te eklenir"
+          # for img in output/*/images/*.raucb; do
+          #   ./scripts/sign-bundle.sh "$img"
+          # done
+
+      - name: Generate SBOM (Faz 5'te aktif)
+        run: |
+          echo "::notice::SBOM Faz 5'te eklenir"
+          # ./scripts/gen-sbom.sh
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: true
+          files: |
+            output/**/images/*.raucb
+            output/**/images/disk.img
+            output/sbom.cyclonedx.json

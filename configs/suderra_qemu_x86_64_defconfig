@@ -1,0 +1,34 @@
+#
+# Suderra OS — QEMU x86_64 defconfig (Faz 1 placeholder)
+#
+# Bu defconfig şu anda boş bir iskelettir. Faz 1'de aşağıdaki bileşenler doldurulacak:
+#
+#   - Architecture: x86_64
+#   - Toolchain: Buildroot, musl libc
+#   - Kernel: Linux 6.12 LTS (custom config)
+#   - Init: systemd minimal (BR2_INIT_SYSTEMD=y)
+#   - Filesystem: ext4 (Faz 1) -> erofs+verity (Faz 3)
+#   - Bootloader: GRUB2 (Faz 1) -> shim + signed (Faz 3)
+#   - Userspace: BusyBox minimal + systemd core
+#
+# Faz 1 implementasyonu için referans:
+#   docs/operations/build.md
+#   board/suderra/common/kernel-fragment.config
+#
+# Kullanım (Faz 1 sonrası):
+#   make build-qemu
+#   ./scripts/qemu-run.sh
+#
+# TODO Faz 1:
+#   BR2_x86_64=y
+#   BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+#   BR2_LINUX_KERNEL=y
+#   BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+#   BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.x"
+#   BR2_INIT_SYSTEMD=y
+#   BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
+#   BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
+#   BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
+#   BR2_PACKAGE_SUDERRA_EDGE_AGENT=y
+#   BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
+#   BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/kernel-fragment.config"

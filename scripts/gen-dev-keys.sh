@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# Suderra OS — Geliştirme anahtarları üret
+#
+# ASLA üretim için kullanma. Sadece DEV variant + lokal test.
+# Üretim anahtarları: HSM (YubiHSM 2 vb.)
+#
+# Kullanım:
+#   ./scripts/gen-dev-keys.sh                       # ~/.suderra-keys/dev/
+#   ./scripts/gen-dev-keys.sh /custom/path
+
+set -euo pipefail
+IFS=$'\n\t'
+
+KEYS_DIR="${1:-${HOME}/.suderra-keys/dev}"
+
+if [ -d "${KEYS_DIR}" ] && [ -n "$(ls -A "${KEYS_DIR}" 2>/dev/null)" ]; then
+    echo "WARNING: ${KEYS_DIR} zaten dolu."
+    read -r -p "Üzerine yazılsın mı? [y/N] " REPLY
+    if [ "${REPLY}" != "y" ]; then
+        echo "İptal"
+        exit 0
+    fi
+fi
+
+mkdir -p "${KEYS_DIR}"
+cd "${KEYS_DIR}"
+
+echo "==> Geliştirme anahtarları üretiliyor: ${KEYS_DIR}"
+
+# UEFI db key
+echo "==> UEFI db key (RSA-3072, 1 yıl)"
+openssl req -newkey rsa:3072 -nodes -keyout uefi-db.key \
+    -x509 -sha256 -days 365 -out uefi-db.crt \
+    -subj "/CN=Suderra Dev UEFI/" 2>/dev/null
+
+# Kernel signing
+echo "==> Kernel signing key (RSA-3072)"
+openssl req -newkey rsa:3072 -nodes -keyout kernel-signing.key \
+    -x509 -sha256 -days 365 -out kernel-signing.crt \
+    -subj "/CN=Suderra Dev Kernel/" 2>/dev/null
+
+# RAUC bundle signing
+echo "==> RAUC bundle signing key (RSA-4096)"
+openssl req -newkey rsa:4096 -nodes -keyout rauc-signing.key \
+    -x509 -sha256 -days 365 -out rauc-signing.crt \
+    -subj "/CN=Suderra Dev RAUC/" 2>/dev/null
+
+# dm-verity hash signing
+echo "==> dm-verity hash signing key (RSA-3072)"
+openssl req -newkey rsa:3072 -nodes -keyout verity-signing.key \
+    -x509 -sha256 -days 365 -out verity-signing.crt \
+    -subj "/CN=Suderra Dev Verity/" 2>/dev/null
+
+# Permissions
+chmod 0600 ./*.key
+chmod 0644 ./*.crt
+
+echo ""
+echo "==> Tamamlandı:"
+ls -l "${KEYS_DIR}"
+echo ""
+echo "Kullanım:"
+echo "  export SUDERRA_KEYS_DIR='${KEYS_DIR}'"
+echo "  ./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig"
+echo ""
+echo "UYARI: Bu anahtarlar SADECE geliştirme için. ÜRETİM için HSM kullan."

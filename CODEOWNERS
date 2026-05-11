@@ -1,0 +1,38 @@
+# CODEOWNERS — Suderra OS
+#
+# Bu dosya, hangi yolların hangi onaylayıcılar tarafından review edilmesi
+# gerektiğini tanımlar. GitHub PR'larda otomatik atama yapar.
+#
+# Format: <pattern> <owner1> <owner2> ...
+# Wildcard: en spesifik kural kazanır.
+
+# Default — hiçbir spesifik kural yoksa
+*                                       @okan-wqm
+
+# Mimari kararlar — proje sahibi onayı zorunlu
+/docs/architecture/                     @okan-wqm
+/docs/architecture/ADR-*.md             @okan-wqm
+
+# Güvenlik kritik
+/SECURITY.md                            @okan-wqm
+/docs/security/                         @okan-wqm
+/board/keys/                            @okan-wqm
+/.github/workflows/security-scan.yml    @okan-wqm
+
+# Boot zinciri ve kernel
+/board/suderra/common/kernel-fragment.config    @okan-wqm
+/board/suderra/x86_64/                  @okan-wqm
+/board/suderra/aarch64/                 @okan-wqm
+
+# OTA — kritik, yanlış update herkesi etkiler
+/package/suderra-keys/                  @okan-wqm
+/scripts/sign-bundle.sh                 @okan-wqm
+/scripts/gen-verity-hash.sh             @okan-wqm
+/tests/ota/                             @okan-wqm
+
+# Uyumluluk — CRA/IEC 62443 dokümanları
+/docs/compliance/                       @okan-wqm
+
+# CI
+/.github/workflows/                     @okan-wqm
+/ci/                                    @okan-wqm

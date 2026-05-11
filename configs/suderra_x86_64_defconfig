@@ -1,0 +1,16 @@
+#
+# Suderra OS — x86_64 endüstriyel PC defconfig (Faz 1 placeholder)
+#
+# Hedef donanım: Endüstriyel x86_64 PC (Advantech UNO, Siemens IPC, vb.)
+# Tam hedef Faz 0'ın açık sorularından — kullanıcı seçecek.
+#
+# Faz 1'de doldurulacak. QEMU defconfig'den farklı olarak:
+#   - Gerçek NIC driver'ları (Intel I210/I225, Realtek)
+#   - Gerçek storage (NVMe, eMMC, SATA)
+#   - Watchdog driver'ları (iTCO/SoftDog)
+#   - TPM 2.0 (TPM_TIS, TPM_CRB)
+#   - UEFI + Secure Boot zinciri
+#   - dm-verity zorunlu (CONFIG_DM_VERITY=y, signed)
+#   - RAUC A/B partition layout
+#
+# Bu defconfig PROD varyantıyla birlikte kullanılır.

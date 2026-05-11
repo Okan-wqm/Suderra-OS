@@ -1,0 +1,37 @@
+#
+# Suderra OS — CI build matrix
+#
+# .github/workflows/build.yml bunu okur.
+# Hangi defconfig'lerin hangi arch'larda test edileceği.
+#
+
+defconfigs:
+  - name: suderra_qemu_x86_64_defconfig
+    arch: x86_64
+    qemu_test: true
+    required: true              # Bu fail olursa PR merge olmaz
+    description: "QEMU smoke test (geliştirme/CI)"
+
+  - name: suderra_x86_64_defconfig
+    arch: x86_64
+    qemu_test: false            # Gerçek HW lab
+    required: true
+    description: "Endüstriyel x86_64 PC"
+
+  - name: suderra_aarch64_defconfig
+    arch: aarch64
+    qemu_test: true             # qemu-system-aarch64
+    required: false             # Faz 1 sonu zorunlu olur
+    description: "ARM SBC (Pi CM4 / Revolution Pi)"
+
+variants:
+  - name: dev
+    description: "Geliştirme: dm-verity disabled, SSH açık"
+  - name: prod
+    description: "Üretim: dm-verity zorunlu, no shell"
+
+security_scans:
+  - lynis              # Cihaz içi audit
+  - trivy              # Image CVE
+  - grype              # SBOM-based CVE
+  - gitleaks           # Repo secret scan

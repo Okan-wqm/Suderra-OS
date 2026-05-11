@@ -1,0 +1,6 @@
+# Faz 2'de doldurulacak.
+# Cargo.lock'tan gelen tüm dependency hash'leri burada doğrulanır.
+#
+# Örnek:
+# sha256  XXXX  suderra-edge-agent-1.6.0.tar.gz
+# sha256  YYYY  Cargo.lock

@@ -1,0 +1,70 @@
+# Buildroot
+/buildroot/
+/output/
+/dl/
+/build/
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+
+# Build artifacts
+*.img
+*.iso
+*.bin
+*.elf
+*.o
+*.a
+*.so
+*.so.*
+
+# RAUC bundles
+*.raucb
+
+# Compiled defconfigs (always regenerated)
+.config
+.config.old
+
+# Anahtarlar — repo'da OLMAZ
+*.key
+*.pem
+*.p12
+*.pfx
+*.gpg
+*.asc
+private-keys/
+secrets/
+.suderra-keys/
+
+# SBOM artifacts (CI üretir)
+sbom.json
+sbom.spdx.json
+sbom.cyclonedx.json
+/artifacts/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+*.iml
+
+# Python (script bağımlılıkları için)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Rust (eğer cargo build edersek)
+target/
+Cargo.lock
+
+# Docker
+.docker-build-cache/
+
+# Test outputs
+test-results/
+*.log

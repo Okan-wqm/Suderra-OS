@@ -1,0 +1,65 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.defconfig }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        defconfig:
+          - suderra_qemu_x86_64_defconfig
+          # Faz 1'de aktif olur:
+          # - suderra_x86_64_defconfig
+          # - suderra_aarch64_defconfig
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: dl/
+          key: br-dl-${{ hashFiles('buildroot/.version', 'configs/${{ matrix.defconfig }}') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache/
+          key: ccache-${{ matrix.defconfig }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.defconfig }}-
+
+      - name: Build container
+        run: docker build -t suderra-builder ci/
+
+      - name: Build image
+        run: |
+          # Faz 1'de aktif olur — şu anda placeholder defconfig boş
+          if [ -s "configs/${{ matrix.defconfig }}" ] && grep -q "^BR2_" "configs/${{ matrix.defconfig }}"; then
+            ./scripts/build-in-docker.sh "${{ matrix.defconfig }}"
+          else
+            echo "::notice::Defconfig ${{ matrix.defconfig }} henüz placeholder — Faz 1'de doldurulacak"
+          fi
+
+      - name: Upload image artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.defconfig }}-image
+          path: output/${{ matrix.defconfig }}/images/
+          retention-days: 30
+          if-no-files-found: ignore

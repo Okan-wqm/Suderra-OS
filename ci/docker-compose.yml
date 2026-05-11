@@ -1,0 +1,29 @@
+#
+# Suderra OS — Local development with Docker Compose
+#
+# Kullanım:
+#   docker compose -f ci/docker-compose.yml run --rm builder make build-qemu
+#
+
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: suderra-builder:latest
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace:rw
+      - suderra-dl:/workspace/dl
+      - suderra-ccache:/workspace/.ccache
+      - ${HOME}/.suderra-keys:/home/builder/.suderra-keys:ro
+    environment:
+      - SOURCE_DATE_EPOCH=1704067200
+      - LC_ALL=C
+      - TZ=UTC
+    tty: true
+    stdin_open: true
+
+volumes:
+  suderra-dl:
+  suderra-ccache:

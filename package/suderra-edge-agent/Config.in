@@ -1,0 +1,16 @@
+config BR2_PACKAGE_SUDERRA_EDGE_AGENT
+	bool "suderra-edge-agent"
+	depends on BR2_PACKAGE_HOST_RUSTC_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  Suderra Edge Agent — Rust tabanlı endüstriyel edge daemon.
+
+	  Modbus TCP/RTU master, OPC UA server, MQTT publisher (mTLS),
+	  SQLCipher encrypted state, systemd Type=notify watchdog.
+
+	  Hedef: aquaculture monitoring + control.
+
+	  Kaynak repo: github.com/Okan-wqm/aquaculture_platform/sens-api-gateway
+
+	  https://github.com/Okan-wqm/aquaculture_platform

@@ -1,0 +1,14 @@
+# Bu klasördeki tüm anahtar/sertifika dosyaları repo'ya GİREMEZ
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.gpg
+*.asc
+*.cer
+*.csr
+
+# Sadece dokümantasyon repo'da kalır
+!README.md
+!.gitignore

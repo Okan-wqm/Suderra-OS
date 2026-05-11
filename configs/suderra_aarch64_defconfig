@@ -1,0 +1,14 @@
+#
+# Suderra OS — aarch64 (ARM64) defconfig (Faz 1 placeholder)
+#
+# Hedef donanım: Revolution Pi / Raspberry Pi CM4 / endüstriyel ARM SBC
+# Tam hedef Faz 0'ın açık sorularından — kullanıcı seçecek.
+#
+# Faz 1'de doldurulacak. x86_64'ten farklı olarak:
+#   - U-Boot bootloader (UEFI değil — extlinux.conf veya FIT image)
+#   - Device tree (DTB) — board'a özel
+#   - GPIO/I2C/SPI overlay'ler (uygulamanın gerektirdiği gibi)
+#   - Watchdog: BCM2835 (Pi CM4) veya board-specific
+#   - RPMB / TrustZone (varsa)
+#
+# Bu defconfig PROD varyantıyla birlikte kullanılır.

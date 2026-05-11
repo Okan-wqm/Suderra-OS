@@ -1,0 +1,13 @@
+NAME="Suderra OS"
+ID=suderra-os
+ID_LIKE=buildroot
+VERSION="v0.1.0-alpha"
+VERSION_ID="0.1.0"
+PRETTY_NAME="Suderra OS v0.1.0-alpha"
+ANSI_COLOR="0;32"
+HOME_URL="https://suderra.example/"
+DOCUMENTATION_URL="https://docs.suderra.example/"
+SUPPORT_URL="https://suderra.example/support"
+BUG_REPORT_URL="https://github.com/Okan-wqm/suderra-os/issues"
+BUILD_ID="placeholder"
+VARIANT="dev"

@@ -1,0 +1,15 @@
+config BR2_PACKAGE_SUDERRA_KEYS
+	bool "suderra-keys"
+	default y
+	help
+	  Suderra OS imajı için gerekli public key/sertifika'ları
+	  hedef rootfs'e kurar.
+
+	  Kurulan dosyalar:
+	  - /etc/rauc/keyring.pem        (RAUC bundle doğrulama)
+	  - /etc/ssl/certs/suderra-ca.pem (Cloud broker mTLS CA)
+	  - /etc/dm-verity/pubkey.pem    (verity root hash doğrulama)
+
+	  Anahtarlar SUDERRA_KEYS_DIR env var ile belirtilir.
+	  DEV variant: ~/.suderra-keys/dev/
+	  PROD variant: CI'da kısa-ömürlü HSM session'dan elde edilir

@@ -1,0 +1,12 @@
+config BR2_PACKAGE_SUDERRA_FIRSTBOOT
+	bool "suderra-firstboot"
+	depends on BR2_INIT_SYSTEMD
+	help
+	  İlk-boot provisioning script.
+
+	  - TPM-sealed disk encryption key oluştur (/data için)
+	  - Cihaz seri no okuyup os-release'e yaz
+	  - Default config dosyalarını /data'ya kopyala
+	  - mTLS provisioning (cihazı cloud'a kaydet)
+	  - RAUC health-check: ilk boot başarılı ise mark good
+	  - Bir kez çalışır, sonra disable olur (systemd ConditionFirstBoot)

@@ -1,0 +1,23 @@
+[Unit]
+Description=Suderra First Boot Provisioning
+ConditionFirstBoot=yes
+After=local-fs.target
+Before=suderra-edge-agent.service
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/suderra-firstboot
+
+# Sertleştirme — TPM ve disk encryption gereği root capabilities lazım
+ProtectSystem=strict
+ReadWritePaths=/data /etc/machine-id
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+DeviceAllow=/dev/tpm0 rw
+DeviceAllow=/dev/tpmrm0 rw
+
+[Install]
+WantedBy=multi-user.target
