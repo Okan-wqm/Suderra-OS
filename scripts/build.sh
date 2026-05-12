@@ -41,6 +41,8 @@ echo "==> BR2_EXTERNAL: ${PROJECT_ROOT}"
 echo "==> BUILDROOT_DIR: ${BUILDROOT_DIR}"
 echo "==> OUTPUT_DIR: ${OUTPUT_DIR}"
 
+"${SCRIPT_DIR}/apply-buildroot-patches.sh" "${BUILDROOT_DIR}"
+
 cd "${BUILDROOT_DIR}"
 
 make BR2_EXTERNAL="${PROJECT_ROOT}" O="${OUTPUT_DIR}" "${DEFCONFIG}"

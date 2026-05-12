@@ -1,0 +1,22 @@
+[Unit]
+Description=Suderra OS nftables firewall
+Documentation=man:nft(8)
+DefaultDependencies=no
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+ConditionPathExists=/usr/sbin/suderra-firewall
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/suderra-firewall
+ExecReload=/usr/sbin/suderra-firewall
+RemainAfterExit=yes
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=sysinit.target

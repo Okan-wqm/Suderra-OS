@@ -1,0 +1,74 @@
+#!/bin/sh
+set -eu
+
+REQUEST_DIR=/var/lib/suderra/provision/request
+RESULT_FILE=/var/lib/suderra/provision/result
+TIMEOUT="${SUDERRA_PROVISION_TIMEOUT:-900}"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ssh provision@DEVICE install-manifest-url https://...
+  ssh provision@DEVICE install-manifest-json < suderra-os-edge-manifest.json
+
+This account is a forced-command provisioning endpoint. It does not provide a
+general shell.
+EOF
+}
+
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+    command="${SSH_ORIGINAL_COMMAND}"
+elif [ "${1:-}" = "-c" ]; then
+    shift
+    command="${*:-}"
+else
+    command="${*:-}"
+fi
+set -- ${command}
+
+[ "$#" -gt 0 ] || {
+    usage
+    exit 2
+}
+
+umask 077
+mkdir -p "${REQUEST_DIR}"
+rm -f "${RESULT_FILE}"
+
+case "$1" in
+    install-manifest-url)
+        [ -n "${2:-}" ] || {
+            usage >&2
+            exit 2
+        }
+        printf '%s\n' "$2" > "${REQUEST_DIR}/manifest-url"
+        rm -f "${REQUEST_DIR}/manifest.json"
+        ;;
+    install-manifest-json)
+        cat > "${REQUEST_DIR}/manifest.json"
+        rm -f "${REQUEST_DIR}/manifest-url"
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+touch "${REQUEST_DIR}/trigger"
+
+elapsed=0
+while [ "${elapsed}" -lt "${TIMEOUT}" ]; do
+    if [ -f "${RESULT_FILE}" ]; then
+        cat "${RESULT_FILE}"
+        if grep -q '^status=ok$' "${RESULT_FILE}"; then
+            exit 0
+        fi
+        exit 1
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+done
+
+echo "status=error"
+echo "message=provisioning worker timeout"
+exit 1

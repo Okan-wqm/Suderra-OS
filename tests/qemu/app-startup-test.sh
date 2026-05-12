@@ -2,7 +2,7 @@
 #
 # Edge Agent startup test (Faz 2 placeholder)
 #
-# Test: Boot'tan sonra 5 saniye içinde suderra-edge-agent.service active mı?
+# Test: Boot'tan sonra 5 saniye içinde suderra-agent.service active mı?
 # Timeout: 30s
 
 set -euo pipefail

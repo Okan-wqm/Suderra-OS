@@ -1,0 +1,212 @@
+#!/bin/sh
+set -eu
+
+CONFIG=/etc/suderra/edge-install.env
+STATE_DIR=/var/lib/suderra/edge
+CONFIG_DIR=/var/lib/suderra/config
+WORK_DIR="${STATE_DIR}/install"
+RELEASES_DIR=/opt/suderra/edge/releases
+CURRENT_LINK=/opt/suderra/edge/current
+EDGE_PUBKEY="${SUDERRA_EDGE_PUBKEY:-/etc/suderra/edge-artifact.pub.pem}"
+
+VERSION=
+URL=
+EXPECTED_SHA256=
+SIGNATURE_URL=
+BIN_NAME=suderra-agent
+FORMAT=tar.gz
+LOCKDOWN_AFTER_INSTALL=1
+INTERACTIVE=0
+MANIFEST=
+MANIFEST_URL=
+
+usage() {
+    cat <<'EOF'
+Usage:
+  suderra-edge-install --manifest FILE
+  suderra-edge-install --manifest-url URL
+  suderra-edge-install --interactive
+
+Suderra OS manifests must include:
+  version, artifact_url, sha256, signature_url, binary_name
+
+Optional fields:
+  artifact_format, config_payload, activation_token
+EOF
+}
+
+json_string() {
+    key="$1"
+    file="$2"
+    tr ',{}' '\n' < "${file}" |
+        sed -nE 's/^[[:space:]]*"'"${key}"'"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' |
+        head -n 1
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --interactive)
+            INTERACTIVE=1
+            ;;
+        --manifest)
+            MANIFEST="${2:-}"
+            shift
+            ;;
+        --manifest-url)
+            MANIFEST_URL="${2:-}"
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if [ -f "${CONFIG}" ]; then
+    # shellcheck disable=SC1090
+    . "${CONFIG}"
+    URL="${SUDERRA_EDGE_URL:-${URL}}"
+    EXPECTED_SHA256="${SUDERRA_EDGE_SHA256:-${EXPECTED_SHA256}}"
+    SIGNATURE_URL="${SUDERRA_EDGE_SIGNATURE_URL:-${SIGNATURE_URL}}"
+    VERSION="${SUDERRA_EDGE_VERSION:-${VERSION}}"
+    FORMAT="${SUDERRA_EDGE_ARTIFACT_FORMAT:-${FORMAT}}"
+    BIN_NAME="${SUDERRA_EDGE_BINARY_NAME:-${BIN_NAME}}"
+    LOCKDOWN_AFTER_INSTALL="${SUDERRA_LOCKDOWN_AFTER_INSTALL:-${LOCKDOWN_AFTER_INSTALL}}"
+fi
+
+mkdir -p "${WORK_DIR}" "${CONFIG_DIR}" "${RELEASES_DIR}" /var/log/suderra
+chmod 0750 /var/lib/suderra "${STATE_DIR}" "${WORK_DIR}" "${CONFIG_DIR}" /var/log/suderra 2>/dev/null || true
+chown -R suderra:suderra /var/lib/suderra /var/log/suderra 2>/dev/null || true
+
+if [ -n "${MANIFEST_URL}" ]; then
+    MANIFEST="${WORK_DIR}/edge-manifest.json"
+    echo "==> Downloading Suderra OS Edge manifest"
+    curl --fail --location --show-error --silent --output "${MANIFEST}" "${MANIFEST_URL}"
+fi
+
+if [ -n "${MANIFEST}" ]; then
+    [ -f "${MANIFEST}" ] || {
+        echo "ERROR: manifest not found: ${MANIFEST}" >&2
+        exit 2
+    }
+    VERSION="$(json_string version "${MANIFEST}")"
+    URL="$(json_string artifact_url "${MANIFEST}")"
+    EXPECTED_SHA256="$(json_string sha256 "${MANIFEST}")"
+    SIGNATURE_URL="$(json_string signature_url "${MANIFEST}")"
+    BIN_NAME="$(json_string binary_name "${MANIFEST}")"
+    FORMAT="$(json_string artifact_format "${MANIFEST}")"
+    CONFIG_PAYLOAD="$(json_string config_payload "${MANIFEST}")"
+    ACTIVATION_TOKEN="$(json_string activation_token "${MANIFEST}")"
+    [ -n "${FORMAT}" ] || FORMAT=tar.gz
+    [ -n "${BIN_NAME}" ] || BIN_NAME=suderra-agent
+else
+    CONFIG_PAYLOAD=
+    ACTIVATION_TOKEN=
+fi
+
+if [ "${INTERACTIVE}" = "1" ] && [ -z "${URL}" ]; then
+    printf "Edge artifact URL: "
+    read -r URL
+fi
+
+if [ "${INTERACTIVE}" = "1" ] && [ -z "${EXPECTED_SHA256}" ]; then
+    printf "Edge artifact SHA256: "
+    read -r EXPECTED_SHA256
+fi
+
+if [ -z "${VERSION}" ] || [ -z "${URL}" ] || [ -z "${EXPECTED_SHA256}" ] || [ -z "${SIGNATURE_URL}" ]; then
+    echo "ERROR: version, artifact_url, sha256 and signature_url are required." >&2
+    exit 2
+fi
+
+[ -s "${EDGE_PUBKEY}" ] || {
+    echo "ERROR: pinned Edge artifact public key missing: ${EDGE_PUBKEY}" >&2
+    exit 2
+}
+
+ARTIFACT="${WORK_DIR}/edge-artifact"
+SIGNATURE="${WORK_DIR}/edge-artifact.sig"
+EXTRACT_DIR="${WORK_DIR}/extract"
+RELEASE_DIR="${RELEASES_DIR}/${VERSION}"
+
+rm -rf "${EXTRACT_DIR}"
+mkdir -p "${EXTRACT_DIR}" "${RELEASE_DIR}"
+
+echo "==> Downloading Suderra Edge artifact"
+curl --fail --location --show-error --silent --output "${ARTIFACT}" "${URL}"
+curl --fail --location --show-error --silent --output "${SIGNATURE}" "${SIGNATURE_URL}"
+
+echo "==> Verifying SHA256"
+printf '%s  %s\n' "${EXPECTED_SHA256}" "${ARTIFACT}" | sha256sum -c -
+
+echo "==> Verifying artifact signature"
+openssl dgst -sha256 -verify "${EDGE_PUBKEY}" -signature "${SIGNATURE}" "${ARTIFACT}" >/dev/null
+
+case "${FORMAT}" in
+    tar.gz|tgz)
+        tar -xzf "${ARTIFACT}" -C "${EXTRACT_DIR}"
+        CANDIDATE="$(find "${EXTRACT_DIR}" -type f -name "${BIN_NAME}" | head -n 1)"
+        ;;
+    raw|bin)
+        CANDIDATE="${ARTIFACT}"
+        ;;
+    *)
+        echo "ERROR: unsupported artifact_format=${FORMAT}" >&2
+        exit 2
+        ;;
+esac
+
+if [ -z "${CANDIDATE:-}" ] || [ ! -f "${CANDIDATE}" ]; then
+    echo "ERROR: ${BIN_NAME} not found in artifact" >&2
+    exit 2
+fi
+
+echo "==> Installing ${BIN_NAME} to ${RELEASE_DIR}"
+install -m 0755 "${CANDIDATE}" "${RELEASE_DIR}/.suderra-agent.new"
+chown root:root "${RELEASE_DIR}/.suderra-agent.new"
+mv -f "${RELEASE_DIR}/.suderra-agent.new" "${RELEASE_DIR}/suderra-agent"
+ln -sfn "releases/${VERSION}" "${CURRENT_LINK}"
+chown -h root:root "${CURRENT_LINK}" 2>/dev/null || true
+
+if [ -n "${CONFIG_PAYLOAD:-}" ]; then
+    printf '%s\n' "${CONFIG_PAYLOAD}" > "${CONFIG_DIR}/config.yaml"
+elif [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
+    {
+        printf 'device_id: "00000000-0000-0000-0000-000000000000"\n'
+        printf 'device_code: "UNACTIVATED"\n'
+        printf 'api_url: "https://provisioning.example.com"\n'
+        if [ -n "${ACTIVATION_TOKEN:-}" ]; then
+            printf 'provisioning_token: "%s"\n' "${ACTIVATION_TOKEN}"
+        fi
+        printf 'mqtt:\n'
+        printf '  broker: null\n'
+        printf '  port: 8883\n'
+        printf '  username: null\n'
+        printf '  password: null\n'
+        printf '  tls:\n'
+        printf '    enabled: true\n'
+        printf '    verify_hostname: true\n'
+        printf '  topics: {}\n'
+    } > "${CONFIG_DIR}/config.yaml"
+fi
+chown suderra:suderra "${CONFIG_DIR}/config.yaml" 2>/dev/null || true
+chmod 0600 "${CONFIG_DIR}/config.yaml"
+
+echo "==> Enabling Suderra Edge service"
+systemctl daemon-reload
+systemctl enable suderra-agent.service
+systemctl restart suderra-agent.service
+
+if [ "${LOCKDOWN_AFTER_INSTALL}" = "1" ]; then
+    /usr/sbin/suderra-lockdown
+else
+    echo "==> Lockdown skipped by SUDERRA_LOCKDOWN_AFTER_INSTALL=${LOCKDOWN_AFTER_INSTALL}"
+fi
+
+echo "==> Suderra Edge install complete"

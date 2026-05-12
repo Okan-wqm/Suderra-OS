@@ -122,12 +122,13 @@ else
     echo "  ⚠ systemd başlatma kanıtı yok (init başka olabilir)"
 fi
 
-# 4. Login prompt veya systemd hazır
-if grep -qE "(suderra login|reached target|Started Login)" "${LOG}"; then
-    echo "  ✓ Login/target hazır"
+# 4. Provisioning image: local login prompt is expected until Edge install
+# runs suderra-lockdown. Runtime appliance validation is a separate test.
+if grep -qE "(suderra login| login:|Reached target|reached target|multi-user.target)" "${LOG}"; then
+    echo "  ✓ Provisioning login/target hazır"
     ((PASS++))
 else
-    echo "  ⚠ Login prompt görülmedi (timeout olabilir)"
+    echo "  ⚠ Provisioning login/target görülmedi (timeout olabilir)"
 fi
 
 echo

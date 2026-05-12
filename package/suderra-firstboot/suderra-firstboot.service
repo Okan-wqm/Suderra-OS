@@ -2,7 +2,7 @@
 Description=Suderra First Boot Provisioning
 ConditionFirstBoot=yes
 After=local-fs.target
-Before=suderra-edge-agent.service
+Before=suderra-agent.service
 Wants=local-fs.target
 
 [Service]

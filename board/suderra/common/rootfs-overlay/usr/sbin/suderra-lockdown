@@ -1,0 +1,106 @@
+#!/bin/sh
+set -eu
+
+FORCE=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --force)
+            FORCE=1
+            ;;
+        --help|-h)
+            echo "Usage: suderra-lockdown [--force]"
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+check_ready() {
+    agent=/opt/suderra/edge/current/suderra-agent
+    config=/var/lib/suderra/config/config.yaml
+
+    [ -x "${agent}" ] || fail "agent binary missing: ${agent}"
+    [ "$(stat -c '%U:%G' "${agent}")" = "root:root" ] ||
+        fail "agent binary is not root-owned"
+    [ -s "${config}" ] || fail "agent config missing: ${config}"
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet suderra-agent.service ||
+            fail "suderra-agent.service is not active"
+    fi
+
+    [ -f /var/lib/suderra/edge/registered ] ||
+        [ -f /var/lib/suderra/registration.json ] ||
+        fail "agent registration marker missing"
+}
+
+if [ "${FORCE}" != "1" ]; then
+    check_ready
+fi
+
+echo "==> Locking Suderra OS into appliance mode"
+
+lock_user() {
+    user="$1"
+    if command -v passwd >/dev/null 2>&1; then
+        passwd -l "${user}" >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/shadow ]; then
+        sed -i "s#^${user}:[^:]*:#${user}:!:#" /etc/shadow
+    fi
+}
+
+lock_user root
+lock_user provision
+
+mkdir -p /etc/systemd/system
+
+for unit in \
+    getty@.service \
+    serial-getty@.service \
+    console-getty.service \
+    container-getty@.service \
+    debug-shell.service \
+    rescue.service \
+    rescue.target \
+    emergency.service \
+    emergency.target \
+    ctrl-alt-del.target \
+    ssh.service \
+    sshd.service \
+    dropbear.service \
+    systemd-logind.service
+do
+    ln -sfn /dev/null "/etc/systemd/system/${unit}"
+done
+
+rm -rf /etc/systemd/system/getty.target.wants \
+       /etc/systemd/system/rescue.target.wants \
+       /etc/systemd/system/emergency.target.wants \
+       /etc/systemd/system/multi-user.target.wants/dropbear.service \
+       2>/dev/null || true
+
+touch /var/lib/suderra/.appliance-locked
+/usr/sbin/suderra-firewall 2>/dev/null || true
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl stop dropbear.service getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true
+    systemctl mask dropbear.service getty@.service serial-getty@.service debug-shell.service \
+        rescue.service rescue.target emergency.service emergency.target 2>/dev/null || true
+fi
+
+if command -v pkill >/dev/null 2>&1; then
+    pkill -KILL -u provision 2>/dev/null || true
+fi
+
+echo "==> Appliance lockdown complete"

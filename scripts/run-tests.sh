@@ -6,6 +6,7 @@
 #   ./scripts/run-tests.sh                   # Hepsi
 #   ./scripts/run-tests.sh qemu              # Sadece QEMU
 #   ./scripts/run-tests.sh security          # Sadece security
+#   ./scripts/run-tests.sh installer         # Sadece USB installer
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -38,15 +39,16 @@ run_category() {
 case "${CATEGORY}" in
     all)
         run_category qemu
+        run_category installer
         run_category security
         run_category ota
         ;;
-    qemu|security|ota)
+    qemu|installer|security|ota)
         run_category "${CATEGORY}"
         ;;
     *)
         echo "ERROR: Bilinmeyen kategori: ${CATEGORY}"
-        echo "Kullanım: $0 [all|qemu|security|ota]"
+        echo "Kullanım: $0 [all|qemu|installer|security|ota]"
         exit 1
         ;;
 esac

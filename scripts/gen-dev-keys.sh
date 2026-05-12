@@ -52,9 +52,23 @@ openssl req -newkey rsa:3072 -nodes -keyout verity-signing.key \
     -x509 -sha256 -days 365 -out verity-signing.crt \
     -subj "/CN=Suderra Dev Verity/" 2>/dev/null
 
+# USB installer payload manifest signing
+echo "==> USB installer payload signing key (RSA-3072)"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+    -out installer-payload.key 2>/dev/null
+openssl rsa -in installer-payload.key -pubout \
+    -out installer-payload.pub.pem 2>/dev/null
+
+# Edge artifact signing
+echo "==> Edge artifact signing key (RSA-3072)"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+    -out edge-artifact.key 2>/dev/null
+openssl rsa -in edge-artifact.key -pubout \
+    -out edge-artifact.pub.pem 2>/dev/null
+
 # Permissions
 chmod 0600 ./*.key
-chmod 0644 ./*.crt
+chmod 0644 ./*.crt ./*.pub.pem
 
 echo ""
 echo "==> Tamamlandı:"
@@ -62,6 +76,8 @@ ls -l "${KEYS_DIR}"
 echo ""
 echo "Kullanım:"
 echo "  export SUDERRA_KEYS_DIR='${KEYS_DIR}'"
+echo "  export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY='${KEYS_DIR}/installer-payload.key'"
+echo "  export SUDERRA_INSTALLER_PAYLOAD_PUBKEY='${KEYS_DIR}/installer-payload.pub.pem'"
 echo "  ./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig"
 echo ""
 echo "UYARI: Bu anahtarlar SADECE geliştirme için. ÜRETİM için HSM kullan."

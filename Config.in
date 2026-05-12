@@ -19,6 +19,7 @@ config BR2_EXTERNAL_SUDERRA_PATH
 #
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-edge-agent/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-firstboot/Config.in"
+source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-os-installer/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
 
 #
@@ -26,17 +27,22 @@ source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
 #
 choice
 	prompt "Suderra OS variant"
-	default BR2_PACKAGE_SUDERRA_VARIANT_DEV
+	default BR2_PACKAGE_SUDERRA_VARIANT_PROD
 
 config BR2_PACKAGE_SUDERRA_VARIANT_DEV
-	bool "Development (debug, ssh açık, dm-verity disabled)"
+	bool "Development / diagnostics (not for appliance release)"
 	help
-	  Sadece geliştirme için. Production'da KULLANMA.
+	  Sadece kontrollü geliştirme ve QEMU/lab doğrulaması için.
+	  Production'da KULLANMA.
 
 config BR2_PACKAGE_SUDERRA_VARIANT_PROD
-	bool "Production (dm-verity, secure boot, no shell)"
+	bool "Production appliance (provision, then Suderra agent only)"
 	help
-	  Üretim varyantı. SSH yok, debug yok, dm-verity zorunlu.
+	  Üretim varyantı local console provisioning ile başlar. Edge
+	  artifact kurulunca suderra-lockdown root login, getty, debug shell
+	  ve remote shell servislerini kapatır; runtime'da sadece zorunlu
+	  sistem servisleri ve suderra-agent çalışır.
+	  dm-verity, secure boot, imzalı release ve RAUC üretim kapılarıdır.
 
 endchoice
 

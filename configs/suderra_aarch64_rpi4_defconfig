@@ -34,23 +34,24 @@ BR2_cortex_a72=y
 BR2_ARM_FPU_VFPV4=y
 
 # ============================================================================
-# Toolchain — musl static (audit-friendly + küçük binary)
+# Toolchain — glibc dynamic, required by Buildroot systemd
 # ============================================================================
 BR2_TOOLCHAIN_BUILDROOT=y
-BR2_TOOLCHAIN_BUILDROOT_LIBC="musl"
-BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_TOOLCHAIN_BUILDROOT_LIBC="glibc"
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_KERNEL_HEADERS_6_11=y
 BR2_BINUTILS_VERSION_2_43_X=y
 BR2_GCC_VERSION_13_X=y
 BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
 BR2_TOOLCHAIN_BUILDROOT_USE_SSP=y
 
 # ============================================================================
-# Linux Kernel — 6.12 LTS + BCM2711 fragment
+# Linux Kernel — Raspberry Pi downstream BCM2711 kernel + Suderra fragment
 # ============================================================================
 BR2_LINUX_KERNEL=y
-BR2_LINUX_KERNEL_CUSTOM_VERSION=y
-BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.6"
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,576cc10e1ed50a9eacffc7a05c796051d7343ea4)/linux-576cc10e1ed50a9eacffc7a05c796051d7343ea4.tar.gz"
 BR2_LINUX_KERNEL_DEFCONFIG="bcm2711"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/linux-rpi4.config"
 BR2_LINUX_KERNEL_IMAGE=y
@@ -73,7 +74,6 @@ BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-
 
 BR2_PACKAGE_RPI_FIRMWARE=y
 BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI4=y
-BR2_PACKAGE_RPI_FIRMWARE_BOOTCODE_BIN=y
 BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/config.txt"
 BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/cmdline.txt"
 
@@ -81,10 +81,10 @@ BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderr
 # Init System — systemd (Edge Agent için zorunlu)
 # ============================================================================
 BR2_INIT_SYSTEMD=y
-BR2_PACKAGE_SYSTEMD_LOGIND=y
+# BR2_PACKAGE_SYSTEMD_LOGIND is not set
 BR2_PACKAGE_SYSTEMD_NETWORKD=y
-BR2_PACKAGE_SYSTEMD_TIMESYNCD=y
-BR2_PACKAGE_SYSTEMD_HOSTNAMED=y
+# BR2_PACKAGE_SYSTEMD_TIMESYNCD is not set
+# BR2_PACKAGE_SYSTEMD_HOSTNAMED is not set
 
 # ============================================================================
 # Filesystem — Faz 1: ext4, Faz 3: erofs + dm-verity
@@ -119,6 +119,18 @@ BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users
 BR2_PACKAGE_IPROUTE2=y
 BR2_PACKAGE_DBUS=y
 BR2_PACKAGE_NFTABLES=y
+BR2_PACKAGE_OPENSSL=y
+BR2_PACKAGE_LIBOPENSSL=y
+BR2_PACKAGE_LIBOPENSSL_BIN=y
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_CURL=y
+BR2_PACKAGE_LIBCURL_OPENSSL=y
+BR2_PACKAGE_CA_CERTIFICATES=y
+BR2_PACKAGE_DROPBEAR=y
+# BR2_PACKAGE_DROPBEAR_CLIENT is not set
+BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
+BR2_PACKAGE_UTIL_LINUX=y
+BR2_PACKAGE_UTIL_LINUX_BINARIES=y
 
 # ============================================================================
 # Time sync — chrony (NTP) + PTP (Faz 2+'da endüstriyel zaman)
@@ -142,7 +154,7 @@ BR2_PACKAGE_I2C_TOOLS=y
 # Suderra custom paketleri — Faz 2+'da aktif olur
 # ============================================================================
 # BR2_PACKAGE_SUDERRA_INSTALLER=y      # Faz 2-D
-# BR2_PACKAGE_SUDERRA_EDGE_AGENT=y     # Faz 2-D (Edge bundle sonradan kurulur)
+# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
 # BR2_PACKAGE_SUDERRA_KEYS=y           # Faz 3 (signing keys)
 
@@ -150,7 +162,8 @@ BR2_PACKAGE_I2C_TOOLS=y
 # Sistem kimliği
 # ============================================================================
 BR2_TARGET_GENERIC_HOSTNAME="suderra-rpi4"
-BR2_TARGET_GENERIC_ISSUE="Suderra OS — Industrial Edge (Raspberry Pi 4 / CM4)"
+BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
+# BR2_TARGET_ENABLE_ROOT_LOGIN is not set
 BR2_TARGET_GENERIC_GETTY=y
 BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y

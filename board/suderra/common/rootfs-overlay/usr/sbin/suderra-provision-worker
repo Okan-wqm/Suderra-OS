@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+BASE_DIR=/var/lib/suderra/provision
+REQUEST_DIR="${BASE_DIR}/request"
+RESULT_FILE="${BASE_DIR}/result"
+
+umask 077
+mkdir -p "${REQUEST_DIR}"
+
+write_result() {
+    status="$1"
+    message="$2"
+    {
+        printf 'status=%s\n' "${status}"
+        printf 'message=%s\n' "${message}"
+    } > "${RESULT_FILE}.tmp"
+    chown provision:provision "${RESULT_FILE}.tmp" 2>/dev/null || true
+    mv -f "${RESULT_FILE}.tmp" "${RESULT_FILE}"
+}
+
+if [ -s "${REQUEST_DIR}/manifest-url" ]; then
+    manifest_url="$(head -n 1 "${REQUEST_DIR}/manifest-url")"
+    if /usr/sbin/suderra-edge-install --manifest-url "${manifest_url}"; then
+        write_result ok "edge install completed"
+    else
+        write_result error "edge install failed"
+    fi
+elif [ -s "${REQUEST_DIR}/manifest.json" ]; then
+    if /usr/sbin/suderra-edge-install --manifest "${REQUEST_DIR}/manifest.json"; then
+        write_result ok "edge install completed"
+    else
+        write_result error "edge install failed"
+    fi
+else
+    write_result error "no provisioning request found"
+fi

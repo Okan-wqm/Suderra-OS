@@ -93,7 +93,7 @@ wget "${URL_BASE}/suderra-os-rpi4.img.xz"
 git clone --recurse-submodules https://github.com/Okan-wqm/suderra-os
 cd suderra-os
 ./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
-# Çıktı: output/suderra_aarch64_rpi4_defconfig/images/sdcard.img.xz
+# Çıktı: output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
 # Süre: ~30-60 dk (ilk build), ~5-10 dk (sonraki)
 ```
 

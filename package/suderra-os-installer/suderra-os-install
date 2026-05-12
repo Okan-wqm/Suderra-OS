@@ -1,0 +1,311 @@
+#!/bin/sh
+set -eu
+
+PAYLOAD_DIR="${SUDERRA_INSTALLER_PAYLOAD_DIR:-/run/suderra-installer/payload}"
+SYS_BLOCK="${SUDERRA_INSTALLER_SYS_BLOCK:-/sys/block}"
+DEV_DIR="${SUDERRA_INSTALLER_DEV_DIR:-/dev}"
+PUBKEY="${SUDERRA_INSTALLER_PUBKEY:-/etc/suderra/os-installer-payload.pub.pem}"
+MIN_BYTES="${SUDERRA_INSTALLER_MIN_BYTES:-8589934592}"
+ALLOW_USB_TARGET="${SUDERRA_INSTALLER_ALLOW_USB_TARGET:-0}"
+SOURCE_DISK="${SUDERRA_INSTALLER_SOURCE_DISK:-}"
+ASSUME_YES="${SUDERRA_INSTALLER_ASSUME_YES:-0}"
+DRY_RUN="${SUDERRA_INSTALLER_DRY_RUN:-0}"
+REPORT_DIR="${SUDERRA_INSTALLER_REPORT_DIR:-/run/suderra-installer}"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  suderra-os-install --install [--yes]
+  suderra-os-install --select-target
+  suderra-os-install --verify-payload
+
+The installer verifies manifest.sig, target image SHA256 and size, excludes its
+own boot disk, selects eMMC before SD, and refuses USB targets unless
+SUDERRA_INSTALLER_ALLOW_USB_TARGET=1 is set.
+EOF
+}
+
+log() {
+    printf '%s\n' "$*"
+}
+
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+json_string() {
+    key="$1"
+    file="$2"
+    tr ',{}' '\n' < "${file}" |
+        sed -nE 's/^[[:space:]]*"'"${key}"'"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' |
+        head -n 1
+}
+
+json_number() {
+    key="$1"
+    file="$2"
+    tr ',{}' '\n' < "${file}" |
+        sed -nE 's/^[[:space:]]*"'"${key}"'"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' |
+        head -n 1
+}
+
+ensure_payload_mounted() {
+    if [ -f "${PAYLOAD_DIR}/manifest.json" ]; then
+        return 0
+    fi
+
+    mkdir -p "${PAYLOAD_DIR}"
+    if command -v mount >/dev/null 2>&1; then
+        mount -o ro -L SUDERRA-PAYLOAD "${PAYLOAD_DIR}" 2>/dev/null || true
+    fi
+
+    [ -f "${PAYLOAD_DIR}/manifest.json" ] ||
+        die "payload manifest not found in ${PAYLOAD_DIR}"
+}
+
+verify_payload() {
+    ensure_payload_mounted
+
+    manifest="${PAYLOAD_DIR}/manifest.json"
+    sig="${PAYLOAD_DIR}/manifest.sig"
+    [ -s "${PUBKEY}" ] || die "pinned installer public key missing: ${PUBKEY}"
+    [ -s "${sig}" ] || die "payload manifest signature missing: ${sig}"
+
+    log "==> Verifying installer manifest signature"
+    openssl dgst -sha256 -verify "${PUBKEY}" -signature "${sig}" "${manifest}" >/dev/null ||
+        die "payload manifest signature verification failed"
+
+    image="$(json_string image "${manifest}")"
+    expected_sha="$(json_string sha256 "${manifest}")"
+    expected_size="$(json_number size_bytes "${manifest}")"
+
+    [ -n "${image}" ] || die "manifest.image is required"
+    [ -n "${expected_sha}" ] || die "manifest.sha256 is required"
+    [ -n "${expected_size}" ] || die "manifest.size_bytes is required"
+
+    image_path="${PAYLOAD_DIR}/${image}"
+    [ -f "${image_path}" ] || die "target image missing: ${image_path}"
+
+    actual_size="$(wc -c "${image_path}" | awk '{print $1}')"
+    [ "${actual_size}" = "${expected_size}" ] ||
+        die "target image size mismatch: expected ${expected_size}, got ${actual_size}"
+
+    actual_sha="$(sha256sum "${image_path}" | awk '{print $1}')"
+    [ "${actual_sha}" = "${expected_sha}" ] ||
+        die "target image SHA256 mismatch"
+
+    log "==> Payload verified: ${image}"
+}
+
+disk_from_partition() {
+    partition="$1"
+    base="$(basename "${partition}")"
+    case "${base}" in
+        mmcblk*p[0-9]*)
+            printf '%s\n' "${base%p[0-9]*}"
+            ;;
+        sd*[0-9]*)
+            printf '%s\n' "${base%[0-9]*}"
+            ;;
+        nvme*n*p[0-9]*)
+            printf '%s\n' "${base%p[0-9]*}"
+            ;;
+        *)
+            printf '%s\n' "${base}"
+            ;;
+    esac
+}
+
+source_disk() {
+    if [ -n "${SOURCE_DISK}" ]; then
+        basename "${SOURCE_DISK}"
+        return 0
+    fi
+
+    root_source="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+    if [ -n "${root_source}" ] && [ "${root_source#${DEV_DIR}/}" != "${root_source}" ]; then
+        parent="$(lsblk -n -o PKNAME "${root_source}" 2>/dev/null | head -n 1 || true)"
+        if [ -n "${parent}" ]; then
+            printf '%s\n' "${parent}"
+        else
+            disk_from_partition "${root_source}"
+        fi
+        return 0
+    fi
+
+    die "could not determine installer source disk; set SUDERRA_INSTALLER_SOURCE_DISK"
+}
+
+read_sys_value() {
+    file="$1"
+    default="$2"
+    if [ -r "${file}" ]; then
+        tr -d '[:space:]' < "${file}"
+    else
+        printf '%s\n' "${default}"
+    fi
+}
+
+candidate_priority() {
+    name="$1"
+    removable="$2"
+    case "${name}" in
+        mmcblk*)
+            if [ "${removable}" = "0" ]; then
+                printf '0\n'
+            else
+                printf '1\n'
+            fi
+            ;;
+        sd*)
+            printf '2\n'
+            ;;
+        *)
+            printf '9\n'
+            ;;
+    esac
+}
+
+select_target() {
+    src="$(source_disk)"
+    best_name=""
+    best_priority=99
+    best_count=0
+    candidates=0
+
+    for devpath in "${SYS_BLOCK}"/mmcblk* "${SYS_BLOCK}"/sd*; do
+        [ -e "${devpath}" ] || continue
+        name="$(basename "${devpath}")"
+
+        case "${name}" in
+            *boot*|*rpmb*) continue ;;
+        esac
+
+        [ "${name}" != "${src}" ] || continue
+
+        case "${name}" in
+            sd*)
+                [ "${ALLOW_USB_TARGET}" = "1" ] || continue
+                ;;
+        esac
+
+        sectors="$(read_sys_value "${devpath}/size" "0")"
+        removable="$(read_sys_value "${devpath}/removable" "1")"
+        bytes=$((sectors * 512))
+        [ "${bytes}" -ge "${MIN_BYTES}" ] || continue
+
+        priority="$(candidate_priority "${name}" "${removable}")"
+        [ "${priority}" -lt 9 ] || continue
+
+        candidates=$((candidates + 1))
+        if [ "${priority}" -lt "${best_priority}" ]; then
+            best_name="${name}"
+            best_priority="${priority}"
+            best_count=1
+        elif [ "${priority}" -eq "${best_priority}" ]; then
+            best_count=$((best_count + 1))
+        fi
+    done
+
+    [ "${candidates}" -gt 0 ] || die "no valid target disk found"
+    [ "${best_count}" -eq 1 ] ||
+        die "multiple equally preferred target disks found; refusing to choose"
+
+    printf '%s/%s\n' "${DEV_DIR}" "${best_name}"
+}
+
+confirm_target() {
+    target="$1"
+    if [ "${ASSUME_YES}" = "1" ]; then
+        return 0
+    fi
+    [ -t 0 ] || die "confirmation requires a TTY; rerun with --yes only in factory automation"
+
+    printf '\nTarget disk: %s\n' "${target}"
+    printf 'This will overwrite the selected SD/eMMC. Continue? [y/N] '
+    read -r answer
+    [ "${answer}" = "y" ] || [ "${answer}" = "Y" ] || die "operator declined install"
+}
+
+install_image() {
+    verify_payload
+    target="$(select_target)"
+    confirm_target "${target}"
+
+    manifest="${PAYLOAD_DIR}/manifest.json"
+    image="$(json_string image "${manifest}")"
+    image_path="${PAYLOAD_DIR}/${image}"
+    uncompressed_sha="$(json_string uncompressed_sha256 "${manifest}")"
+    uncompressed_size="$(json_number uncompressed_size_bytes "${manifest}")"
+
+    if [ "${DRY_RUN}" = "1" ]; then
+        log "==> Dry run: would write ${image_path} to ${target}"
+        return 0
+    fi
+
+    [ -b "${target}" ] || die "target is not a block device: ${target}"
+
+    log "==> Writing Suderra OS target image to ${target}"
+    xz -dc "${image_path}" | dd of="${target}" bs=4M conv=fsync status=progress
+    sync
+
+    if [ -n "${uncompressed_sha}" ] && [ -n "${uncompressed_size}" ]; then
+        log "==> Verifying written image prefix"
+        actual="$(head -c "${uncompressed_size}" "${target}" | sha256sum | awk '{print $1}')"
+        [ "${actual}" = "${uncompressed_sha}" ] ||
+            die "written target verification failed"
+    else
+        log "WARN: manifest has no uncompressed hash; skipped read-back verification"
+    fi
+
+    mkdir -p "${REPORT_DIR}"
+    {
+        printf 'Suderra OS install complete\n'
+        printf 'target=%s\n' "${target}"
+        printf 'next=power off, remove USB installer, boot target media\n'
+    } > "${REPORT_DIR}/provisioning-info.txt"
+
+    log "==> Install complete"
+    log "Remove the USB installer, then power the device back on."
+    poweroff
+}
+
+COMMAND="--install"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --install)
+            COMMAND="--install"
+            ;;
+        --select-target)
+            COMMAND="--select-target"
+            ;;
+        --verify-payload)
+            COMMAND="--verify-payload"
+            ;;
+        --yes|-y)
+            ASSUME_YES=1
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+case "${COMMAND}" in
+    --select-target)
+        select_target
+        ;;
+    --verify-payload)
+        verify_payload
+        ;;
+    --install)
+        install_image
+        ;;
+esac

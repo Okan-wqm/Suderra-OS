@@ -24,6 +24,24 @@ defconfigs:
     required: false             # Faz 1 sonu zorunlu olur
     description: "ARM SBC (Pi CM4 / Revolution Pi)"
 
+  - name: suderra_aarch64_rpi4_defconfig
+    arch: aarch64
+    qemu_test: false
+    required: true
+    description: "Raspberry Pi 4 / CM4 target image"
+
+  - name: suderra_aarch64_rpi4_usb_installer_defconfig
+    arch: aarch64
+    qemu_test: false
+    required: true
+    description: "USB self-installer for Pi 4 / CM4"
+
+  - name: suderra_aarch64_revpi4_defconfig
+    arch: aarch64
+    qemu_test: false
+    required: true
+    description: "Revolution Pi Connect 4 target image"
+
 variants:
   - name: dev
     description: "Geliştirme: dm-verity disabled, SSH açık"

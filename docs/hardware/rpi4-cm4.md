@@ -50,7 +50,14 @@ CM4 ismi: `CM4<RAM><STORAGE><WiFi>`
 - **EDATEC CM4 Nano** — fanless mini-PC kabin
 - **Custom carrier** — büyük projeler için
 
-Suderra OS Faz 2-A şu an **Pi 4 + CM4 IO + CM4 minimal carrier'larda** test edildi. Custom carrier'lar device tree overlay gerektirir (Faz 2-B).
+Suderra OS treats **Pi 4 / CM4** and **RevPi Connect 4** as separate Buildroot
+targets:
+
+- `suderra_aarch64_rpi4_defconfig`
+- `suderra_aarch64_rpi4_usb_installer_defconfig`
+- `suderra_aarch64_revpi4_defconfig`
+
+Custom carrier'lar device tree overlay gerektirir (Faz 2-B).
 
 ## 2. Bill of Materials (BOM)
 
@@ -145,9 +152,9 @@ CM4 IO Board'da ek olarak:
        ↓
    [systemd]         ← PID 1
        ↓
-   [getty]           ← Login prompt
+   [firstboot]       ← temporary forced-command provision user
        ↓
-   [Edge Agent]      ← (varsa, suderra-installer ile kuruldu)
+   [Edge Agent]      ← tenant manifest ile indirildiğinde çalışır
 ```
 
 **Önemli:** Suderra OS U-Boot kullanmaz — Pi firmware doğrudan Linux yükler. Faz 4'te RAUC A/B slot için U-Boot eklenir.
@@ -224,7 +231,7 @@ cd usbboot/recovery
 make
 sudo ./rpiboot
 # CM4 USB OTG ile bilgisayara bağlanır, eMMC /dev/sdX olarak görünür
-sudo ./scripts/flash-sd.sh /dev/sdX output/.../sdcard.img.xz
+sudo ./scripts/flash-sd.sh /dev/sdX output/.../suderra-rpi4-target.img.xz
 ```
 
 ### 6.2. PXE Network Boot

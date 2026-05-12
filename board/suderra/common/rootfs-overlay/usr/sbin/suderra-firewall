@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if [ -f /var/lib/suderra/.appliance-locked ]; then
+    rules=/etc/nftables.conf
+else
+    rules=/etc/nftables.provisioning.conf
+fi
+
+exec /usr/sbin/nft -f "${rules}"

@@ -30,18 +30,23 @@ Diğer seçenekler:
 **systemd kullanılacak** ama sertleştirilmiş ve minimal konfigürasyonla:
 
 1. **Sadece core systemd** + journald + udev
-2. **DIŞLANAN** systemd bileşenleri (Buildroot Kconfig'de disable):
-   - `systemd-networkd` — yerine custom nftables + minimal config
+2. **AÇIK kalan** systemd bileşenleri:
+   - `systemd-networkd` — appliance için DHCP/network bring-up
+3. **DIŞLANAN** systemd bileşenleri (Buildroot Kconfig'de disable):
    - `systemd-resolved` — yerine doğrudan resolv.conf
    - `systemd-timesyncd` — yerine chrony (daha sertleştirilmiş)
-   - `systemd-logind` — gerek yok (interaktif login yok)
+   - `systemd-logind` — gerek yok (runtime appliance modunda interaktif login yok;
+     provisioning sadece local console + getty ile geçici)
    - `systemd-homed` — gerek yok
    - `systemd-portabled` — gerek yok
    - `systemd-machined` — container yok
    - `systemd-importd` — gerek yok
    - `systemd-userdbd` — gerek yok
-3. **Tek user unit:** `suderra-edge-agent.service`
-4. **Tek target:** `multi-user.target` (graphical/network değil)
+4. **Provisioning geçişi:** ilk kurulumda local console login açık kalır; Edge
+   artifact doğrulanıp kurulunca `suderra-lockdown` getty/root/debug/remote
+   shell yüzeyini kapatır.
+5. **Tek Suderra uygulama servisi:** `suderra-agent.service`
+6. **Tek target:** `multi-user.target` (graphical yok)
 
 ## Alternatives Considered
 
@@ -80,8 +85,11 @@ Diğer seçenekler:
 
 - Buildroot defconfig: `BR2_INIT_SYSTEMD=y`
 - Disable edilen systemd özellikleri için `BR2_PACKAGE_SYSTEMD_*` flag'leri (yukarıdaki liste)
-- `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-edge-agent.service` — sertleştirilmiş unit
-- `systemd-analyze security suderra-edge-agent.service` skoru hedef: < 2.0 (max güvenlik)
+- Default runtime unit:
+  `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service`
+- Opsiyonel embedded build unit:
+  `package/suderra-edge-agent/suderra-agent.service`
+- `systemd-analyze security suderra-agent.service` skoru hedef: < 2.0 (max güvenlik)
 - Boot süresi hedef: 5sn içinde edge-agent active (Faz 2 doğrulama)
 - Boot süresi ölçümü: `systemd-analyze blame`, `systemd-analyze critical-chain`
 

@@ -40,7 +40,37 @@ sudo ./scripts/flash-sd.sh --skip-verify /dev/sdX <image>
 
 ## 2. Platform-Spesifik Flashing
 
-### 2.1. Raspberry Pi 4 / CM4 — SD Card
+### 2.1. Raspberry Pi 4 / CM4 — USB Self-Installer
+
+Factory and field installs use two artifacts:
+
+- `suderra-rpi4-target.img.xz`: the OS image written to SD/eMMC.
+- `suderra-rpi4-usb-installer.img.xz`: the USB-booted installer image.
+
+Build order:
+
+```bash
+./scripts/gen-dev-keys.sh
+export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${HOME}/.suderra-keys/dev/installer-payload.key"
+export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${HOME}/.suderra-keys/dev/installer-payload.pub.pem"
+
+./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
+export SUDERRA_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+./scripts/build-in-docker.sh suderra_aarch64_rpi4_usb_installer_defconfig
+```
+
+Write the USB installer to a USB stick, boot the Pi/CM4 from it, confirm the
+displayed target, then remove the USB stick after poweroff.
+
+Target selection is fail-closed:
+
+- the installer boot disk is excluded
+- eMMC is preferred over SD
+- one SD is accepted if no eMMC exists
+- multiple equal-priority targets stop the install
+- USB targets are refused unless a factory flag explicitly allows them
+
+### 2.2. Raspberry Pi 4 / CM4 — Direct SD Card
 
 ```bash
 # SD card'ı bul (yeni takılı USB SD reader)
@@ -48,14 +78,14 @@ lsblk
 
 # Yaz
 sudo ./scripts/flash-sd.sh /dev/sdb \
-  output/suderra_aarch64_rpi4_defconfig/images/sdcard.img.xz
+  output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
 ```
 
 **Image layout (SD card):**
 - Partition 1 (vfat, 256MB, bootable): `/boot` — Pi firmware + kernel + DTB
 - Partition 2 (ext4, ~512MB): `/` — Suderra OS root
 
-### 2.2. CM4 eMMC — USB OTG
+### 2.3. CM4 eMMC — USB OTG
 
 CM4 modülünün eMMC'sine doğrudan yazma (Pi 4 ile yapılır):
 
@@ -69,7 +99,7 @@ sudo ./rpiboot
 # CM4 USB OTG ile bağlandı, eMMC /dev/sdX olarak görünür
 
 # Suderra OS image'i yaz
-sudo /path/to/Suderra-OS/scripts/flash-sd.sh /dev/sdX sdcard.img.xz
+sudo /path/to/Suderra-OS/scripts/flash-sd.sh /dev/sdX suderra-rpi4-target.img.xz
 ```
 
 CM4 IO Board üzerinde:
@@ -78,7 +108,21 @@ CM4 IO Board üzerinde:
 3. CM4'e güç ver
 4. `rpiboot` çalıştır
 
-### 2.3. Endüstriyel x86 PC — USB Stick
+### 2.4. Revolution Pi Connect 4
+
+RevPi Connect 4 is a separate target:
+
+```bash
+./scripts/build-in-docker.sh suderra_aarch64_revpi4_defconfig
+sudo ./scripts/flash-sd.sh /dev/sdX \
+  output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz
+```
+
+USB-A self-install is supported when the device boot order allows USB boot.
+The official fallback remains micro-USB/rpiboot, where RevPi eMMC appears as
+`/dev/sdX` on the host and is flashed with the same target image.
+
+### 2.5. Endüstriyel x86 PC — USB Stick
 
 ```bash
 # 8+ GB USB stick (USB 3.0 önerilen)
@@ -97,7 +141,7 @@ sudo ./scripts/flash-sd.sh /dev/sdc \
 - USB boot: Enabled
 - Boot order: USB → SSD/eMMC
 
-### 2.4. PXE/iPXE Network Boot (Faz 4+)
+### 2.6. PXE/iPXE Network Boot (Faz 4+)
 
 Toplu deployment için. Şu an dokümante edilmedi — Faz 4'te:
 
@@ -106,7 +150,7 @@ Toplu deployment için. Şu an dokümante edilmedi — Faz 4'te:
 [Client PXE] → iPXE → HTTP boot → Suderra OS netinstall
 ```
 
-### 2.5. Factory Programming (Faz 5+)
+### 2.7. Factory Programming (Faz 5+)
 
 Üretim hattında otomatik:
 - Robot SD insertion
@@ -129,30 +173,19 @@ sync && sudo eject /dev/sdb
 #    - Seri konsol: USB-Serial adapter (GPIO14/15)
 screen /dev/ttyUSB0 115200
 
-# 4. Login prompt:
-#    "Suderra OS — Industrial Edge (Raspberry Pi 4 / CM4)"
-#    "suderra-rpi4 login: _"
-
-# 5. Kimlik doğrula (DEV variant):
-suderra-rpi4 login: suderra
-Password: suderra
-
-# 6. Sistem kontrolü:
-$ cat /etc/os-release         # VERSION_ID
-$ uname -r                    # 6.12.6
-$ systemctl is-system-running # running veya degraded (Edge Agent yoksa normal)
-$ journalctl -b 0 -p err      # boot error'ları
-$ ip addr                     # network
+# 4. Firstboot prints the temporary provision user password on console.
+# 5. Tenant provisioning connects as provision@<device-ip>.
+# 6. root SSH must fail; provision SSH runs only the forced command.
 ```
 
 ### 3.2. Hash mismatch debugging
 
 ```bash
 # Image hash hesapla
-sha256sum sdcard.img.xz
+sha256sum suderra-rpi4-target.img.xz
 
 # Beklenen hash (release'tan):
-cat sdcard.img.xz.sha256
+cat suderra-rpi4-target.img.xz.sha256
 
 # Eşleşmiyorsa: indirme bozuk, yeniden indir
 wget -c <url>  # resume download
@@ -227,7 +260,7 @@ Aynı image 100+ cihaza yazılır:
 # 10x SD card hub kullanarak paralel
 # veya factory programming station
 for sd in /dev/sd{b..k}; do
-    sudo ./scripts/flash-sd.sh --force "${sd}" sdcard.img.xz &
+    sudo ./scripts/flash-sd.sh --force "${sd}" suderra-rpi4-target.img.xz &
 done
 wait
 ```

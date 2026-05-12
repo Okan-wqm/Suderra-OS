@@ -1,6 +1,7 @@
 config BR2_PACKAGE_SUDERRA_EDGE_AGENT
-	bool "suderra-edge-agent"
-	depends on BR2_PACKAGE_HOST_RUSTC_ARCH_SUPPORTS
+	bool "suderra-agent"
+	depends on BR2_INIT_SYSTEMD
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
 	depends on BR2_TOOLCHAIN_HAS_THREADS
 	select BR2_PACKAGE_HOST_RUSTC
 	help
@@ -14,3 +15,6 @@ config BR2_PACKAGE_SUDERRA_EDGE_AGENT
 	  Kaynak repo: github.com/Okan-wqm/aquaculture_platform/sens-api-gateway
 
 	  https://github.com/Okan-wqm/aquaculture_platform
+
+comment "suderra-agent needs systemd, threads, and a Rust-supported target"
+	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

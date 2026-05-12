@@ -32,6 +32,14 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/etc/dm-verity
 	$(INSTALL) -m 0644 $(SUDERRA_KEYS_DIR)/verity-signing.crt \
 		$(TARGET_DIR)/etc/dm-verity/pubkey.pem
+	if [ -f "$(SUDERRA_KEYS_DIR)/installer-payload.pub.pem" ]; then \
+		$(INSTALL) -D -m 0644 $(SUDERRA_KEYS_DIR)/installer-payload.pub.pem \
+			$(TARGET_DIR)/etc/suderra/os-installer-payload.pub.pem; \
+	fi
+	if [ -f "$(SUDERRA_KEYS_DIR)/edge-artifact.pub.pem" ]; then \
+		$(INSTALL) -D -m 0644 $(SUDERRA_KEYS_DIR)/edge-artifact.pub.pem \
+			$(TARGET_DIR)/etc/suderra/edge-artifact.pub.pem; \
+	fi
 endef
 
 $(eval $(generic-package))

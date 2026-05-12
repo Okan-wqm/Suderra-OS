@@ -31,6 +31,7 @@ docs/
 ### Güvenlik
 
 - [threat-model.md](security/threat-model.md) — STRIDE tehdit modeli
+- [field-appliance-hardening.md](security/field-appliance-hardening.md) — sahada agent-only kilitli appliance güvenlik modeli
 - [kernel-hardening.md](security/kernel-hardening.md) — hangi CONFIG'ler açık/kapalı, neden
 - [sbom-process.md](security/sbom-process.md) — SBOM (CycloneDX) üretim akışı
 - [key-management.md](security/key-management.md) — anahtar lifecycle, HSM roadmap
@@ -46,6 +47,7 @@ docs/
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
 - [ota.md](operations/ota.md) — RAUC bundle oluştur, sun, rollback
+- [edge-agent-update.md](operations/edge-agent-update.md) — `suderra-agent` pin/hash/config güncelleme akışı
 - [verify-release.md](operations/verify-release.md) — cosign + SLSA + SBOM ile release doğrulama
 - [debug.md](operations/debug.md) — serial console, journalctl, ssh-yok durum
 - [factory-reset.md](operations/factory-reset.md) — fabrika ayarlarına dönüş

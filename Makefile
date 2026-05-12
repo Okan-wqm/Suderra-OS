@@ -37,6 +37,9 @@ help:
 	@echo "  build-qemu         QEMU x86_64 imajı (geliştirme/CI)"
 	@echo "  build-x86          x86_64 endüstriyel imaj"
 	@echo "  build-arm          aarch64 imaj (Pi CM4)"
+	@echo "  build-rpi4         Raspberry Pi 4/CM4 target imajı"
+	@echo "  build-rpi4-installer USB self-installer imajı"
+	@echo "  build-revpi4       Revolution Pi Connect 4 target imajı"
 	@echo ""
 	@echo "Çalıştırma:"
 	@echo "  qemu               Son QEMU imajını boot et"
@@ -68,6 +71,18 @@ build-x86:
 .PHONY: build-arm
 build-arm:
 	@$(MAKE) _build DEFCONFIG=suderra_aarch64_defconfig
+
+.PHONY: build-rpi4
+build-rpi4:
+	@$(MAKE) _build DEFCONFIG=suderra_aarch64_rpi4_defconfig
+
+.PHONY: build-rpi4-installer
+build-rpi4-installer:
+	@$(MAKE) _build DEFCONFIG=suderra_aarch64_rpi4_usb_installer_defconfig
+
+.PHONY: build-revpi4
+build-revpi4:
+	@$(MAKE) _build DEFCONFIG=suderra_aarch64_revpi4_defconfig
 
 .PHONY: _build
 _build:

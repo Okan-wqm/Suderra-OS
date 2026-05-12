@@ -87,8 +87,12 @@ QEMU layout production'dan ayrı çünkü:
 
 `board/suderra/common/users.txt` Buildroot'un user/group tablosu:
 
-- `suderra-edge` (UID 200) — Edge Agent runtime user, login disabled
-- Root şifresi DEV variant'ta `suderra` (mkpasswd ile production'da değişir)
+- `suderra` (UID 200) — Edge Agent runtime user, login disabled
+- `provision` (UID 201) — firstboot tarafından tek kullanımlık parola verilen
+  forced-command provisioning user. Genel shell vermez.
+- Root password login kapalıdır. `suderra-lockdown` root/provision password
+  login'i, getty/debug shell'i, dropbear/SSH unit'lerini ve provisioning
+  firewall kuralını kapatır.
 
 Format: `username uid group gid password home shell groups comment`
 (Boşluk yerine `_` kullanılmalı, Buildroot satırı space-split eder.)
