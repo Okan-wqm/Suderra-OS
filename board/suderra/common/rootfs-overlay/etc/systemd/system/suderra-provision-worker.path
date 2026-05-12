@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Suderra OS provisioning requests
+Documentation=https://github.com/Okan-wqm/suderra-os
+
+[Path]
+PathModified=/var/lib/suderra/provision/request
+MakeDirectory=true
+
+[Install]
+WantedBy=multi-user.target

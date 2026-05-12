@@ -28,7 +28,10 @@ fn main() -> Result<()> {
         .json()
         .init();
 
-    info!("suderra-firstboot v{} başlatılıyor", env!("CARGO_PKG_VERSION"));
+    info!(
+        "suderra-firstboot v{} başlatılıyor",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // systemd'ye "başlatma sürüyor" sinyali (Type=notify)
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);

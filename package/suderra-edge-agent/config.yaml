@@ -1,0 +1,12 @@
+device_id: "00000000-0000-0000-0000-000000000000"
+device_code: "UNACTIVATED"
+api_url: "https://provisioning.example.com"
+mqtt:
+  broker: null
+  port: 8883
+  username: null
+  password: null
+  tls:
+    enabled: true
+    verify_hostname: true
+  topics: {}

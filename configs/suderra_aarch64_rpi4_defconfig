@@ -1,0 +1,175 @@
+#
+# Suderra OS — Raspberry Pi 4 / CM4 defconfig (aarch64)
+#
+# Hedef donanım: Raspberry Pi 4 Model B, Compute Module 4 (CM4),
+#                CM4 IO Board, CM4-based custom carrier'lar.
+#
+# SoC: Broadcom BCM2711 (4x Cortex-A72 @ 1.5 GHz, 1/2/4/8 GB LPDDR4)
+#
+# Boot zinciri:
+#   1. ROM bootloader (Pi SPI EEPROM)
+#   2. start4.elf (close-source GPU firmware)
+#   3. config.txt -> kernel=Image
+#   4. cmdline.txt -> kernel command line
+#   5. Linux 6.12 LTS (Suderra hardening fragment)
+#   6. systemd -> Edge Agent
+#
+# Boyut hedefleri (uncompressed):
+#   - Boot partition: ~80 MB (firmware blobs + kernel + DTB)
+#   - Rootfs:        ~80-120 MB (Faz 1), ~50 MB (Faz 3 sonu)
+#
+# Build:
+#   ./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
+#
+# Flash:
+#   sudo ./scripts/flash-sd.sh /dev/sdX \
+#     output/suderra_aarch64_rpi4_defconfig/images/sdcard.img.xz
+#
+
+# ============================================================================
+# Architecture — Cortex-A72 (BCM2711)
+# ============================================================================
+BR2_aarch64=y
+BR2_cortex_a72=y
+BR2_ARM_FPU_VFPV4=y
+
+# ============================================================================
+# Toolchain — glibc dynamic, required by Buildroot systemd
+# ============================================================================
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_LIBC="glibc"
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_KERNEL_HEADERS_6_11=y
+BR2_BINUTILS_VERSION_2_43_X=y
+BR2_GCC_VERSION_13_X=y
+BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
+BR2_TOOLCHAIN_BUILDROOT_USE_SSP=y
+
+# ============================================================================
+# Linux Kernel — Raspberry Pi downstream BCM2711 kernel + Suderra fragment
+# ============================================================================
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,576cc10e1ed50a9eacffc7a05c796051d7343ea4)/linux-576cc10e1ed50a9eacffc7a05c796051d7343ea4.tar.gz"
+BR2_LINUX_KERNEL_DEFCONFIG="bcm2711"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/linux-rpi4.config"
+BR2_LINUX_KERNEL_IMAGE=y
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+
+# Device trees — Pi 4 B, CM4 base, CM4 IO Board
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-cm4 broadcom/bcm2711-rpi-cm4-io"
+
+# ============================================================================
+# Raspberry Pi Firmware (close-source GPU/boot blobs — Broadcom)
+# ============================================================================
+#
+# Pi 4 boot zinciri close-source bir firmware (start4.elf) gerektirir.
+# Bu firmware Broadcom tarafından sağlanır ve Buildroot bunu indirir.
+# Açık kaynak değildir ancak imzalı ve doğrulanabilirdir.
+#
+# Suderra OS bu firmware'i değiştirmez — yalnızca config.txt + cmdline.txt'yi
+# kontrol eder.
+
+BR2_PACKAGE_RPI_FIRMWARE=y
+BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI4=y
+BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/config.txt"
+BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/cmdline.txt"
+
+# ============================================================================
+# Init System — systemd (Edge Agent için zorunlu)
+# ============================================================================
+BR2_INIT_SYSTEMD=y
+# BR2_PACKAGE_SYSTEMD_LOGIND is not set
+BR2_PACKAGE_SYSTEMD_NETWORKD=y
+# BR2_PACKAGE_SYSTEMD_TIMESYNCD is not set
+# BR2_PACKAGE_SYSTEMD_HOSTNAMED is not set
+
+# ============================================================================
+# Filesystem — Faz 1: ext4, Faz 3: erofs + dm-verity
+# ============================================================================
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_GEN=4
+BR2_TARGET_ROOTFS_EXT2_LABEL="suderra-root"
+BR2_TARGET_ROOTFS_EXT2_BLOCKS=0
+BR2_TARGET_ROOTFS_EXT2_INODES=0
+BR2_TARGET_ROOTFS_EXT2_RESBLKS=1
+
+# ============================================================================
+# Image üretimi (genimage)
+# ============================================================================
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_MTOOLS=y
+
+# ============================================================================
+# Rootfs overlay + post-build / post-image scripts
+# ============================================================================
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
+BR2_ROOTFS_POST_SCRIPT_ARGS="suderra_aarch64_rpi4"
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users.txt"
+
+# ============================================================================
+# Network tools (Faz 2'de Edge Agent için genişler)
+# ============================================================================
+BR2_PACKAGE_IPROUTE2=y
+BR2_PACKAGE_DBUS=y
+BR2_PACKAGE_NFTABLES=y
+BR2_PACKAGE_OPENSSL=y
+BR2_PACKAGE_LIBOPENSSL=y
+BR2_PACKAGE_LIBOPENSSL_BIN=y
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_CURL=y
+BR2_PACKAGE_LIBCURL_OPENSSL=y
+BR2_PACKAGE_CA_CERTIFICATES=y
+BR2_PACKAGE_DROPBEAR=y
+# BR2_PACKAGE_DROPBEAR_CLIENT is not set
+BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
+BR2_PACKAGE_UTIL_LINUX=y
+BR2_PACKAGE_UTIL_LINUX_BINARIES=y
+
+# ============================================================================
+# Time sync — chrony (NTP) + PTP (Faz 2+'da endüstriyel zaman)
+# ============================================================================
+BR2_PACKAGE_CHRONY=y
+
+# ============================================================================
+# Donanım yardımcı araçları
+# ============================================================================
+# I2C/SPI debug ve test için
+BR2_PACKAGE_I2C_TOOLS=y
+
+# Hardware watchdog daemon (busybox watchdog yerine systemd-watchdog kullanılır)
+# BR2_PACKAGE_WATCHDOG=n
+
+# GPIO test (Edge Agent geliştirici için)
+# BR2_PACKAGE_LIBGPIOD=y
+# BR2_PACKAGE_LIBGPIOD_TOOLS=y
+
+# ============================================================================
+# Suderra custom paketleri — Faz 2+'da aktif olur
+# ============================================================================
+# BR2_PACKAGE_SUDERRA_INSTALLER=y      # Faz 2-D
+# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
+# BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
+# BR2_PACKAGE_SUDERRA_KEYS=y           # Faz 3 (signing keys)
+
+# ============================================================================
+# Sistem kimliği
+# ============================================================================
+BR2_TARGET_GENERIC_HOSTNAME="suderra-rpi4"
+BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
+# BR2_TARGET_ENABLE_ROOT_LOGIN is not set
+BR2_TARGET_GENERIC_GETTY=y
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+
+# ============================================================================
+# Reproducible build
+# ============================================================================
+BR2_REPRODUCIBLE=y
+BR2_PER_PACKAGE_DIRECTORIES=y

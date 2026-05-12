@@ -25,7 +25,10 @@ fn main() -> Result<()> {
         .json()
         .init();
 
-    info!("suderra-factory-reset v{} başlatılıyor", env!("CARGO_PKG_VERSION"));
+    info!(
+        "suderra-factory-reset v{} başlatılıyor",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // TODO Faz 5:
     // - GPIO line poll (gpiod crate)

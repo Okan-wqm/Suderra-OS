@@ -1,0 +1,90 @@
+#!/bin/sh
+set -eu
+
+status=0
+
+ok() {
+    echo "OK: $1"
+}
+
+fail() {
+    echo "FAIL: $1"
+    status=1
+}
+
+check_user_locked() {
+    user="$1"
+    while IFS=: read -r name password _rest; do
+        if [ "${name}" = "${user}" ]; then
+            case "${password}" in
+                !*) return 0 ;;
+                *) return 1 ;;
+            esac
+        fi
+    done < /etc/shadow
+    return 1
+}
+
+check_masked() {
+    unit="$1"
+    [ -L "/etc/systemd/system/${unit}" ] &&
+        [ "$(readlink "/etc/systemd/system/${unit}")" = "/dev/null" ]
+}
+
+if [ -f /var/lib/suderra/.appliance-locked ]; then
+    ok "appliance lock marker exists"
+else
+    fail "appliance lock marker missing"
+fi
+
+if check_user_locked root; then
+    ok "root password login locked"
+else
+    fail "root password login is not locked"
+fi
+
+if check_user_locked provision; then
+    ok "provision password login locked"
+else
+    fail "provision password login is not locked"
+fi
+
+for unit in \
+    getty@.service \
+    serial-getty@.service \
+    debug-shell.service \
+    rescue.service \
+    emergency.service \
+    ssh.service \
+    sshd.service \
+    dropbear.service \
+    systemd-logind.service
+do
+    if check_masked "${unit}"; then
+        ok "${unit} masked"
+    else
+        fail "${unit} not masked"
+    fi
+done
+
+if [ -x /opt/suderra/edge/current/suderra-agent ]; then
+    ok "suderra-agent binary installed"
+else
+    fail "suderra-agent binary missing"
+fi
+
+if [ -s /var/lib/suderra/config/config.yaml ]; then
+    ok "mutable agent config exists"
+else
+    fail "mutable agent config missing"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-enabled suderra-agent.service >/dev/null 2>&1; then
+        ok "suderra-agent.service enabled"
+    else
+        fail "suderra-agent.service not enabled"
+    fi
+fi
+
+exit "${status}"

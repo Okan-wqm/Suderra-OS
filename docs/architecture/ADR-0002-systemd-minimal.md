@@ -19,6 +19,7 @@ Init sistemi seçimi, OS'in temel yapı taşıdır. Suderra Edge Agent (Rust uyg
 Önceki master planda "systemd yerine finit veya s6" yazıyordu. Ancak bu, uygulamanın **temelden refactor edilmesini** gerektirir (sd-notify, hardening directives, journald log akışı, vb. — hepsi yeniden yazılır).
 
 Diğer seçenekler:
+
 - s6 / s6-rc — küçük, modüler, ama sd-notify yok
 - finit — küçük, embedded'a yönelik, ama Type=notify ekosistemi yok
 - BusyBox init + custom shell — primitive, watchdog/hardening manuel
@@ -29,18 +30,23 @@ Diğer seçenekler:
 **systemd kullanılacak** ama sertleştirilmiş ve minimal konfigürasyonla:
 
 1. **Sadece core systemd** + journald + udev
-2. **DIŞLANAN** systemd bileşenleri (Buildroot Kconfig'de disable):
-   - `systemd-networkd` — yerine custom nftables + minimal config
+2. **AÇIK kalan** systemd bileşenleri:
+   - `systemd-networkd` — appliance için DHCP/network bring-up
+3. **DIŞLANAN** systemd bileşenleri (Buildroot Kconfig'de disable):
    - `systemd-resolved` — yerine doğrudan resolv.conf
    - `systemd-timesyncd` — yerine chrony (daha sertleştirilmiş)
-   - `systemd-logind` — gerek yok (interaktif login yok)
+   - `systemd-logind` — gerek yok (runtime appliance modunda interaktif login yok;
+     provisioning sadece local console + getty ile geçici)
    - `systemd-homed` — gerek yok
    - `systemd-portabled` — gerek yok
    - `systemd-machined` — container yok
    - `systemd-importd` — gerek yok
    - `systemd-userdbd` — gerek yok
-3. **Tek user unit:** `suderra-edge-agent.service`
-4. **Tek target:** `multi-user.target` (graphical/network değil)
+4. **Provisioning geçişi:** ilk kurulumda local console login açık kalır; Edge
+   artifact doğrulanıp kurulunca `suderra-lockdown` getty/root/debug/remote
+   shell yüzeyini kapatır.
+5. **Tek Suderra uygulama servisi:** `suderra-agent.service`
+6. **Tek target:** `multi-user.target` (graphical yok)
 
 ## Alternatives Considered
 
@@ -55,6 +61,7 @@ Diğer seçenekler:
 ## Consequences
 
 ### Positive
+
 - Mevcut uygulama **değiştirmeden** çalışır — Faz 2 süresi 2-3 ay kısalır
 - systemd hardening directives güçlü (ProtectSystem, NoNewPrivileges, vb.)
 - `systemd-analyze security` ile her unit'in skoru ölçülebilir
@@ -63,12 +70,14 @@ Diğer seçenekler:
 - Endüstriyel ekosistemde yaygın (debug bilgisi bol)
 
 ### Negative
+
 - systemd "küçük" değil — minimal kurulumda bile 8-15MB
 - systemd CVE'leri (CVE-2022-3821 vb.) — patch disiplini şart
 - Geçmişte 38xx CVE → kernel'le birlikte takip
 - Boot süresi s6'ya göre 2-3x yavaş (1-2 sn fark)
 
 ### Neutral / Trade-offs
+
 - "systemd-free" pazarlama hikayesinden vazgeçildi → "hardened minimal systemd" hikayesine geçildi
 - Eğer ileride app refactor edilirse s6'ya geçiş düşünülebilir, ama bu büyük bir karar (yeni ADR ile)
 
@@ -76,8 +85,11 @@ Diğer seçenekler:
 
 - Buildroot defconfig: `BR2_INIT_SYSTEMD=y`
 - Disable edilen systemd özellikleri için `BR2_PACKAGE_SYSTEMD_*` flag'leri (yukarıdaki liste)
-- `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-edge-agent.service` — sertleştirilmiş unit
-- `systemd-analyze security suderra-edge-agent.service` skoru hedef: < 2.0 (max güvenlik)
+- Default runtime unit:
+  `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service`
+- Opsiyonel embedded build unit:
+  `package/suderra-edge-agent/suderra-agent.service`
+- `systemd-analyze security suderra-agent.service` skoru hedef: < 2.0 (max güvenlik)
 - Boot süresi hedef: 5sn içinde edge-agent active (Faz 2 doğrulama)
 - Boot süresi ölçümü: `systemd-analyze blame`, `systemd-analyze critical-chain`
 

@@ -1,6 +1,6 @@
 config BR2_PACKAGE_SUDERRA_KEYS
 	bool "suderra-keys"
-	default y
+	default n
 	help
 	  Suderra OS imajı için gerekli public key/sertifika'ları
 	  hedef rootfs'e kurar.

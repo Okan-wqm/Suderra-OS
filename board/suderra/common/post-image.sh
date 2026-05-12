@@ -19,8 +19,12 @@ set -euo pipefail
 IFS=$'\n\t'
 
 BINARIES_DIR="${1:?BINARIES_DIR not set}"
-# BR2_ROOTFS_POST_SCRIPT_ARGS'tan gelen defconfig adı (suderra_qemu_x86_64,
-# suderra_x86_64, suderra_aarch64). Layout seçimi için kullanılır.
+# BR2_ROOTFS_POST_SCRIPT_ARGS'tan gelen defconfig adı:
+#   - suderra_qemu_x86_64        -> QEMU disk image (test)
+#   - suderra_x86_64             -> Endüstriyel x86 PC (UEFI + GRUB)
+#   - suderra_aarch64            -> Generic aarch64 (template)
+#   - suderra_aarch64_rpi4       -> Raspberry Pi 4 / CM4 (SD card)
+#   - suderra_aarch64_revpi      -> Revolution Pi (Faz 2-B)
 DEFCONFIG_NAME="${2:-suderra_x86_64}"
 BR2_EXTERNAL_SUDERRA_PATH="${BR2_EXTERNAL_SUDERRA_PATH:?BR2_EXTERNAL_SUDERRA_PATH not set}"
 
@@ -38,17 +42,77 @@ if [ -z "${ARCH}" ]; then
 fi
 echo "    Arch: ${ARCH}"
 
-# 1. genimage config seçimi — QEMU için tek-rootfs, prod için A/B+/data
+# 1. genimage config seçimi — defconfig'e göre dispatch
 GENIMAGE_CFG=""
+IMAGE_OUTPUT_NAME=""
+
+prepare_rpi4_installer_payload() {
+    default_target="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz"
+    target_image="${SUDERRA_TARGET_IMAGE_XZ:-${default_target}}"
+    sign_key="${SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY:-}"
+
+    [ -f "${target_image}" ] || {
+        echo "ERROR: target payload image missing: ${target_image}"
+        echo "Build suderra_aarch64_rpi4_defconfig first or set SUDERRA_TARGET_IMAGE_XZ."
+        exit 1
+    }
+    [ -n "${sign_key}" ] && [ -f "${sign_key}" ] || {
+        echo "ERROR: SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY must point to the manifest signing key."
+        exit 1
+    }
+
+    echo "==> USB installer payload hazırlanıyor"
+    cp -f "${target_image}" "${BINARIES_DIR}/suderra-rpi4-target.img.xz"
+
+    compressed_sha="$(sha256sum "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | awk '{print $1}')"
+    compressed_size="$(wc -c "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | awk '{print $1}')"
+    uncompressed_sha="$(xz -dc "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | sha256sum | awk '{print $1}')"
+    uncompressed_size="$(xz -dc "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | wc -c | awk '{print $1}')"
+
+    cat > "${BINARIES_DIR}/manifest.json" <<EOF
+{
+  "version": "${SUDERRA_VERSION:-v0.1.0-alpha}",
+  "board": "rpi4-cm4",
+  "image": "suderra-rpi4-target.img.xz",
+  "sha256": "${compressed_sha}",
+  "size_bytes": ${compressed_size},
+  "uncompressed_sha256": "${uncompressed_sha}",
+  "uncompressed_size_bytes": ${uncompressed_size},
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+
+    openssl dgst -sha256 -sign "${sign_key}" \
+        -out "${BINARIES_DIR}/manifest.sig" \
+        "${BINARIES_DIR}/manifest.json"
+}
+
 case "${DEFCONFIG_NAME}" in
     suderra_qemu_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage-qemu.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
         ;;
     suderra_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
+        ;;
+    suderra_aarch64_rpi4*)
+        if [ "${DEFCONFIG_NAME}" = "suderra_aarch64_rpi4_usb_installer" ]; then
+            prepare_rpi4_installer_payload
+            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4-usb-installer/genimage.cfg"
+            IMAGE_OUTPUT_NAME="suderra-rpi4-usb-installer.img"
+        else
+            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/genimage.cfg"
+            IMAGE_OUTPUT_NAME="suderra-rpi4-target.img"
+        fi
+        ;;
+    suderra_aarch64_revpi*)
+        GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi4/genimage.cfg"
+        IMAGE_OUTPUT_NAME="suderra-revpi4-target.img"
         ;;
     suderra_aarch64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64/genimage.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
         ;;
     *)
         echo "ERROR: Unsupported defconfig: ${DEFCONFIG_NAME}"
@@ -73,8 +137,26 @@ genimage \
     --outputpath "${BINARIES_DIR}" \
     --tmppath "${GENIMAGE_TMP}"
 
-echo "==> disk.img üretildi: ${BINARIES_DIR}/disk.img"
-ls -la "${BINARIES_DIR}/disk.img" 2>/dev/null || true
+IMAGE_PATH="${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}"
+echo "==> ${IMAGE_OUTPUT_NAME} üretildi: ${IMAGE_PATH}"
+ls -la "${IMAGE_PATH}" 2>/dev/null || true
+
+# Release artifact: xz sıkıştırma + SHA256 manifest (CI'da release.yml kullanır)
+if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ]; then
+    echo "==> ${IMAGE_OUTPUT_NAME}.xz üretiliyor"
+    xz -k -T0 -9 -f "${IMAGE_PATH}"
+
+    {
+        echo "# Suderra OS — release manifest"
+        echo "# Build: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# Defconfig: ${DEFCONFIG_NAME}"
+        echo "# Arch: ${ARCH}"
+        echo ""
+        echo "# SHA256 checksums:"
+        ( cd "${BINARIES_DIR}" && sha256sum "${IMAGE_OUTPUT_NAME}" "${IMAGE_OUTPUT_NAME}.xz" )
+    } > "${BINARIES_DIR}/MANIFEST.txt"
+    cat "${BINARIES_DIR}/MANIFEST.txt"
+fi
 
 # 2-4. Faz 3 — dm-verity + imzalama
 # TODO Faz 3:

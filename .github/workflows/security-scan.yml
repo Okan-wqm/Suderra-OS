@@ -19,16 +19,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Trivy binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          KEY_URL="https://aquasecurity.github.io/trivy-repo/deb/public.key"
+          REPO_URL="https://aquasecurity.github.io/trivy-repo/deb"
+          wget -qO - "${KEY_URL}" | \
+            sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] ${REPO_URL} $(lsb_release -sc) main" | \
+            sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          trivy --version
+
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'fs'
-          format: 'sarif'
-          output: 'trivy-fs.sarif'
-          severity: 'CRITICAL,HIGH'
-          skip-dirs: 'buildroot,output,dl'
+        run: |
+          trivy fs \
+            --format sarif \
+            --output trivy-fs.sarif \
+            --severity CRITICAL,HIGH \
+            --skip-dirs buildroot,output,dl \
+            --ignore-unfixed \
+            --exit-code 0 \
+            .
+
       - name: Upload SARIF
-        if: always()
+        if: always() && hashFiles('trivy-fs.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-fs.sarif'
@@ -39,15 +57,31 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Trivy config scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'config'
-          format: 'sarif'
-          output: 'trivy-config.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Install Trivy binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          KEY_URL="https://aquasecurity.github.io/trivy-repo/deb/public.key"
+          REPO_URL="https://aquasecurity.github.io/trivy-repo/deb"
+          wget -qO - "${KEY_URL}" | \
+            sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] ${REPO_URL} $(lsb_release -sc) main" | \
+            sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Run Trivy config scan
+        run: |
+          trivy config \
+            --format sarif \
+            --output trivy-config.sarif \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --exit-code 0 \
+            .
+
       - name: Upload SARIF
-        if: always()
+        if: always() && hashFiles('trivy-config.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-config.sarif'

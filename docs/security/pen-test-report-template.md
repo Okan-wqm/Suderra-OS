@@ -43,6 +43,7 @@
 - [ ] White-box (kaynak kod erişimi)
 
 Çerçeve:
+
 - OWASP Embedded Application Security
 - OWASP IoT Top 10
 - MITRE ATT&CK (Embedded/ICS matrix)
@@ -75,9 +76,11 @@ Her bulgu için:
   1. ...
   2. ...
 - **Kanıt (screenshot / log):**
+
   ```
   ...
   ```
+
 - **Etki:** ...
 - **Önerilen düzeltme:** ...
 - **Geçici workaround:** ...
@@ -115,6 +118,7 @@ Her bulgu için:
 ## Sonuç
 
 Suderra OS `vX.Y.Z` için pen-test:
+
 - [ ] PASS — Üretim için onaylanmaz (kritik/yüksek bulgu yok)
 - [ ] PASS WITH CONDITIONS — Belirtilen düzeltmeler sonrası onay
 - [ ] FAIL — Kritik/yüksek bulgular düzeltilmeli

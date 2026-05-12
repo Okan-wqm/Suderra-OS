@@ -1,0 +1,5 @@
+# Provisioning-only SSH.
+#
+# Root SSH is always disabled. The temporary provision user is constrained by
+# its login shell (/usr/sbin/suderra-provision) and removed by lockdown.
+DROPBEAR_ARGS="-w -j -k -I 600 -K 60"

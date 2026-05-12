@@ -117,6 +117,7 @@ Detay: [../security/key-management.md](../security/key-management.md)
 ## Test Senaryoları (Faz 3)
 
 `tests/security/verity-tamper-test.sh` (oluşturulacak):
+
 1. Imaj build, normal boot
 2. rootfs.A imajına 1 byte değiştir
 3. Reboot

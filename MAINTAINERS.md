@@ -13,6 +13,7 @@ Aktif maintainer'lar:
 ## Sorumluluk Alanları
 
 Mevcut faz: tek maintainer. Multi-maintainer'a geçince alan başına COD:
+
 - **Kernel + hardening:** TBD
 - **Boot zinciri (UEFI, dm-verity, RAUC):** TBD
 - **OTA + RAUC:** TBD

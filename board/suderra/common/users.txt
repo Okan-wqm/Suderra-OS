@@ -7,8 +7,8 @@
 #
 # Buildroot tarafından `BR2_ROOTFS_USERS_TABLES` ile okunur.
 #
-# DEV variant: root login açık (suderra/suderra şifresi)
-# PROD variant: tüm interactive login disabled (firstboot OOB key ile)
+# Provisioning image: root local console login defconfig ile geçici açılır.
+# Runtime appliance: suderra-lockdown root login/getty/debug/remote shell kapatır.
 #
 # UID range:
 #   1-99      sistem (Buildroot default)
@@ -17,6 +17,10 @@
 #
 # NOT: $6$ = SHA-512 hash. mkpasswd -m sha-512 -S "saltsuderra" "suderra"
 
-# Edge Agent runtime user — interactive login disabled, sadece systemd unit kullanır
-# UID 200 sabit (reproducible) — Buildroot'un auto-assign (-1) yerine
-suderra-edge 200 suderra-edge 200 ! /var/lib/suderra /sbin/nologin - Suderra_Edge_Agent_runtime
+# Edge Agent runtime user — interactive login disabled, sadece systemd unit kullanır.
+# UID 200 sabit (reproducible) — Buildroot'un auto-assign (-1) yerine.
+suderra 200 suderra 200 ! /var/lib/suderra /sbin/nologin - Suderra_Edge_Agent_runtime
+
+# Temporary provisioning user — firstboot assigns a one-time password, and the
+# login shell is a forced provisioning command instead of a general shell.
+provision 201 provision 201 ! /var/lib/suderra/provision /usr/sbin/suderra-provision - Suderra_OS_provisioning_user

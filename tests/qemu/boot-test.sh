@@ -65,15 +65,15 @@ echo
 LOG=$(mktemp -t suderra-boot-test-XXXXXX.log)
 trap 'rm -f "${LOG}"' EXIT
 
-# QEMU komut argümanları
+# QEMU args — quoted because commas are QEMU key=value syntax (SC2054).
 QEMU_ARGS=(
-    -machine q35
-    -m 256M
-    -smp 2
-    -cpu max,+pdpe1gb
+    -machine "q35"
+    -m "256M"
+    -smp "2"
+    -cpu "max,+pdpe1gb"
     -drive "file=${DISK_IMG},format=raw,if=virtio"
-    -netdev user,id=net0
-    -device virtio-net-pci,netdev=net0
+    -netdev "user,id=net0"
+    -device "virtio-net-pci,netdev=net0"
     -nographic
     -serial "file:${LOG}"
     -no-reboot
@@ -122,12 +122,13 @@ else
     echo "  ⚠ systemd başlatma kanıtı yok (init başka olabilir)"
 fi
 
-# 4. Login prompt veya systemd hazır
-if grep -qE "(suderra login|reached target|Started Login)" "${LOG}"; then
-    echo "  ✓ Login/target hazır"
+# 4. Provisioning image: local login prompt is expected until Edge install
+# runs suderra-lockdown. Runtime appliance validation is a separate test.
+if grep -qE "(suderra login| login:|Reached target|reached target|multi-user.target)" "${LOG}"; then
+    echo "  ✓ Provisioning login/target hazır"
     ((PASS++))
 else
-    echo "  ⚠ Login prompt görülmedi (timeout olabilir)"
+    echo "  ⚠ Provisioning login/target görülmedi (timeout olabilir)"
 fi
 
 echo

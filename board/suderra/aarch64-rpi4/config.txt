@@ -1,0 +1,129 @@
+# Suderra OS — Raspberry Pi 4 / CM4 firmware konfigürasyonu
+#
+# Bu dosya Pi firmware (start4.elf) tarafından okunur ve kernel yüklemesi
+# öncesi düşük seviye donanım kurulumu yapar. Boot zinciri:
+#
+#   ROM bootloader -> bootcode.bin (Pi 4 SPI EEPROM) -> start4.elf
+#       -> config.txt (bu dosya) -> kernel=Image -> cmdline.txt -> Linux
+#
+# Referans: https://www.raspberrypi.com/documentation/computers/config_txt.html
+
+# ----------------------------------------------------------------------------
+# Kernel & ARM
+# ----------------------------------------------------------------------------
+
+# 64-bit ARM mode (Cortex-A72 / AArch64)
+arm_64bit=1
+
+# Buildroot tarafından üretilen kernel image adı
+kernel=Image
+
+# Kernel cmdline ayrı dosyadan okunur
+# (Buildroot rpi-firmware paketi cmdline.txt'yi /boot içine kopyalar)
+
+# ----------------------------------------------------------------------------
+# Device Tree
+# ----------------------------------------------------------------------------
+#
+# Suderra OS aynı SD imajını üç farklı boardda boot edebilir:
+#   - Pi 4 Model B           -> bcm2711-rpi-4-b.dtb
+#   - CM4 (custom carrier)   -> bcm2711-rpi-cm4.dtb
+#   - CM4 Official IO Board  -> bcm2711-rpi-cm4-io.dtb
+#
+# Pi firmware otomatik olarak doğru DTB'yi seçer (board revision üzerinden).
+# Manuel override gerekirse aşağıdaki satırı aç:
+#
+# device_tree=bcm2711-rpi-cm4-io.dtb
+
+# DTB'nin lineer yüklenmesini sağla (overlay'ler için gerekli)
+arm_boost=1
+
+# ----------------------------------------------------------------------------
+# Konsol & Debug
+# ----------------------------------------------------------------------------
+
+# Mini-UART üzerinden seri konsol (GPIO14/15)
+# Endüstriyel kurulumda debug için ŞART — sahada arıza teşhisi
+enable_uart=1
+uart_2ndstage=1
+
+# ----------------------------------------------------------------------------
+# GPU / Display
+# ----------------------------------------------------------------------------
+
+# Headless edge cihazı — GPU minimum bellek
+gpu_mem=16
+
+# HDMI default kapalı (gerekirse cihaz konfigürasyonu ile açılır)
+hdmi_blanking=2
+
+# ----------------------------------------------------------------------------
+# Watchdog (BCM2835 hardware)
+# ----------------------------------------------------------------------------
+#
+# Sistem 15 saniyede yanıt vermezse hardware reset.
+# systemd watchdog ile birlikte çalışır (systemd.service WatchdogSec=).
+
+dtparam=watchdog=on
+
+# ----------------------------------------------------------------------------
+# Endüstriyel I/O (Edge Agent için)
+# ----------------------------------------------------------------------------
+
+# I2C — sensör bus (BME280, DS3231 RTC, vb.)
+dtparam=i2c_arm=on
+dtparam=i2c1=on
+
+# SPI — high-speed sensör / ADC
+dtparam=spi=on
+
+# PWM — kontrol çıkışları (fan, valve actuator)
+# dtoverlay=pwm-2chan
+
+# 1-Wire (DS18B20 sıcaklık sensörü)
+# dtoverlay=w1-gpio
+
+# ----------------------------------------------------------------------------
+# Endüstriyel network — kablolu eth tercih
+# ----------------------------------------------------------------------------
+
+# Bluetooth kapalı (UART0 serbest, saldırı yüzeyi az)
+dtoverlay=disable-bt
+
+# Wi-Fi kapalı (gerçek deployment'ta — testte aç)
+# dtoverlay=disable-wifi
+
+# ----------------------------------------------------------------------------
+# Performans
+# ----------------------------------------------------------------------------
+
+# CPU normal frekansta (overclock yok — endüstriyel kararlılık)
+# arm_freq=1500   # Pi 4 default 1500 MHz, override etme
+
+# Cooling — CM4 endüstriyel kabin için fan kontrolü
+# dtparam=cooling_fan=on
+# dtparam=fan_temp0=60000   # 60°C'de fan başlasın
+
+# ----------------------------------------------------------------------------
+# initramfs (Faz 3'te dm-verity için aktive)
+# ----------------------------------------------------------------------------
+
+# initramfs rootfs.cpio.gz followkernel
+# auto_initramfs=1
+
+# ----------------------------------------------------------------------------
+# RTC (CM4 IO board üzerinde DS3231)
+# ----------------------------------------------------------------------------
+
+# CM4 IO board'da RTC otomatik tanımlanır
+# Custom carrier için: dtoverlay=i2c-rtc,ds3231
+
+# ----------------------------------------------------------------------------
+# Boot davranışı
+# ----------------------------------------------------------------------------
+
+# Boot sırasında splash gizli (sessiz boot — endüstriyel)
+disable_splash=1
+
+# Boot delay kapalı
+boot_delay=0

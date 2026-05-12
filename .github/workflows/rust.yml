@@ -96,19 +96,19 @@ jobs:
           restore-keys: |
             rust-build-${{ runner.os }}-${{ matrix.target }}-
 
-      - name: Install musl toolchain (x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
 
-      - name: Install musl cross toolchain (aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
-          tar -xf aarch64-linux-musl-cross.tgz
-          echo "$PWD/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+      # cross-rs Docker container ile build (musl toolchain dahil, network
+      # bağımsız). x86 + aarch64 musl için tek mekanizma — musl.cc retry
+      # gibi sürprizler olmadan.
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross@0.2.5
 
-      - name: cargo build --release (${{ matrix.target }})
-        run: cargo build --workspace --release --target ${{ matrix.target }}
+      - name: cross build --release (${{ matrix.target }})
+        run: cross build --workspace --release --target ${{ matrix.target }}
 
       - name: Binary boyut raporu
         run: |
@@ -133,7 +133,11 @@ jobs:
           retention-days: 7
 
   # -----------------------------------------------------------------
-  # Security: cargo-audit + cargo-deny
+  # Security: cargo-deny (advisories + bans + licenses + sources)
+  #
+  # cargo-deny'nin [advisories] config'i zaten RustSec/advisory-db ile
+  # CVE check yapar (cargo-audit ile aynı kaynak). cargo-audit ayrı step
+  # eklemek duplicate iş — kaldırıldı, cargo deny check yeterli.
   # -----------------------------------------------------------------
   security:
     name: Security (audit + deny)
@@ -142,24 +146,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: cargo-audit
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: userspace
+      - name: Install Rust toolchain
+        run: rustup show
 
-      - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Install cargo-deny (prebuilt)
+        uses: taiki-e/install-action@v2
         with:
-          manifest-path: userspace/Cargo.toml
-          command: check
-          arguments: --all-features
+          tool: cargo-deny
+
+      - name: cargo deny check (advisories + bans + licenses + sources)
+        run: cargo deny check
 
   # -----------------------------------------------------------------
   # MSRV check (rust-toolchain.toml ile pinli versiyon doğrulaması)
   # -----------------------------------------------------------------
   msrv:
-    name: MSRV check (Rust 1.85)
+    name: MSRV check (Rust 1.86)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

@@ -8,12 +8,14 @@
 ## Context
 
 Suderra OS sahada güvenli ve geri dönülebilir update mekanizması gerektirir. CRA gereği:
+
 - Vendor en az 5 yıl security update commitment vermeli
 - Update'ler imzalı olmalı, doğrulanmalı
 - Bozuk update otomatik geri dönmeli (rollback)
 - Update sırasında cihaz bricking olmamalı (anti-brick guarantee)
 
 Üç ana OTA framework:
+
 1. **RAUC** — Pengutronix, A/B veya custom, Buildroot first-class
 2. **Mender** — Northern.tech, A/B + delta + cloud platform
 3. **swupdate** — Stefano Babic, çok formatlı, A/B opsiyonel
@@ -23,6 +25,7 @@ Suderra OS sahada güvenli ve geri dönülebilir update mekanizması gerektirir.
 **RAUC** + **A/B root partition** + **bundle imzalama (X.509 + RSA-4096)** kullanılacak.
 
 Partition layout:
+
 ```
 /dev/<disk>
 ├── p1: EFI/Boot (~256MB, FAT32, shared)
@@ -44,6 +47,7 @@ Partition layout:
 ## Consequences
 
 ### Positive
+
 - A/B garantili anti-brick: bozuk update otomatik fallback
 - Imza doğrulama RAUC içinde built-in (`x509-cert`, RSA-4096)
 - Buildroot defconfig'de tek satır: `BR2_PACKAGE_RAUC=y`
@@ -55,6 +59,7 @@ Partition layout:
   4. Başarısız → bootloader otomatik eski rootfs'e döner
 
 ### Negative
+
 - /data partition KENDİ KENDİNE backup'lanmaz (kullanıcı verisi)
   - → Edge Agent'in `offline.db` ve `retain.db`'si update sırasında korunur (RAUC `/data`'ya dokunmaz)
 - Disk boyutu 2x rootfs gerekiyor (A/B)
@@ -63,6 +68,7 @@ Partition layout:
 - /boot shared — bootloader update riski (nadir ama mümkün)
 
 ### Neutral / Trade-offs
+
 - Cloud platform yok → basit HTTPS sunucu yeterli (Faz 4)
 - Mender gibi fleet management özelliği yok → Faz 5 telemetry ile dolaylı çözüm
 
@@ -72,6 +78,7 @@ Partition layout:
 - Bundle imzalama: `scripts/sign-bundle.sh` → `rauc bundle create --cert=... --key=...`
 - Bootloader: GRUB2 (x86) ve U-Boot (ARM) RAUC ile uyumlu
 - `system.conf` örnek (board/suderra/common/rootfs-overlay/etc/rauc/system.conf):
+
   ```ini
   [system]
   compatible=suderra-os-x86_64
@@ -91,6 +98,7 @@ Partition layout:
   type=raw
   bootname=B
   ```
+
 - Health-check: `suderra-firstboot.service` boot sonrası 5 dk içinde "mark good"
 - Test: `tests/ota/update-rollback-test.sh` — 10× update + 1 bozuk → rollback
 

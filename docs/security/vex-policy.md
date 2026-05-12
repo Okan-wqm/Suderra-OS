@@ -62,6 +62,7 @@ CVE: paket X, versiyon Y'da bug Z var
 ## Yayınlama
 
 VEX dokümanları:
+
 - `vex/suderra-os-<version>.openvex.json` (repo)
 - Release artifact (cosign-signed)
 - HTTPS feed: `https://updates.suderra.example/vex/`

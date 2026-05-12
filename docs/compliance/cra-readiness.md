@@ -7,6 +7,7 @@
 AB Cyber Resilience Act (Regulation 2024/2847) AB pazarına satılan tüm "dijital element içeren ürünler" için zorunlu hale geldi (2027 itibariyle uygulanacak).
 
 Suderra OS hangi sınıfta:
+
 - **Class II** (default sınıf) — endüstriyel cihazlar
 - Self-assessment yeterli (Class III ise dış denetim gerekir)
 
@@ -42,13 +43,15 @@ Suderra OS hangi sınıfta:
 ### 3. Reporting Obligations
 
 CRA Article 14 gereği:
+
 - **24 saat içinde:** Aktif olarak istismar edilen zafiyetler ENISA'ya raporlanmalı
 - **72 saat içinde:** Detaylı rapor
 - **14 gün içinde:** Düzeltme raporu
 
 İç süreç:
+
 - Incident response runbook (Faz 6)
-- 24/7 security@suderra.example monitoring
+- 24/7 <security@suderra.example> monitoring
 - Otomatik triage + escalation
 
 ## Teknik Dosya (Technical Documentation)

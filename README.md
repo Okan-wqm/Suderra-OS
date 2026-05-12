@@ -17,6 +17,7 @@ Sıradan Linux dağıtımları (Ubuntu, Debian) endüstriyel sahalarda çalışa
 | Supply chain | Geniş (binlerce paket) | Dar (~30-50 paket, pinli) |
 
 Suderra OS şunları sağlar:
+
 - **Immutable rootfs** + `dm-verity` ile kriptografik bütünlük
 - **UEFI Secure Boot** zinciri (shim → kernel → initramfs)
 - **A/B partition + RAUC OTA** — bozuk update otomatik geri döner
@@ -40,10 +41,31 @@ make build-qemu
 # 3. QEMU'da çalıştır
 ./scripts/qemu-run.sh
 
-# 4. Gerçek donanım için
-make build-x86_64
-./scripts/flash-usb.sh /dev/sdX output/images/x86_64/suderra-os.img
+# 4. Raspberry Pi 4 / CM4 için
+./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
+sudo ./scripts/flash-sd.sh /dev/sdX \
+  output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+
+# 5. Endüstriyel x86 için (Faz 2-C)
+./scripts/build-in-docker.sh suderra_x86_64_defconfig
+sudo ./scripts/flash-sd.sh /dev/sdX \
+  output/suderra_x86_64_defconfig/images/disk.img.xz
 ```
+
+**Kurulum rehberi (adım adım, sıfırdan):** [docs/operations/install.md](docs/operations/install.md)
+
+## Desteklenen Hardware
+
+| Platform | Durum | Defconfig | Image |
+|---|---|---|---|
+| QEMU x86_64 (test) | ✅ Faz 1 | `suderra_qemu_x86_64_defconfig` | `disk.img` |
+| Raspberry Pi 4 Model B | ✅ Faz 2-A | `suderra_aarch64_rpi4_defconfig` | `suderra-rpi4-target.img.xz` |
+| Pi 4 / CM4 USB installer | ✅ Faz 2-A | `suderra_aarch64_rpi4_usb_installer_defconfig` | `suderra-rpi4-usb-installer.img.xz` |
+| Compute Module 4 (CM4) | ✅ Faz 2-A | `suderra_aarch64_rpi4_defconfig` | `suderra-rpi4-target.img.xz` |
+| Endüstriyel x86 PC (UEFI+TPM) | ⏳ Faz 2-C | `suderra_x86_64_defconfig` | `disk.img.xz` |
+| RevPi Connect 4 | ✅ Faz 2-B | `suderra_aarch64_revpi4_defconfig` | `suderra-revpi4-target.img.xz` |
+
+Hardware detayı: [docs/hardware/rpi4-cm4.md](docs/hardware/rpi4-cm4.md)
 
 ## Mimari
 
@@ -100,6 +122,7 @@ Detaylar: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
 Tam doküman indeksi: [docs/README.md](docs/README.md)
 
 Hızlı linkler:
+
 - **Roadmap:** [ROADMAP.md](ROADMAP.md) — 7 fazlı 5-7 aylık plan
 - **Mimari:** [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
 - **Rust workspace:** [docs/dev/rust-workspace.md](docs/dev/rust-workspace.md) + [userspace/README.md](userspace/README.md)

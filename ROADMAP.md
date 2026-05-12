@@ -42,6 +42,7 @@ aquaculture_platform/sens-api-gateway       (ayrı repo, submodule veya cargo so
 **Hedef:** QEMU'da `Suderra OS v0.1.0-alpha` banner ile boot eden imaj + gerçek x86_64 endüstriyel donanımda boot testi.
 
 ### İçerik
+
 - [ ] Buildroot 2024.11 LTS `git submodule` olarak ekle
 - [ ] `configs/suderra_qemu_x86_64_defconfig` doldur:
   - Arch: x86_64, musl, kernel 6.12 LTS
@@ -57,12 +58,14 @@ aquaculture_platform/sens-api-gateway       (ayrı repo, submodule veya cargo so
 - [ ] `configs/suderra_aarch64_defconfig` placeholder dolu (boot etmese de)
 
 ### Doğrulama
+
 - `make build-qemu` ≤ 30 dk
 - QEMU boot ≤ 60 sn
 - `tests/qemu/boot-test.sh` PASS
 - Reproducible build doğrulanmış (`scripts/verify-reproducible.sh`)
 
 ### Çıktı
+
 - `output/suderra_qemu_x86_64_defconfig/images/disk.img` (~80-100 MB ilk denemede)
 - Buildroot manifest (`legal-info/`)
 
@@ -71,6 +74,7 @@ aquaculture_platform/sens-api-gateway       (ayrı repo, submodule veya cargo so
 **Hedef:** Suderra-OS-spesifik Rust crate'leri için workspace.
 
 ### İçerik
+
 - [x] `userspace/Cargo.toml` (workspace root) [Faz 0 sonu]
 - [x] Crate iskeletleri: firstboot, ota, telemetry, watchdog, factory-reset
 - [ ] `userspace/.cargo/config.toml` — musl cross-compile (x86_64 + aarch64)
@@ -80,6 +84,7 @@ aquaculture_platform/sens-api-gateway       (ayrı repo, submodule veya cargo so
 - [ ] İlk crate çalışır: `suderra-firstboot --help`
 
 ### Build Stratejisi
+
 Userspace crates Buildroot tarafından paketlenir (`package/suderra-firstboot/suderra-firstboot.mk`).
 Buildroot host-rustc kullanır, musl target ile cross-build.
 
@@ -88,6 +93,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 **Hedef:** Mevcut Edge Agent boot sonrası 5sn'de active + ilk Suderra Rust crate'i (`suderra-firstboot`) çalışıyor.
 
 ### İçerik
+
 - [ ] `package/suderra-edge-agent/suderra-edge-agent.mk` doldur (Cargo build)
 - [ ] Edge Agent statik binary, `/usr/bin/suderra-edge-agent`
 - [ ] systemd unit deploy (mevcut hardened unit)
@@ -100,6 +106,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 - [ ] 24 saat stres test (memory leak yok)
 
 ### Doğrulama
+
 - `systemd-analyze` blame ≤ 8s
 - `journalctl -u suderra-edge-agent` → READY=1 < 5s
 - PLC'den veri okuma → cloud broker'a publish
@@ -110,6 +117,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 **Hedef:** Production-grade güvenlik. Lynis 85+, nmap'te 0 port.
 
 ### İçerik (öncelik sırası)
+
 - [ ] Read-only rootfs (erofs veya squashfs)
 - [ ] dm-verity aktive (kernel cmdline + hash signing)
 - [ ] Secure Boot zinciri (dev keys ile)
@@ -126,6 +134,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 - [ ] `tests/security/verity-tamper-test.sh` → kernel reddeder
 
 ### Çıktı
+
 - Sertleştirilmiş PROD variant imajı (~50-60 MB)
 - Detaylı `docs/security/kernel-hardening.md`
 - İlk threat model revisionu
@@ -135,6 +144,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 **Hedef:** Sahada güvenli + geri dönülebilir update. Bozuk update otomatik rollback.
 
 ### İçerik
+
 - [ ] RAUC integration: `BR2_PACKAGE_RAUC=y`
 - [ ] A/B partition layout (genimage.cfg)
 - [ ] `suderra-ota` Rust crate:
@@ -149,6 +159,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 - [ ] `tests/ota/update-rollback-test.sh` → 10× update + 1 bozuk → rollback
 
 ### Doğrulama
+
 - 10 başarılı update + 1 bozuk update → otomatik rollback
 - İmza tampering → bundle reddedilir
 - Downgrade → reddedilir
@@ -159,6 +170,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 **Hedef:** Sahada cihaz sorun yaşarsa masandan görüyorsun + müdahale ediyorsun.
 
 ### İçerik
+
 - [ ] `suderra-telemetry` Rust crate:
   - CPU, RAM, disk, sıcaklık, uptime
   - Edge Agent metrikleri (Modbus read rate, MQTT publish, errors)
@@ -176,6 +188,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 - [ ] OpenSSF Best Practices Badge başvurusu (Passing)
 
 ### Doğrulama
+
 - Cihaz offline olunca dashboard alert 5dk içinde
 - Crash sonrası otomatik raporlama
 - SBOM her release artifact'ine eklenmiş
@@ -186,6 +199,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 **Hedef:** Müşteriye sunulabilir test raporları + IEC 62443-4-2 / CRA gap analizi tamamlanmış.
 
 ### İçerik
+
 - [ ] 30 gün stres testi (lab)
 - [ ] Güç kesintisi testi (100× ani güç kesme, fs bozulması yok)
 - [ ] Sıcaklık testi (donanım üreticisinin spec'ine göre, varsa lab)
@@ -201,6 +215,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 - [ ] Production signing keys generation (cold ceremony)
 
 ### Çıktı
+
 - Test raporları PDF
 - Bilinen sorunlar listesi
 - Sertifikasyon-ready dokümantasyon paketi
@@ -211,6 +226,7 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 **Hedef:** 1-3 cihaz gerçek müşteride, 30 gün yakın takip.
 
 ### İçerik
+
 - [ ] 1-2 mevcut müşteride pilot kurulum
 - [ ] Cihaz başına unique mTLS cert (factory provisioning)
 - [ ] 30 gün telemetri günlük inceleme
@@ -220,7 +236,9 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
 - [ ] Pilot sonu rapor: üretim onayı veya "şunları çöz" listesi
 
 ### Karar Noktası: SL2 vs SL3
+
 Pilot sonrası ADR-0006 yeniden değerlendirilir:
+
 - Müşteri profili → SL3 trigger var mı?
 - Tehdit modeli ne kadar gerçekleşti?
 - SL3 sertifikasyon investment'ı haklı mı?
@@ -285,6 +303,7 @@ Faz 1 başlamadan önce netleşmesi gerekenler:
 ## Sonraki Adım
 
 **Şimdi (Faz 1 girişi):**
+
 1. Hedef x86_64 endüstriyel PC modelini kesinleştir
 2. Buildroot 2024.11 LTS submodule olarak ekle
 3. `configs/suderra_qemu_x86_64_defconfig` doldurmaya başla

@@ -74,7 +74,7 @@ GA    Production release + OTA dağıtım
 | `security@suderra.example` | Resmi iletişim |
 | `incident-comms@suderra.example` | Müşteri bildirim mailing listesi |
 | GitHub Security Advisory | Public disclosure |
-| ENISA SPOC | https://www.enisa.europa.eu/topics/incident-reporting |
+| ENISA SPOC | <https://www.enisa.europa.eu/topics/incident-reporting> |
 
 ## Roller
 
@@ -89,6 +89,7 @@ GA    Production release + OTA dağıtım
 ## Forensic Tools
 
 Cihaz üzerinde (canlı):
+
 - `journalctl -b` (boot log)
 - `dmesg` (kernel log)
 - `ps auxf` (process tree)
@@ -97,6 +98,7 @@ Cihaz üzerinde (canlı):
 - `last`, `lastlog` (login history, varsa)
 
 Lab analizi:
+
 - Memory dump (eğer mümkün)
 - Disk image (dd)
 - Volatility framework
@@ -115,6 +117,7 @@ Lab analizi:
 ## Post-Mortem
 
 Her P0/P1 sonrası 7 gün içinde:
+
 - Olay zaman çizgisi
 - Root cause (5 Whys)
 - Detection lag (ne zaman olduysa vs. ne zaman algıladık)
@@ -129,6 +132,7 @@ Her P0/P1 sonrası 7 gün içinde:
 ## Tabletop Exercises
 
 Yılda en az 2 kez:
+
 - Senaryoyu seç (OTA compromise, kernel 0-day, vb.)
 - Tüm takım simüle et
 - SLA'ları ölç

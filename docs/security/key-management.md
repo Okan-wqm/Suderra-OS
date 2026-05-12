@@ -29,6 +29,7 @@
 ## Geliştirme Anahtarları
 
 `board/keys/README.md`:
+
 - Dev anahtarları **tek-kullanım**, kısa ömürlü
 - Asla üretim cihazlarına enroll edilmez
 - `.gitignore` ile repo'ya GİREMEZ
@@ -37,6 +38,7 @@
 ## Üretim Anahtar Altyapısı (Faz 4 öncesi karar)
 
 Seçenekler:
+
 | Seçenek | Maliyet | Güvenlik | Karmaşıklık |
 |---|---|---|---|
 | **YubiHSM 2** | ~650 USD | Yüksek | Düşük |

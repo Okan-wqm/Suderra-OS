@@ -10,6 +10,7 @@
 Suderra Edge Agent hem endüstriyel x86_64 PC (Advantech UNO, Siemens IPC, vb.) hem de aarch64 SBC (Revolution Pi, Raspberry Pi CM4) üzerinde çalışacak. Tek mimari hedef sınırlandırma kararı kullanıcı tarafından reddedildi.
 
 Multi-arch desteği üç şekilde verilebilir:
+
 1. Tek `unified` defconfig + conditional Kconfig
 2. Her mimari için ayrı defconfig, ortak rootfs-overlay
 3. Tamamen ayrı build sistemleri (iki repo)
@@ -19,6 +20,7 @@ Multi-arch desteği üç şekilde verilebilir:
 **Ayrı defconfig + ortak rootfs-overlay + mimari-özel board klasörleri.**
 
 Yapı:
+
 ```
 configs/
 ├── suderra_qemu_x86_64_defconfig    # Geliştirme/CI
@@ -31,6 +33,7 @@ board/suderra/
 ```
 
 Faz sıralaması:
+
 1. Faz 1: **x86_64 (QEMU)** önce — geliştirme döngüsü hızlı
 2. Faz 1.5: **x86_64 endüstriyel** gerçek donanım
 3. Faz 2 sonu: **aarch64** ekle
@@ -46,18 +49,21 @@ Faz sıralaması:
 ## Consequences
 
 ### Positive
+
 - CI matrix: tek workflow tüm mimarileri build eder
 - Geliştirme döngüsü: QEMU x86_64 (~15 dk build) ile hızlı iterasyon
 - Donanım eklerken sadece yeni `board/suderra/<arch>/` klasörü + defconfig
 - Ortak rootfs-overlay → uygulama davranışı tutarlı
 
 ### Negative
+
 - Kernel config iki yerde tutulur (`board/suderra/x86_64/linux-x86_64.config`, `aarch64/linux-aarch64.config`)
 - → çözüm: ortak `kernel-fragment.config` (sertleştirme) + arch-specific add-on
 - aarch64 secure boot zinciri x86_64'ten farklı (U-Boot FIT image vs UEFI shim)
 - → ADR-0005'te detay
 
 ### Neutral / Trade-offs
+
 - Faz 1 sadece x86_64 — ARM ertelendi, ama yapı baştan hazır
 - ARM hedef cihazı henüz seçilmedi (Faz 0 açık soru)
 

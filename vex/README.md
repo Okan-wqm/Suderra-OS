@@ -5,6 +5,7 @@ Bu klasör, Suderra OS imajları için VEX dokümanlarını içerir.
 ## Neden VEX?
 
 SBOM'da görünen her CVE gerçekten exploitable değildir. VEX:
+
 - Hangi CVE'lerin etkisiz olduğunu (`not_affected`) açıklar
 - Hangi CVE'lerin etkilendiğini (`affected`) ve düzeltildiğini (`fixed`) belirtir
 - Müşteri scanner'larındaki false-positive yükünü azaltır
@@ -37,6 +38,7 @@ vex/
 ## Justification Etiketleri (OpenVEX)
 
 `not_affected` için zorunlu:
+
 - `component_not_present`
 - `vulnerable_code_not_present`
 - `vulnerable_code_not_in_execute_path`
@@ -46,6 +48,7 @@ vex/
 ## Otomasyon
 
 Faz 5'te:
+
 - `scripts/gen-vex.sh` — SBOM'dan VEX template
 - CI'da PR review için VEX diff
 - Müşteriye dashboard üzerinden VEX teslimi

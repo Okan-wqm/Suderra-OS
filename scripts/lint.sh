@@ -18,8 +18,8 @@ FAILED=0
 # ShellCheck
 if command -v shellcheck >/dev/null 2>&1; then
     echo "==> shellcheck"
-    find scripts board/suderra/common tests -name '*.sh' -type f 2>/dev/null \
-        | xargs -r shellcheck --severity=warning || FAILED=1
+    find scripts board/suderra/common tests -name '*.sh' -type f -print0 2>/dev/null \
+        | xargs -0 -r shellcheck --severity=warning || FAILED=1
 else
     echo "WARN: shellcheck yüklü değil, atlanıyor (apt install shellcheck)"
 fi

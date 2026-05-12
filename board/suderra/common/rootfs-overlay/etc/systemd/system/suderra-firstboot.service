@@ -19,7 +19,7 @@ Description=Suderra OS firstboot initialization
 Documentation=https://github.com/Okan-wqm/suderra-os
 DefaultDependencies=no
 After=local-fs.target systemd-tmpfiles-setup.service
-Before=sysinit.target suderra-edge-agent.service
+Before=sysinit.target suderra-agent.service
 ConditionPathExists=!/var/lib/suderra/.firstboot-done
 
 [Service]
@@ -45,17 +45,46 @@ ExecStart=/bin/sh -c ' \
         fi; \
     fi; \
     \
-    # 3. /var/lib/suderra hazırla \
-    mkdir -p /var/lib/suderra /etc/suderra; \
-    chown -R 200:200 /var/lib/suderra 2>/dev/null || true; \
+    # 3. Mutable state/config and provisioning directories \
+    mkdir -p /var/lib/suderra/config /var/lib/suderra/edge /var/lib/suderra/provision/request /var/log/suderra /etc/suderra; \
+    chown -R 200:200 /var/lib/suderra/config /var/lib/suderra/edge /var/log/suderra 2>/dev/null || true; \
+    chown -R 201:201 /var/lib/suderra/provision 2>/dev/null || true; \
+    chown root:root /etc/suderra 2>/dev/null || true; \
+    chmod 0750 /var/lib/suderra /var/lib/suderra/config /var/lib/suderra/edge /var/log/suderra 2>/dev/null || true; \
+    chmod 0700 /var/lib/suderra/provision /var/lib/suderra/provision/request 2>/dev/null || true; \
+    chmod 0755 /etc/suderra 2>/dev/null || true; \
     \
-    # 4. Config skeleton (yoksa) \
-    if [ ! -f /etc/suderra/config.yaml ]; then \
-        echo "# Faz 2: Edge Agent config" > /etc/suderra/config.yaml; \
-        chmod 0640 /etc/suderra/config.yaml; \
+    # 4. Config skeleton (mutable, persisted under /var/lib) \
+    if [ ! -f /var/lib/suderra/config/config.yaml ]; then \
+        printf "%s\n" \
+          "device_id: \"00000000-0000-0000-0000-000000000000\"" \
+          "device_code: \"UNACTIVATED\"" \
+          "api_url: \"https://provisioning.example.com\"" \
+          "mqtt:" \
+          "  broker: null" \
+          "  port: 8883" \
+          "  username: null" \
+          "  password: null" \
+          "  tls:" \
+          "    enabled: true" \
+          "    verify_hostname: true" \
+          "  topics: {}" > /var/lib/suderra/config/config.yaml; \
+        chown 200:200 /var/lib/suderra/config/config.yaml 2>/dev/null || true; \
+        chmod 0600 /var/lib/suderra/config/config.yaml; \
     fi; \
     \
-    # 5. Done flag \
+    # 5. One-time provisioning password for the forced-command SSH user \
+    if [ ! -f /var/lib/suderra/provision/credentials.env ]; then \
+        pass="$(tr -dc A-HJ-NP-Za-km-z2-9 </dev/urandom | head -c 24)"; \
+        hash="$(openssl passwd -6 "${pass}")"; \
+        sed -i "s#^provision:[^:]*:#provision:${hash}:#" /etc/shadow; \
+        printf "SUDERRA_PROVISION_USER=provision\nSUDERRA_PROVISION_PASSWORD=%s\n" "${pass}" > /var/lib/suderra/provision/credentials.env; \
+        chown 201:201 /var/lib/suderra/provision/credentials.env 2>/dev/null || true; \
+        chmod 0600 /var/lib/suderra/provision/credentials.env; \
+        printf "Suderra OS provisioning user: provision\nPassword: %s\n" "${pass}" > /dev/console 2>/dev/null || true; \
+    fi; \
+    \
+    # 6. Done flag \
     touch /var/lib/suderra/.firstboot-done; \
     echo "==> Suderra firstboot tamamlandı"; \
 '

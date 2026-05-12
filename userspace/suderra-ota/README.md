@@ -22,6 +22,7 @@ Faz 4 (OTA sistemi) ile birlikte tam implementasyon.
 - `suderra-ota` Rust: high-level policy (poll, download, health check, rollback decision)
 
 CLI veya systemd timer:
+
 ```ini
 [Unit]
 Description=Suderra OTA check

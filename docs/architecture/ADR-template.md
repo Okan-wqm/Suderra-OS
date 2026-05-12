@@ -25,12 +25,15 @@ Ne kararlaştırıldı? Net, tek cümle ile özetlenebilen seçim.
 ## Consequences
 
 ### Positive
+
 - ...
 
 ### Negative
+
 - ...
 
 ### Neutral / Trade-offs
+
 - ...
 
 ## Implementation Notes

@@ -9,6 +9,7 @@ Her geliştirici aynı imajı, aynı SHA256 ile build edebilmeli. Bu hem supply 
 ## Container Stratejisi
 
 `ci/Dockerfile`:
+
 - Base: `ubuntu:24.04` (pinli SHA256)
 - Pinli Buildroot bağımlılıkları
 - Pinli toolchain

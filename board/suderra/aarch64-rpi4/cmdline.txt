@@ -1,0 +1,1 @@
+console=serial0,115200 console=tty1 root=LABEL=suderra-root rootfstype=ext4 rootwait ro fsck.repair=yes quiet loglevel=3 systemd.show_status=auto cgroup_enable=memory cgroup_memory=1

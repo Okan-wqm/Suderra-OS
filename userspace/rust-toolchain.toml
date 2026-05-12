@@ -15,7 +15,7 @@
 # 4. Bu dosyayı güncelle, PR aç
 
 [toolchain]
-channel = "1.85.0"
+channel = "1.86.0"
 components = [
     "rustfmt",        # kod formatlama (cargo fmt)
     "clippy",         # lint (cargo clippy)

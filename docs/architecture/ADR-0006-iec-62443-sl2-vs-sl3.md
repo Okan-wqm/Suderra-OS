@@ -22,6 +22,7 @@ IEC 62443-4-2, IACS (Industrial Automation and Control Systems) bileşenleri iç
 | SL 4 | Bilinçli | Yüksek | Yüksek | State actor | Savunma, nükleer, ulusal kritik altyapı |
 
 Hangi seviyeyi hedeflediğimizi şimdi karara bağlamak gerekir çünkü:
+
 - Mimari kararlar (SL3+: secure element, side-channel hardening) tasarım aşamasında verilmeli
 - Sertifikasyon hazırlığı (Faz 6) seviye-spesifik kanıt gerektirir
 - Pazar pozisyonu erkenden netleşmeli
@@ -44,6 +45,7 @@ SL 3'e geçiş yolu **mimari olarak açık tutulur** ama Faz 7 (pilot) sonrası,
 ## Consequences
 
 ### Positive
+
 - **Uygulama-OS tutarlılığı:** Edge Agent zaten SL2 için yazılmış; çift seviye karmaşıklığı yok
 - **Maliyet sürdürülebilir:** Tek geliştirici / küçük ekip için ulaşılabilir sertifikasyon
 - **Self-assessment yeterli:** CRA Class II ile uyumlu, Notified Body zorunlu değil
@@ -52,6 +54,7 @@ SL 3'e geçiş yolu **mimari olarak açık tutulur** ama Faz 7 (pilot) sonrası,
 - **SL3 kapısı açık:** Mimari kararlar (dm-verity, Secure Boot, TPM 2.0, mTLS) SL3'e migrasyon yolunu engellemez
 
 ### Negative
+
 - **State actor / hedefli IACS saldırılarına karşı sınırlı:** APT, organize crime, sofistike IACS saldırganı için yetersiz
 - **Kritik altyapı satışı kapalı:** Elektrik, su, gaz, savunma sektörü SL3+ ister
 - **NIS2 directive bazı sektörler kapsamında:** Aquaculture şimdilik kapsam dışı ama mevzuat değişebilir
@@ -59,6 +62,7 @@ SL 3'e geçiş yolu **mimari olarak açık tutulur** ama Faz 7 (pilot) sonrası,
 - **Pazarlama yumuşak:** "Sertifikalı" demek ama hangi SL olduğunu netleştirmek gerek
 
 ### Neutral / Trade-offs
+
 - SL3 upgrade'e geçiş Faz 8+ olarak ertelendi
 - Pilot saha geri bildirimi gerçek tehdit modelini netleştirecek (telemetri verisinden)
 - CRA Class kararı SL3 ile bağlantılı: Class III olursa SL3 zorunlu

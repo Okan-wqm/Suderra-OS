@@ -8,6 +8,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# shellcheck disable=SC2034  # Faz 3'te nmap çağrılarında kullanılacak
 TARGET="${1:-localhost}"
 
 # TODO Faz 3:
@@ -16,5 +17,5 @@ TARGET="${1:-localhost}"
 # 3. UDP scan: nmap -sU -p 1-1000 ${TARGET}
 # 4. IPv6 scan: nmap -6 ${TARGET}
 
-echo "SKIP: Faz 3'te implement edilecek (hedef: 0 open port)"
+echo "SKIP: Faz 3'te implement edilecek (hedef: 0 open port — TARGET=${TARGET})"
 exit 0

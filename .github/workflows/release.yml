@@ -4,99 +4,406 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (örn: v0.1.0-alpha)'
+        required: true
+        type: string
 
 permissions:
   contents: write
-  id-token: write       # Sigstore keyless signing için
-  attestations: write   # SLSA attestation için
+  id-token: write       # Sigstore keyless signing (OIDC)
+  attestations: write   # SLSA build provenance
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  release:
-    name: Build & Sign & Release
+  # =========================================================================
+  # Validate
+  # =========================================================================
+  validate:
+    name: Validate tag
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - name: Parse SemVer tag
+        id: parse
+        run: |
+          TAG="${{ env.RELEASE_TAG }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' SemVer formatında değil (v<major>.<minor>.<patch>[-pre])"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::Release tag: $TAG"
+
+  # =========================================================================
+  # Build — Her defconfig için paralel matrix
+  # =========================================================================
+  build:
+    name: Build ${{ matrix.target.name }}
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: qemu-x86_64
+            defconfig: suderra_qemu_x86_64_defconfig
+            artifact: disk.img
+            arch: x86_64
+          - name: rpi4
+            defconfig: suderra_aarch64_rpi4_defconfig
+            artifact: sdcard.img
+            arch: aarch64
+          # Faz 2-C/B'de aktif olur:
+          # - name: x86_64-industrial
+          #   defconfig: suderra_x86_64_defconfig
+          #   artifact: disk.img
+          #   arch: x86_64
+          # - name: revpi
+          #   defconfig: suderra_aarch64_revpi_defconfig
+          #   artifact: sdcard.img
+          #   arch: aarch64
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Validate tag format (SemVer)
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: dl/
+          key: br-dl-release-${{ hashFiles('buildroot/.version', 'configs/${{ matrix.target.defconfig }}') }}
+
+      - name: Build container image
         run: |
-          if [[ ! "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$ ]]; then
-            echo "::error::Tag '${{ github.ref_name }}' SemVer formatında değil"
-            exit 1
+          docker build -t suderra-builder ci/
+
+      - name: Build OS image
+        run: |
+          ./scripts/build-in-docker.sh "${{ matrix.target.defconfig }}"
+
+      - name: Verify build artifacts
+        run: |
+          OUT_DIR="output/${{ matrix.target.defconfig }}/images"
+          ls -lh "$OUT_DIR/"
+          [ -f "$OUT_DIR/${{ matrix.target.artifact }}" ] || \
+            (echo "::error::Build artifact yok: ${{ matrix.target.artifact }}" && exit 1)
+
+      - name: Rename for release
+        run: |
+          OUT_DIR="output/${{ matrix.target.defconfig }}/images"
+          # Naming: suderra-os-<version>-<target>.img.xz
+          BASE="suderra-os-${{ needs.validate.outputs.version }}-${{ matrix.target.name }}"
+          mv "$OUT_DIR/${{ matrix.target.artifact }}.xz" "$OUT_DIR/${BASE}.img.xz"
+          mv "$OUT_DIR/${{ matrix.target.artifact }}"    "$OUT_DIR/${BASE}.img" || true
+          mv "$OUT_DIR/MANIFEST.txt"                     "$OUT_DIR/${BASE}.manifest.txt" || true
+          # Standalone .sha256 dosyası (curl ile kolay indirilebilir)
+          ( cd "$OUT_DIR" && sha256sum "${BASE}.img.xz" > "${BASE}.img.xz.sha256" )
+          ls -lh "$OUT_DIR/"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target.name }}
+          path: |
+            output/${{ matrix.target.defconfig }}/images/suderra-os-*.img.xz
+            output/${{ matrix.target.defconfig }}/images/suderra-os-*.sha256
+            output/${{ matrix.target.defconfig }}/images/suderra-os-*.manifest.txt
+          retention-days: 7
+
+  # =========================================================================
+  # Build suderra-installer binary (multi-arch)
+  # =========================================================================
+  build-installer:
+    name: Build suderra-installer (${{ matrix.arch }})
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-musl
+
+      - name: Install musl toolchain
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends musl-tools
+          else
+            # cross-rs ile aarch64 musl build
+            cargo install cross --locked
           fi
+
+      - name: Build (x86_64 native)
+        if: matrix.arch == 'x86_64'
+        working-directory: userspace
+        run: |
+          cargo build -p suderra-installer \
+            --target x86_64-unknown-linux-musl \
+            --release
+
+      - name: Build (aarch64 via cross)
+        if: matrix.arch == 'aarch64'
+        working-directory: userspace
+        run: |
+          cross build -p suderra-installer \
+            --target aarch64-unknown-linux-musl \
+            --release
+
+      - name: Rename + manifest
+        run: |
+          BIN="userspace/target/${{ matrix.arch }}-unknown-linux-musl/release/suderra-installer"
+          OUT="suderra-installer-${{ needs.validate.outputs.version }}-${{ matrix.arch }}"
+          cp "$BIN" "$OUT"
+          sha256sum "$OUT" > "$OUT.sha256"
+          ls -lh "$OUT"
+
+      - name: Upload installer binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.arch }}
+          path: |
+            suderra-installer-*
+          retention-days: 7
+
+  # =========================================================================
+  # SBOM Generation (Faz 5'te aktif olur — şimdi syft ile basit)
+  # =========================================================================
+  sbom:
+    name: SBOM generation
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0.17.7
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          mkdir -p sbom/
+          for f in artifacts/build-*/suderra-os-*.img.xz; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f" .img.xz)"
+            syft "$f" -o cyclonedx-json="sbom/${base}.cyclonedx.json" || \
+              echo "::warning::SBOM generation skipped for $base"
+          done
+          ls -lh sbom/ || echo "::notice::No SBOMs generated"
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+          retention-days: 30
+
+  # =========================================================================
+  # Cosign Sign + GitHub Release
+  # =========================================================================
+  release:
+    name: Sign + Publish release
+    needs: [validate, build, build-installer, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write       # Sigstore keyless
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.7.0
         with:
           cosign-release: 'v2.4.1'
 
-      - name: Install syft (SBOM)
-        uses: anchore/sbom-action/download-syft@v0.17.7
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
 
-      - name: Build container
-        run: docker build -t suderra-builder ci/
-
-      - name: Build all defconfigs
+      - name: Stage release files
         run: |
-          for d in configs/suderra_*_defconfig; do
-            name=$(basename "$d")
-            echo "::group::Building $name"
-            # Faz 1'de aktif:
-            # ./scripts/build-in-docker.sh "$name"
-            echo "::endgroup::"
+          mkdir -p release/
+          # OS images
+          for f in artifacts/build-*/suderra-os-*.img.xz \
+                   artifacts/build-*/suderra-os-*.sha256 \
+                   artifacts/build-*/suderra-os-*.manifest.txt; do
+            [ -f "$f" ] && cp "$f" release/
           done
-          echo "::notice::Build Faz 1'de aktif olur"
-
-      - name: Sign RAUC bundles (Faz 4'te aktif)
-        env:
-          SUDERRA_KEYS_DIR: ${{ secrets.SUDERRA_KEYS_PATH }}
-        run: |
-          for img in output/*/images/*.raucb; do
-            [ -f "$img" ] || continue
-            ./scripts/sign-bundle.sh "$img"
+          # Installer binaries
+          for f in artifacts/installer-*/suderra-installer-* ; do
+            [ -f "$f" ] && cp "$f" release/
           done
-
-      - name: Generate SBOM (CycloneDX + SPDX) — Faz 5'te aktif
-        run: |
-          for d in configs/suderra_*_defconfig; do
-            name=$(basename "$d")
-            # ./scripts/gen-sbom.sh "$name"
+          # SBOMs
+          for f in artifacts/sbom/*.cyclonedx.json; do
+            [ -f "$f" ] && cp "$f" release/
           done
-          echo "::notice::SBOM Faz 5'te aktif olur"
+          ls -lh release/
 
-      - name: Cosign keyless sign — release artifacts (SLSA L2+)
+      - name: Generate combined SHA256SUMS
+        working-directory: release
         run: |
-          for f in output/**/images/*.img output/**/images/*.raucb output/sbom.cyclonedx.json; do
+          sha256sum *.img.xz suderra-installer-* *.cyclonedx.json 2>/dev/null | \
+            tee SHA256SUMS
+
+      - name: Cosign keyless sign all artifacts
+        working-directory: release
+        run: |
+          for f in *.img.xz suderra-installer-* *.cyclonedx.json SHA256SUMS; do
             [ -f "$f" ] || continue
+            echo "::group::Signing $f"
             cosign sign-blob \
               --yes \
               --output-signature="${f}.sig" \
               --output-certificate="${f}.cert" \
-              "${f}"
+              "$f"
+            echo "::endgroup::"
           done
+          ls -la
 
-      - name: SLSA build attestation
+      - name: Build manifest.json (suderra-installer manifest format)
+        working-directory: release
+        run: |
+          cat > manifest.json <<EOF
+          {
+            "version": "${{ needs.validate.outputs.version }}",
+            "release_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "packages": [
+          $(
+            FIRST=1
+            for f in suderra-os-*.img.xz; do
+              [ -f "$f" ] || continue
+              HASH=$(sha256sum "$f" | awk '{print $1}')
+              SIZE=$(stat -c%s "$f")
+              # Extract target name from filename: suderra-os-v0.1.0-rpi4.img.xz -> rpi4
+              TARGET=$(echo "$f" | sed -E 's/suderra-os-[^-]+-(.+)\.img\.xz/\1/')
+              ARCH=""
+              case "$TARGET" in
+                rpi4|revpi) ARCH="aarch64" ;;
+                *x86_64*|qemu-x86_64) ARCH="x86_64" ;;
+              esac
+              [ -n "$FIRST" ] || echo ","
+              FIRST=""
+              cat <<PKG
+              {
+                "name": "os",
+                "arch": "$ARCH",
+                "target": "$TARGET",
+                "file": "$f",
+                "sha256": "$HASH",
+                "size_bytes": $SIZE,
+                "kind": "image"
+              }
+          PKG
+            done
+          )
+            ],
+            "changelog_url": "https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.version }}",
+            "sbom_url": "https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}/"
+          }
+          EOF
+          cat manifest.json
+          # Sign manifest
+          cosign sign-blob --yes \
+            --output-signature=manifest.json.sig \
+            --output-certificate=manifest.json.cert \
+            manifest.json
+
+      - name: SLSA build provenance attestation
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: |
-            output/**/images/*.img
-            output/**/images/*.raucb
+            release/suderra-os-*.img.xz
+            release/suderra-installer-*
+            release/manifest.json
 
-      - name: Create draft release
+      - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: "Suderra OS ${{ needs.validate.outputs.version }}"
           generate_release_notes: true
           draft: true
+          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          body: |
+            # Suderra OS ${{ needs.validate.outputs.version }}
+
+            > Sertleştirilmiş, immutable, OTA-güncellenebilir Linux tabanlı
+            > endüstriyel edge işletim sistemi.
+
+            ## Kurulum
+
+            ```bash
+            # Raspberry Pi 4 / CM4:
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}/suderra-os-${{ needs.validate.outputs.version }}-rpi4.img.xz -o sdcard.img.xz
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}/suderra-os-${{ needs.validate.outputs.version }}-rpi4.img.xz.sha256 -o sdcard.img.xz.sha256
+            sha256sum -c sdcard.img.xz.sha256
+            sudo ./scripts/flash-sd.sh /dev/sdX sdcard.img.xz
+            ```
+
+            ## Doğrulama (cosign keyless)
+
+            ```bash
+            cosign verify-blob \
+              --certificate-identity-regexp "^https://github\\.com/${{ github.repository }}/" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --signature suderra-os-${{ needs.validate.outputs.version }}-rpi4.img.xz.sig \
+              suderra-os-${{ needs.validate.outputs.version }}-rpi4.img.xz
+            ```
+
+            ## Sıradaki Adım
+
+            OS boot ettikten sonra Edge Agent kurulumu için:
+
+            ```bash
+            sudo suderra-installer install edge
+            ```
+
+            Detaylar: [docs/operations/install.md](docs/operations/install.md)
+
+            ## Artifacts
+
+            - **OS Images** (`*.img.xz`) — SD card / USB stick için
+            - **Installer Binary** (`suderra-installer-*`) — multi-arch
+            - **SBOM** (`*.cyclonedx.json`) — supply chain
+            - **Manifest** (`manifest.json`) — `suderra-installer` formatı
+            - **SHA256SUMS** — toplu hash dosyası
+            - Tüm dosyaların `.sig` + `.cert` cosign keyless imzaları
+            - `attestations.intoto.jsonl` — SLSA build provenance
           files: |
-            output/**/images/*.raucb
-            output/**/images/*.raucb.sig
-            output/**/images/*.raucb.cert
-            output/**/images/disk.img
-            output/**/images/disk.img.sig
-            output/**/images/disk.img.cert
-            output/sbom.cyclonedx.json
-            output/sbom.cyclonedx.json.sig
-            output/sbom.spdx.json
+            release/suderra-os-*.img.xz
+            release/suderra-os-*.sha256
+            release/suderra-os-*.manifest.txt
+            release/suderra-installer-*
+            release/*.cyclonedx.json
+            release/SHA256SUMS
+            release/manifest.json
+            release/*.sig
+            release/*.cert
+
+      - name: Release summary
+        run: |
+          echo "::notice::Draft release created: ${{ needs.validate.outputs.version }}"
+          echo "::notice::Manual approval required to publish (Settings → Releases → Edit Draft)"

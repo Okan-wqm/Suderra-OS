@@ -9,6 +9,7 @@ Saldırgan rootkit kursa bile, TPM PCR'lar boot zincirinin hash'lerini tutar.
 PCR değerleri eşleşmiyorsa = cihaz manipüle edilmiş = cloud uyarır.
 
 Kanıtlanan zincir:
+
 ```
 UEFI firmware → bootloader → kernel → initrd → rootfs (dm-verity root hash)
 ```

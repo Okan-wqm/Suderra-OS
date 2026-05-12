@@ -21,10 +21,21 @@ jobs:
       matrix:
         defconfig:
           - suderra_qemu_x86_64_defconfig
-          # Faz 1'de aktif olur:
+          - suderra_aarch64_rpi4_defconfig
+          - suderra_aarch64_rpi4_usb_installer_defconfig
+          - suderra_aarch64_revpi4_defconfig
+          # Faz 2-B/C'de aktif olur:
           # - suderra_x86_64_defconfig
-          # - suderra_aarch64_defconfig
     steps:
+      - name: Show runner environment
+        run: |
+          set -euo pipefail
+          set -x
+          uname -a
+          df -h
+          free -h
+          docker --version
+          ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -43,15 +54,53 @@ jobs:
           restore-keys: |
             ccache-${{ matrix.defconfig }}-
 
-      - name: Build container
-        run: docker build -t suderra-builder ci/
-
-      - name: Build image
+      - name: Verify submodule + paths
         run: |
+          set -euo pipefail
+          set -x
+          ls -la
+          git submodule status
+          ls buildroot/ | head -10
+          ls configs/
+          head -5 "configs/${{ matrix.defconfig }}"
+
+      - name: Build container
+        run: |
+          set -euo pipefail
+          set -x
+          docker build -t suderra-builder ci/ 2>&1 | tail -20
+
+      - name: Buildroot defconfig parse (smoke test)
+        run: |
+          set -euo pipefail
+          set -x
+          # Önce sadece defconfig parse edebiliyor muyuz?
+          make -C buildroot \
+            BR2_EXTERNAL="$(pwd)" \
+            O="$(pwd)/output/${{ matrix.defconfig }}" \
+            "${{ matrix.defconfig }}" 2>&1 | tail -30
+
+      - name: Build image (full Buildroot run)
+        run: |
+          set -euo pipefail
+          set -x
           if [ -s "configs/${{ matrix.defconfig }}" ] && grep -q "^BR2_" "configs/${{ matrix.defconfig }}"; then
-            ./scripts/build-in-docker.sh "${{ matrix.defconfig }}"
+            if [ "${{ matrix.defconfig }}" = "suderra_aarch64_rpi4_usb_installer_defconfig" ]; then
+              mkdir -p .ci-installer-keys
+              openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+                -out .ci-installer-keys/installer-payload.key
+              openssl rsa -in .ci-installer-keys/installer-payload.key \
+                -pubout -out .ci-installer-keys/installer-payload.pub.pem
+              chmod 0644 .ci-installer-keys/installer-payload.key .ci-installer-keys/installer-payload.pub.pem
+              export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY=/workspace/.ci-installer-keys/installer-payload.key
+              export SUDERRA_INSTALLER_PAYLOAD_PUBKEY=/workspace/.ci-installer-keys/installer-payload.pub.pem
+              ./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig 2>&1 | tail -200
+              export SUDERRA_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+            fi
+            ./scripts/build-in-docker.sh "${{ matrix.defconfig }}" 2>&1 | tail -200
           else
-            echo "::notice::Defconfig ${{ matrix.defconfig }} henüz placeholder"
+            echo "::error::Defconfig ${{ matrix.defconfig }} missing or empty"
+            exit 1
           fi
 
       - name: Upload image artifact
@@ -61,7 +110,7 @@ jobs:
           name: ${{ matrix.defconfig }}-image
           path: output/${{ matrix.defconfig }}/images/
           retention-days: 30
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   qemu-smoke-test:
     name: QEMU boot smoke test
@@ -73,12 +122,14 @@ jobs:
 
       - name: Install QEMU + OVMF
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf
 
       - name: KVM acceleration check
         run: |
+          set -euo pipefail
           # GitHub runner'larda /dev/kvm var mı? Varsa hızlı, yoksa TCG (yavaş)
           if [ -e /dev/kvm ]; then
             echo "==> /dev/kvm mevcut — KVM acceleration aktif"
@@ -98,9 +149,10 @@ jobs:
         env:
           BOOT_TEST_TIMEOUT: 180   # CI'da TCG fallback için cömert
         run: |
+          set -euo pipefail
           if [ ! -f output/suderra_qemu_x86_64_defconfig/images/disk.img ]; then
-            echo "::notice::Image artifact yok (build job placeholder) — test atlanıyor"
-            exit 0
+            echo "::error::Image artifact yok"
+            exit 1
           fi
           ./tests/qemu/boot-test.sh suderra_qemu_x86_64_defconfig
 

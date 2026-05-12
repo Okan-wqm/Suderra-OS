@@ -19,6 +19,7 @@ Tek karar verici: proje maintainer'ı (`@okan-wqm`)
 ### Sonraki Faz (4+)
 
 Multi-maintainer'a geçince:
+
 - **Lazy consensus**: PR 7 gün boyunca itiraz almazsa kabul edilir
 - **Code review**: en az 1 maintainer review (security/kernel için 2)
 - **Major decisions**: ADR + en az 2 maintainer onayı
@@ -36,6 +37,7 @@ Multi-maintainer'a geçince:
 ## Maintainer Olma
 
 Faz 4+:
+
 1. 6+ ay aktif contributor olarak çalış
 2. Mevcut maintainer önerir
 3. Diğer maintainer'lar lazy consensus ile onaylar
@@ -95,6 +97,7 @@ Bileşenler kendi lisanslarında ([docs/compliance/licenses.md](docs/compliance/
 ## İtiraz Süreci
 
 Kararlardan memnun değilseniz:
+
 1. İlk: PR'da yorum
 2. Ardından: maintainer'lara mail
 3. Son çare: GitHub Discussions'ta public discussion

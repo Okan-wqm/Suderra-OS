@@ -26,6 +26,18 @@ fi
 
 # Reproducible build için ortam değişkenleri
 SOURCE_DATE_EPOCH=$(git -C "${PROJECT_ROOT}" log -1 --format=%ct 2>/dev/null || echo "1704067200")
+EXTRA_ENV=()
+for name in \
+    SUDERRA_TARGET_IMAGE_XZ \
+    SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY \
+    SUDERRA_INSTALLER_PAYLOAD_PUBKEY \
+    SUDERRA_VERSION \
+    SUDERRA_BUILD_ID
+do
+    if [ -n "${!name:-}" ]; then
+        EXTRA_ENV+=("-e" "${name}=${!name}")
+    fi
+done
 
 # Help
 if [ "${1:-}" = "--help" ] || [ -z "${1:-}" ]; then
@@ -54,6 +66,7 @@ if [ "${1}" = "--shell" ]; then
         ${KEYS_MOUNT} \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
         -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
+        "${EXTRA_ENV[@]}" \
         -w /workspace \
         suderra-builder:latest \
         /bin/bash
@@ -71,6 +84,7 @@ exec docker run --rm \
     ${KEYS_MOUNT} \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
+    "${EXTRA_ENV[@]}" \
     -w /workspace \
     suderra-builder:latest \
     /workspace/scripts/build.sh "${DEFCONFIG}"

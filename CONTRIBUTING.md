@@ -3,6 +3,7 @@
 Suderra OS endüstriyel/güvenlik kritik bir işletim sistemidir. Katkı süreci buna göre disiplinlidir.
 
 ## İçindekiler
+
 - [Geliştirici Sertifikası (DCO)](#geliştirici-sertifikası-dco)
 - [Branch Stratejisi](#branch-stratejisi)
 - [Commit Mesaj Formatı](#commit-mesaj-formatı)
@@ -47,6 +48,7 @@ Signed-off-by: Ad Soyad <email@example.com>
 ```
 
 **Type'lar:**
+
 - `feat` — yeni özellik
 - `fix` — bug fix
 - `security` — güvenlik patch'i (CVE referansı gövdede)
@@ -60,6 +62,7 @@ Signed-off-by: Ad Soyad <email@example.com>
 **Scope örnekleri:** `kernel`, `systemd`, `rauc`, `verity`, `secboot`, `edge-agent`, `x86_64`, `aarch64`, `ci`, `docs`
 
 **Örnekler:**
+
 ```
 feat(rauc): A/B partition rollback otomatik tetikleme
 
@@ -95,22 +98,26 @@ Signed-off-by: Okan Y <okan@example.com>
 ## Kod Standartları
 
 ### Shell scripts
+
 - `#!/usr/bin/env bash` + `set -euo pipefail`
 - `shellcheck` temiz olmalı (CI kontrol eder)
 - 4 space indent
 - Komut substitution: `$(...)`, backtick yasak
 
 ### Markdown
+
 - `markdownlint` temiz
 - Satır uzunluğu yumuşak (uzun cümleler ok)
 - Tablolar tercih edilir (ASCII art yerine)
 
 ### Buildroot paketleri (.mk)
+
 - 4 space tab indent (Buildroot konvansiyonu)
 - `<package>_LICENSE`, `<package>_LICENSE_FILES`, `<package>_VERSION` zorunlu
 - Hash file (`*.hash`) check zorunlu (supply chain)
 
 ### Kernel config
+
 - Sertleştirme: [docs/security/kernel-hardening.md](docs/security/kernel-hardening.md)
 - Her aç/kapa kararı yorumlanmış olmalı
 - `make savedefconfig` ile minimal tutulur
@@ -125,6 +132,7 @@ Signed-off-by: Okan Y <okan@example.com>
 ```
 
 Format (Michael Nygard, kısa):
+
 - **Status:** Proposed / Accepted / Deprecated / Superseded by ADR-XXXX
 - **Context:** Hangi soruyu cevaplıyor?
 - **Decision:** Ne kararlaştırıldı?
@@ -149,6 +157,7 @@ CI'da hepsi otomatik koşar. Lokal test için: `make test`.
 Suderra OS, Linux kernel ve diğer GPL bileşenleri yeniden dağıtır. Kaynak kod sunma yükümlülüğümüz var. Detay: [docs/compliance/licenses.md](docs/compliance/licenses.md).
 
 Yeni paket eklerken:
+
 - SPDX lisans tanımla (`<pkg>_LICENSE = GPL-2.0+`)
 - Lisans dosyasını işaretle (`<pkg>_LICENSE_FILES = COPYING`)
 - Hash dosyası ekle (supply chain bütünlüğü için)

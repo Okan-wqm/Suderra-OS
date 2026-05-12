@@ -1,0 +1,81 @@
+[Unit]
+Description=Suderra Edge Agent (downloaded runtime)
+Documentation=https://github.com/Okan-wqm/aquaculture_platform/tree/main/sens-api-gateway
+After=network-online.target time-sync.target
+Wants=network-online.target
+ConditionPathExists=/opt/suderra/edge/current/suderra-agent
+ConditionPathExists=/var/lib/suderra/config/config.yaml
+
+[Service]
+Type=notify
+NotifyAccess=main
+Environment=SUDERRA_CONFIG=/var/lib/suderra/config/config.yaml
+ExecStart=/opt/suderra/edge/current/suderra-agent
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=90s
+
+User=suderra
+Group=suderra
+UMask=0077
+
+WatchdogSec=60s
+
+LimitCORE=0
+LimitNOFILE=4096
+MemoryMax=256M
+CPUQuota=75%
+TasksMax=64
+
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/suderra /var/log/suderra
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+ProcSubset=pid
+
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=true
+RemoveIPC=true
+
+MemoryDenyWriteExecute=true
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@debug @mount @module @raw-io @reboot @swap @privileged
+SystemCallErrorNumber=EPERM
+
+DevicePolicy=closed
+DeviceAllow=/dev/gpiomem rw
+DeviceAllow=/dev/i2c-1 rw
+DeviceAllow=/dev/spidev0.0 rw
+DeviceAllow=/dev/spidev0.1 rw
+DeviceAllow=/dev/ttyAMA0 rw
+DeviceAllow=/dev/ttyUSB0 rw
+DeviceAllow=/dev/watchdog rw
+DeviceAllow=/dev/tpm0 rw
+DeviceAllow=/dev/tpmrm0 rw
+DeviceAllow=char-rtc r
+
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suderra-agent
+SyslogLevelPrefix=true
+
+[Install]
+WantedBy=multi-user.target
