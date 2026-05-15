@@ -38,6 +38,11 @@ jobs:
     needs: matrix
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    env:
+      SUDERRA_CI_STORAGE: /mnt/suderra-os/${{ matrix.defconfig }}
+      SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/output
+      SUDERRA_HOST_DL_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/dl
+      SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/ccache
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}
@@ -55,8 +60,15 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Prepare CI build storage
+        run: |
+          set -euo pipefail
+          mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}"
+          df -h "${SUDERRA_CI_STORAGE}"
+
       - name: Check runner resource contract
         env:
+          SUDERRA_RESOURCE_PATH: ${{ env.SUDERRA_CI_STORAGE }}
           SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
           SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
           SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
@@ -65,13 +77,13 @@ jobs:
       - name: Cache Buildroot downloads
         uses: actions/cache@v5
         with:
-          path: dl/
+          path: ${{ env.SUDERRA_HOST_DL_DIR }}
           key: br-dl-${{ hashFiles('buildroot/.version', format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
         uses: actions/cache@v5
         with:
-          path: .ccache/
+          path: ${{ env.SUDERRA_HOST_CCACHE_DIR }}
           key: ccache-${{ matrix.defconfig }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ matrix.defconfig }}-
@@ -99,7 +111,7 @@ jobs:
           # Önce sadece defconfig parse edebiliyor muyuz?
           make -C buildroot \
             BR2_EXTERNAL="$(pwd)" \
-            O="$(pwd)/output/${{ matrix.defconfig }}" \
+            O="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}" \
             "${{ matrix.defconfig }}" 2>&1 | tail -30
 
       - name: Build image (full Buildroot run)
@@ -187,14 +199,14 @@ jobs:
           set -euo pipefail
           python3 scripts/ci/validate-build-matrix.py verify-artifacts \
             --defconfig "${{ matrix.defconfig }}" \
-            --images-dir "output/${{ matrix.defconfig }}/images"
+            --images-dir "${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
 
       - name: Upload image artifact
         if: success()
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.defconfig }}-image
-          path: output/${{ matrix.defconfig }}/images/
+          path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
           retention-days: 30
           if-no-files-found: error
 

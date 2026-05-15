@@ -90,6 +90,11 @@ jobs:
     needs: [validate, matrix, production-readiness]
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    env:
+      SUDERRA_CI_STORAGE: /mnt/suderra-os-release/${{ matrix.defconfig }}
+      SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/output
+      SUDERRA_HOST_DL_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/dl
+      SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/ccache
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
@@ -100,14 +105,21 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Prepare CI build storage
+        run: |
+          set -euo pipefail
+          mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}"
+          df -h "${SUDERRA_CI_STORAGE}"
+
       - name: Cache Buildroot downloads
         uses: actions/cache@v5
         with:
-          path: dl/
+          path: ${{ env.SUDERRA_HOST_DL_DIR }}
           key: br-dl-release-${{ hashFiles('buildroot/.version', format('configs/{0}', matrix.defconfig)) }}
 
       - name: Build container image
         env:
+          SUDERRA_RESOURCE_PATH: ${{ env.SUDERRA_CI_STORAGE }}
           SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
           SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
           SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
@@ -192,7 +204,7 @@ jobs:
       - name: Verify build artifacts
         run: |
           set -euo pipefail
-          OUT_DIR="output/${{ matrix.defconfig }}/images"
+          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
           ls -lh "$OUT_DIR/"
           python3 scripts/ci/validate-build-matrix.py verify-artifacts \
             --defconfig "${{ matrix.defconfig }}" \
@@ -201,7 +213,7 @@ jobs:
       - name: Rename for release
         run: |
           set -euo pipefail
-          OUT_DIR="output/${{ matrix.defconfig }}/images"
+          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
           BASE="${{ matrix.release }}"
           src_xz="$OUT_DIR/${{ matrix.artifact }}.xz"
           dst_xz="$OUT_DIR/${BASE}.xz"
@@ -232,11 +244,11 @@ jobs:
         with:
           name: build-${{ matrix.name }}
           path: |
-            output/${{ matrix.defconfig }}/images/suderra-*.img.xz
-            output/${{ matrix.defconfig }}/images/suderra-*.sha256
-            output/${{ matrix.defconfig }}/images/suderra-*.manifest.txt
-            output/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.json
-            output/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.sig
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.img.xz
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.sha256
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.manifest.txt
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.json
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.sig
           retention-days: 7
 
   # =========================================================================

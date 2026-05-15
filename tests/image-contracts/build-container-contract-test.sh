@@ -34,14 +34,24 @@ require_pattern 'getent group dbus' 'dbus group preflight'
 require_pattern 'groupadd -r dbus' 'dbus group creation'
 require_pattern 'SHELL \["/bin/bash", "-o", "pipefail", "-c"\]' 'Dockerfile pipefail shell'
 require_pattern '# hadolint ignore=DL3008' 'documented apt pinning exception'
-grep -q 'PROJECT_ROOT}/dl:/workspace/dl:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+grep -q 'HOST_DL_DIR}:/workspace/dl:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must bind repo-local dl/ for CI cache compatibility" >&2
         exit 1
     }
-grep -q 'PROJECT_ROOT}/.ccache:/workspace/.ccache:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+grep -q 'HOST_OUTPUT_DIR}:/workspace/output:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must bind host output storage for CI disk compatibility" >&2
+        exit 1
+    }
+grep -q 'HOST_CCACHE_DIR}:/workspace/.ccache:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must bind repo-local .ccache/ for CI cache compatibility" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_RESOURCE_PATH' "${RESOURCE_CHECK}" ||
+    {
+        echo "ERROR: runner resource gate must support explicit build storage path" >&2
         exit 1
     }
 grep -q 'SUDERRA_MIN_DISK_GIB' "${RESOURCE_CHECK}" ||

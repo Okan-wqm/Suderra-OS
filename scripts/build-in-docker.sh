@@ -24,7 +24,10 @@ if [ -d "${HOME}/.suderra-keys" ]; then
     KEYS_MOUNT_ARGS=(-v "${HOME}/.suderra-keys:/home/builder/.suderra-keys:ro")
 fi
 
-mkdir -p "${PROJECT_ROOT}/dl" "${PROJECT_ROOT}/.ccache"
+HOST_DL_DIR="${SUDERRA_HOST_DL_DIR:-${PROJECT_ROOT}/dl}"
+HOST_CCACHE_DIR="${SUDERRA_HOST_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
+HOST_OUTPUT_DIR="${SUDERRA_HOST_OUTPUT_DIR:-${PROJECT_ROOT}/output}"
+mkdir -p "${HOST_DL_DIR}" "${HOST_CCACHE_DIR}" "${HOST_OUTPUT_DIR}"
 
 DOCKER_USER_ARGS=(
     --user "$(id -u):$(id -g)"
@@ -73,11 +76,13 @@ fi
 if [ "${1}" = "--shell" ]; then
     exec docker run --rm -it \
         -v "${PROJECT_ROOT}:/workspace:rw" \
-        -v "${PROJECT_ROOT}/dl:/workspace/dl:rw" \
-        -v "${PROJECT_ROOT}/.ccache:/workspace/.ccache:rw" \
+        -v "${HOST_OUTPUT_DIR}:/workspace/output:rw" \
+        -v "${HOST_DL_DIR}:/workspace/dl:rw" \
+        -v "${HOST_CCACHE_DIR}:/workspace/.ccache:rw" \
         "${KEYS_MOUNT_ARGS[@]}" \
         "${DOCKER_USER_ARGS[@]}" \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+        -e BR2_CCACHE_DIR=/workspace/.ccache \
         -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
         "${EXTRA_ENV[@]}" \
         -w /workspace \
@@ -93,11 +98,13 @@ echo "==> SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
 run_build() {
     docker run --rm \
         -v "${PROJECT_ROOT}:/workspace:rw" \
-        -v "${PROJECT_ROOT}/dl:/workspace/dl:rw" \
-        -v "${PROJECT_ROOT}/.ccache:/workspace/.ccache:rw" \
+        -v "${HOST_OUTPUT_DIR}:/workspace/output:rw" \
+        -v "${HOST_DL_DIR}:/workspace/dl:rw" \
+        -v "${HOST_CCACHE_DIR}:/workspace/.ccache:rw" \
         "${KEYS_MOUNT_ARGS[@]}" \
         "${DOCKER_USER_ARGS[@]}" \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+        -e BR2_CCACHE_DIR=/workspace/.ccache \
         -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
         "${EXTRA_ENV[@]}" \
         -w /workspace \
@@ -116,11 +123,13 @@ fi
 
 exec docker run --rm \
     -v "${PROJECT_ROOT}:/workspace:rw" \
-    -v "${PROJECT_ROOT}/dl:/workspace/dl:rw" \
-    -v "${PROJECT_ROOT}/.ccache:/workspace/.ccache:rw" \
+    -v "${HOST_OUTPUT_DIR}:/workspace/output:rw" \
+    -v "${HOST_DL_DIR}:/workspace/dl:rw" \
+    -v "${HOST_CCACHE_DIR}:/workspace/.ccache:rw" \
     "${KEYS_MOUNT_ARGS[@]}" \
     "${DOCKER_USER_ARGS[@]}" \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    -e BR2_CCACHE_DIR=/workspace/.ccache \
     -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
     "${EXTRA_ENV[@]}" \
     -w /workspace \
