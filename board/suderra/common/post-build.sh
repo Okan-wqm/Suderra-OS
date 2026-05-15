@@ -42,8 +42,9 @@ case "${ENV_VARIANT}" in
         exit 1
         ;;
 esac
-if [ "${CONFIG_VARIANT}" = "prod" ] && [ "${ENV_VARIANT}" = "dev" ]; then
-    echo "ERROR: BR2 production variant cannot be downgraded with SUDERRA_VARIANT=dev"
+if [ -n "${CONFIG_VARIANT}" ] && [ -n "${ENV_VARIANT}" ] && [ "${CONFIG_VARIANT}" != "${ENV_VARIANT}" ]; then
+    echo "ERROR: BR2 Suderra variant (${CONFIG_VARIANT}) conflicts with SUDERRA_VARIANT=${ENV_VARIANT}"
+    echo "Production/dev variant selection must come from one authoritative build contract."
     exit 1
 fi
 if [ -n "${CONFIG_VARIANT}" ]; then
@@ -51,7 +52,15 @@ if [ -n "${CONFIG_VARIANT}" ]; then
 elif [ -n "${ENV_VARIANT}" ]; then
     SUDERRA_OS_VARIANT="${ENV_VARIANT}"
 else
-    SUDERRA_OS_VARIANT="dev"
+    case "${DEFCONFIG_NAME}" in
+        suderra_x86_64*)
+            echo "ERROR: production-capable ${DEFCONFIG_NAME} requires BR2_CONFIG or SUDERRA_VARIANT"
+            exit 1
+            ;;
+        *)
+            SUDERRA_OS_VARIANT="dev"
+            ;;
+    esac
 fi
 
 # 1. /etc/os-release

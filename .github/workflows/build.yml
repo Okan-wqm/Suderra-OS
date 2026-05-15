@@ -51,6 +51,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check runner resource contract
+        run: ./scripts/ci/check-runner-resources.sh
+
       - name: Cache Buildroot downloads
         uses: actions/cache@v5
         with:

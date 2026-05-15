@@ -684,7 +684,14 @@ def validate_hardware(validation: Validation, evidence: dict[str, Any], require_
                     validation.error(check_path, "must be an object")
                     continue
                 check_status(validation, f"{check_path}.status", check.get("status"), STATUS_VALUES)
-                check_relative_path(validation, f"{check_path}.evidence", check.get("evidence"), False)
+                check_relative_path(
+                    validation,
+                    f"{check_path}.evidence",
+                    check.get("evidence"),
+                    require_pass
+                    and bool(hardware.get("required"))
+                    and check_name in REQUIRED_HARDWARE_CHECKS,
+                )
                 if require_pass and check.get("status") != "passed":
                     validation.error(f"{check_path}.status", "must be passed for release-ready evidence")
 
@@ -930,6 +937,7 @@ def validate_evidence(
         validation.error("$.schema_version", f"must be {SCHEMA_VERSION}")
     for field in ("version", "target", "generated_at"):
         check_string(validation, f"$.{field}", evidence.get(field))
+    parse_timestamp(validation, "$.generated_at", evidence.get("generated_at"), True)
     for field in ("version", "target"):
         value = evidence.get(field)
         if isinstance(value, str) and not SAFE_ID_RE.fullmatch(value):

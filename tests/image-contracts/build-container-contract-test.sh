@@ -8,6 +8,7 @@ IFS=$'\n\t'
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 DOCKERFILE="${PROJECT_ROOT}/ci/Dockerfile"
+RESOURCE_CHECK="${PROJECT_ROOT}/scripts/ci/check-runner-resources.sh"
 
 require_pattern() {
     local pattern="$1"
@@ -41,5 +42,15 @@ grep -q 'PROJECT_ROOT}/dl:/workspace/dl:rw' "${PROJECT_ROOT}/scripts/build-in-do
 grep -q 'PROJECT_ROOT}/.ccache:/workspace/.ccache:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must bind repo-local .ccache/ for CI cache compatibility" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_MIN_DISK_GIB' "${RESOURCE_CHECK}" ||
+    {
+        echo "ERROR: runner resource gate must expose explicit disk threshold" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_MIN_MEM_GIB' "${RESOURCE_CHECK}" ||
+    {
+        echo "ERROR: runner resource gate must expose explicit memory threshold" >&2
         exit 1
     }

@@ -18,7 +18,13 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 CATEGORY="${1:-all}"
 FAILED=0
 SKIPPED=0
-FAIL_ON_SKIP="${SUDERRA_FAIL_ON_SKIP:-0}"
+if [ -n "${SUDERRA_FAIL_ON_SKIP+x}" ]; then
+    FAIL_ON_SKIP="${SUDERRA_FAIL_ON_SKIP}"
+elif [ "${CI:-}" = "true" ]; then
+    FAIL_ON_SKIP="1"
+else
+    FAIL_ON_SKIP="0"
+fi
 
 run_category() {
     local cat="$1"

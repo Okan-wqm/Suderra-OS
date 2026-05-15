@@ -108,6 +108,7 @@ jobs:
 
       - name: Build container image
         run: |
+          ./scripts/ci/check-runner-resources.sh
           docker build -t suderra-builder ci/
 
       - name: Build OS image
