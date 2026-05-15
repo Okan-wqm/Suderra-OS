@@ -23,4 +23,4 @@ suderra 200 suderra 200 ! /var/lib/suderra /sbin/nologin - Suderra_Edge_Agent_ru
 
 # Temporary provisioning user — firstboot assigns a one-time password, and the
 # login shell is a forced provisioning command instead of a general shell.
-provision 201 provision 201 ! /var/lib/suderra/provision /usr/sbin/suderra-provision - Suderra_OS_provisioning_user
+provision 201 provision 201 ! /var/spool/suderra-provision /usr/sbin/suderra-provision - Suderra_OS_provisioning_user

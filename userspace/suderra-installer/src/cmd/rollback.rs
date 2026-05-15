@@ -18,7 +18,10 @@ pub async fn run(args: RollbackArgs) -> Result<()> {
 
     let state = InstalledState::load().unwrap_or_default();
     let current = state.installed.get(&args.package).ok_or_else(|| {
-        anyhow::anyhow!("'{}' kurulu değil — rollback için önce bir sürüm kurmalısın", args.package)
+        anyhow::anyhow!(
+            "'{}' kurulu değil — rollback için önce bir sürüm kurmalısın",
+            args.package
+        )
     })?;
 
     let target_version = if let Some(v) = args.to_version {

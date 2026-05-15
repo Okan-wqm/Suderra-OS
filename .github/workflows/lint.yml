@@ -10,6 +10,34 @@ permissions:
   contents: read
 
 jobs:
+  matrix-consistency:
+    name: Build Matrix Contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate ci/build-matrix.yml
+        run: python3 scripts/ci/validate-build-matrix.py validate
+
+  actionlint:
+    name: GitHub Actions Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: raven-actions/actionlint@v2
+
+  contract-tests:
+    name: Image Contract + Installer Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.86.0
+      - name: Run matrix contract tests
+        run: ./scripts/run-tests.sh image-contracts
+      - name: Run USB installer tests
+        run: ./scripts/run-tests.sh installer
+
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-24.04
@@ -23,6 +51,8 @@ jobs:
           additional_files: |
             board/suderra/common/post-build.sh
             board/suderra/common/post-image.sh
+            board/suderra/common/rootfs-overlay/usr/sbin/*
+            package/suderra-os-installer/suderra-os-install
             tests/**/*.sh
 
   markdownlint:
@@ -59,7 +89,7 @@ jobs:
         with:
           file_or_dir: ci .github
           config_file: .yamllint.yml
-          strict: false
+          strict: true
 
   dco:
     name: DCO (Signed-off-by) Check

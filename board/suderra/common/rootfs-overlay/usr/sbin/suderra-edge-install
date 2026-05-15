@@ -7,18 +7,20 @@ CONFIG_DIR=/var/lib/suderra/config
 WORK_DIR="${STATE_DIR}/install"
 RELEASES_DIR=/opt/suderra/edge/releases
 CURRENT_LINK=/opt/suderra/edge/current
-EDGE_PUBKEY="${SUDERRA_EDGE_PUBKEY:-/etc/suderra/edge-artifact.pub.pem}"
+EDGE_PUBKEY="${SUDERRA_EDGE_PUBKEY:-/etc/suderra/edge-artifact.ed25519.pub}"
+VERIFY_BIN="${SUDERRA_INSTALLER_VERIFY_BIN:-/usr/bin/suderra-installer}"
 
 VERSION=
 URL=
 EXPECTED_SHA256=
-SIGNATURE_URL=
 BIN_NAME=suderra-agent
 FORMAT=tar.gz
 LOCKDOWN_AFTER_INSTALL=1
 INTERACTIVE=0
 MANIFEST=
 MANIFEST_URL=
+MIN_KEY_EPOCH="${SUDERRA_EDGE_MIN_KEY_EPOCH:-1}"
+MIN_ROLLBACK_FLOOR="${SUDERRA_EDGE_MIN_ROLLBACK_FLOOR:-v0.1.0-alpha}"
 
 usage() {
     cat <<'EOF'
@@ -31,16 +33,32 @@ Suderra OS manifests must include:
   version, artifact_url, sha256, signature_url, binary_name
 
 Optional fields:
-  artifact_format, config_payload, activation_token
+  config.payload
 EOF
 }
 
-json_string() {
-    key="$1"
-    file="$2"
-    tr ',{}' '\n' < "${file}" |
-        sed -nE 's/^[[:space:]]*"'"${key}"'"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' |
-        head -n 1
+detect_board() {
+    if [ -n "${SUDERRA_TARGET_BOARD:-}" ]; then
+        printf '%s\n' "${SUDERRA_TARGET_BOARD}"
+        return 0
+    fi
+    if [ -r /proc/device-tree/model ]; then
+        model="$(tr -d '\000' < /proc/device-tree/model)"
+        case "${model}" in
+            *RevPi*|*Revolution\ Pi*) printf '%s\n' "revpi4"; return 0 ;;
+            *Raspberry\ Pi*|*Compute\ Module*) printf '%s\n' "rpi4-cm4"; return 0 ;;
+        esac
+    fi
+    echo "ERROR: unable to detect target board; set SUDERRA_TARGET_BOARD" >&2
+    exit 2
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        aarch64|arm64) printf '%s\n' "aarch64" ;;
+        x86_64|amd64) printf '%s\n' "x86_64" ;;
+        *) uname -m ;;
+    esac
 }
 
 while [ "$#" -gt 0 ]; do
@@ -73,16 +91,18 @@ if [ -f "${CONFIG}" ]; then
     . "${CONFIG}"
     URL="${SUDERRA_EDGE_URL:-${URL}}"
     EXPECTED_SHA256="${SUDERRA_EDGE_SHA256:-${EXPECTED_SHA256}}"
-    SIGNATURE_URL="${SUDERRA_EDGE_SIGNATURE_URL:-${SIGNATURE_URL}}"
     VERSION="${SUDERRA_EDGE_VERSION:-${VERSION}}"
     FORMAT="${SUDERRA_EDGE_ARTIFACT_FORMAT:-${FORMAT}}"
     BIN_NAME="${SUDERRA_EDGE_BINARY_NAME:-${BIN_NAME}}"
     LOCKDOWN_AFTER_INSTALL="${SUDERRA_LOCKDOWN_AFTER_INSTALL:-${LOCKDOWN_AFTER_INSTALL}}"
+    MIN_KEY_EPOCH="${SUDERRA_EDGE_MIN_KEY_EPOCH:-${MIN_KEY_EPOCH}}"
+    MIN_ROLLBACK_FLOOR="${SUDERRA_EDGE_MIN_ROLLBACK_FLOOR:-${MIN_ROLLBACK_FLOOR}}"
 fi
 
 mkdir -p "${WORK_DIR}" "${CONFIG_DIR}" "${RELEASES_DIR}" /var/log/suderra
 chmod 0750 /var/lib/suderra "${STATE_DIR}" "${WORK_DIR}" "${CONFIG_DIR}" /var/log/suderra 2>/dev/null || true
-chown -R suderra:suderra /var/lib/suderra /var/log/suderra 2>/dev/null || true
+chown root:root /var/lib/suderra 2>/dev/null || true
+chown suderra:suderra "${STATE_DIR}" "${WORK_DIR}" "${CONFIG_DIR}" /var/log/suderra 2>/dev/null || true
 
 if [ -n "${MANIFEST_URL}" ]; then
     MANIFEST="${WORK_DIR}/edge-manifest.json"
@@ -95,19 +115,36 @@ if [ -n "${MANIFEST}" ]; then
         echo "ERROR: manifest not found: ${MANIFEST}" >&2
         exit 2
     }
-    VERSION="$(json_string version "${MANIFEST}")"
-    URL="$(json_string artifact_url "${MANIFEST}")"
-    EXPECTED_SHA256="$(json_string sha256 "${MANIFEST}")"
-    SIGNATURE_URL="$(json_string signature_url "${MANIFEST}")"
-    BIN_NAME="$(json_string binary_name "${MANIFEST}")"
-    FORMAT="$(json_string artifact_format "${MANIFEST}")"
-    CONFIG_PAYLOAD="$(json_string config_payload "${MANIFEST}")"
-    ACTIVATION_TOKEN="$(json_string activation_token "${MANIFEST}")"
-    [ -n "${FORMAT}" ] || FORMAT=tar.gz
-    [ -n "${BIN_NAME}" ] || BIN_NAME=suderra-agent
+    [ -x "${VERIFY_BIN}" ] || {
+        echo "ERROR: suderra-installer verifier missing: ${VERIFY_BIN}" >&2
+        exit 2
+    }
+    [ -s "${EDGE_PUBKEY}" ] || {
+        echo "ERROR: pinned Edge artifact public key missing: ${EDGE_PUBKEY}" >&2
+        exit 2
+    }
+    PLAN_FILE="${WORK_DIR}/edge-plan.env"
+    CONFIG_PAYLOAD_FILE="${WORK_DIR}/config-payload.yaml"
+    TARGET_BOARD="$(detect_board)"
+    TARGET_ARCH="$(detect_arch)"
+    "${VERIFY_BIN}" edge-manifest plan \
+        --manifest "${MANIFEST}" \
+        --public-key "${EDGE_PUBKEY}" \
+        --board "${TARGET_BOARD}" \
+        --arch "${TARGET_ARCH}" \
+        --min-key-epoch "${MIN_KEY_EPOCH}" \
+        --min-rollback-floor "${MIN_ROLLBACK_FLOOR}" \
+        --write-plan "${PLAN_FILE}" \
+        --config-output "${CONFIG_PAYLOAD_FILE}"
+    # shellcheck disable=SC1090
+    . "${PLAN_FILE}"
+    VERSION="${SUDERRA_EDGE_VERSION}"
+    URL="${SUDERRA_EDGE_ARTIFACT_URL}"
+    EXPECTED_SHA256="${SUDERRA_EDGE_SHA256}"
+    BIN_NAME="${SUDERRA_EDGE_BINARY_NAME}"
+    FORMAT="${SUDERRA_EDGE_ARTIFACT_FORMAT}"
 else
-    CONFIG_PAYLOAD=
-    ACTIVATION_TOKEN=
+    CONFIG_PAYLOAD_FILE=
 fi
 
 if [ "${INTERACTIVE}" = "1" ] && [ -z "${URL}" ]; then
@@ -120,18 +157,17 @@ if [ "${INTERACTIVE}" = "1" ] && [ -z "${EXPECTED_SHA256}" ]; then
     read -r EXPECTED_SHA256
 fi
 
-if [ -z "${VERSION}" ] || [ -z "${URL}" ] || [ -z "${EXPECTED_SHA256}" ] || [ -z "${SIGNATURE_URL}" ]; then
-    echo "ERROR: version, artifact_url, sha256 and signature_url are required." >&2
+if [ -z "${MANIFEST}" ]; then
+    echo "ERROR: signed provisioning manifest is required." >&2
     exit 2
 fi
 
-[ -s "${EDGE_PUBKEY}" ] || {
-    echo "ERROR: pinned Edge artifact public key missing: ${EDGE_PUBKEY}" >&2
+if [ -z "${VERSION}" ] || [ -z "${URL}" ] || [ -z "${EXPECTED_SHA256}" ]; then
+    echo "ERROR: verified manifest did not produce version, artifact URL and SHA256." >&2
     exit 2
-}
+fi
 
 ARTIFACT="${WORK_DIR}/edge-artifact"
-SIGNATURE="${WORK_DIR}/edge-artifact.sig"
 EXTRACT_DIR="${WORK_DIR}/extract"
 RELEASE_DIR="${RELEASES_DIR}/${VERSION}"
 
@@ -140,13 +176,16 @@ mkdir -p "${EXTRACT_DIR}" "${RELEASE_DIR}"
 
 echo "==> Downloading Suderra Edge artifact"
 curl --fail --location --show-error --silent --output "${ARTIFACT}" "${URL}"
-curl --fail --location --show-error --silent --output "${SIGNATURE}" "${SIGNATURE_URL}"
 
-echo "==> Verifying SHA256"
-printf '%s  %s\n' "${EXPECTED_SHA256}" "${ARTIFACT}" | sha256sum -c -
-
-echo "==> Verifying artifact signature"
-openssl dgst -sha256 -verify "${EDGE_PUBKEY}" -signature "${SIGNATURE}" "${ARTIFACT}" >/dev/null
+echo "==> Verifying signed Suderra Edge artifact"
+"${VERIFY_BIN}" edge-manifest verify-artifact \
+    --manifest "${MANIFEST}" \
+    --public-key "${EDGE_PUBKEY}" \
+    --artifact "${ARTIFACT}" \
+    --board "${TARGET_BOARD}" \
+    --arch "${TARGET_ARCH}" \
+    --min-key-epoch "${MIN_KEY_EPOCH}" \
+    --min-rollback-floor "${MIN_ROLLBACK_FLOOR}"
 
 case "${FORMAT}" in
     tar.gz|tgz)
@@ -174,8 +213,8 @@ mv -f "${RELEASE_DIR}/.suderra-agent.new" "${RELEASE_DIR}/suderra-agent"
 ln -sfn "releases/${VERSION}" "${CURRENT_LINK}"
 chown -h root:root "${CURRENT_LINK}" 2>/dev/null || true
 
-if [ -n "${CONFIG_PAYLOAD:-}" ]; then
-    printf '%s\n' "${CONFIG_PAYLOAD}" > "${CONFIG_DIR}/config.yaml"
+if [ -n "${CONFIG_PAYLOAD_FILE:-}" ] && [ -s "${CONFIG_PAYLOAD_FILE}" ]; then
+    install -m 0600 "${CONFIG_PAYLOAD_FILE}" "${CONFIG_DIR}/config.yaml"
 elif [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
     {
         printf 'device_id: "00000000-0000-0000-0000-000000000000"\n'

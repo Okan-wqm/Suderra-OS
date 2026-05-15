@@ -38,19 +38,84 @@ if [ ! -f "${DISK_IMG}" ]; then
     exit 1
 fi
 
+find_ovmf_code() {
+    local candidate
+    local base
+    local -a candidates
+
+    if [ -n "${OVMF_CODE:-}" ]; then
+        if [ -f "${OVMF_CODE}" ]; then
+            printf '%s\n' "${OVMF_CODE}"
+            return 0
+        fi
+        echo "ERROR: OVMF_CODE bulundu değil: ${OVMF_CODE}" >&2
+        return 1
+    fi
+
+    candidates=(
+        /usr/share/OVMF/OVMF_CODE_4M.fd
+        /usr/share/OVMF/OVMF_CODE.fd
+        /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+        /usr/share/OVMF/OVMF_CODE.secboot.fd
+        /usr/share/qemu/edk2-x86_64-code.fd
+        /usr/share/qemu/OVMF.fd
+        /usr/share/ovmf/OVMF.fd
+        /usr/share/edk2/ovmf/OVMF_CODE.fd
+        /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd
+        /usr/share/edk2/x64/OVMF_CODE.fd
+        /usr/share/edk2/x64/OVMF_CODE.4m.fd
+        /usr/share/edk2-ovmf/x64/OVMF_CODE.fd
+        /usr/share/edk2-ovmf/x64/OVMF_CODE_4M.fd
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [ -f "${candidate}" ]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    while IFS= read -r candidate; do
+        [ -f "${candidate}" ] || continue
+        base="$(basename "${candidate}")"
+        case "${base}" in
+            *VARS*|*vars*|*ia32*|*IA32*|*arm*|*ARM*|*aarch64*|*AARCH64*|*riscv*|*RISCV*)
+                continue
+                ;;
+        esac
+        printf '%s\n' "${candidate}"
+        return 0
+    done < <(
+        {
+            find /usr/share/OVMF /usr/share/ovmf /usr/share/qemu /usr/share/edk2 /usr/share/edk2-ovmf \
+                -maxdepth 4 \
+                -type f \
+                \( -iname 'OVMF_CODE*.fd' -o -iname 'OVMF.fd' -o -iname 'edk2-x86_64-code*.fd' \) \
+                2>/dev/null || true
+        } | sort
+    )
+
+    echo "ERROR: OVMF firmware bulunamadı. OVMF_CODE=/path/to/OVMF_CODE.fd ayarlayın." >&2
+    return 1
+}
+
 case "${ARCH}" in
     x86_64)
+        OVMF_CODE_PATH="$(find_ovmf_code)"
         echo "==> QEMU x86_64 başlatılıyor"
+        echo "==> OVMF: ${OVMF_CODE_PATH}"
         echo "==> CTRL-A X ile çıkış"
         exec qemu-system-x86_64 \
+            -machine q35 \
             -m 512M \
             -smp 2 \
             -drive "file=${DISK_IMG},format=raw,if=virtio" \
             -nographic \
             -serial mon:stdio \
+            -fw_cfg name=opt/org.tianocore/X-Cpuhp-Bugcheck-Override,string=yes \
             -netdev user,id=net0,hostfwd=tcp::5555-:8080 \
             -device virtio-net-pci,netdev=net0 \
-            -bios /usr/share/OVMF/OVMF_CODE.fd \
+            -bios "${OVMF_CODE_PATH}" \
             ${QEMU_KVM:+-enable-kvm}
         ;;
     aarch64)

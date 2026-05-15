@@ -11,12 +11,14 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   trivy-fs:
     name: Trivy (filesystem)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -41,8 +43,7 @@ jobs:
             --output trivy-fs.sarif \
             --severity CRITICAL,HIGH \
             --skip-dirs buildroot,output,dl \
-            --ignore-unfixed \
-            --exit-code 0 \
+            --exit-code 1 \
             .
 
       - name: Upload SARIF
@@ -55,6 +56,9 @@ jobs:
   trivy-config:
     name: Trivy (config / Dockerfile)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -77,7 +81,7 @@ jobs:
             --format sarif \
             --output trivy-config.sarif \
             --severity CRITICAL,HIGH,MEDIUM \
-            --exit-code 0 \
+            --exit-code 1 \
             .
 
       - name: Upload SARIF
@@ -98,11 +102,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  sbom-diff:
-    name: SBOM Diff (release-to-release)
+  grype-fs:
+    name: Grype (filesystem)
     runs-on: ubuntu-24.04
-    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
-      - name: Faz 5'te aktif olur
-        run: echo "::notice::SBOM diff Faz 5'te eklenecek"
+      - name: Run Grype scan
+        uses: anchore/scan-action@v4
+        with:
+          path: .
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+          only-fixed: true
+      - name: Upload SARIF
+        if: always() && hashFiles('results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: grype-fs
+
+  vex-json:
+    name: VEX JSON syntax
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate OpenVEX JSON files
+        run: |
+          set -euo pipefail
+          for vex in vex/*.json; do
+            [ -f "$vex" ] || continue
+            python3 -m json.tool "$vex" >/dev/null
+          done

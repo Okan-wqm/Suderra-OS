@@ -13,4 +13,4 @@ UMask=0077
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectHome=true
-ReadWritePaths=/var/lib/suderra /var/log/suderra /opt/suderra /etc/suderra /etc/systemd/system /etc/shadow
+ReadWritePaths=/var/spool/suderra-provision /var/lib/suderra /var/log/suderra /opt/suderra /etc/suderra /etc/systemd/system /etc/shadow

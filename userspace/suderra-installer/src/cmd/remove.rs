@@ -27,7 +27,12 @@ pub async fn run(args: RemoveArgs) -> Result<()> {
         } else {
             format!("'{}' kaldırılsın MI (config korunur)?", args.package)
         };
-        if !Confirm::new().with_prompt(prompt).default(false).interact().unwrap_or(false) {
+        if !Confirm::new()
+            .with_prompt(prompt)
+            .default(false)
+            .interact()
+            .unwrap_or(false)
+        {
             info!("kaldırma iptal edildi");
             Event::new(EventKind::Remove, &args.package, EventResult::Aborted)
                 .record()

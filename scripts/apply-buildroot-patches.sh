@@ -15,11 +15,6 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 BUILDROOT_DIR="${1:-${BUILDROOT_DIR:-${PROJECT_ROOT}/buildroot}}"
 PATCH_DIR="${PROJECT_ROOT}/patches/buildroot"
 
-if [ "${SUDERRA_SKIP_BUILDROOT_PATCHES:-0}" = "1" ]; then
-    echo "==> Buildroot patch application skipped by SUDERRA_SKIP_BUILDROOT_PATCHES=1"
-    exit 0
-fi
-
 if [ ! -d "${BUILDROOT_DIR}" ]; then
     echo "ERROR: Buildroot bulunamadı: ${BUILDROOT_DIR}" >&2
     exit 1

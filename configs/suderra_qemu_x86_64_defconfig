@@ -15,6 +15,8 @@
 # Architecture
 BR2_x86_64=y
 BR2_x86_corei7=y
+BR2_JLEVEL=1
+BR2_PACKAGE_SUDERRA_VARIANT_DEV=y
 
 # Toolchain — glibc dynamic, required by Buildroot systemd
 BR2_TOOLCHAIN_BUILDROOT=y
@@ -33,12 +35,12 @@ BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.6"
 BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
 BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/linux-qemu.config"
 BR2_LINUX_KERNEL_BZIMAGE=y
 BR2_LINUX_KERNEL_INSTALL_TARGET=y
 
 # Kernel hardening fragment (Faz 1: light, Faz 3: strict)
-# Şu an Faz 1'de pasif — Faz 3'te aktive edilir
-# BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/kernel-fragment.config"
+# Şu an Faz 1'de pasif — Faz 3'te common/kernel-fragment.config bu listeye eklenir.
 
 # Init system — systemd minimal
 # Edge Agent Type=notify + sd-notify zorunlu kıldığı için sysvinit/finit alternatif değil
@@ -50,21 +52,26 @@ BR2_PACKAGE_SYSTEMD_RESOLVED=n
 # BR2_PACKAGE_SYSTEMD_TIMESYNCD is not set
 # BR2_PACKAGE_SYSTEMD_TIMEDATED is not set
 # BR2_PACKAGE_SYSTEMD_HOSTNAMED is not set
-BR2_PACKAGE_SYSTEMD_BOOTCTL=y
 # Faz 3'te aktive: BR2_PACKAGE_SYSTEMD_BOOT=y (UEFI Secure Boot için)
 
 # Filesystem — Faz 1: ext4 (kolay debug), Faz 3: erofs + dm-verity
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_EXT2_GEN=4
-BR2_TARGET_ROOTFS_EXT2_BLOCKS=0
+BR2_TARGET_ROOTFS_EXT2_SIZE="256M"
 BR2_TARGET_ROOTFS_EXT2_INODES=0
 BR2_TARGET_ROOTFS_EXT2_RESBLKS=1
 
-# Bootloader — GRUB2 (BIOS+UEFI), Faz 3'te shim ile signed boot
+# Image generation
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_MTOOLS=y
+
+# Bootloader — GRUB2 UEFI (QEMU OVMF), Faz 3'te shim ile signed boot
 BR2_TARGET_GRUB2=y
-BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="boot linux ext2 fat squash4 part_msdos part_gpt normal biosdisk search"
-BR2_TARGET_GRUB2_BUILTIN_CONFIG_PC="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/grub.cfg"
+BR2_TARGET_GRUB2_X86_64_EFI=y
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_msdos part_gpt normal search efi_gop efi_uga"
+BR2_TARGET_GRUB2_BUILTIN_CONFIG_EFI="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/grub-qemu.cfg"
 
 # QEMU host modules için (gerçek HW'de gereksiz)
 BR2_PACKAGE_QEMU=n

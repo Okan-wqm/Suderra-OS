@@ -4,13 +4,20 @@ set -eu
 PAYLOAD_DIR="${SUDERRA_INSTALLER_PAYLOAD_DIR:-/run/suderra-installer/payload}"
 SYS_BLOCK="${SUDERRA_INSTALLER_SYS_BLOCK:-/sys/block}"
 DEV_DIR="${SUDERRA_INSTALLER_DEV_DIR:-/dev}"
-PUBKEY="${SUDERRA_INSTALLER_PUBKEY:-/etc/suderra/os-installer-payload.pub.pem}"
+PUBKEY="${SUDERRA_INSTALLER_PUBKEY:-/etc/suderra/os-installer-payload.ed25519.pub}"
+VERIFY_BIN="${SUDERRA_INSTALLER_VERIFY_BIN:-/usr/bin/suderra-installer}"
 MIN_BYTES="${SUDERRA_INSTALLER_MIN_BYTES:-8589934592}"
 ALLOW_USB_TARGET="${SUDERRA_INSTALLER_ALLOW_USB_TARGET:-0}"
+USB_TARGET_BY_ID="${SUDERRA_INSTALLER_USB_TARGET_BY_ID:-}"
 SOURCE_DISK="${SUDERRA_INSTALLER_SOURCE_DISK:-}"
 ASSUME_YES="${SUDERRA_INSTALLER_ASSUME_YES:-0}"
 DRY_RUN="${SUDERRA_INSTALLER_DRY_RUN:-0}"
 REPORT_DIR="${SUDERRA_INSTALLER_REPORT_DIR:-/run/suderra-installer}"
+PLAN_FILE="${REPORT_DIR}/payload-plan.env"
+TARGET_BOARD="${SUDERRA_INSTALLER_TARGET_BOARD:-}"
+MIN_KEY_EPOCH="${SUDERRA_INSTALLER_MIN_KEY_EPOCH:-1}"
+MIN_ROLLBACK_FLOOR="${SUDERRA_INSTALLER_MIN_ROLLBACK_FLOOR:-v0.1.0-alpha}"
+TARGET_ARCH="${SUDERRA_INSTALLER_TARGET_ARCH:-$(uname -m)}"
 
 usage() {
     cat <<'EOF'
@@ -19,9 +26,11 @@ Usage:
   suderra-os-install --select-target
   suderra-os-install --verify-payload
 
-The installer verifies manifest.sig, target image SHA256 and size, excludes its
-own boot disk, selects eMMC before SD, and refuses USB targets unless
-SUDERRA_INSTALLER_ALLOW_USB_TARGET=1 is set.
+The installer verifies an Ed25519-signed payload index, target image SHA256,
+compressed/uncompressed size, and board compatibility through the Rust
+suderra-installer verifier. It excludes its own boot/payload disks, selects
+eMMC before SD, and only writes a USB target when an explicit
+SUDERRA_INSTALLER_USB_TARGET_BY_ID=/dev/disk/by-id/... path is provided.
 EOF
 }
 
@@ -34,20 +43,27 @@ die() {
     exit 1
 }
 
-json_string() {
-    key="$1"
-    file="$2"
-    tr ',{}' '\n' < "${file}" |
-        sed -nE 's/^[[:space:]]*"'"${key}"'"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' |
-        head -n 1
-}
+detect_target_board() {
+    if [ -n "${TARGET_BOARD}" ]; then
+        printf '%s\n' "${TARGET_BOARD}"
+        return 0
+    fi
 
-json_number() {
-    key="$1"
-    file="$2"
-    tr ',{}' '\n' < "${file}" |
-        sed -nE 's/^[[:space:]]*"'"${key}"'"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' |
-        head -n 1
+    if [ -r /proc/device-tree/model ]; then
+        model="$(tr -d '\000' < /proc/device-tree/model)"
+        case "${model}" in
+            *RevPi*|*Revolution\ Pi*)
+                printf '%s\n' "revpi4"
+                return 0
+                ;;
+            *Raspberry\ Pi*|*Compute\ Module*)
+                printf '%s\n' "rpi4-cm4"
+                return 0
+                ;;
+        esac
+    fi
+
+    die "could not determine target board; set SUDERRA_INSTALLER_TARGET_BOARD"
 }
 
 ensure_payload_mounted() {
@@ -67,35 +83,27 @@ ensure_payload_mounted() {
 verify_payload() {
     ensure_payload_mounted
 
-    manifest="${PAYLOAD_DIR}/manifest.json"
-    sig="${PAYLOAD_DIR}/manifest.sig"
+    [ -x "${VERIFY_BIN}" ] || die "suderra-installer verifier missing: ${VERIFY_BIN}"
     [ -s "${PUBKEY}" ] || die "pinned installer public key missing: ${PUBKEY}"
-    [ -s "${sig}" ] || die "payload manifest signature missing: ${sig}"
 
-    log "==> Verifying installer manifest signature"
-    openssl dgst -sha256 -verify "${PUBKEY}" -signature "${sig}" "${manifest}" >/dev/null ||
-        die "payload manifest signature verification failed"
+    board="$(detect_target_board)"
+    mkdir -p "${REPORT_DIR}"
+    log "==> Verifying signed installer payload for ${board}"
+    "${VERIFY_BIN}" usb-payload verify \
+        --payload-dir "${PAYLOAD_DIR}" \
+        --public-key "${PUBKEY}" \
+        --target-board "${board}" \
+        --target-arch "${TARGET_ARCH}" \
+        --min-key-epoch "${MIN_KEY_EPOCH}" \
+        --min-rollback-floor "${MIN_ROLLBACK_FLOOR}" \
+        --write-plan "${PLAN_FILE}"
 
-    image="$(json_string image "${manifest}")"
-    expected_sha="$(json_string sha256 "${manifest}")"
-    expected_size="$(json_number size_bytes "${manifest}")"
+    # shellcheck disable=SC1090
+    . "${PLAN_FILE}"
+    [ -n "${SUDERRA_PAYLOAD_IMAGE_PATH:-}" ] ||
+        die "verifier did not write SUDERRA_PAYLOAD_IMAGE_PATH"
 
-    [ -n "${image}" ] || die "manifest.image is required"
-    [ -n "${expected_sha}" ] || die "manifest.sha256 is required"
-    [ -n "${expected_size}" ] || die "manifest.size_bytes is required"
-
-    image_path="${PAYLOAD_DIR}/${image}"
-    [ -f "${image_path}" ] || die "target image missing: ${image_path}"
-
-    actual_size="$(wc -c "${image_path}" | awk '{print $1}')"
-    [ "${actual_size}" = "${expected_size}" ] ||
-        die "target image size mismatch: expected ${expected_size}, got ${actual_size}"
-
-    actual_sha="$(sha256sum "${image_path}" | awk '{print $1}')"
-    [ "${actual_sha}" = "${expected_sha}" ] ||
-        die "target image SHA256 mismatch"
-
-    log "==> Payload verified: ${image}"
+    log "==> Payload verified: ${SUDERRA_PAYLOAD_IMAGE_NAME}"
 }
 
 disk_from_partition() {
@@ -124,6 +132,9 @@ source_disk() {
     fi
 
     root_source="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+    if [ "${root_source}" = "/dev/root" ]; then
+        root_source="$(readlink -f /dev/root 2>/dev/null || printf '%s\n' /dev/root)"
+    fi
     if [ -n "${root_source}" ] && [ "${root_source#${DEV_DIR}/}" != "${root_source}" ]; then
         parent="$(lsblk -n -o PKNAME "${root_source}" 2>/dev/null | head -n 1 || true)"
         if [ -n "${parent}" ]; then
@@ -135,6 +146,38 @@ source_disk() {
     fi
 
     die "could not determine installer source disk; set SUDERRA_INSTALLER_SOURCE_DISK"
+}
+
+mounted_disk_for_path() {
+    path="$1"
+    source="$(findmnt -n -o SOURCE "${path}" 2>/dev/null || true)"
+    [ -n "${source}" ] || return 0
+    case "${source}" in
+        /dev/root)
+            source="$(readlink -f /dev/root 2>/dev/null || printf '%s\n' /dev/root)"
+            ;;
+    esac
+    [ "${source#${DEV_DIR}/}" != "${source}" ] || return 0
+    parent="$(lsblk -n -o PKNAME "${source}" 2>/dev/null | head -n 1 || true)"
+    if [ -n "${parent}" ]; then
+        printf '%s\n' "${parent}"
+    else
+        disk_from_partition "${source}"
+    fi
+}
+
+excluded_disks() {
+    source_disk
+    mounted_disk_for_path /boot
+    mounted_disk_for_path "${PAYLOAD_DIR}"
+}
+
+is_excluded_disk() {
+    name="$1"
+    for excluded in $(excluded_disks | sort -u); do
+        [ "${name}" != "${excluded}" ] || return 0
+    done
+    return 1
 }
 
 read_sys_value() {
@@ -150,16 +193,17 @@ read_sys_value() {
 candidate_priority() {
     name="$1"
     removable="$2"
+    media_type="$3"
     case "${name}" in
         mmcblk*)
-            if [ "${removable}" = "0" ]; then
+            if [ "${removable}" = "0" ] || [ "${media_type}" = "MMC" ]; then
                 printf '0\n'
             else
                 printf '1\n'
             fi
             ;;
         sd*)
-            printf '2\n'
+            printf '9\n'
             ;;
         *)
             printf '9\n'
@@ -168,7 +212,30 @@ candidate_priority() {
 }
 
 select_target() {
-    src="$(source_disk)"
+    if [ "${ALLOW_USB_TARGET}" = "1" ] && [ -n "${USB_TARGET_BY_ID}" ]; then
+        case "${USB_TARGET_BY_ID}" in
+            /dev/disk/by-id/*|"${DEV_DIR}"/disk/by-id/*)
+                ;;
+            *)
+                die "USB targets must be explicit /dev/disk/by-id paths"
+                ;;
+        esac
+        [ -e "${USB_TARGET_BY_ID}" ] ||
+            die "explicit USB target does not exist: ${USB_TARGET_BY_ID}"
+        resolved="$(readlink -f "${USB_TARGET_BY_ID}" 2>/dev/null || printf '%s\n' "${USB_TARGET_BY_ID}")"
+        name="$(basename "${resolved}")"
+        is_excluded_disk "${name}" &&
+            die "explicit USB target is an installer source disk: ${USB_TARGET_BY_ID}"
+        devpath="${SYS_BLOCK}/${name}"
+        [ -e "${devpath}" ] || die "explicit USB target is not in ${SYS_BLOCK}: ${name}"
+        sectors="$(read_sys_value "${devpath}/size" "0")"
+        bytes=$((sectors * 512))
+        [ "${bytes}" -ge "${MIN_BYTES}" ] ||
+            die "explicit USB target is smaller than minimum ${MIN_BYTES} bytes"
+        printf '%s\n' "${USB_TARGET_BY_ID}"
+        return 0
+    fi
+
     best_name=""
     best_priority=99
     best_count=0
@@ -182,20 +249,19 @@ select_target() {
             *boot*|*rpmb*) continue ;;
         esac
 
-        [ "${name}" != "${src}" ] || continue
+        is_excluded_disk "${name}" && continue
 
         case "${name}" in
-            sd*)
-                [ "${ALLOW_USB_TARGET}" = "1" ] || continue
-                ;;
+            sd*) continue ;;
         esac
 
         sectors="$(read_sys_value "${devpath}/size" "0")"
         removable="$(read_sys_value "${devpath}/removable" "1")"
+        media_type="$(read_sys_value "${devpath}/device/type" "")"
         bytes=$((sectors * 512))
         [ "${bytes}" -ge "${MIN_BYTES}" ] || continue
 
-        priority="$(candidate_priority "${name}" "${removable}")"
+        priority="$(candidate_priority "${name}" "${removable}" "${media_type}")"
         [ "${priority}" -lt 9 ] || continue
 
         candidates=$((candidates + 1))
@@ -228,16 +294,103 @@ confirm_target() {
     [ "${answer}" = "y" ] || [ "${answer}" = "Y" ] || die "operator declined install"
 }
 
+target_size_bytes() {
+    target="$1"
+    name="$(basename "$(readlink -f "${target}" 2>/dev/null || printf '%s\n' "${target}")")"
+    sectors="$(read_sys_value "${SYS_BLOCK}/${name}/size" "0")"
+    printf '%s\n' "$((sectors * 512))"
+}
+
+partition_path() {
+    disk="$1"
+    number="$2"
+    case "$(basename "${disk}")" in
+        mmcblk*|nvme*n*)
+            printf '%sp%s\n' "${disk}" "${number}"
+            ;;
+        *)
+            printf '%s%s\n' "${disk}" "${number}"
+            ;;
+    esac
+}
+
+reread_partition_table() {
+    target="$1"
+    if command -v blockdev >/dev/null 2>&1; then
+        blockdev --rereadpt "${target}" 2>/dev/null || true
+    fi
+    if command -v partprobe >/dev/null 2>&1; then
+        partprobe "${target}" 2>/dev/null || true
+    fi
+    sync
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm settle 2>/dev/null || true
+    fi
+}
+
+wait_for_partition() {
+    partition="$1"
+    tries=0
+    while [ "${tries}" -lt 20 ]; do
+        [ -b "${partition}" ] && return 0
+        sleep 1
+        tries=$((tries + 1))
+    done
+    die "partition did not appear: ${partition}"
+}
+
+verify_target_partitions() {
+    target="$1"
+    resolved="$(readlink -f "${target}" 2>/dev/null || printf '%s\n' "${target}")"
+    boot_part="$(partition_path "${resolved}" 1)"
+    root_part="$(partition_path "${resolved}" 2)"
+
+    wait_for_partition "${boot_part}"
+    wait_for_partition "${root_part}"
+
+    boot_type="$(blkid -s TYPE -o value "${boot_part}" 2>/dev/null || true)"
+    root_type="$(blkid -s TYPE -o value "${root_part}" 2>/dev/null || true)"
+    case "${boot_type}" in
+        vfat|fat) ;;
+        *) die "boot partition type mismatch: ${boot_part} type=${boot_type}" ;;
+    esac
+    [ "${root_type}" = "ext4" ] ||
+        die "root partition type mismatch: ${root_part} type=${root_type}"
+
+    root_partuuid="$(blkid -s PARTUUID -o value "${root_part}" 2>/dev/null || true)"
+    [ -n "${root_partuuid}" ] || die "root PARTUUID missing for ${root_part}"
+
+    mount_dir="${REPORT_DIR}/target-boot"
+    mkdir -p "${mount_dir}"
+    mount "${boot_part}" "${mount_dir}"
+    if [ ! -f "${mount_dir}/cmdline.txt" ]; then
+        umount "${mount_dir}" || true
+        die "target boot partition has no cmdline.txt"
+    fi
+    sed -i "s#root=[^ ]*#root=PARTUUID=${root_partuuid}#" "${mount_dir}/cmdline.txt"
+    if ! grep -q "root=PARTUUID=${root_partuuid}" "${mount_dir}/cmdline.txt"; then
+        umount "${mount_dir}" || true
+        die "cmdline.txt PARTUUID update verification failed"
+    fi
+    sync
+    umount "${mount_dir}"
+}
+
 install_image() {
     verify_payload
     target="$(select_target)"
     confirm_target "${target}"
 
-    manifest="${PAYLOAD_DIR}/manifest.json"
-    image="$(json_string image "${manifest}")"
-    image_path="${PAYLOAD_DIR}/${image}"
-    uncompressed_sha="$(json_string uncompressed_sha256 "${manifest}")"
-    uncompressed_size="$(json_number uncompressed_size_bytes "${manifest}")"
+    # shellcheck disable=SC1090
+    . "${PLAN_FILE}"
+    image_path="${SUDERRA_PAYLOAD_IMAGE_PATH}"
+    uncompressed_sha="${SUDERRA_PAYLOAD_UNCOMPRESSED_SHA256}"
+    uncompressed_size="${SUDERRA_PAYLOAD_UNCOMPRESSED_SIZE_BYTES}"
+    min_storage="${SUDERRA_PAYLOAD_MIN_STORAGE_BYTES}"
+
+    target_bytes="$(target_size_bytes "${target}")"
+    [ "${target_bytes}" -ge "${min_storage}" ] ||
+        die "target is smaller than required minimum: ${target_bytes} < ${min_storage}"
 
     if [ "${DRY_RUN}" = "1" ]; then
         log "==> Dry run: would write ${image_path} to ${target}"
@@ -250,19 +403,25 @@ install_image() {
     xz -dc "${image_path}" | dd of="${target}" bs=4M conv=fsync status=progress
     sync
 
-    if [ -n "${uncompressed_sha}" ] && [ -n "${uncompressed_size}" ]; then
-        log "==> Verifying written image prefix"
-        actual="$(head -c "${uncompressed_size}" "${target}" | sha256sum | awk '{print $1}')"
-        [ "${actual}" = "${uncompressed_sha}" ] ||
-            die "written target verification failed"
-    else
-        log "WARN: manifest has no uncompressed hash; skipped read-back verification"
-    fi
+    log "==> Re-reading partition table"
+    reread_partition_table "${target}"
+
+    log "==> Verifying written image prefix"
+    actual="$(head -c "${uncompressed_size}" "${target}" | sha256sum | awk '{print $1}')"
+    [ "${actual}" = "${uncompressed_sha}" ] ||
+        die "written target verification failed"
+
+    log "==> Verifying target partitions and PARTUUID boot identity"
+    verify_target_partitions "${target}"
 
     mkdir -p "${REPORT_DIR}"
     {
         printf 'Suderra OS install complete\n'
         printf 'target=%s\n' "${target}"
+        printf 'target_bytes=%s\n' "${target_bytes}"
+        printf 'payload=%s\n' "${SUDERRA_PAYLOAD_IMAGE_NAME}"
+        printf 'payload_sha256=%s\n' "${SUDERRA_PAYLOAD_COMPRESSED_SHA256}"
+        printf 'uncompressed_sha256=%s\n' "${uncompressed_sha}"
         printf 'next=power off, remove USB installer, boot target media\n'
     } > "${REPORT_DIR}/provisioning-info.txt"
 

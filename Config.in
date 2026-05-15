@@ -27,7 +27,7 @@ source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
 #
 choice
 	prompt "Suderra OS variant"
-	default BR2_PACKAGE_SUDERRA_VARIANT_PROD
+	default BR2_PACKAGE_SUDERRA_VARIANT_DEV
 
 config BR2_PACKAGE_SUDERRA_VARIANT_DEV
 	bool "Development / diagnostics (not for appliance release)"

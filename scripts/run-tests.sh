@@ -7,6 +7,7 @@
 #   ./scripts/run-tests.sh qemu              # Sadece QEMU
 #   ./scripts/run-tests.sh security          # Sadece security
 #   ./scripts/run-tests.sh installer         # Sadece USB installer
+#   ./scripts/run-tests.sh image-contracts   # Build matrix/image contracts
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -16,6 +17,8 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 
 CATEGORY="${1:-all}"
 FAILED=0
+SKIPPED=0
+FAIL_ON_SKIP="${SUDERRA_FAIL_ON_SKIP:-0}"
 
 run_category() {
     local cat="$1"
@@ -27,28 +30,45 @@ run_category() {
     for test in "${dir}"/*.sh; do
         [ -f "${test}" ] || continue
         echo "  - $(basename "${test}")"
-        if ! bash "${test}"; then
-            FAILED=1
-            echo "    FAIL"
-        else
-            echo "    OK"
-        fi
+        set +e
+        bash "${test}"
+        status="$?"
+        set -e
+        case "${status}" in
+            0)
+                echo "    OK"
+                ;;
+            77)
+                SKIPPED=$((SKIPPED + 1))
+                if [ "${FAIL_ON_SKIP}" = "1" ]; then
+                    FAILED=1
+                    echo "    SKIP treated as FAIL"
+                else
+                    echo "    SKIP"
+                fi
+                ;;
+            *)
+                FAILED=1
+                echo "    FAIL"
+                ;;
+        esac
     done
 }
 
 case "${CATEGORY}" in
     all)
+        run_category image-contracts
         run_category qemu
         run_category installer
         run_category security
         run_category ota
         ;;
-    qemu|installer|security|ota)
+    qemu|installer|security|ota|image-contracts)
         run_category "${CATEGORY}"
         ;;
     *)
         echo "ERROR: Bilinmeyen kategori: ${CATEGORY}"
-        echo "Kullanım: $0 [all|qemu|installer|security|ota]"
+        echo "Kullanım: $0 [all|qemu|installer|security|ota|image-contracts]"
         exit 1
         ;;
 esac
@@ -60,4 +80,8 @@ if [ "${FAILED}" -ne 0 ]; then
 fi
 
 echo ""
-echo "==> Tüm testler geçti"
+if [ "${SKIPPED}" -gt 0 ]; then
+    echo "==> Tüm zorunlu testler geçti (${SKIPPED} skipped)"
+else
+    echo "==> Tüm testler geçti"
+fi

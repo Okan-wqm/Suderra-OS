@@ -34,14 +34,15 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+base64 = { workspace = true }
 
 # Crypto (SHA256 verify)
 sha2 = { workspace = true }
 hex = { workspace = true }
+ed25519-dalek = { workspace = true }
 
 # CLI + UX
 clap = { workspace = true }
-indicatif = { workspace = true }
 dialoguer = { workspace = true }
 
 # Time (audit log timestamps)

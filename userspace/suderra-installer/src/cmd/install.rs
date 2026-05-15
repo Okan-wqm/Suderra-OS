@@ -26,6 +26,7 @@ use tracing::{info, warn};
 /// `install <package>` çalıştır
 pub async fn run(args: InstallArgs) -> Result<()> {
     info!("paket kurulumu: {}", args.package);
+    enforce_signature_policy(args.verify_signature)?;
 
     // 1. Lokal dosyadan mı kuruyor (air-gapped)?
     if let Some(local) = &args.from_file {
@@ -64,12 +65,7 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     let package_info = manifest
         .find_package(&args.package, arch.as_str())
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Paket bulunamadı: {}/{}/{}",
-                args.package,
-                arch,
-                version
-            )
+            anyhow::anyhow!("Paket bulunamadı: {}/{}/{}", args.package, arch, version)
         })?;
 
     // Konfirm prompt
@@ -78,11 +74,15 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     println!("  Versiyon:  {}", manifest.version);
     println!("  Mimari:    {}", package_info.arch);
     println!("  Dosya:     {}", package_info.file);
-    println!("  Boyut:     {} bytes ({:.1} MiB)",
+    println!(
+        "  Boyut:     {} bytes ({:.1} MiB)",
         package_info.size_bytes,
         package_info.size_bytes as f64 / 1024.0 / 1024.0
     );
-    println!("  SHA256:    {}", &package_info.sha256[..16.min(package_info.sha256.len())]);
+    println!(
+        "  SHA256:    {}",
+        &package_info.sha256[..16.min(package_info.sha256.len())]
+    );
     if let Some(min_os) = &package_info.min_os_version {
         println!("  Min OS:    {min_os}");
     }
@@ -104,26 +104,25 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     let target = target_dir.join(&package_info.file);
 
     let bundle_url = release.artifact_url(args.mirror);
-    let download_result = match download_file(&bundle_url, &target, Some(&package_info.sha256))
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            // Fallback mirror
-            if let Some(fallback) = args.mirror.fallback() {
-                warn!("Ana mirror başarısız ({e}), fallback denenecek: {fallback:?}");
-                let release2 = PackageRelease {
-                    package: args.package.clone(),
-                    version: manifest.version.clone(),
-                    arch,
-                };
-                let fallback_url = release2.artifact_url(fallback);
-                download_file(&fallback_url, &target, Some(&package_info.sha256)).await?
-            } else {
-                return Err(e);
+    let download_result =
+        match download_file(&bundle_url, &target, Some(&package_info.sha256)).await {
+            Ok(r) => r,
+            Err(e) => {
+                // Fallback mirror
+                if let Some(fallback) = args.mirror.fallback() {
+                    warn!("Ana mirror başarısız ({e}), fallback denenecek: {fallback:?}");
+                    let release2 = PackageRelease {
+                        package: args.package.clone(),
+                        version: manifest.version.clone(),
+                        arch,
+                    };
+                    let fallback_url = release2.artifact_url(fallback);
+                    download_file(&fallback_url, &target, Some(&package_info.sha256)).await?
+                } else {
+                    return Err(e);
+                }
             }
-        }
-    };
+        };
 
     Event::new(EventKind::Download, &args.package, EventResult::Success)
         .with_version(&manifest.version)
@@ -145,17 +144,25 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
                 match verify::verify_keyless(&target, &sig_path) {
                     Ok(_outcome) => {
                         signature_verified = true;
-                        Event::new(EventKind::VerifySignature, &args.package, EventResult::Success)
-                            .with_version(&manifest.version)
-                            .record()
-                            .ok();
+                        Event::new(
+                            EventKind::VerifySignature,
+                            &args.package,
+                            EventResult::Success,
+                        )
+                        .with_version(&manifest.version)
+                        .record()
+                        .ok();
                     }
                     Err(e) => {
-                        Event::new(EventKind::VerifySignature, &args.package, EventResult::Failure)
-                            .with_version(&manifest.version)
-                            .with_meta("error", e.to_string())
-                            .record()
-                            .ok();
+                        Event::new(
+                            EventKind::VerifySignature,
+                            &args.package,
+                            EventResult::Failure,
+                        )
+                        .with_version(&manifest.version)
+                        .with_meta("error", e.to_string())
+                        .record()
+                        .ok();
                         // Bundle'ı sil — manipüle edilmiş olabilir
                         let _ = tokio::fs::remove_file(&target).await;
                         return Err(e);
@@ -223,7 +230,11 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
         verify::verify_keyless(local, sig)?;
         signature_verified = true;
     } else if args.verify_signature {
-        warn!("--from-file ile kullanıldı, --signature belirtilmedi. Doğrulama atlanıyor.");
+        bail!("--from-file imzalı kurulum için --signature gerektirir");
+    } else {
+        warn!(
+            "Signature doğrulama devre dışı; yalnızca geliştirme/lab kullanımı için kabul edilir"
+        );
     }
 
     // Hash hesapla
@@ -254,7 +265,11 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
 }
 
 /// RAUC bundle install — Faz 4'te tam, şu an stub
-async fn install_bundle(bundle: &std::path::Path, package: &str, start_service: bool) -> Result<()> {
+async fn install_bundle(
+    bundle: &std::path::Path,
+    package: &str,
+    start_service: bool,
+) -> Result<()> {
     info!("bundle kurulumu (stub): {}", bundle.display());
 
     // TODO Faz 4 (RAUC integration):
@@ -288,4 +303,35 @@ fn confirm_install() -> Result<bool> {
         .default(true)
         .interact();
     Ok(prompt.unwrap_or(false))
+}
+
+fn enforce_signature_policy(verify_signature: bool) -> Result<()> {
+    if verify_signature {
+        return Ok(());
+    }
+    if is_production_variant() {
+        bail!("production images cannot disable signature verification");
+    }
+    Ok(())
+}
+
+fn is_production_variant() -> bool {
+    if std::env::var("SUDERRA_OS_VARIANT")
+        .or_else(|_| std::env::var("SUDERRA_VARIANT"))
+        .map(|value| value.trim_matches('"').eq_ignore_ascii_case("prod"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    let Ok(os_release) = std::fs::read_to_string("/etc/os-release") else {
+        return false;
+    };
+    os_release.lines().any(|line| {
+        let Some((key, value)) = line.split_once('=') else {
+            return false;
+        };
+        matches!(key, "VARIANT" | "VARIANT_ID")
+            && value.trim().trim_matches('"').eq_ignore_ascii_case("prod")
+    })
 }

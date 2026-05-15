@@ -41,6 +41,170 @@ pub enum Commands {
     Status(StatusArgs),
     /// Paketi kaldır
     Remove(RemoveArgs),
+    /// Verify and sign universal USB installer payload indexes.
+    UsbPayload(UsbPayloadArgs),
+    /// Verify signed Edge provisioning manifests and artifacts.
+    EdgeManifest(EdgeManifestArgs),
+    /// Validate a release package manifest against the Rust schema.
+    ValidateManifest(ValidateManifestArgs),
+}
+
+/// `validate-manifest`
+#[derive(clap::Args, Debug)]
+pub struct ValidateManifestArgs {
+    /// Release manifest JSON file.
+    #[arg(value_name = "FILE")]
+    pub manifest: std::path::PathBuf,
+}
+
+/// `usb-payload <command>`
+#[derive(clap::Args, Debug)]
+pub struct UsbPayloadArgs {
+    /// USB payload operation.
+    #[command(subcommand)]
+    pub command: UsbPayloadCommand,
+}
+
+/// USB payload manifest operations.
+#[derive(Subcommand, Debug)]
+pub enum UsbPayloadCommand {
+    /// Verify a signed payload index and write a shell-safe install plan.
+    Verify(UsbPayloadVerifyArgs),
+    /// Sign a JSON payload index with an Ed25519 private key through OpenSSL.
+    Sign(UsbPayloadSignArgs),
+}
+
+/// `usb-payload verify`
+#[derive(clap::Args, Debug)]
+pub struct UsbPayloadVerifyArgs {
+    /// Directory containing manifest.json, manifest.sig and payload images.
+    #[arg(long, value_name = "DIR")]
+    pub payload_dir: std::path::PathBuf,
+
+    /// Ed25519 public key, either raw hex or PEM SubjectPublicKeyInfo.
+    #[arg(long, value_name = "FILE")]
+    pub public_key: std::path::PathBuf,
+
+    /// Board family to install, for example rpi4-cm4 or revpi4.
+    #[arg(long)]
+    pub target_board: String,
+
+    /// Expected payload architecture, for example aarch64.
+    #[arg(long)]
+    pub target_arch: String,
+
+    /// Minimum accepted signing key epoch for this payload index.
+    #[arg(long, default_value_t = 1)]
+    pub min_key_epoch: u32,
+
+    /// Minimum rollback floor this payload must preserve.
+    #[arg(long, default_value = "v0.1.0-alpha")]
+    pub min_rollback_floor: String,
+
+    /// Write validated payload metadata as a shell-safe environment file.
+    #[arg(long, value_name = "FILE")]
+    pub write_plan: Option<std::path::PathBuf>,
+}
+
+/// `usb-payload sign`
+#[derive(clap::Args, Debug)]
+pub struct UsbPayloadSignArgs {
+    /// JSON manifest to canonicalize and sign.
+    #[arg(long, value_name = "FILE")]
+    pub manifest: std::path::PathBuf,
+
+    /// Ed25519 private key in OpenSSL PEM format.
+    #[arg(long, value_name = "FILE")]
+    pub private_key: std::path::PathBuf,
+
+    /// Destination detached signature file.
+    #[arg(long, value_name = "FILE")]
+    pub signature: std::path::PathBuf,
+}
+
+/// `edge-manifest <command>`
+#[derive(clap::Args, Debug)]
+pub struct EdgeManifestArgs {
+    /// Edge provisioning manifest operation.
+    #[command(subcommand)]
+    pub command: EdgeManifestCommand,
+}
+
+/// Edge provisioning manifest operations.
+#[derive(Subcommand, Debug)]
+pub enum EdgeManifestCommand {
+    /// Verify a signed manifest and write a shell-safe download/install plan.
+    Plan(EdgeManifestPlanArgs),
+    /// Verify a downloaded artifact against the signed manifest.
+    VerifyArtifact(EdgeManifestVerifyArtifactArgs),
+}
+
+/// `edge-manifest plan`
+#[derive(clap::Args, Debug)]
+pub struct EdgeManifestPlanArgs {
+    /// Signed edge provisioning manifest JSON.
+    #[arg(long, value_name = "FILE")]
+    pub manifest: std::path::PathBuf,
+
+    /// Ed25519 public key, either raw hex or PEM SubjectPublicKeyInfo.
+    #[arg(long, value_name = "FILE")]
+    pub public_key: std::path::PathBuf,
+
+    /// Expected board family, for example rpi4-cm4 or revpi4.
+    #[arg(long)]
+    pub board: Option<String>,
+
+    /// Expected artifact architecture, for example aarch64.
+    #[arg(long)]
+    pub arch: Option<String>,
+
+    /// Minimum accepted signing key epoch for this provisioning manifest.
+    #[arg(long, default_value_t = 1)]
+    pub min_key_epoch: u32,
+
+    /// Minimum rollback floor this provisioning manifest must preserve.
+    #[arg(long, default_value = "v0.1.0-alpha")]
+    pub min_rollback_floor: String,
+
+    /// Write validated manifest fields as a shell-safe environment file.
+    #[arg(long, value_name = "FILE")]
+    pub write_plan: Option<std::path::PathBuf>,
+
+    /// Write manifest config payload to this path after digest verification.
+    #[arg(long, value_name = "FILE")]
+    pub config_output: Option<std::path::PathBuf>,
+}
+
+/// `edge-manifest verify-artifact`
+#[derive(clap::Args, Debug)]
+pub struct EdgeManifestVerifyArtifactArgs {
+    /// Signed edge provisioning manifest JSON.
+    #[arg(long, value_name = "FILE")]
+    pub manifest: std::path::PathBuf,
+
+    /// Ed25519 public key, either raw hex or PEM SubjectPublicKeyInfo.
+    #[arg(long, value_name = "FILE")]
+    pub public_key: std::path::PathBuf,
+
+    /// Downloaded artifact file to verify.
+    #[arg(long, value_name = "FILE")]
+    pub artifact: std::path::PathBuf,
+
+    /// Expected board family, for example rpi4-cm4 or revpi4.
+    #[arg(long)]
+    pub board: Option<String>,
+
+    /// Expected artifact architecture, for example aarch64.
+    #[arg(long)]
+    pub arch: Option<String>,
+
+    /// Minimum accepted signing key epoch for this provisioning manifest.
+    #[arg(long, default_value_t = 1)]
+    pub min_key_epoch: u32,
+
+    /// Minimum rollback floor this provisioning manifest must preserve.
+    #[arg(long, default_value = "v0.1.0-alpha")]
+    pub min_rollback_floor: String,
 }
 
 /// `install <package>`

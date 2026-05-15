@@ -1,17 +1,18 @@
 config BR2_PACKAGE_SUDERRA_OS_INSTALLER
 	bool "suderra-os-installer"
 	depends on BR2_INIT_SYSTEMD
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_HOST_RUSTC
 	select BR2_PACKAGE_UTIL_LINUX
 	select BR2_PACKAGE_UTIL_LINUX_BINARIES
 	select BR2_PACKAGE_XZ
-	select BR2_PACKAGE_OPENSSL
-	select BR2_PACKAGE_LIBOPENSSL
-	select BR2_PACKAGE_LIBOPENSSL_BIN
 	help
-	  USB-booted self-installer for Raspberry Pi 4, CM4 and compatible
-	  appliances. It verifies a signed payload manifest, selects a safe
-	  SD/eMMC target, writes the Suderra OS target image, verifies the
-	  written image prefix, and powers off.
+	  Runtime verifier plus USB-booted self-installer for Suderra OS
+	  appliances. The suderra-installer verifier validates signed USB
+	  payload and Edge provisioning manifests; the suderra-os-install
+	  helper selects a safe SD/eMMC target, writes the target image,
+	  verifies the written image prefix, and powers off.
 
-comment "suderra-os-installer needs systemd"
-	depends on !BR2_INIT_SYSTEMD
+comment "suderra-os-installer needs systemd, threads, and a Rust-supported target"
+	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

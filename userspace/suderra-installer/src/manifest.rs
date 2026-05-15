@@ -76,6 +76,8 @@ pub enum PackageKind {
     Binary,
     /// Tar.gz arşivi (config templates, scripts)
     Tarball,
+    /// Bootable OS image artifact.
+    Image,
 }
 
 impl Manifest {
@@ -86,7 +88,9 @@ impl Manifest {
 
     /// Belirli bir paketi mimari + isimle bul
     pub fn find_package(&self, name: &str, arch: &str) -> Option<&Package> {
-        self.packages.iter().find(|p| p.name == name && p.arch == arch)
+        self.packages
+            .iter()
+            .find(|p| p.name == name && p.arch == arch)
     }
 }
 

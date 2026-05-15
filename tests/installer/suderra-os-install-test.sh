@@ -5,29 +5,42 @@ IFS=$'\n\t'
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 INSTALLER="${PROJECT_ROOT}/package/suderra-os-installer/suderra-os-install"
+VERIFY_BIN="${SUDERRA_INSTALLER_VERIFY_BIN:-${PROJECT_ROOT}/userspace/target/x86_64-unknown-linux-gnu/debug/suderra-installer}"
+CARGO_BIN="${CARGO_BIN:-cargo}"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
+
+ensure_verify_bin() {
+    (cd "${PROJECT_ROOT}/userspace" && \
+        "${CARGO_BIN}" build -p suderra-installer --target x86_64-unknown-linux-gnu)
+}
 
 make_disk() {
     local name="$1"
     local sectors="$2"
     local removable="$3"
+    local media_type="${4:-}"
     mkdir -p "${TMPDIR}/sys/block/${name}"
     printf '%s\n' "${sectors}" > "${TMPDIR}/sys/block/${name}/size"
     printf '%s\n' "${removable}" > "${TMPDIR}/sys/block/${name}/removable"
+    if [ -n "${media_type}" ]; then
+        mkdir -p "${TMPDIR}/sys/block/${name}/device"
+        printf '%s\n' "${media_type}" > "${TMPDIR}/sys/block/${name}/device/type"
+    fi
 }
 
 reset_sys() {
-    rm -rf "${TMPDIR}/sys" "${TMPDIR}/payload" "${TMPDIR}/keys"
+    rm -rf "${TMPDIR}/sys" "${TMPDIR}/payload" "${TMPDIR}/keys" "${TMPDIR}/dev"
     mkdir -p "${TMPDIR}/sys/block" "${TMPDIR}/payload" "${TMPDIR}/keys"
+    mkdir -p "${TMPDIR}/dev/disk/by-id"
 }
 
 run_select() {
     SUDERRA_INSTALLER_SYS_BLOCK="${TMPDIR}/sys/block" \
     SUDERRA_INSTALLER_SOURCE_DISK="${1}" \
     SUDERRA_INSTALLER_MIN_BYTES=1 \
-    SUDERRA_INSTALLER_DEV_DIR=/dev \
+    SUDERRA_INSTALLER_DEV_DIR="${TMPDIR}/dev" \
     "${INSTALLER}" --select-target
 }
 
@@ -56,21 +69,21 @@ test_self_usb_excluded() {
 
 test_emmc_preferred_over_sd() {
     reset_sys
-    make_disk mmcblk0 16777216 0
-    make_disk mmcblk1 16777216 1
-    expect_eq /dev/mmcblk0 "$(run_select sda)"
+    make_disk mmcblk0 16777216 0 MMC
+    make_disk mmcblk1 16777216 1 SD
+    expect_eq "${TMPDIR}/dev/mmcblk0" "$(run_select sda)"
 }
 
 test_sd_fallback() {
     reset_sys
-    make_disk mmcblk1 16777216 1
-    expect_eq /dev/mmcblk1 "$(run_select sda)"
+    make_disk mmcblk1 16777216 1 SD
+    expect_eq "${TMPDIR}/dev/mmcblk1" "$(run_select sda)"
 }
 
 test_multiple_equal_targets_fail() {
     reset_sys
-    make_disk mmcblk0 16777216 0
-    make_disk mmcblk1 16777216 0
+    make_disk mmcblk0 16777216 0 MMC
+    make_disk mmcblk1 16777216 0 MMC
     expect_fail run_select sda
 }
 
@@ -79,56 +92,94 @@ test_usb_target_requires_factory_flag() {
     make_disk sdb 16777216 1
     expect_fail run_select sda
 
+    touch "${TMPDIR}/dev/sdb"
+    ln -s ../../sdb "${TMPDIR}/dev/disk/by-id/suderra-usb-target"
     actual="$(
         SUDERRA_INSTALLER_SYS_BLOCK="${TMPDIR}/sys/block" \
         SUDERRA_INSTALLER_SOURCE_DISK=sda \
         SUDERRA_INSTALLER_MIN_BYTES=1 \
-        SUDERRA_INSTALLER_DEV_DIR=/dev \
+        SUDERRA_INSTALLER_DEV_DIR="${TMPDIR}/dev" \
         SUDERRA_INSTALLER_ALLOW_USB_TARGET=1 \
+        SUDERRA_INSTALLER_USB_TARGET_BY_ID="${TMPDIR}/dev/disk/by-id/suderra-usb-target" \
         "${INSTALLER}" --select-target
     )"
-    expect_eq /dev/sdb "${actual}"
+    expect_eq "${TMPDIR}/dev/disk/by-id/suderra-usb-target" "${actual}"
 }
 
 write_manifest() {
     local sha="$1"
     local size="$2"
+    local uncompressed_sha="$3"
+    local uncompressed_size="$4"
+    local expires_at="${MANIFEST_EXPIRES_AT:-2099-01-01T00:00:00Z}"
+    local key_epoch="${MANIFEST_KEY_EPOCH:-1}"
+    local rollback_floor="${MANIFEST_ROLLBACK_FLOOR:-v0.1.0-alpha}"
     cat > "${TMPDIR}/payload/manifest.json" <<EOF
 {
-  "version": "test",
-  "board": "rpi4-cm4",
-  "image": "suderra-rpi4-target.img.xz",
-  "sha256": "${sha}",
-  "size_bytes": ${size},
-  "uncompressed_sha256": "${sha}",
-  "uncompressed_size_bytes": ${size},
-  "created_at": "2026-05-12T00:00:00Z"
+  "schema_version": 1,
+  "kind": "suderra.usb-payload-index.v1",
+  "board_family": "pi-cm4-revpi",
+  "compatible_models": ["rpi4-cm4", "revpi4"],
+  "payloads": [
+    {
+      "name": "rpi4",
+      "board_family": "rpi4-cm4",
+      "compatible_models": ["rpi4-cm4"],
+      "arch": "aarch64",
+      "image_path": "suderra-rpi4-target.img.xz",
+      "compressed_sha256": "${sha}",
+      "compressed_size_bytes": ${size},
+      "uncompressed_sha256": "${uncompressed_sha}",
+      "uncompressed_size_bytes": ${uncompressed_size},
+      "min_storage_bytes": 1024,
+      "rollback_floor": "${rollback_floor}"
+    }
+  ],
+  "created_at": "2026-05-12T00:00:00Z",
+  "expires_at": "${expires_at}",
+  "key_epoch": ${key_epoch}
 }
 EOF
 }
 
 sign_manifest() {
-    openssl dgst -sha256 -sign "${TMPDIR}/keys/payload.key" \
-        -out "${TMPDIR}/payload/manifest.sig" \
-        "${TMPDIR}/payload/manifest.json"
+    SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+    "${VERIFY_BIN}" usb-payload sign \
+        --manifest "${TMPDIR}/payload/manifest.json" \
+        --private-key "${TMPDIR}/keys/payload.key" \
+        --signature "${TMPDIR}/payload/manifest.sig"
 }
 
 prepare_payload() {
+    ensure_verify_bin
     reset_sys
-    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    openssl genpkey -algorithm ED25519 \
         -out "${TMPDIR}/keys/payload.key" >/dev/null 2>&1
-    openssl rsa -in "${TMPDIR}/keys/payload.key" \
+    openssl pkey -in "${TMPDIR}/keys/payload.key" \
         -pubout -out "${TMPDIR}/keys/payload.pub.pem" >/dev/null 2>&1
-    printf 'target image bytes' > "${TMPDIR}/payload/suderra-rpi4-target.img.xz"
+    printf 'target image bytes' > "${TMPDIR}/payload/suderra-rpi4-target.img"
+    xz -z -k -f "${TMPDIR}/payload/suderra-rpi4-target.img"
     sha="$(sha256sum "${TMPDIR}/payload/suderra-rpi4-target.img.xz" | awk '{print $1}')"
     size="$(wc -c "${TMPDIR}/payload/suderra-rpi4-target.img.xz" | awk '{print $1}')"
-    write_manifest "${sha}" "${size}"
+    uncompressed_sha="$(sha256sum "${TMPDIR}/payload/suderra-rpi4-target.img" | awk '{print $1}')"
+    uncompressed_size="$(wc -c "${TMPDIR}/payload/suderra-rpi4-target.img" | awk '{print $1}')"
+    write_manifest "${sha}" "${size}" "${uncompressed_sha}" "${uncompressed_size}"
     sign_manifest
 }
 
 verify_payload() {
+    local target_board="${1:-rpi4-cm4}"
+    local min_key_epoch="${2:-1}"
+    local min_rollback_floor="${3:-v0.1.0-alpha}"
     SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
     SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+    SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+    SUDERRA_INSTALLER_TARGET_BOARD="${target_board}" \
+    SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+    SUDERRA_INSTALLER_MIN_KEY_EPOCH="${min_key_epoch}" \
+    SUDERRA_INSTALLER_MIN_ROLLBACK_FLOOR="${min_rollback_floor}" \
+    SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+    SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
     "${INSTALLER}" --verify-payload >/dev/null
 }
 
@@ -144,6 +195,39 @@ test_manifest_sha_required() {
     expect_fail verify_payload
 }
 
+test_manifest_expiry_required() {
+    MANIFEST_EXPIRES_AT="2000-01-01T00:00:00Z" prepare_payload
+    expect_fail verify_payload
+}
+
+test_manifest_wrong_board_rejected() {
+    prepare_payload
+    expect_fail verify_payload unknown-board
+}
+
+test_manifest_rollback_floor_required() {
+    prepare_payload
+    expect_fail verify_payload rpi4-cm4 1 v0.2.0
+}
+
+test_manifest_key_epoch_floor_required() {
+    MANIFEST_KEY_EPOCH=1 prepare_payload
+    expect_fail verify_payload rpi4-cm4 2 v0.1.0-alpha
+}
+
+test_manifest_wrong_arch_rejected() {
+    prepare_payload
+    expect_fail env \
+        SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+        SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+        SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+        SUDERRA_INSTALLER_TARGET_BOARD=rpi4-cm4 \
+        SUDERRA_INSTALLER_TARGET_ARCH=x86_64 \
+        SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+        SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+        "${INSTALLER}" --verify-payload
+}
+
 test_manifest_verifies() {
     prepare_payload
     verify_payload
@@ -157,6 +241,11 @@ for test_name in \
     test_usb_target_requires_factory_flag \
     test_manifest_signature_required \
     test_manifest_sha_required \
+    test_manifest_expiry_required \
+    test_manifest_wrong_board_rejected \
+    test_manifest_rollback_floor_required \
+    test_manifest_key_epoch_floor_required \
+    test_manifest_wrong_arch_rejected \
     test_manifest_verifies
 do
     echo "  - ${test_name}"

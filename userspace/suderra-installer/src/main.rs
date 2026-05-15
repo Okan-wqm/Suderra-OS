@@ -35,6 +35,7 @@
 mod audit;
 mod cli;
 mod cmd;
+mod contracts;
 mod download;
 mod manifest;
 mod sources;
@@ -79,5 +80,17 @@ async fn run() -> Result<()> {
         Commands::List(args) => cmd::list::run(args).await,
         Commands::Status(args) => cmd::status::run(args).await,
         Commands::Remove(args) => cmd::remove::run(args).await,
+        Commands::UsbPayload(args) => contracts::run_usb_payload(args),
+        Commands::EdgeManifest(args) => contracts::run_edge_manifest(args),
+        Commands::ValidateManifest(args) => {
+            let json = std::fs::read_to_string(&args.manifest)?;
+            let manifest = manifest::Manifest::from_json(&json)?;
+            println!(
+                "manifest {}: {} package(s)",
+                manifest.version,
+                manifest.packages.len()
+            );
+            Ok(())
+        }
     }
 }

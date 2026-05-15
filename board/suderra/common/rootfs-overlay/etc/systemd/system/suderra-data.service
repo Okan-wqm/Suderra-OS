@@ -1,0 +1,40 @@
+[Unit]
+Description=Suderra mutable data partition
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+After=local-fs-pre.target
+Before=local-fs.target sysinit.target suderra-firstboot.service suderra-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c ' \
+    set -e; \
+    mkdir -p /data; \
+    if ! mountpoint -q /data; then \
+        [ -e /dev/disk/by-label/SUDERRA-DATA ] || exit 0; \
+        mount -L SUDERRA-DATA /data; \
+    fi; \
+    mkdir -p /data/suderra/lib /data/suderra/log /data/suderra/releases; \
+    mkdir -p /var/lib/suderra /var/log/suderra /opt/suderra/edge/releases; \
+    if ! mountpoint -q /var/lib/suderra; then \
+        mount --bind /data/suderra/lib /var/lib/suderra; \
+    fi; \
+    if ! mountpoint -q /var/log/suderra; then \
+        mount --bind /data/suderra/log /var/log/suderra; \
+    fi; \
+    if ! mountpoint -q /opt/suderra/edge/releases; then \
+        mount --bind /data/suderra/releases /opt/suderra/edge/releases; \
+    fi; \
+    chown root:root /data /data/suderra /var/lib/suderra 2>/dev/null || true; \
+    chown 200:200 /data/suderra/lib /data/suderra/log 2>/dev/null || true; \
+    chmod 0755 /data /data/suderra 2>/dev/null || true; \
+    chmod 0750 /data/suderra/lib /data/suderra/log /var/lib/suderra /var/log/suderra 2>/dev/null || true; \
+'
+
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=sysinit.target

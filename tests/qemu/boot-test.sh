@@ -46,100 +46,91 @@ if [ -z "${DISK_IMG}" ] || [ ! -f "${DISK_IMG}" ]; then
     echo "SKIP: imaj bulunamadı"
     echo "  Aranılan: ${PROJECT_ROOT}/output/${DEFCONFIG}/images/disk.img"
     echo "  Önce: ./scripts/build-in-docker.sh ${DEFCONFIG}"
-    exit 0
+    exit 77
 fi
 
 # QEMU varlığı kontrol
 if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "SKIP: qemu-system-x86_64 yok (apt install qemu-system-x86)"
-    exit 0
+    exit 77
 fi
+
+find_ovmf_code() {
+    local candidate
+    local base
+    local -a candidates
+
+    if [ -n "${OVMF_CODE:-}" ]; then
+        if [ -f "${OVMF_CODE}" ]; then
+            printf '%s\n' "${OVMF_CODE}"
+            return 0
+        fi
+        echo "SKIP: OVMF_CODE bulundu değil: ${OVMF_CODE}" >&2
+        return 77
+    fi
+
+    candidates=(
+        /usr/share/OVMF/OVMF_CODE_4M.fd
+        /usr/share/OVMF/OVMF_CODE.fd
+        /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+        /usr/share/OVMF/OVMF_CODE.secboot.fd
+        /usr/share/qemu/edk2-x86_64-code.fd
+        /usr/share/qemu/OVMF.fd
+        /usr/share/ovmf/OVMF.fd
+        /usr/share/edk2/ovmf/OVMF_CODE.fd
+        /usr/share/edk2/ovmf/OVMF_CODE.secboot.fd
+        /usr/share/edk2/x64/OVMF_CODE.fd
+        /usr/share/edk2/x64/OVMF_CODE.4m.fd
+        /usr/share/edk2-ovmf/x64/OVMF_CODE.fd
+        /usr/share/edk2-ovmf/x64/OVMF_CODE_4M.fd
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [ -f "${candidate}" ]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    while IFS= read -r candidate; do
+        [ -f "${candidate}" ] || continue
+        base="$(basename "${candidate}")"
+        case "${base}" in
+            *VARS*|*vars*|*ia32*|*IA32*|*arm*|*ARM*|*aarch64*|*AARCH64*|*riscv*|*RISCV*)
+                continue
+                ;;
+        esac
+        printf '%s\n' "${candidate}"
+        return 0
+    done < <(
+        {
+            find /usr/share/OVMF /usr/share/ovmf /usr/share/qemu /usr/share/edk2 /usr/share/edk2-ovmf \
+                -maxdepth 4 \
+                -type f \
+                \( -iname 'OVMF_CODE*.fd' -o -iname 'OVMF.fd' -o -iname 'edk2-x86_64-code*.fd' \) \
+                2>/dev/null || true
+        } | sort
+    )
+
+    echo "SKIP: OVMF firmware bulunamadı. OVMF_CODE=/path/to/OVMF_CODE.fd ayarlayın." >&2
+    return 77
+}
+
+OVMF_CODE_PATH="$(find_ovmf_code)" || exit "$?"
 
 echo "==> QEMU boot test"
 echo "    Defconfig: ${DEFCONFIG}"
 echo "    Image:     ${DISK_IMG}"
 echo "    Timeout:   ${TIMEOUT}s"
+echo "    OVMF:      ${OVMF_CODE_PATH}"
 echo
 
-# Log dosyası
-LOG=$(mktemp -t suderra-boot-test-XXXXXX.log)
-trap 'rm -f "${LOG}"' EXIT
-
-# QEMU args — quoted because commas are QEMU key=value syntax (SC2054).
-QEMU_ARGS=(
-    -machine "q35"
-    -m "256M"
-    -smp "2"
-    -cpu "max,+pdpe1gb"
-    -drive "file=${DISK_IMG},format=raw,if=virtio"
-    -netdev "user,id=net0"
-    -device "virtio-net-pci,netdev=net0"
-    -nographic
-    -serial "file:${LOG}"
-    -no-reboot
-)
-
-# UEFI firmware varsa secure-boot ready test (yoksa BIOS mode)
-if [ -f /usr/share/OVMF/OVMF_CODE.fd ]; then
-    QEMU_ARGS+=(-bios /usr/share/OVMF/OVMF_CODE.fd)
-elif [ -f /usr/share/qemu/OVMF.fd ]; then
-    QEMU_ARGS+=(-bios /usr/share/qemu/OVMF.fd)
-fi
-
-# Boot ve banner bekle
-echo "==> QEMU başlatılıyor..."
-timeout "${TIMEOUT}" qemu-system-x86_64 "${QEMU_ARGS[@]}" 2>/dev/null || true
-
-# Sonuç değerlendirme
-echo "==> Boot loglarını analiz ediliyor..."
-
-PASS=0
-FAIL=0
-
-# 1. Banner var mı?
-if grep -q "Suderra OS" "${LOG}"; then
-    echo "  ✓ Suderra OS banner görüldü"
-    ((PASS++))
-else
-    echo "  ✗ Suderra OS banner görülmedi"
-    ((FAIL++))
-fi
-
-# 2. Kernel panic yok mu?
-if grep -q "Kernel panic" "${LOG}"; then
-    echo "  ✗ Kernel panic tespit edildi"
-    ((FAIL++))
-else
-    echo "  ✓ Kernel panic yok"
-    ((PASS++))
-fi
-
-# 3. systemd başlatma sonu
-if grep -qE "(Welcome to|Reached target|systemd\[1\])" "${LOG}"; then
-    echo "  ✓ systemd başlatma görüldü"
-    ((PASS++))
-else
-    echo "  ⚠ systemd başlatma kanıtı yok (init başka olabilir)"
-fi
-
-# 4. Provisioning image: local login prompt is expected until Edge install
-# runs suderra-lockdown. Runtime appliance validation is a separate test.
-if grep -qE "(suderra login| login:|Reached target|reached target|multi-user.target)" "${LOG}"; then
-    echo "  ✓ Provisioning login/target hazır"
-    ((PASS++))
-else
-    echo "  ⚠ Provisioning login/target görülmedi (timeout olabilir)"
-fi
-
-echo
-echo "==> Sonuç: ${PASS} PASS, ${FAIL} FAIL"
-
-if [ "${FAIL}" -eq 0 ] && [ "${PASS}" -ge 2 ]; then
-    echo "==> BOOT TEST PASSED"
-    exit 0
-else
-    echo "==> BOOT TEST FAILED"
-    echo "--- Log son 50 satır ---"
-    tail -50 "${LOG}"
-    exit 1
-fi
+# Log dosyaları: success/failure ayrımı olmadan korunur.
+LOG_DIR="${BOOT_TEST_LOG_DIR:-${PROJECT_ROOT}/output/qemu-boot-logs}"
+mkdir -p "${LOG_DIR}"
+echo "==> QMP acceptance harness başlatılıyor..."
+python3 "${PROJECT_ROOT}/tests/qemu/qmp-acceptance.py" \
+    --image "${DISK_IMG}" \
+    --ovmf "${OVMF_CODE_PATH}" \
+    --timeout "${TIMEOUT}" \
+    --log-dir "${LOG_DIR}"

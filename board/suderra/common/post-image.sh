@@ -42,49 +42,136 @@ if [ -z "${ARCH}" ]; then
 fi
 echo "    Arch: ${ARCH}"
 
+CONFIG_VARIANT=""
+if [ -n "${BR2_CONFIG:-}" ] && [ -f "${BR2_CONFIG}" ]; then
+    if grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_DEV=y' "${BR2_CONFIG}"; then
+        CONFIG_VARIANT="dev"
+    elif grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${BR2_CONFIG}"; then
+        CONFIG_VARIANT="prod"
+    fi
+fi
+ENV_VARIANT="${SUDERRA_VARIANT:-}"
+case "${ENV_VARIANT}" in
+    ""|dev|prod) ;;
+    *)
+        echo "ERROR: SUDERRA_VARIANT must be dev or prod, got '${ENV_VARIANT}'"
+        exit 1
+        ;;
+esac
+if [ "${CONFIG_VARIANT}" = "prod" ] && [ "${ENV_VARIANT}" = "dev" ]; then
+    echo "ERROR: BR2 production variant cannot be downgraded with SUDERRA_VARIANT=dev"
+    exit 1
+fi
+if [ -n "${CONFIG_VARIANT}" ]; then
+    SUDERRA_OS_VARIANT="${CONFIG_VARIANT}"
+elif [ -n "${ENV_VARIANT}" ]; then
+    SUDERRA_OS_VARIANT="${ENV_VARIANT}"
+else
+    SUDERRA_OS_VARIANT="dev"
+fi
+echo "    Variant: ${SUDERRA_OS_VARIANT}"
+
 # 1. genimage config seçimi — defconfig'e göre dispatch
 GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
 
 prepare_rpi4_installer_payload() {
-    default_target="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz"
-    target_image="${SUDERRA_TARGET_IMAGE_XZ:-${default_target}}"
+    default_rpi4="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz"
+    default_revpi4="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz"
+    rpi4_image="${SUDERRA_RPI4_TARGET_IMAGE_XZ:-${SUDERRA_TARGET_IMAGE_XZ:-${default_rpi4}}}"
+    revpi4_image="${SUDERRA_REVPI4_TARGET_IMAGE_XZ:-${default_revpi4}}"
     sign_key="${SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY:-}"
+    public_key="${SUDERRA_INSTALLER_PAYLOAD_PUBKEY:-}"
 
-    [ -f "${target_image}" ] || {
-        echo "ERROR: target payload image missing: ${target_image}"
-        echo "Build suderra_aarch64_rpi4_defconfig first or set SUDERRA_TARGET_IMAGE_XZ."
+    [ -f "${rpi4_image}" ] || {
+        echo "ERROR: RPi4/CM4 target payload image missing: ${rpi4_image}"
+        echo "Build suderra_aarch64_rpi4_defconfig first or set SUDERRA_RPI4_TARGET_IMAGE_XZ."
+        exit 1
+    }
+    [ -f "${revpi4_image}" ] || {
+        echo "ERROR: RevPi4 target payload image missing: ${revpi4_image}"
+        echo "Build suderra_aarch64_revpi4_defconfig first or set SUDERRA_REVPI4_TARGET_IMAGE_XZ."
         exit 1
     }
     [ -n "${sign_key}" ] && [ -f "${sign_key}" ] || {
-        echo "ERROR: SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY must point to the manifest signing key."
+        echo "ERROR: SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY must point to an Ed25519 PEM signing key."
+        exit 1
+    }
+    [ -n "${public_key}" ] && [ -f "${public_key}" ] || {
+        echo "ERROR: SUDERRA_INSTALLER_PAYLOAD_PUBKEY must point to the pinned Ed25519 public key."
         exit 1
     }
 
     echo "==> USB installer payload hazırlanıyor"
-    cp -f "${target_image}" "${BINARIES_DIR}/suderra-rpi4-target.img.xz"
+    cp -f "${rpi4_image}" "${BINARIES_DIR}/suderra-rpi4-target.img.xz"
+    cp -f "${revpi4_image}" "${BINARIES_DIR}/suderra-revpi4-target.img.xz"
 
-    compressed_sha="$(sha256sum "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | awk '{print $1}')"
-    compressed_size="$(wc -c "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | awk '{print $1}')"
-    uncompressed_sha="$(xz -dc "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | sha256sum | awk '{print $1}')"
-    uncompressed_size="$(xz -dc "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | wc -c | awk '{print $1}')"
+    rpi4_compressed_sha="$(sha256sum "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | awk '{print $1}')"
+    rpi4_compressed_size="$(wc -c "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | awk '{print $1}')"
+    rpi4_uncompressed_sha="$(xz -dc "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | sha256sum | awk '{print $1}')"
+    rpi4_uncompressed_size="$(xz -dc "${BINARIES_DIR}/suderra-rpi4-target.img.xz" | wc -c | awk '{print $1}')"
+
+    revpi4_compressed_sha="$(sha256sum "${BINARIES_DIR}/suderra-revpi4-target.img.xz" | awk '{print $1}')"
+    revpi4_compressed_size="$(wc -c "${BINARIES_DIR}/suderra-revpi4-target.img.xz" | awk '{print $1}')"
+    revpi4_uncompressed_sha="$(xz -dc "${BINARIES_DIR}/suderra-revpi4-target.img.xz" | sha256sum | awk '{print $1}')"
+    revpi4_uncompressed_size="$(xz -dc "${BINARIES_DIR}/suderra-revpi4-target.img.xz" | wc -c | awk '{print $1}')"
 
     cat > "${BINARIES_DIR}/manifest.json" <<EOF
 {
-  "version": "${SUDERRA_VERSION:-v0.1.0-alpha}",
-  "board": "rpi4-cm4",
-  "image": "suderra-rpi4-target.img.xz",
-  "sha256": "${compressed_sha}",
-  "size_bytes": ${compressed_size},
-  "uncompressed_sha256": "${uncompressed_sha}",
-  "uncompressed_size_bytes": ${uncompressed_size},
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "schema_version": 1,
+  "kind": "suderra.usb-payload-index.v1",
+  "board_family": "pi-cm4-revpi",
+  "compatible_models": ["rpi4-cm4", "revpi4"],
+  "payloads": [
+    {
+      "name": "rpi4-cm4",
+      "board_family": "rpi4-cm4",
+      "compatible_models": ["rpi4-cm4"],
+      "arch": "aarch64",
+      "image_path": "suderra-rpi4-target.img.xz",
+      "compressed_sha256": "${rpi4_compressed_sha}",
+      "compressed_size_bytes": ${rpi4_compressed_size},
+      "uncompressed_sha256": "${rpi4_uncompressed_sha}",
+      "uncompressed_size_bytes": ${rpi4_uncompressed_size},
+      "min_storage_bytes": 8589934592,
+      "rollback_floor": "${SUDERRA_ROLLBACK_FLOOR:-v0.1.0-alpha}"
+    },
+    {
+      "name": "revpi4",
+      "board_family": "revpi4",
+      "compatible_models": ["revpi4"],
+      "arch": "aarch64",
+      "image_path": "suderra-revpi4-target.img.xz",
+      "compressed_sha256": "${revpi4_compressed_sha}",
+      "compressed_size_bytes": ${revpi4_compressed_size},
+      "uncompressed_sha256": "${revpi4_uncompressed_sha}",
+      "uncompressed_size_bytes": ${revpi4_uncompressed_size},
+      "min_storage_bytes": 8589934592,
+      "rollback_floor": "${SUDERRA_ROLLBACK_FLOOR:-v0.1.0-alpha}"
+    }
+  ],
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "expires_at": "${SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT:-2099-01-01T00:00:00Z}",
+  "key_epoch": ${SUDERRA_INSTALLER_KEY_EPOCH:-1}
 }
 EOF
 
-    openssl dgst -sha256 -sign "${sign_key}" \
-        -out "${BINARIES_DIR}/manifest.sig" \
-        "${BINARIES_DIR}/manifest.json"
+    python3 - "${BINARIES_DIR}/manifest.json" > "${BINARIES_DIR}/manifest.canonical" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+sys.stdout.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+
+    openssl pkeyutl -sign -rawin -inkey "${sign_key}" \
+        -in "${BINARIES_DIR}/manifest.canonical" \
+        -out "${BINARIES_DIR}/manifest.sig"
+    openssl pkeyutl -verify -rawin -pubin -inkey "${public_key}" \
+        -sigfile "${BINARIES_DIR}/manifest.sig" \
+        -in "${BINARIES_DIR}/manifest.canonical"
+    rm -f "${BINARIES_DIR}/manifest.canonical"
 }
 
 case "${DEFCONFIG_NAME}" in
@@ -100,7 +187,7 @@ case "${DEFCONFIG_NAME}" in
         if [ "${DEFCONFIG_NAME}" = "suderra_aarch64_rpi4_usb_installer" ]; then
             prepare_rpi4_installer_payload
             GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4-usb-installer/genimage.cfg"
-            IMAGE_OUTPUT_NAME="suderra-rpi4-usb-installer.img"
+            IMAGE_OUTPUT_NAME="suderra-pi-cm4-revpi-usb-installer.img"
         else
             GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/genimage.cfg"
             IMAGE_OUTPUT_NAME="suderra-rpi4-target.img"
@@ -158,23 +245,91 @@ if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ]; then
     cat "${BINARIES_DIR}/MANIFEST.txt"
 fi
 
-# 2-4. Faz 3 — dm-verity + imzalama
-# TODO Faz 3:
-#   veritysetup format rootfs.img verity.img > verity.txt
-#   ROOT_HASH=$(awk '/Root hash:/ {print $3}' verity.txt)
-#   # Kernel cmdline'a embed
-#   # objcopy --update-section .cmdline="root=... dm-verity-hash=${ROOT_HASH}" kernel.efi
+enforce_production_contract() {
+    missing=""
+    production_target="0"
 
-# 5-6. Faz 4 — RAUC bundle
-# TODO Faz 4:
-#   rauc bundle create --cert=${SUDERRA_KEYS_DIR}/rauc-signing.crt \
-#                      --key=${SUDERRA_KEYS_DIR}/rauc-signing.key \
-#                      bundle-source/ "${BINARIES_DIR}/suderra-os-${SUDERRA_VERSION}.raucb"
+    case "${DEFCONFIG_NAME}" in
+        suderra_x86_64*|suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
+            production_target="1"
+            ;;
+    esac
+    if [ "${production_target}" != "1" ]; then
+        echo "==> Production contract gate skipped: ${DEFCONFIG_NAME} is not a production target"
+        return 0
+    fi
 
-# 7. Faz 5 — SBOM
-# TODO Faz 5:
-#   "${BR2_EXTERNAL_SUDERRA_PATH}/scripts/gen-sbom.sh" \
-#       "${BINARIES_DIR}/../legal-info/manifest.csv" \
-#       "${BINARIES_DIR}/sbom.cyclonedx.json"
+    for artifact in \
+        "${BINARIES_DIR}/rootfs.verity" \
+        "${BINARIES_DIR}/rootfs.verity.roothash" \
+        "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.sig" \
+        "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.cert"
+    do
+        if [ ! -s "${artifact}" ]; then
+            missing="${missing} ${artifact}"
+        fi
+    done
+
+    case "${DEFCONFIG_NAME}" in
+        suderra_x86_64*)
+            for artifact in \
+                "${BINARIES_DIR}/suderra.efi" \
+                "${BINARIES_DIR}/suderra.efi.sig"
+            do
+                if [ ! -s "${artifact}" ]; then
+                    missing="${missing} ${artifact}"
+                fi
+            done
+            ;;
+        suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
+            if [ "${DEFCONFIG_NAME}" != "suderra_aarch64_rpi4_usb_installer" ]; then
+                for artifact in \
+                    "${BINARIES_DIR}/suderra.fit" \
+                    "${BINARIES_DIR}/suderra.fit.sig"
+                do
+                    if [ ! -s "${artifact}" ]; then
+                        missing="${missing} ${artifact}"
+                    fi
+                done
+            fi
+            ;;
+    esac
+
+    if [ -n "${missing}" ]; then
+        echo "ERROR: production build is missing required signed/verity artifacts:"
+        # shellcheck disable=SC2086
+        for artifact in ${missing}; do
+            echo "  - ${artifact}"
+        done
+        echo "Production images must fail closed until dm-verity, signed boot artifacts, and release signing are wired."
+        exit 1
+    fi
+
+    if ! grep -Eq '^[0-9a-f]{64}$' "${BINARIES_DIR}/rootfs.verity.roothash"; then
+        echo "ERROR: rootfs.verity.roothash must contain a lowercase sha256 root hash"
+        exit 1
+    fi
+    if [ "$(wc -c < "${BINARIES_DIR}/rootfs.verity")" -lt 4096 ]; then
+        echo "ERROR: rootfs.verity is too small to be a real verity hash tree"
+        exit 1
+    fi
+    if [ "$(wc -c < "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.sig")" -lt 64 ]; then
+        echo "ERROR: ${IMAGE_OUTPUT_NAME}.sig is too small to be a production signature"
+        exit 1
+    fi
+    if ! openssl x509 -in "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.cert" -noout >/dev/null 2>&1; then
+        echo "ERROR: ${IMAGE_OUTPUT_NAME}.cert must be a parseable X.509 certificate"
+        exit 1
+    fi
+}
+
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+    enforce_production_contract
+fi
+
+# dm-verity, signed boot artifacts, RAUC bundles, and SBOM release evidence are
+# production gates, not best-effort post-image decorations. Until those
+# artifacts are generated by their dedicated build/release stages, production
+# variants fail closed in enforce_production_contract above.
 
 echo "==> post-image tamamlandı"

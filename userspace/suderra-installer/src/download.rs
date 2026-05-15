@@ -3,12 +3,11 @@
 
 //! HTTP download + SHA256 verification.
 //!
-//! reqwest (rustls backend) ile HTTPS, progress bar, retry logic.
+//! reqwest (rustls backend) ile HTTPS ve SHA256 doğrulaması.
 //! TLS sertifika doğrulaması zorunlu — SUDERRA_INSECURE=1 ile devre dışı
 //! (yalnızca lokal test / air-gapped için).
 
 use anyhow::{anyhow, bail, Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
@@ -34,17 +33,6 @@ pub async fn download_file(
         bail!("HTTP {} — {}", response.status(), url);
     }
 
-    let total_bytes = response.content_length().unwrap_or(0);
-
-    // Progress bar
-    let pb = ProgressBar::new(total_bytes);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap_or_else(|_| ProgressStyle::default_bar())
-            .progress_chars("=>-"),
-    );
-
     // Hedef dosyayı aç + parent dir oluştur
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -62,11 +50,10 @@ pub async fn download_file(
         hasher.update(&chunk);
         file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
-        pb.set_position(downloaded);
     }
 
     file.flush().await?;
-    pb.finish_with_message("indirme tamam");
+    info!("indirme tamam: {downloaded} bytes");
 
     let actual_sha256 = hex::encode(hasher.finalize());
 
@@ -107,8 +94,13 @@ pub struct DownloadResult {
 
 /// reqwest client'ı yapılandır — TLS strict, makul timeout, user-agent
 fn build_client() -> Result<reqwest::Client> {
-    let insecure = std::env::var("SUDERRA_INSECURE").map(|v| v == "1").unwrap_or(false);
+    let insecure = std::env::var("SUDERRA_INSECURE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     if insecure {
+        if production_variant() {
+            bail!("SUDERRA_INSECURE=1 is forbidden on production Suderra OS variants");
+        }
         warn!("⚠ SUDERRA_INSECURE=1 — TLS doğrulaması devre dışı (yalnızca dev/test)");
     }
 
@@ -119,7 +111,27 @@ fn build_client() -> Result<reqwest::Client> {
         .danger_accept_invalid_certs(insecure)
         .tcp_keepalive(std::time::Duration::from_secs(60));
 
-    builder.build().map_err(|e| anyhow!("HTTP client başlatılamadı: {e}"))
+    builder
+        .build()
+        .map_err(|e| anyhow!("HTTP client başlatılamadı: {e}"))
+}
+
+fn production_variant() -> bool {
+    if std::env::var("SUDERRA_VARIANT")
+        .map(|value| value == "prod")
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let Ok(os_release) = std::fs::read_to_string("/etc/os-release") else {
+        return false;
+    };
+    os_release.lines().any(|line| {
+        matches!(
+            line.trim(),
+            "VARIANT=prod" | "VARIANT=\"prod\"" | "VARIANT='prod'"
+        )
+    })
 }
 
 /// Tek string olarak küçük bir dosya indir (örn: .sha256, manifest.json)

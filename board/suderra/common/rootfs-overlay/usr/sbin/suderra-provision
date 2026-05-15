@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-REQUEST_DIR=/var/lib/suderra/provision/request
-RESULT_FILE=/var/lib/suderra/provision/result
+REQUEST_DIR=/var/spool/suderra-provision/inbox
+RESULT_FILE=/var/spool/suderra-provision/result
 TIMEOUT="${SUDERRA_PROVISION_TIMEOUT:-900}"
 
 usage() {

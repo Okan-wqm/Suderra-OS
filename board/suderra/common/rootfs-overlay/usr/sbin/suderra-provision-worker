@@ -1,9 +1,10 @@
 #!/bin/sh
 set -eu
 
-BASE_DIR=/var/lib/suderra/provision
-REQUEST_DIR="${BASE_DIR}/request"
+BASE_DIR=/var/spool/suderra-provision
+REQUEST_DIR="${BASE_DIR}/inbox"
 RESULT_FILE="${BASE_DIR}/result"
+TRANSACTION_DIR="${BASE_DIR}/transaction"
 
 umask 077
 mkdir -p "${REQUEST_DIR}"
@@ -19,16 +20,32 @@ write_result() {
     mv -f "${RESULT_FILE}.tmp" "${RESULT_FILE}"
 }
 
+if [ -f /var/lib/suderra/.appliance-locked ]; then
+    write_result error "device is locked"
+    exit 1
+fi
+
+rm -rf "${TRANSACTION_DIR}"
+mkdir -p "${TRANSACTION_DIR}"
+chown root:root "${TRANSACTION_DIR}" 2>/dev/null || true
+chmod 0700 "${TRANSACTION_DIR}"
+
 if [ -s "${REQUEST_DIR}/manifest-url" ]; then
-    manifest_url="$(head -n 1 "${REQUEST_DIR}/manifest-url")"
+    cp "${REQUEST_DIR}/manifest-url" "${TRANSACTION_DIR}/manifest-url"
+    rm -f "${REQUEST_DIR}/manifest-url" "${REQUEST_DIR}/manifest.json" "${REQUEST_DIR}/trigger"
+    manifest_url="$(head -n 1 "${TRANSACTION_DIR}/manifest-url")"
     if /usr/sbin/suderra-edge-install --manifest-url "${manifest_url}"; then
         write_result ok "edge install completed"
+        rm -rf "${TRANSACTION_DIR}"
     else
         write_result error "edge install failed"
     fi
 elif [ -s "${REQUEST_DIR}/manifest.json" ]; then
-    if /usr/sbin/suderra-edge-install --manifest "${REQUEST_DIR}/manifest.json"; then
+    cp "${REQUEST_DIR}/manifest.json" "${TRANSACTION_DIR}/manifest.json"
+    rm -f "${REQUEST_DIR}/manifest-url" "${REQUEST_DIR}/manifest.json" "${REQUEST_DIR}/trigger"
+    if /usr/sbin/suderra-edge-install --manifest "${TRANSACTION_DIR}/manifest.json"; then
         write_result ok "edge install completed"
+        rm -rf "${TRANSACTION_DIR}"
     else
         write_result error "edge install failed"
     fi

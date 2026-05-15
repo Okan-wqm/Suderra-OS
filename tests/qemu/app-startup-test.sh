@@ -11,4 +11,4 @@ IFS=$'\n\t'
 # TODO Faz 2: QEMU boot + systemd-analyze ile ölçüm
 
 echo "SKIP: Faz 2'de implement edilecek"
-exit 0
+exit 77

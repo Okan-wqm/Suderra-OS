@@ -26,13 +26,33 @@ DEFCONFIG_NAME="${2:-unknown}"
 echo "==> Suderra OS post-build hook"
 echo "    Defconfig: ${DEFCONFIG_NAME}"
 
-CONFIG_VARIANT="prod"
+CONFIG_VARIANT=""
 if [ -n "${BR2_CONFIG:-}" ] && [ -f "${BR2_CONFIG}" ]; then
     if grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_DEV=y' "${BR2_CONFIG}"; then
         CONFIG_VARIANT="dev"
+    elif grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${BR2_CONFIG}"; then
+        CONFIG_VARIANT="prod"
     fi
 fi
-SUDERRA_OS_VARIANT="${SUDERRA_VARIANT:-${CONFIG_VARIANT}}"
+ENV_VARIANT="${SUDERRA_VARIANT:-}"
+case "${ENV_VARIANT}" in
+    ""|dev|prod) ;;
+    *)
+        echo "ERROR: SUDERRA_VARIANT must be dev or prod, got '${ENV_VARIANT}'"
+        exit 1
+        ;;
+esac
+if [ "${CONFIG_VARIANT}" = "prod" ] && [ "${ENV_VARIANT}" = "dev" ]; then
+    echo "ERROR: BR2 production variant cannot be downgraded with SUDERRA_VARIANT=dev"
+    exit 1
+fi
+if [ -n "${CONFIG_VARIANT}" ]; then
+    SUDERRA_OS_VARIANT="${CONFIG_VARIANT}"
+elif [ -n "${ENV_VARIANT}" ]; then
+    SUDERRA_OS_VARIANT="${ENV_VARIANT}"
+else
+    SUDERRA_OS_VARIANT="dev"
+fi
 
 # 1. /etc/os-release
 echo "==> /etc/os-release güncelleniyor"
@@ -65,13 +85,7 @@ echo "${HOSTNAME}" > "${TARGET_DIR}/etc/hostname"
 
 # 3. suid binary temizleme — sadece beyaz liste kalır
 echo "==> suid binary'ler temizleniyor"
-# Faz 3'te aktif olacak (find -perm /4000 + allowlist filtreleme).
-# shellcheck disable=SC2034  # Faz 3'te post-build.sh içinde kullanılır
-SUID_ALLOWLIST=(
-    "/bin/su"          # eğer gerekiyorsa (DEV variant)
-    "/usr/bin/sudo"    # eğer gerekiyorsa (DEV variant)
-    # PROD variant'ta hiçbiri olmamalı
-)
+find "${TARGET_DIR}" -xdev -perm /4000 -type f -exec chmod u-s {} + 2>/dev/null || true
 
 # 4. Gereksiz dosyaları sil
 echo "==> Gereksiz dosyalar siliniyor"
@@ -119,6 +133,8 @@ case "${DEFCONFIG_NAME}" in
             "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-os-install.service"
         ;;
     *)
+        ln -sfn ../suderra-data.service \
+            "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-data.service"
         ln -sfn ../suderra-firstboot.service \
             "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-firstboot.service"
         ln -sfn ../../../../usr/lib/systemd/system/dropbear.service \
@@ -169,6 +185,8 @@ if [ "${SUDERRA_APPLIANCE_MODE:-0}" = "1" ]; then
         ssh.service \
         sshd.service \
         dropbear.service \
+        suderra-provision-worker.path \
+        suderra-provision-worker.service \
         systemd-logind.service
     do
         ln -sfn /dev/null "${TARGET_DIR}/etc/systemd/system/${unit}"

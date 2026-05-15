@@ -68,7 +68,9 @@ impl Arch {
             match arch.as_str() {
                 "aarch64" => return Arch::Aarch64,
                 "x86_64" => return Arch::X86_64,
-                other => tracing::warn!("Bilinmeyen SUDERRA_TARGET_ARCH={other}, runtime detection"),
+                other => {
+                    tracing::warn!("Bilinmeyen SUDERRA_TARGET_ARCH={other}, runtime detection")
+                }
             }
         }
 
@@ -136,11 +138,9 @@ impl PackageRelease {
     /// Manifest (metadata) URL'i — paket bilgisi, deps, vb.
     pub fn manifest_url(&self, mirror: Mirror) -> String {
         match mirror {
-            Mirror::Github | Mirror::Auto => format!(
-                "{}/{}/manifest.json",
-                mirror.base_url(),
-                self.version
-            ),
+            Mirror::Github | Mirror::Auto => {
+                format!("{}/{}/manifest.json", mirror.base_url(), self.version)
+            }
             Mirror::Suderra => format!(
                 "{}/{}/{}/manifest.json",
                 mirror.base_url(),

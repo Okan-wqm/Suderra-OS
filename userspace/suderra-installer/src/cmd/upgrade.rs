@@ -22,7 +22,10 @@ pub async fn run(args: UpgradeArgs) -> Result<()> {
     if let Some(current) = state.installed.get(&args.package) {
         info!("mevcut sürüm: {}", current.version);
     } else {
-        info!("'{}' henüz kurulu değil — install komutu kullanılıyor", args.package);
+        info!(
+            "'{}' henüz kurulu değil — install komutu kullanılıyor",
+            args.package
+        );
     }
 
     // install komutuna delege et (latest version)

@@ -15,4 +15,4 @@ IFS=$'\n\t'
 # 5. Sağlam imajla doğrula: normal boot
 
 echo "SKIP: Faz 3'te implement edilecek"
-exit 0
+exit 77

@@ -78,6 +78,8 @@ for unit in \
     ssh.service \
     sshd.service \
     dropbear.service \
+    suderra-provision-worker.path \
+    suderra-provision-worker.service \
     systemd-logind.service
 do
     ln -sfn /dev/null "/etc/systemd/system/${unit}"
@@ -87,6 +89,8 @@ rm -rf /etc/systemd/system/getty.target.wants \
        /etc/systemd/system/rescue.target.wants \
        /etc/systemd/system/emergency.target.wants \
        /etc/systemd/system/multi-user.target.wants/dropbear.service \
+       /etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path \
+       /var/spool/suderra-provision \
        2>/dev/null || true
 
 touch /var/lib/suderra/.appliance-locked
@@ -94,9 +98,11 @@ touch /var/lib/suderra/.appliance-locked
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
-    systemctl stop dropbear.service getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true
+    systemctl stop dropbear.service suderra-provision-worker.path suderra-provision-worker.service \
+        getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true
     systemctl mask dropbear.service getty@.service serial-getty@.service debug-shell.service \
-        rescue.service rescue.target emergency.service emergency.target 2>/dev/null || true
+        rescue.service rescue.target emergency.service emergency.target \
+        suderra-provision-worker.path suderra-provision-worker.service 2>/dev/null || true
 fi
 
 if command -v pkill >/dev/null 2>&1; then

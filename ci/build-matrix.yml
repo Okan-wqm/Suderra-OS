@@ -1,55 +1,186 @@
 #
-# Suderra OS — CI build matrix
+# Suderra OS CI build matrix and image contracts.
 #
-# .github/workflows/build.yml bunu okur.
-# Hangi defconfig'lerin hangi arch'larda test edileceği.
+# This file is the single source of truth for Buildroot targets consumed by
+# GitHub Actions and local validation. Do not duplicate target lists in
+# workflows; generate matrices with scripts/ci/validate-build-matrix.py.
 #
 
 defconfigs:
   - name: suderra_qemu_x86_64_defconfig
+    target: qemu-x86_64
     arch: x86_64
+    artifact: disk.img
+    release_artifact: suderra-qemu-x86_64.img.xz
+    expected_artifacts:
+      - disk.img
+      - disk.img.xz
+      - MANIFEST.txt
     qemu_test: true
-    required: true              # Bu fail olursa PR merge olmaz
-    description: "QEMU smoke test (geliştirme/CI)"
+    ci_build: true
+    release: true
+    production_required: false
+    production_ready: false
+    profile: provisioning
+    boot_mode: uefi-grub
+    partition_table: gpt
+    root_partition: rootfs
+    root_identity: gpt-label-rootfs
+    genimage: board/suderra/x86_64/genimage-qemu.cfg
+    post_image_arg: suderra_qemu_x86_64
+    signing: unsigned-lab
+    acceptance: qemu-system-x86_64-ovmf
+    blocker: secure-boot-dm-verity-rauc-not-enabled
+    description: QEMU smoke/acceptance image for development and CI.
 
   - name: suderra_x86_64_defconfig
+    target: x86_64
     arch: x86_64
-    qemu_test: false            # Gerçek HW lab
-    required: true
-    description: "Endüstriyel x86_64 PC"
+    artifact: disk.img
+    release_artifact: suderra-x86_64-target.img.xz
+    expected_artifacts:
+      - disk.img
+      - disk.img.xz
+      - MANIFEST.txt
+    qemu_test: false
+    ci_build: false
+    release: false
+    production_required: true
+    production_ready: false
+    profile: locked-appliance
+    boot_mode: uefi-secureboot-uki
+    partition_table: gpt
+    root_partition: rootfs-a
+    root_identity: verity-signed-cmdline
+    genimage: board/suderra/x86_64/genimage.cfg
+    post_image_arg: suderra_x86_64
+    signing: production-required
+    acceptance: hardware-lab
+    blocker: x86-production-secureboot-verity-rauc-and-hardware-evidence-missing
+    description: Industrial x86_64 production target.
 
   - name: suderra_aarch64_defconfig
+    target: generic-aarch64-template
     arch: aarch64
-    qemu_test: true             # qemu-system-aarch64
-    required: false             # Faz 1 sonu zorunlu olur
-    description: "ARM SBC (Pi CM4 / Revolution Pi)"
+    artifact: disk.img
+    release_artifact: suderra-aarch64-target.img.xz
+    expected_artifacts:
+      - disk.img
+      - disk.img.xz
+      - MANIFEST.txt
+    qemu_test: false
+    ci_build: false
+    release: false
+    production_required: false
+    production_ready: false
+    profile: unsupported-template
+    boot_mode: u-boot-template
+    partition_table: gpt
+    root_partition: rootfs-a
+    root_identity: template
+    genimage: board/suderra/aarch64/genimage.cfg
+    post_image_arg: suderra_aarch64
+    signing: unsupported
+    acceptance: none
+    blocker: no-board-u-boot-config-kernel-config-or-acceptance-path
+    description: Unsupported generic aarch64 template.
 
   - name: suderra_aarch64_rpi4_defconfig
+    target: rpi4
     arch: aarch64
+    artifact: suderra-rpi4-target.img
+    release_artifact: suderra-rpi4-target.img.xz
+    expected_artifacts:
+      - suderra-rpi4-target.img
+      - suderra-rpi4-target.img.xz
+      - MANIFEST.txt
     qemu_test: false
-    required: true
-    description: "Raspberry Pi 4 / CM4 target image"
+    ci_build: true
+    release: true
+    production_required: true
+    production_ready: false
+    profile: provisioning
+    boot_mode: u-boot-signed-fit-required
+    partition_table: mbr
+    root_partition: rootfs
+    root_identity: partuuid-mutated-post-flash
+    genimage: board/suderra/aarch64-rpi4/genimage.cfg
+    post_image_arg: suderra_aarch64_rpi4
+    signing: production-required
+    acceptance: pi4-cm4-hardware-lab
+    blocker: signed-fit-dm-verity-rauc-and-hardware-evidence-missing
+    description: Raspberry Pi 4 / Compute Module 4 target image.
 
   - name: suderra_aarch64_rpi4_usb_installer_defconfig
+    target: pi-cm4-revpi-usb-installer
     arch: aarch64
+    artifact: suderra-pi-cm4-revpi-usb-installer.img
+    release_artifact: suderra-pi-cm4-revpi-usb-installer.img.xz
+    expected_artifacts:
+      - suderra-pi-cm4-revpi-usb-installer.img
+      - suderra-pi-cm4-revpi-usb-installer.img.xz
+      - MANIFEST.txt
+      - manifest.json
+      - manifest.sig
     qemu_test: false
-    required: true
-    description: "USB self-installer for Pi 4 / CM4"
+    ci_build: true
+    release: true
+    production_required: true
+    production_ready: false
+    profile: provisioning-installer
+    boot_mode: rpi-firmware-installer
+    partition_table: mbr
+    root_partition: rootfs
+    root_identity: installer-rootfs
+    genimage: board/suderra/aarch64-rpi4-usb-installer/genimage.cfg
+    post_image_arg: suderra_aarch64_rpi4_usb_installer
+    signing: payload-ed25519-required
+    acceptance: pi4-cm4-revpi-hardware-lab
+    blocker: production-payload-key-policy-and-hardware-flash-evidence-missing
+    description: USB self-installer for Pi 4, CM4, and RevPi payloads.
 
   - name: suderra_aarch64_revpi4_defconfig
+    target: revpi4
     arch: aarch64
+    artifact: suderra-revpi4-target.img
+    release_artifact: suderra-revpi4-target.img.xz
+    expected_artifacts:
+      - suderra-revpi4-target.img
+      - suderra-revpi4-target.img.xz
+      - MANIFEST.txt
     qemu_test: false
-    required: true
-    description: "Revolution Pi Connect 4 target image"
+    ci_build: true
+    release: true
+    production_required: true
+    production_ready: false
+    profile: provisioning
+    boot_mode: u-boot-signed-fit-required
+    partition_table: mbr
+    root_partition: rootfs
+    root_identity: partuuid-mutated-post-flash
+    genimage: board/suderra/aarch64-revpi4/genimage.cfg
+    post_image_arg: suderra_aarch64_revpi4
+    signing: production-required
+    acceptance: revpi-connect-4-hardware-lab
+    blocker: signed-fit-dm-verity-rauc-revpi-io-and-hardware-evidence-missing
+    description: Revolution Pi Connect 4 target image.
 
 variants:
   - name: dev
-    description: "Geliştirme: dm-verity disabled, SSH açık"
+    description: Development and lab images may keep provisioning/debug affordances.
   - name: prod
-    description: "Üretim: dm-verity zorunlu, no shell"
+    description: Production images require signed boot artifacts, dm-verity, RAUC A/B, encrypted data, and release evidence.
 
 security_scans:
-  - lynis              # Cihaz içi audit
-  - trivy              # Image CVE
-  - grype              # SBOM-based CVE
-  - gitleaks           # Repo secret scan
+  - actionlint
+  - shellcheck
+  - yamllint
+  - markdownlint
+  - hadolint
+  - gitleaks
+  - rust-fmt
+  - rust-clippy
+  - rust-test
+  - cargo-deny
+  - trivy
+  - grype

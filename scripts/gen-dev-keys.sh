@@ -53,22 +53,20 @@ openssl req -newkey rsa:3072 -nodes -keyout verity-signing.key \
     -subj "/CN=Suderra Dev Verity/" 2>/dev/null
 
 # USB installer payload manifest signing
-echo "==> USB installer payload signing key (RSA-3072)"
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
-    -out installer-payload.key 2>/dev/null
-openssl rsa -in installer-payload.key -pubout \
-    -out installer-payload.pub.pem 2>/dev/null
+echo "==> USB installer payload signing key (Ed25519)"
+openssl genpkey -algorithm ED25519 -out installer-payload.key 2>/dev/null
+openssl pkey -in installer-payload.key -pubout \
+    -out installer-payload.ed25519.pub 2>/dev/null
 
-# Edge artifact signing
-echo "==> Edge artifact signing key (RSA-3072)"
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
-    -out edge-artifact.key 2>/dev/null
-openssl rsa -in edge-artifact.key -pubout \
-    -out edge-artifact.pub.pem 2>/dev/null
+# Edge artifact/provisioning manifest signing
+echo "==> Edge artifact signing key (Ed25519)"
+openssl genpkey -algorithm ED25519 -out edge-artifact.key 2>/dev/null
+openssl pkey -in edge-artifact.key -pubout \
+    -out edge-artifact.ed25519.pub 2>/dev/null
 
 # Permissions
 chmod 0600 ./*.key
-chmod 0644 ./*.crt ./*.pub.pem
+chmod 0644 ./*.crt ./*.pub
 
 echo ""
 echo "==> Tamamlandı:"
@@ -77,7 +75,7 @@ echo ""
 echo "Kullanım:"
 echo "  export SUDERRA_KEYS_DIR='${KEYS_DIR}'"
 echo "  export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY='${KEYS_DIR}/installer-payload.key'"
-echo "  export SUDERRA_INSTALLER_PAYLOAD_PUBKEY='${KEYS_DIR}/installer-payload.pub.pem'"
+echo "  export SUDERRA_INSTALLER_PAYLOAD_PUBKEY='${KEYS_DIR}/installer-payload.ed25519.pub'"
 echo "  ./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig"
 echo ""
 echo "UYARI: Bu anahtarlar SADECE geliştirme için. ÜRETİM için HSM kullan."

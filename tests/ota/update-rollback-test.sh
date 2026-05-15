@@ -19,4 +19,4 @@ IFS=$'\n\t'
 # 9. rauc status: önceki versiyon active
 
 echo "SKIP: Faz 4'te implement edilecek"
-exit 0
+exit 77

@@ -2,8 +2,8 @@
 # Suderra OS — firstboot servisi
 #
 # İlk boot'ta çalışır:
-#   1. /data partition mkfs (zaten ext4 değilse)
-#   2. /var/lib/suderra dizinini /data altında bind-mount için hazırla
+#   1. /data partition and bind mounts are prepared by suderra-data.service
+#   2. /var/lib/suderra runtime directories are initialized
 #   3. /etc/machine-id üret (Buildroot empty bırakır)
 #   4. Edge Agent için config skeleton oluştur (yoksa)
 #   5. Tamamlandı flag'i koy: /var/lib/suderra/.firstboot-done
@@ -18,7 +18,7 @@
 Description=Suderra OS firstboot initialization
 Documentation=https://github.com/Okan-wqm/suderra-os
 DefaultDependencies=no
-After=local-fs.target systemd-tmpfiles-setup.service
+After=local-fs.target systemd-tmpfiles-setup.service suderra-data.service
 Before=sysinit.target suderra-agent.service
 ConditionPathExists=!/var/lib/suderra/.firstboot-done
 
@@ -37,21 +37,15 @@ ExecStart=/bin/sh -c ' \
         systemd-machine-id-setup; \
     fi; \
     \
-    # 2. /data partition mkfs (eğer raw ise) \
-    if [ -b /dev/disk/by-partlabel/data ]; then \
-        if ! blkid /dev/disk/by-partlabel/data >/dev/null 2>&1; then \
-            echo "==> /data mkfs.ext4"; \
-            mkfs.ext4 -L data -F /dev/disk/by-partlabel/data; \
-        fi; \
-    fi; \
-    \
-    # 3. Mutable state/config and provisioning directories \
-    mkdir -p /var/lib/suderra/config /var/lib/suderra/edge /var/lib/suderra/provision/request /var/log/suderra /etc/suderra; \
-    chown -R 200:200 /var/lib/suderra/config /var/lib/suderra/edge /var/log/suderra 2>/dev/null || true; \
-    chown -R 201:201 /var/lib/suderra/provision 2>/dev/null || true; \
+    # 2. Mutable state/config and provisioning directories \
+    mkdir -p /var/lib/suderra/config /var/lib/suderra/edge /var/log/suderra /etc/suderra /var/spool/suderra-provision/inbox; \
+    chown root:root /var/lib/suderra /var/spool/suderra-provision 2>/dev/null || true; \
+    chown 200:200 /var/lib/suderra/config /var/lib/suderra/edge /var/log/suderra 2>/dev/null || true; \
+    chown 201:201 /var/spool/suderra-provision/inbox 2>/dev/null || true; \
     chown root:root /etc/suderra 2>/dev/null || true; \
     chmod 0750 /var/lib/suderra /var/lib/suderra/config /var/lib/suderra/edge /var/log/suderra 2>/dev/null || true; \
-    chmod 0700 /var/lib/suderra/provision /var/lib/suderra/provision/request 2>/dev/null || true; \
+    chmod 0750 /var/spool/suderra-provision 2>/dev/null || true; \
+    chmod 0700 /var/spool/suderra-provision/inbox 2>/dev/null || true; \
     chmod 0755 /etc/suderra 2>/dev/null || true; \
     \
     # 4. Config skeleton (mutable, persisted under /var/lib) \
@@ -74,13 +68,13 @@ ExecStart=/bin/sh -c ' \
     fi; \
     \
     # 5. One-time provisioning password for the forced-command SSH user \
-    if [ ! -f /var/lib/suderra/provision/credentials.env ]; then \
+    if [ ! -f /var/spool/suderra-provision/credentials.env ]; then \
         pass="$(tr -dc A-HJ-NP-Za-km-z2-9 </dev/urandom | head -c 24)"; \
         hash="$(openssl passwd -6 "${pass}")"; \
         sed -i "s#^provision:[^:]*:#provision:${hash}:#" /etc/shadow; \
-        printf "SUDERRA_PROVISION_USER=provision\nSUDERRA_PROVISION_PASSWORD=%s\n" "${pass}" > /var/lib/suderra/provision/credentials.env; \
-        chown 201:201 /var/lib/suderra/provision/credentials.env 2>/dev/null || true; \
-        chmod 0600 /var/lib/suderra/provision/credentials.env; \
+        printf "SUDERRA_PROVISION_USER=provision\nSUDERRA_PROVISION_PASSWORD=%s\n" "${pass}" > /var/spool/suderra-provision/credentials.env; \
+        chown root:root /var/spool/suderra-provision/credentials.env 2>/dev/null || true; \
+        chmod 0600 /var/spool/suderra-provision/credentials.env; \
         printf "Suderra OS provisioning user: provision\nPassword: %s\n" "${pass}" > /dev/console 2>/dev/null || true; \
     fi; \
     \

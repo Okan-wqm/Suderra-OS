@@ -12,20 +12,31 @@ permissions:
   contents: read
 
 jobs:
+  matrix:
+    name: Build matrix contract
+    runs-on: ubuntu-24.04
+    outputs:
+      build_matrix: ${{ steps.matrix.outputs.build_matrix }}
+      qemu_matrix: ${{ steps.matrix.outputs.qemu_matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate build matrix
+        run: python3 scripts/ci/validate-build-matrix.py validate
+      - name: Emit dynamic matrices
+        id: matrix
+        run: |
+          set -euo pipefail
+          echo "build_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build)" >> "$GITHUB_OUTPUT"
+          echo "qemu_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector qemu_test)" >> "$GITHUB_OUTPUT"
+
   build:
-    name: Build ${{ matrix.defconfig }}
+    name: Build ${{ matrix.name }}
+    needs: matrix
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
-        defconfig:
-          - suderra_qemu_x86_64_defconfig
-          - suderra_aarch64_rpi4_defconfig
-          - suderra_aarch64_rpi4_usb_installer_defconfig
-          - suderra_aarch64_revpi4_defconfig
-          # Faz 2-B/C'de aktif olur:
-          # - suderra_x86_64_defconfig
+      matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}
     steps:
       - name: Show runner environment
         run: |
@@ -44,7 +55,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dl/
-          key: br-dl-${{ hashFiles('buildroot/.version', 'configs/${{ matrix.defconfig }}') }}
+          key: br-dl-${{ hashFiles('buildroot/.version', format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -84,24 +95,52 @@ jobs:
         run: |
           set -euo pipefail
           set -x
+          mkdir -p build-logs
+          build_and_check() {
+            local defconfig="$1"
+            local log_path="build-logs/${defconfig}.log"
+            ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
+            python3 scripts/ci/classify-build-warnings.py \
+              --json-output "build-logs/${defconfig}.warnings.json" \
+              "${log_path}"
+          }
           if [ -s "configs/${{ matrix.defconfig }}" ] && grep -q "^BR2_" "configs/${{ matrix.defconfig }}"; then
             if [ "${{ matrix.defconfig }}" = "suderra_aarch64_rpi4_usb_installer_defconfig" ]; then
               mkdir -p .ci-installer-keys
-              openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+              openssl genpkey -algorithm ED25519 \
                 -out .ci-installer-keys/installer-payload.key
-              openssl rsa -in .ci-installer-keys/installer-payload.key \
+              openssl pkey -in .ci-installer-keys/installer-payload.key \
                 -pubout -out .ci-installer-keys/installer-payload.pub.pem
-              chmod 0644 .ci-installer-keys/installer-payload.key .ci-installer-keys/installer-payload.pub.pem
+              chmod 0600 .ci-installer-keys/installer-payload.key
+              chmod 0644 .ci-installer-keys/installer-payload.pub.pem
               export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY=/workspace/.ci-installer-keys/installer-payload.key
               export SUDERRA_INSTALLER_PAYLOAD_PUBKEY=/workspace/.ci-installer-keys/installer-payload.pub.pem
-              ./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig 2>&1 | tail -200
-              export SUDERRA_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+              build_and_check suderra_aarch64_rpi4_defconfig
+              build_and_check suderra_aarch64_revpi4_defconfig
+              export SUDERRA_RPI4_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+              export SUDERRA_REVPI4_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz
             fi
-            ./scripts/build-in-docker.sh "${{ matrix.defconfig }}" 2>&1 | tail -200
+            build_and_check "${{ matrix.defconfig }}"
           else
             echo "::error::Defconfig ${{ matrix.defconfig }} missing or empty"
             exit 1
           fi
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.defconfig }}-build-logs
+          path: build-logs/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Verify image contract artifact
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/validate-build-matrix.py verify-artifacts \
+            --defconfig "${{ matrix.defconfig }}" \
+            --images-dir "output/${{ matrix.defconfig }}/images"
 
       - name: Upload image artifact
         if: success()
@@ -113,10 +152,13 @@ jobs:
           if-no-files-found: error
 
   qemu-smoke-test:
-    name: QEMU boot smoke test
-    needs: build
+    name: QEMU boot smoke test (${{ matrix.name }})
+    needs: [matrix, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.qemu_matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -141,26 +183,25 @@ jobs:
       - name: Download image artifact
         uses: actions/download-artifact@v4
         with:
-          name: suderra_qemu_x86_64_defconfig-image
-          path: output/suderra_qemu_x86_64_defconfig/images/
-        continue-on-error: true
+          name: ${{ matrix.defconfig }}-image
+          path: output/${{ matrix.defconfig }}/images/
 
       - name: Run boot smoke test
         env:
           BOOT_TEST_TIMEOUT: 180   # CI'da TCG fallback için cömert
         run: |
           set -euo pipefail
-          if [ ! -f output/suderra_qemu_x86_64_defconfig/images/disk.img ]; then
+          if [ ! -f "output/${{ matrix.defconfig }}/images/${{ matrix.artifact }}" ]; then
             echo "::error::Image artifact yok"
             exit 1
           fi
-          ./tests/qemu/boot-test.sh suderra_qemu_x86_64_defconfig
+          ./tests/qemu/boot-test.sh "${{ matrix.defconfig }}"
 
       - name: Upload boot logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: boot-test-logs
-          path: /tmp/suderra-boot-test-*.log
+          path: output/qemu-boot-logs/
           retention-days: 7
           if-no-files-found: ignore

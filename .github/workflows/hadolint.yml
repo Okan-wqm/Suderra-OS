@@ -3,14 +3,8 @@ name: Hadolint (Dockerfile lint)
 on:
   push:
     branches: [main, "claude/**"]
-    paths:
-      - '**/Dockerfile*'
-      - 'ci/**'
   pull_request:
     branches: [main, "claude/**"]
-    paths:
-      - '**/Dockerfile*'
-      - 'ci/**'
 
 permissions:
   contents: read
@@ -19,6 +13,9 @@ jobs:
   hadolint:
     name: Hadolint
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: hadolint/hadolint-action@v3.1.0
@@ -26,7 +23,6 @@ jobs:
           dockerfile: ci/Dockerfile
           format: sarif
           output-file: hadolint-results.sarif
-          no-fail: true
 
       - uses: github/codeql-action/upload-sarif@v3
         with:

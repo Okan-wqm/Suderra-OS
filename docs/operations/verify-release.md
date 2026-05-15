@@ -1,68 +1,127 @@
 # Release Doğrulama (Verify Release)
 
-Müşteri veya yetkili teknisyen, indirdiği Suderra OS imajı/RAUC bundle'ının **gerçekten Suderra'dan geldiğini** ve **değiştirilmediğini** doğrulayabilir.
+Müşteri veya yetkili teknisyen, indirdiği Suderra OS artifact'inin Suderra
+release workflow'undan geldiğini ve değişmediğini doğrulayabilir.
+
+Örnekler `v1.0.0` ve Raspberry Pi 4 artifact'i içindir. Diğer imajlar
+`ci/build-matrix.yml` içindeki `release_artifact` değerleriyle aynı adları
+kullanır.
 
 ## Hızlı Doğrulama
 
 ```bash
-# 1. cosign yükle
-curl -O -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
-sudo install cosign-linux-amd64 /usr/local/bin/cosign
+VERSION=v1.0.0
+REPO=Okan-wqm/suderra-os
+BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+ARTIFACT=suderra-rpi4-target.img.xz
 
-# 2. İmza dosyalarını indir (release'den)
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/disk.img
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/disk.img.sig
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/disk.img.cert
+curl -fsSLO "${BASE_URL}/${ARTIFACT}"
+curl -fsSLO "${BASE_URL}/${ARTIFACT}.sha256"
+curl -fsSLO "${BASE_URL}/${ARTIFACT}.sig"
+curl -fsSLO "${BASE_URL}/${ARTIFACT}.cert"
 
-# 3. Cosign keyless doğrulama
+sha256sum -c "${ARTIFACT}.sha256"
+
 cosign verify-blob \
-    --certificate disk.img.cert \
-    --signature disk.img.sig \
-    --certificate-identity-regexp "https://github.com/Okan-wqm/suderra-os/.github/workflows/release.yml.*" \
+    --certificate "${ARTIFACT}.cert" \
+    --signature "${ARTIFACT}.sig" \
+    --certificate-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    disk.img
+    "${ARTIFACT}"
 ```
 
-Çıktı: `Verified OK`
+Beklenen sonuç: hash doğrulaması geçer ve `cosign verify-blob` `Verified OK`
+yazar.
 
-## SLSA Provenance Doğrulama
+## GitHub Provenance Doğrulama
 
-Her release ile birlikte `.intoto.jsonl` (in-toto attestation) yayınlanır:
+Release workflow `actions/attest-build-provenance` ile GitHub Artifact
+Attestations üretir. Workflow ayrı bir `attestations.intoto.jsonl` release
+asset'i yayınlamaz; provenance GitHub attestation servisi üzerinden
+doğrulanır. Aşağıdaki komut için `--signer-workflow` ve `--source-ref`
+destekleyen güncel GitHub CLI gerekir.
 
 ```bash
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/suderra-os.intoto.jsonl
+gh attestation verify "${ARTIFACT}" \
+    -R "${REPO}" \
+    --signer-workflow "${REPO}/.github/workflows/release.yml" \
+    --source-ref "refs/tags/${VERSION}"
+```
 
-# slsa-verifier yükle
-go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
+Offline doğrulama gerekiyorsa online bir makinede bundle ve trusted root alın:
 
-slsa-verifier verify-artifact disk.img \
-    --provenance-path suderra-os.intoto.jsonl \
-    --source-uri github.com/Okan-wqm/suderra-os \
-    --source-tag v1.0.0
+```bash
+gh attestation download "${ARTIFACT}" -R "${REPO}"
+gh attestation trusted-root > trusted_root.jsonl
+```
+
+Sonra artifact, bundle dosyası ve `trusted_root.jsonl` offline ortama taşınıp
+şu şekilde doğrulanır:
+
+```bash
+gh attestation verify "${ARTIFACT}" \
+    -R "${REPO}" \
+    --bundle sha256:<artifact-digest>.jsonl \
+    --custom-trusted-root trusted_root.jsonl
 ```
 
 ## SBOM Doğrulama
 
+Her release imajı için aynı taban adla CycloneDX JSON SBOM yayınlanır ve cosign
+ile imzalanır.
+
 ```bash
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/sbom.cyclonedx.json
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/sbom.cyclonedx.json.sig
+SBOM=suderra-rpi4-target.cyclonedx.json
+
+curl -fsSLO "${BASE_URL}/${SBOM}"
+curl -fsSLO "${BASE_URL}/${SBOM}.sig"
+curl -fsSLO "${BASE_URL}/${SBOM}.cert"
 
 cosign verify-blob \
-    --certificate sbom.cyclonedx.json.cert \
-    --signature sbom.cyclonedx.json.sig \
-    --certificate-identity-regexp "https://github.com/Okan-wqm/suderra-os/.github/workflows/release.yml.*" \
+    --certificate "${SBOM}.cert" \
+    --signature "${SBOM}.sig" \
+    --certificate-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    sbom.cyclonedx.json
+    "${SBOM}"
+```
+
+## Manifest ve SHA256SUMS
+
+`manifest.json` `suderra-installer` tarafından tüketilen release manifest'idir.
+`SHA256SUMS` toplu hash dosyasıdır. İkisi de release job'ında cosign keyless
+ile imzalanır.
+
+```bash
+for f in manifest.json SHA256SUMS; do
+    curl -fsSLO "${BASE_URL}/${f}"
+    curl -fsSLO "${BASE_URL}/${f}.sig"
+    curl -fsSLO "${BASE_URL}/${f}.cert"
+    cosign verify-blob \
+        --certificate "${f}.cert" \
+        --signature "${f}.sig" \
+        --certificate-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        "${f}"
+done
 ```
 
 ## VEX Doğrulama
 
-```bash
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.0.0/suderra-os.openvex.json
+OpenVEX dosyaları yayınlandığında aynı cosign pattern'i ile doğrulanır ve
+tarayıcıya verilir:
 
-# Cosign ile imza doğrula (yukarıdaki ile aynı pattern)
-# Sonra Trivy ile birleştir:
-trivy image --vex suderra-os.openvex.json suderra-os:v1.0.0
+```bash
+VEX=suderra-os.openvex.json
+curl -fsSLO "${BASE_URL}/${VEX}"
+curl -fsSLO "${BASE_URL}/${VEX}.sig"
+curl -fsSLO "${BASE_URL}/${VEX}.cert"
+cosign verify-blob \
+    --certificate "${VEX}.cert" \
+    --signature "${VEX}.sig" \
+    --certificate-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "${VEX}"
+trivy image --vex "${VEX}" suderra-os:"${VERSION}"
 ```
 
 ## Cihaz Üzerinde dm-verity Doğrulama
@@ -70,55 +129,57 @@ trivy image --vex suderra-os.openvex.json suderra-os:v1.0.0
 Cihaz boot ederken zaten yapar, ama manuel kontrol:
 
 ```bash
-# Verity root hash kontrolü (cihaz üzerinde, dev variant)
 dmsetup table
-
-# Beklenen çıktı:
-# 0 1048576 verity 1 /dev/disk/by-partlabel/rootfs-a /dev/disk/by-partlabel/verity 4096 4096 ... <root-hash>
 ```
+
+Beklenen çıktı `verity` target'ı, rootfs partition'ı ve release manifest'iyle
+uyumlu root hash içerir.
 
 ## RAUC Bundle Doğrulama
 
 ```bash
 rauc info --keyring=/etc/rauc/keyring.pem suderra-os-v1.0.0.raucb
+```
 
-# Beklenen:
-# Compatible: suderra-os-x86_64
-# Version: v1.0.0
-# Verification: OK
+Beklenen:
+
+```text
+Compatible: suderra-os-x86_64
+Version: v1.0.0
+Verification: OK
 ```
 
 ## Tam Doğrulama Akışı (Üretim)
 
-```
-1. SHA256 hash check (release notes'tan)
-2. Cosign signature verify
-3. SLSA provenance verify (slsa-verifier)
-4. SBOM signature verify
-5. VEX signature verify
-6. Cihaza yükle (flash)
-7. Boot → dm-verity otomatik check
-8. RAUC info → keyring verify
-```
+1. Artifact ve `.sha256` indir, hash doğrula.
+2. Artifact `.sig` + `.cert` ile cosign keyless imzasını doğrula.
+3. GitHub Artifact Attestation provenance doğrula.
+4. SBOM imzasını doğrula.
+5. `manifest.json` ve `SHA256SUMS` imzalarını doğrula.
+6. VEX yayınlandıysa imzasını doğrula ve tarama aracına ver.
+7. Cihaza yükle.
+8. Boot sonrası dm-verity durumunu kontrol et.
+9. RAUC bundle varsa `rauc info` ile keyring doğrulaması yap.
 
 ## Trust Anchor'lar
 
 | Anchor | Lokasyon | Güven kaynağı |
 |---|---|---|
-| Cosign keyless | Sigstore Fulcio (Transparency log) | İmzalama olayı public log'a yazılıyor |
-| GitHub repo identity | OIDC issuer (token.actions.githubusercontent.com) | GitHub OIDC token |
-| RAUC keyring | İmaj içinde `/etc/rauc/keyring.pem` | Suderra'nın yayınladığı public key |
+| Cosign keyless | Sigstore Fulcio + transparency log | İmzalama olayı public log'a yazılır |
+| GitHub Artifact Attestations | GitHub attestation servisi | Workflow provenance ve artifact digest |
+| GitHub repo identity | OIDC issuer (`token.actions.githubusercontent.com`) | GitHub Actions OIDC token |
+| RAUC keyring | İmaj içinde `/etc/rauc/keyring.pem` | Suderra public key |
 | UEFI db | Cihaz UEFI variables | OEM veya MOK enrollment |
 
 ## Yapılacaklar
 
-- [ ] `scripts/verify-release.sh` — yukarıdaki adımları otomatize et (Faz 5)
+- [ ] `scripts/verify-release.sh` — yukarıdaki adımları otomatize et
 - [ ] PGP-signed release notes (alternative trust path)
 - [ ] Hardware-based attestation (TPM PCR remote attestation, Faz 6+)
 
 ## Referanslar
 
 - [Sigstore cosign](https://docs.sigstore.dev/cosign/verifying/verify/)
-- [SLSA verifier](https://github.com/slsa-framework/slsa-verifier)
-- [in-toto attestations](https://docs.sigstore.dev/cosign/verifying/attestation/)
+- [GitHub Artifact Attestations](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
+- [GitHub offline attestation verification](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations/verifying-attestations-offline)
 - [docs/security/vex-policy.md](../security/vex-policy.md)

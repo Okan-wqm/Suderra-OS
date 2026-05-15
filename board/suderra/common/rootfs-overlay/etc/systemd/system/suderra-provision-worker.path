@@ -3,7 +3,7 @@ Description=Watch Suderra OS provisioning requests
 Documentation=https://github.com/Okan-wqm/suderra-os
 
 [Path]
-PathModified=/var/lib/suderra/provision/request
+PathModified=/var/spool/suderra-provision/inbox
 MakeDirectory=true
 
 [Install]

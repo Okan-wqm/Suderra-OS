@@ -3,20 +3,13 @@ name: Rust Userspace
 on:
   push:
     branches: [main, "claude/**"]
-    paths:
-      - 'userspace/**'
-      - '.github/workflows/rust.yml'
   pull_request:
     branches: [main, "claude/**"]
-    paths:
-      - 'userspace/**'
-      - '.github/workflows/rust.yml'
   workflow_dispatch:
 
 # Permissions: minimum gerekli
 permissions:
   contents: read
-  security-events: write   # SARIF upload için
 
 # Eski koşumları cancel et — yeni commit gelirse
 concurrency:

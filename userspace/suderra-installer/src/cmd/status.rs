@@ -35,7 +35,12 @@ pub async fn run(args: StatusArgs) -> Result<()> {
     let filtered: Vec<_> = state
         .installed
         .iter()
-        .filter(|(name, _)| args.package.as_deref().map(|p| p == name.as_str()).unwrap_or(true))
+        .filter(|(name, _)| {
+            args.package
+                .as_deref()
+                .map(|p| p == name.as_str())
+                .unwrap_or(true)
+        })
         .collect();
 
     if filtered.is_empty() {

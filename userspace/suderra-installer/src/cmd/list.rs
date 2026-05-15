@@ -42,7 +42,10 @@ pub async fn run(args: ListArgs) -> Result<()> {
     };
 
     if args.json {
-        let out = ListOutput { installed, available };
+        let out = ListOutput {
+            installed,
+            available,
+        };
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         print_human(&installed, &available);
@@ -106,8 +109,16 @@ async fn fetch_available_from_suderra(release: &PackageRelease) -> Result<Vec<Av
     let versions: Vec<serde_json::Value> = serde_json::from_str(&json)?;
     let mut rows = vec![];
     for v in versions {
-        let version = v.get("version").and_then(|s| s.as_str()).unwrap_or("").to_string();
-        let date = v.get("released_at").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        let version = v
+            .get("version")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        let date = v
+            .get("released_at")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
         rows.push(AvailableRow {
             package: release.package.clone(),
             version,
@@ -123,7 +134,13 @@ fn print_human(installed: &[InstalledRow], available: &[AvailableRow]) {
         println!("  {:<20} {:<15} {:<25} SIG", "Paket", "Sürüm", "Kurulum");
         for r in installed {
             let sig = if r.signature_verified { "✓" } else { "✗" };
-            println!("  {:<20} {:<15} {:<25} {}", r.package, r.version, &r.installed_at[..19.min(r.installed_at.len())], sig);
+            println!(
+                "  {:<20} {:<15} {:<25} {}",
+                r.package,
+                r.version,
+                &r.installed_at[..19.min(r.installed_at.len())],
+                sig
+            );
         }
         println!();
     } else {

@@ -18,4 +18,4 @@ IFS=$'\n\t'
 THRESHOLD=85
 
 echo "SKIP: Faz 3'te implement edilecek (hedef skor ≥ ${THRESHOLD})"
-exit 0
+exit 77

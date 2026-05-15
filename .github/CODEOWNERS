@@ -1,4 +1,13 @@
 # GitHub CODEOWNERS — Suderra OS
-# (Bu dosya ayrıca /CODEOWNERS olarak kök dizinde de mevcut.)
 
 * @okan-wqm
+
+# CI, release governance, and supply-chain verification changes require owner review.
+.github/workflows/*.yml @okan-wqm
+.github/CODEOWNERS @okan-wqm
+ci/build-matrix.yml @okan-wqm
+docs/dev/branch-protection.md @okan-wqm
+docs/operations/verify-release.md @okan-wqm
+docs/security/sbom-process.md @okan-wqm
+scripts/ci/validate-build-matrix.py @okan-wqm
+scripts/lint.sh @okan-wqm

@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     flex \
     gettext \
     libssl-dev \
+    libelf-dev \
     file \
     # Cross-build helpers
     bash \
@@ -66,9 +67,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     shellcheck \
     && rm -rf /var/lib/apt/lists/*
 
+# Some upstream package install hooks attempt host-side chown when the
+# container is run as root. Buildroot later enforces target permissions via
+# fakeroot, but keeping expected system groups present prevents hidden install
+# hook errors from polluting build evidence.
+RUN set -eux; \
+    getent group dbus >/dev/null || groupadd -r dbus
+
 # Non-root build user (reproducible build için uid sabit)
-RUN groupadd -g 1000 builder && \
-    useradd -m -u 1000 -g 1000 -s /bin/bash builder
+RUN set -eux; \
+    existing_group="$(getent group 1000 | cut -d: -f1 || true)"; \
+    if [ -n "${existing_group}" ]; then \
+        groupmod -n builder "${existing_group}"; \
+    else \
+        groupadd -g 1000 builder; \
+    fi; \
+    if id -u 1000 >/dev/null 2>&1; then \
+        usermod -l builder -d /home/builder -m "$(getent passwd 1000 | cut -d: -f1)"; \
+        usermod -g builder builder; \
+    else \
+        useradd -m -u 1000 -g 1000 -s /bin/bash builder; \
+    fi
 
 WORKDIR /workspace
 USER builder
