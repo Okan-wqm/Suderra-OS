@@ -146,7 +146,6 @@ log_info "Boyut: $(du -h "${IMAGE_ABS}" | awk '{print $1}')"
 # ----------------------------------------------------------------------------
 verify_hash() {
     local file="$1"
-    local hash_file=""
 
     # MANIFEST.txt arada bir mi?
     if [[ -f "${IMAGE_DIR}/MANIFEST.txt" ]]; then

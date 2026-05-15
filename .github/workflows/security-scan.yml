@@ -20,7 +20,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Trivy binary
         run: |
@@ -48,7 +48,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && hashFiles('trivy-fs.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-fs.sarif'
           category: 'trivy-fs'
@@ -60,7 +60,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Trivy binary
         run: |
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && hashFiles('trivy-config.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-config.sarif'
           category: 'trivy-config'
@@ -95,7 +95,7 @@ jobs:
     name: Gitleaks (secret scan)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
@@ -109,18 +109,27 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Install Grype
+        run: |
+          set -euo pipefail
+          curl -sSfL \
+            https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            -o /tmp/install-grype.sh
+          sudo sh /tmp/install-grype.sh -b /usr/local/bin
+          grype version
+          grype db update
       - name: Run Grype scan
-        uses: anchore/scan-action@v4
-        with:
-          path: .
-          fail-build: true
-          severity-cutoff: high
-          output-format: sarif
-          only-fixed: true
+        run: |
+          set -euo pipefail
+          grype dir:. \
+            -o sarif \
+            --file results.sarif \
+            --fail-on high \
+            --only-fixed
       - name: Upload SARIF
         if: always() && hashFiles('results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
           category: grype-fs
@@ -129,7 +138,7 @@ jobs:
     name: VEX JSON syntax
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate OpenVEX JSON files
         run: |
           set -euo pipefail

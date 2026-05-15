@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Parse SemVer tag
         id: parse
+        env:
+          RELEASE_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           TAG="${{ env.RELEASE_TAG }}"
@@ -37,8 +39,8 @@ jobs:
             echo "::error::Tag '$TAG' SemVer formatında değil (v<major>.<minor>.<patch>[-pre])"
             exit 1
           fi
-          if [ "${{ github.ref }}" != "refs/tags/${TAG}" ]; then
-            echo "::error::Release workflow must run from refs/tags/${TAG}; current ref is ${{ github.ref }}"
+          if [ "${RELEASE_REF}" != "refs/tags/${TAG}" ]; then
+            echo "::error::Release workflow must run from refs/tags/${TAG}; current ref is ${RELEASE_REF}"
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
@@ -51,7 +53,7 @@ jobs:
     outputs:
       release_matrix: ${{ steps.matrix.outputs.release_matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
           submodules: recursive
@@ -74,7 +76,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
       - name: Enforce GA production readiness
@@ -92,14 +94,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
           submodules: recursive
           fetch-depth: 0
 
       - name: Cache Buildroot downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: dl/
           key: br-dl-release-${{ hashFiles('buildroot/.version', format('configs/{0}', matrix.defconfig)) }}
@@ -139,7 +141,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.defconfig }}-build-logs
           path: build-logs/
@@ -185,7 +187,7 @@ jobs:
           ls -lh "$OUT_DIR/"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.name }}
           path: |
@@ -209,7 +211,7 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
 
@@ -253,7 +255,7 @@ jobs:
           ls -lh "$OUT"
 
       - name: Upload installer binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.arch }}
           path: |
@@ -269,7 +271,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
 
@@ -277,7 +279,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0.17.7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
 
@@ -315,7 +317,7 @@ jobs:
           PY
 
       - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom/
@@ -330,7 +332,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
           fetch-depth: 0
@@ -361,7 +363,7 @@ jobs:
       id-token: write       # Sigstore keyless
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
 
@@ -374,7 +376,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.86.0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
 
@@ -578,7 +580,8 @@ jobs:
             ```bash
             cosign verify-blob \
               --certificate suderra-rpi4-target.img.xz.cert \
-              --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}" \
+              --certificate-identity \
+                "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               --signature suderra-rpi4-target.img.xz.sig \
               suderra-rpi4-target.img.xz

@@ -31,3 +31,15 @@ require_pattern 'openssl' 'signing and certificate tooling'
 require_pattern 'shellcheck' 'strict shell lint tooling'
 require_pattern 'getent group dbus' 'dbus group preflight'
 require_pattern 'groupadd -r dbus' 'dbus group creation'
+require_pattern 'SHELL \["/bin/bash", "-o", "pipefail", "-c"\]' 'Dockerfile pipefail shell'
+require_pattern '# hadolint ignore=DL3008' 'documented apt pinning exception'
+grep -q 'PROJECT_ROOT}/dl:/workspace/dl:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must bind repo-local dl/ for CI cache compatibility" >&2
+        exit 1
+    }
+grep -q 'PROJECT_ROOT}/.ccache:/workspace/.ccache:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must bind repo-local .ccache/ for CI cache compatibility" >&2
+        exit 1
+    }

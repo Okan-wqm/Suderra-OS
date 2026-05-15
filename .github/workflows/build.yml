@@ -19,7 +19,7 @@ jobs:
       build_matrix: ${{ steps.matrix.outputs.build_matrix }}
       qemu_matrix: ${{ steps.matrix.outputs.qemu_matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate build matrix
         run: python3 scripts/ci/validate-build-matrix.py validate
       - name: Emit dynamic matrices
@@ -47,18 +47,18 @@ jobs:
           free -h
           docker --version
           ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Cache Buildroot downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: dl/
           key: br-dl-${{ hashFiles('buildroot/.version', format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .ccache/
           key: ccache-${{ matrix.defconfig }}-${{ github.sha }}
@@ -71,8 +71,8 @@ jobs:
           set -x
           ls -la
           git submodule status
-          ls buildroot/ | head -10
-          ls configs/
+          find buildroot -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -10
+          find configs -maxdepth 1 -type f -printf '%f\n' | sort
           head -5 "configs/${{ matrix.defconfig }}"
 
       - name: Build container
@@ -128,7 +128,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.defconfig }}-build-logs
           path: build-logs/
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload image artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.defconfig }}-image
           path: output/${{ matrix.defconfig }}/images/
@@ -160,7 +160,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.qemu_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install QEMU + OVMF
         run: |
@@ -181,7 +181,7 @@ jobs:
           fi
 
       - name: Download image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.defconfig }}-image
           path: output/${{ matrix.defconfig }}/images/
@@ -199,7 +199,7 @@ jobs:
 
       - name: Upload boot logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: boot-test-logs
           path: output/qemu-boot-logs/

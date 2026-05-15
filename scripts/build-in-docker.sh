@@ -24,6 +24,8 @@ if [ -d "${HOME}/.suderra-keys" ]; then
     KEYS_MOUNT_ARGS=(-v "${HOME}/.suderra-keys:/home/builder/.suderra-keys:ro")
 fi
 
+mkdir -p "${PROJECT_ROOT}/dl" "${PROJECT_ROOT}/.ccache"
+
 DOCKER_USER_ARGS=(
     --user "$(id -u):$(id -g)"
     -e HOME=/tmp
@@ -71,8 +73,8 @@ fi
 if [ "${1}" = "--shell" ]; then
     exec docker run --rm -it \
         -v "${PROJECT_ROOT}:/workspace:rw" \
-        -v suderra-dl:/workspace/dl \
-        -v suderra-ccache:/workspace/.ccache \
+        -v "${PROJECT_ROOT}/dl:/workspace/dl:rw" \
+        -v "${PROJECT_ROOT}/.ccache:/workspace/.ccache:rw" \
         "${KEYS_MOUNT_ARGS[@]}" \
         "${DOCKER_USER_ARGS[@]}" \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
@@ -91,8 +93,8 @@ echo "==> SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
 run_build() {
     docker run --rm \
         -v "${PROJECT_ROOT}:/workspace:rw" \
-        -v suderra-dl:/workspace/dl \
-        -v suderra-ccache:/workspace/.ccache \
+        -v "${PROJECT_ROOT}/dl:/workspace/dl:rw" \
+        -v "${PROJECT_ROOT}/.ccache:/workspace/.ccache:rw" \
         "${KEYS_MOUNT_ARGS[@]}" \
         "${DOCKER_USER_ARGS[@]}" \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
@@ -114,8 +116,8 @@ fi
 
 exec docker run --rm \
     -v "${PROJECT_ROOT}:/workspace:rw" \
-    -v suderra-dl:/workspace/dl \
-    -v suderra-ccache:/workspace/.ccache \
+    -v "${PROJECT_ROOT}/dl:/workspace/dl:rw" \
+    -v "${PROJECT_ROOT}/.ccache:/workspace/.ccache:rw" \
     "${KEYS_MOUNT_ARGS[@]}" \
     "${DOCKER_USER_ARGS[@]}" \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \

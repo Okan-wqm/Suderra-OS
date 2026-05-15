@@ -18,7 +18,9 @@ ARG BUILDROOT_VERSION=2024.11
 ENV LC_ALL=C
 ENV TZ=UTC
 ENV SOURCE_DATE_EPOCH=1704067200
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Buildroot core dependencies
     build-essential \
