@@ -14,7 +14,7 @@
 # Architecture
 BR2_aarch64=y
 BR2_cortex_a72=y
-BR2_JLEVEL=1
+BR2_JLEVEL=4
 BR2_PACKAGE_SUDERRA_VARIANT_DEV=y
 
 # Toolchain — glibc dynamic, required by Buildroot systemd

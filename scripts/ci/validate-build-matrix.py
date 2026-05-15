@@ -31,6 +31,7 @@ TARGET_FIELDS = {
     "qemu_test",
     "ci_build",
     "release",
+    "timeout_minutes",
     "production_required",
     "production_ready",
     "profile",
@@ -230,6 +231,12 @@ def validate() -> int:
             except ValueError as exc:
                 errors.append(str(exc))
 
+        timeout_minutes = target["timeout_minutes"]
+        if not isinstance(timeout_minutes, int):
+            errors.append(f"{name}: timeout_minutes must be an integer")
+        elif not 30 <= timeout_minutes <= 360:
+            errors.append(f"{name}: timeout_minutes must be between 30 and 360")
+
         config_path = ROOT / "configs" / name
         if not config_path.is_file():
             errors.append(f"{name}: missing configs/{name}")
@@ -312,6 +319,7 @@ def github_matrix(selector: str) -> int:
                 "artifact": target["artifact"],
                 "release": release_base,
                 "release_artifact": release_artifact,
+                "timeout_minutes": target["timeout_minutes"],
                 "expected_artifacts": " ".join(expected_artifacts(target)),
                 "profile": target["profile"],
                 "boot_mode": target["boot_mode"],

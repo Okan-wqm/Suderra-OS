@@ -19,6 +19,7 @@ defconfigs:
     qemu_test: true
     ci_build: true
     release: true
+    timeout_minutes: 300
     production_required: false
     production_ready: false
     profile: provisioning
@@ -45,6 +46,7 @@ defconfigs:
     qemu_test: false
     ci_build: false
     release: false
+    timeout_minutes: 300
     production_required: true
     production_ready: false
     profile: locked-appliance
@@ -71,6 +73,7 @@ defconfigs:
     qemu_test: false
     ci_build: false
     release: false
+    timeout_minutes: 300
     production_required: false
     production_ready: false
     profile: unsupported-template
@@ -97,6 +100,7 @@ defconfigs:
     qemu_test: false
     ci_build: true
     release: true
+    timeout_minutes: 300
     production_required: true
     production_ready: false
     profile: provisioning
@@ -125,6 +129,7 @@ defconfigs:
     qemu_test: false
     ci_build: true
     release: true
+    timeout_minutes: 360
     production_required: true
     production_ready: false
     profile: provisioning-installer
@@ -151,6 +156,7 @@ defconfigs:
     qemu_test: false
     ci_build: true
     release: true
+    timeout_minutes: 300
     production_required: true
     production_ready: false
     profile: provisioning

@@ -33,7 +33,7 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: matrix
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}

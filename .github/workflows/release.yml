@@ -89,7 +89,7 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: [validate, matrix, production-readiness]
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
