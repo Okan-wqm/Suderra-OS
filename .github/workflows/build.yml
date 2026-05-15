@@ -63,7 +63,8 @@ jobs:
       - name: Prepare CI build storage
         run: |
           set -euo pipefail
-          mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}"
+          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}"
+          sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
           df -h "${SUDERRA_CI_STORAGE}"
 
       - name: Check runner resource contract
