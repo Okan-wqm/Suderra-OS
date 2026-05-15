@@ -32,6 +32,13 @@ TARGET_FIELDS = {
     "ci_build",
     "release",
     "timeout_minutes",
+    "build_step_timeout_minutes",
+    "min_disk_gib",
+    "min_mem_gib",
+    "min_vcpu",
+    "build_jlevel",
+    "prebuild_defconfigs",
+    "payload_image_exports",
     "production_required",
     "production_ready",
     "profile",
@@ -179,6 +186,13 @@ def expected_artifacts(target: dict[str, Any]) -> list[str]:
     return [str(artifact) for artifact in artifacts]
 
 
+def list_field(target: dict[str, Any], field: str) -> list[str]:
+    value = target.get(field)
+    if not isinstance(value, list):
+        raise ValueError(f"{target.get('name', '<unknown>')}: {field} must be a list")
+    return [str(item) for item in value]
+
+
 def read_config(defconfig: str) -> str:
     return (ROOT / "configs" / defconfig).read_text(encoding="utf-8")
 
@@ -193,6 +207,11 @@ def validate() -> int:
     errors: list[str] = []
     names: set[str] = set()
     targets: set[str] = set()
+    targets_by_name = {
+        str(target.get("name", "")): target
+        for target in matrix["defconfigs"]
+        if str(target.get("name", ""))
+    }
 
     for target in matrix["defconfigs"]:
         name = str(target.get("name", ""))
@@ -216,12 +235,12 @@ def validate() -> int:
         if target["partition_table"] not in VALID_TABLES:
             errors.append(f"{name}: unsupported partition_table {target['partition_table']}")
 
-        expected_artifacts = target["expected_artifacts"]
-        if not isinstance(expected_artifacts, list) or not expected_artifacts:
+        artifact_contract = target["expected_artifacts"]
+        if not isinstance(artifact_contract, list) or not artifact_contract:
             errors.append(f"{name}: expected_artifacts must be a non-empty list")
-        elif target["artifact"] not in expected_artifacts:
+        elif target["artifact"] not in artifact_contract:
             errors.append(f"{name}: artifact must also be listed in expected_artifacts")
-        for artifact in expected_artifacts if isinstance(expected_artifacts, list) else []:
+        for artifact in artifact_contract if isinstance(artifact_contract, list) else []:
             if not isinstance(artifact, str) or not SAFE_ARTIFACT_RE.fullmatch(artifact):
                 errors.append(f"{name}: unsafe expected artifact name {artifact!r}")
 
@@ -237,6 +256,59 @@ def validate() -> int:
         elif not 30 <= timeout_minutes <= 360:
             errors.append(f"{name}: timeout_minutes must be between 30 and 360")
 
+        build_step_timeout_minutes = target["build_step_timeout_minutes"]
+        if not isinstance(build_step_timeout_minutes, int):
+            errors.append(f"{name}: build_step_timeout_minutes must be an integer")
+        elif not 30 <= build_step_timeout_minutes <= 350:
+            errors.append(f"{name}: build_step_timeout_minutes must be between 30 and 350")
+        elif isinstance(timeout_minutes, int) and build_step_timeout_minutes > timeout_minutes - 10:
+            errors.append(f"{name}: build_step_timeout_minutes must leave at least 10 minutes for log upload")
+
+        resource_ranges = {
+            "min_disk_gib": (20, 200),
+            "min_mem_gib": (2, 64),
+            "min_vcpu": (1, 128),
+            "build_jlevel": (1, 128),
+        }
+        for field, (lower, upper) in resource_ranges.items():
+            value = target[field]
+            if not isinstance(value, int):
+                errors.append(f"{name}: {field} must be an integer")
+            elif not lower <= value <= upper:
+                errors.append(f"{name}: {field} must be between {lower} and {upper}")
+        if isinstance(target["build_jlevel"], int) and isinstance(target["min_vcpu"], int):
+            if target["build_jlevel"] > target["min_vcpu"]:
+                errors.append(f"{name}: build_jlevel must not exceed min_vcpu")
+        if isinstance(target["build_jlevel"], int) and isinstance(target["min_mem_gib"], int):
+            if target["min_mem_gib"] < max(4, target["build_jlevel"] + 2):
+                errors.append(f"{name}: min_mem_gib is too low for build_jlevel")
+
+        try:
+            prebuild_defconfigs = list_field(target, "prebuild_defconfigs")
+            payload_image_exports = list_field(target, "payload_image_exports")
+        except ValueError as exc:
+            errors.append(str(exc))
+            prebuild_defconfigs = []
+            payload_image_exports = []
+
+        for prebuild in prebuild_defconfigs:
+            if prebuild == name:
+                errors.append(f"{name}: prebuild_defconfigs must not include itself")
+            if prebuild not in targets_by_name:
+                errors.append(f"{name}: unknown prebuild defconfig {prebuild}")
+
+        for export in payload_image_exports:
+            match = re.fullmatch(r"(SUDERRA_[A-Z0-9_]+_TARGET_IMAGE_XZ)=([^:=]+):([^:=/]+)", export)
+            if not match:
+                errors.append(f"{name}: unsafe payload_image_exports entry {export!r}")
+                continue
+            _env_name, prebuild, artifact = match.groups()
+            prebuild_target = targets_by_name.get(prebuild)
+            if prebuild not in prebuild_defconfigs:
+                errors.append(f"{name}: payload export {export!r} must reference prebuild_defconfigs")
+            elif prebuild_target and artifact not in expected_artifacts(prebuild_target):
+                errors.append(f"{name}: payload export {export!r} references non-contract artifact")
+
         config_path = ROOT / "configs" / name
         if not config_path.is_file():
             errors.append(f"{name}: missing configs/{name}")
@@ -245,6 +317,11 @@ def validate() -> int:
         genimage_path = ROOT / str(target["genimage"])
         if not genimage_path.is_file():
             errors.append(f"{name}: missing genimage contract {target['genimage']}")
+        elif re.search(r"^\s*partition-label\s*=", genimage_path.read_text(encoding="utf-8"), re.MULTILINE):
+            errors.append(
+                f"{name}: genimage {target['genimage']} uses unsupported partition-label; "
+                "GPT labels come from partition section names"
+            )
 
         config = read_config(name)
         actual_arg = post_script_args(config)
@@ -257,8 +334,14 @@ def validate() -> int:
         jlevel = re.search(r"^BR2_JLEVEL=([0-9]+)$", config, re.MULTILINE)
         if not jlevel:
             errors.append(f"{name}: BR2_JLEVEL must be explicit for reproducible resource use")
-        elif int(jlevel.group(1)) < 1:
-            errors.append(f"{name}: BR2_JLEVEL must be >= 1; auto mode is not allowed")
+        elif int(jlevel.group(1)) != target["build_jlevel"]:
+            errors.append(
+                f"{name}: BR2_JLEVEL={jlevel.group(1)} does not match "
+                f"build_jlevel={target['build_jlevel']}"
+            )
+
+        if "BR2_CCACHE=y" not in config:
+            errors.append(f"{name}: BR2_CCACHE must be enabled for CI cache effectiveness")
 
         if "BR2_PACKAGE_SYSTEMD_BOOTCTL=" in config:
             errors.append(f"{name}: BR2_PACKAGE_SYSTEMD_BOOTCTL is not a Buildroot symbol")
@@ -319,7 +402,15 @@ def github_matrix(selector: str) -> int:
                 "artifact": target["artifact"],
                 "release": release_base,
                 "release_artifact": release_artifact,
+                "signing": target["signing"],
                 "timeout_minutes": target["timeout_minutes"],
+                "build_step_timeout_minutes": target["build_step_timeout_minutes"],
+                "min_disk_gib": target["min_disk_gib"],
+                "min_mem_gib": target["min_mem_gib"],
+                "min_vcpu": target["min_vcpu"],
+                "build_jlevel": target["build_jlevel"],
+                "prebuild_defconfigs": " ".join(list_field(target, "prebuild_defconfigs")),
+                "payload_image_exports": " ".join(list_field(target, "payload_image_exports")),
                 "expected_artifacts": " ".join(expected_artifacts(target)),
                 "profile": target["profile"],
                 "boot_mode": target["boot_mode"],

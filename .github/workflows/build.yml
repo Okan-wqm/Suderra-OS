@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   matrix:
     name: Build matrix contract
@@ -52,6 +56,10 @@ jobs:
           submodules: recursive
 
       - name: Check runner resource contract
+        env:
+          SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
+          SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
+          SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
         run: ./scripts/ci/check-runner-resources.sh
 
       - name: Cache Buildroot downloads
@@ -95,34 +103,70 @@ jobs:
             "${{ matrix.defconfig }}" 2>&1 | tail -30
 
       - name: Build image (full Buildroot run)
+        env:
+          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
+          MATRIX_PAYLOAD_IMAGE_EXPORTS: ${{ matrix.payload_image_exports }}
+          MATRIX_SIGNING: ${{ matrix.signing }}
+          MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
         run: |
           set -euo pipefail
           set -x
           mkdir -p build-logs
+          build_deadline=$((SECONDS + MATRIX_BUILD_STEP_TIMEOUT_MINUTES * 60))
           build_and_check() {
             local defconfig="$1"
             local log_path="build-logs/${defconfig}.log"
-            ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
+            local remaining=$((build_deadline - SECONDS))
+            if [ "${remaining}" -le 0 ]; then
+              echo "::error::Build step timeout budget exhausted before ${defconfig}"
+              exit 124
+            fi
+            timeout --kill-after=60s "${remaining}s" \
+              ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
             python3 scripts/ci/classify-build-warnings.py \
               --json-output "build-logs/${defconfig}.warnings.json" \
               "${log_path}"
           }
-          if [ -s "configs/${{ matrix.defconfig }}" ] && grep -q "^BR2_" "configs/${{ matrix.defconfig }}"; then
-            if [ "${{ matrix.defconfig }}" = "suderra_aarch64_rpi4_usb_installer_defconfig" ]; then
-              mkdir -p .ci-installer-keys
-              openssl genpkey -algorithm ED25519 \
-                -out .ci-installer-keys/installer-payload.key
-              openssl pkey -in .ci-installer-keys/installer-payload.key \
-                -pubout -out .ci-installer-keys/installer-payload.pub.pem
-              chmod 0600 .ci-installer-keys/installer-payload.key
-              chmod 0644 .ci-installer-keys/installer-payload.pub.pem
-              export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY=/workspace/.ci-installer-keys/installer-payload.key
-              export SUDERRA_INSTALLER_PAYLOAD_PUBKEY=/workspace/.ci-installer-keys/installer-payload.pub.pem
-              build_and_check suderra_aarch64_rpi4_defconfig
-              build_and_check suderra_aarch64_revpi4_defconfig
-              export SUDERRA_RPI4_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
-              export SUDERRA_REVPI4_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz
+          prepare_payload_signing_keys() {
+            if [ "${MATRIX_SIGNING}" != "payload-ed25519-required" ]; then
+              return 0
             fi
+            mkdir -p .ci-installer-keys
+            openssl genpkey -algorithm ED25519 \
+              -out .ci-installer-keys/installer-payload.key
+            openssl pkey -in .ci-installer-keys/installer-payload.key \
+              -pubout -out .ci-installer-keys/installer-payload.pub.pem
+            chmod 0600 .ci-installer-keys/installer-payload.key
+            chmod 0644 .ci-installer-keys/installer-payload.pub.pem
+            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY=/workspace/.ci-installer-keys/installer-payload.key
+            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY=/workspace/.ci-installer-keys/installer-payload.pub.pem
+          }
+          export_payload_images() {
+            local payload_exports=()
+            local entry env_name source_spec source_defconfig artifact image_path
+            read -r -a payload_exports <<< "${MATRIX_PAYLOAD_IMAGE_EXPORTS}"
+            for entry in "${payload_exports[@]}"; do
+              [ -n "${entry}" ] || continue
+              env_name="${entry%%=*}"
+              source_spec="${entry#*=}"
+              source_defconfig="${source_spec%%:*}"
+              artifact="${source_spec#*:}"
+              image_path="/workspace/output/${source_defconfig}/images/${artifact}"
+              if [ ! -f "${image_path}" ]; then
+                echo "::error::Payload image contract missing ${image_path}"
+                exit 1
+              fi
+              export "${env_name}=${image_path}"
+            done
+          }
+          if [ -s "configs/${{ matrix.defconfig }}" ] && grep -q "^BR2_" "configs/${{ matrix.defconfig }}"; then
+            prepare_payload_signing_keys
+            read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
+            for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
+              [ -n "${prebuild_defconfig}" ] || continue
+              build_and_check "${prebuild_defconfig}"
+            done
+            export_payload_images
             build_and_check "${{ matrix.defconfig }}"
           else
             echo "::error::Defconfig ${{ matrix.defconfig }} missing or empty"

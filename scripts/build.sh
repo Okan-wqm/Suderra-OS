@@ -16,6 +16,7 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 DEFCONFIG="${1:?Kullanım: $0 <defconfig>}"
 BUILDROOT_DIR="${BUILDROOT_DIR:-${PROJECT_ROOT}/buildroot}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/${DEFCONFIG}}"
+export BR2_CCACHE_DIR="${BR2_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
 
 # Buildroot var mı?
 if [ ! -d "${BUILDROOT_DIR}" ]; then
@@ -40,7 +41,9 @@ echo "==> Suderra OS build: ${DEFCONFIG}"
 echo "==> BR2_EXTERNAL: ${PROJECT_ROOT}"
 echo "==> BUILDROOT_DIR: ${BUILDROOT_DIR}"
 echo "==> OUTPUT_DIR: ${OUTPUT_DIR}"
+echo "==> BR2_CCACHE_DIR: ${BR2_CCACHE_DIR}"
 
+mkdir -p "${BR2_CCACHE_DIR}"
 "${SCRIPT_DIR}/apply-buildroot-patches.sh" "${BUILDROOT_DIR}"
 
 cd "${BUILDROOT_DIR}"

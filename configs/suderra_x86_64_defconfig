@@ -17,6 +17,7 @@
 BR2_x86_64=y
 BR2_x86_corei7=y
 BR2_JLEVEL=4
+BR2_CCACHE=y
 BR2_PACKAGE_SUDERRA_VARIANT_PROD=y
 
 # Toolchain — qemu defconfig ile aynı glibc/systemd tabanı

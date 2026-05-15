@@ -54,3 +54,18 @@ grep -q 'SUDERRA_MIN_MEM_GIB' "${RESOURCE_CHECK}" ||
         echo "ERROR: runner resource gate must expose explicit memory threshold" >&2
         exit 1
     }
+grep -q 'SUDERRA_MIN_VCPU' "${RESOURCE_CHECK}" ||
+    {
+        echo "ERROR: runner resource gate must expose explicit vCPU threshold" >&2
+        exit 1
+    }
+grep -q 'MATRIX_PREBUILD_DEFCONFIGS' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+    {
+        echo "ERROR: build workflow must consume matrix prebuild contracts" >&2
+        exit 1
+    }
+grep -q 'MATRIX_PAYLOAD_IMAGE_EXPORTS' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+    {
+        echo "ERROR: build workflow must consume matrix payload export contracts" >&2
+        exit 1
+    }

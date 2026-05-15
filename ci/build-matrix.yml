@@ -20,6 +20,13 @@ defconfigs:
     ci_build: true
     release: true
     timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
     production_required: false
     production_ready: false
     profile: provisioning
@@ -47,6 +54,13 @@ defconfigs:
     ci_build: false
     release: false
     timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
     production_required: true
     production_ready: false
     profile: locked-appliance
@@ -74,6 +88,13 @@ defconfigs:
     ci_build: false
     release: false
     timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
     production_required: false
     production_ready: false
     profile: unsupported-template
@@ -101,6 +122,13 @@ defconfigs:
     ci_build: true
     release: true
     timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
     production_required: true
     production_ready: false
     profile: provisioning
@@ -130,6 +158,17 @@ defconfigs:
     ci_build: true
     release: true
     timeout_minutes: 360
+    build_step_timeout_minutes: 340
+    min_disk_gib: 35
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+      - suderra_aarch64_rpi4_defconfig
+      - suderra_aarch64_revpi4_defconfig
+    payload_image_exports:
+      - SUDERRA_RPI4_TARGET_IMAGE_XZ=suderra_aarch64_rpi4_defconfig:suderra-rpi4-target.img.xz
+      - SUDERRA_REVPI4_TARGET_IMAGE_XZ=suderra_aarch64_revpi4_defconfig:suderra-revpi4-target.img.xz
     production_required: true
     production_ready: false
     profile: provisioning-installer
@@ -157,6 +196,13 @@ defconfigs:
     ci_build: true
     release: true
     timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
     production_required: true
     production_ready: false
     profile: provisioning
