@@ -62,7 +62,10 @@ venv/
 
 # Rust (eğer cargo build edersek)
 target/
+# Application workspaces must commit their lockfiles; Buildroot builds use
+# cargo --locked and must fail closed if dependency resolution drifts.
 Cargo.lock
+!userspace/Cargo.lock
 
 # Docker
 .docker-build-cache/

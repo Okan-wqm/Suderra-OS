@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 EXTERNAL_MK="${ROOT}/external.mk"
+LOCKFILE="${ROOT}/userspace/Cargo.lock"
 
 grep -q 'SUDERRA_RUST_WORKSPACE_BUILD' "${EXTERNAL_MK}" ||
     {
@@ -32,6 +33,21 @@ grep -q 'CARGO_TARGET_DIR="$(@D)/cargo-target"' "${EXTERNAL_MK}" ||
 grep -q -- '--locked' "${EXTERNAL_MK}" ||
     {
         echo "ERROR: Rust workspace builds must honor Cargo.lock" >&2
+        exit 1
+    }
+test -f "${LOCKFILE}" ||
+    {
+        echo "ERROR: userspace/Cargo.lock must be present for fail-closed Rust builds" >&2
+        exit 1
+    }
+git -C "${ROOT}" ls-files --error-unmatch userspace/Cargo.lock >/dev/null ||
+    {
+        echo "ERROR: userspace/Cargo.lock must be tracked in git" >&2
+        exit 1
+    }
+git -C "${ROOT}" check-ignore -q userspace/Cargo.lock &&
+    {
+        echo "ERROR: userspace/Cargo.lock must not be ignored" >&2
         exit 1
     }
 

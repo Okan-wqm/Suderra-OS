@@ -53,14 +53,20 @@ jobs:
       - name: rust-toolchain (pinned)
         run: rustup show
 
+      - name: Cargo.lock contract
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" ls-files --error-unmatch userspace/Cargo.lock
+          cargo metadata --locked --no-deps --format-version 1 >/tmp/suderra-cargo-metadata.json
+
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
       - name: cargo clippy (host)
-        run: cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
 
       - name: cargo test (host)
-        run: cargo test --workspace --target x86_64-unknown-linux-gnu
+        run: cargo test --locked --workspace --target x86_64-unknown-linux-gnu
 
   # -----------------------------------------------------------------
   # Cross-compile (musl static, production target)
@@ -101,7 +107,7 @@ jobs:
           tool: cross@0.2.5
 
       - name: cross build --release (${{ matrix.target }})
-        run: cross build --workspace --release --target ${{ matrix.target }}
+        run: cross build --locked --workspace --release --target ${{ matrix.target }}
 
       - name: Binary boyut raporu
         run: |
@@ -162,4 +168,4 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup show   # rust-toolchain.toml otomatik kurulur
-      - run: cargo check --workspace --target x86_64-unknown-linux-gnu
+      - run: cargo check --locked --workspace --target x86_64-unknown-linux-gnu

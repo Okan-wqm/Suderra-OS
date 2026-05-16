@@ -344,6 +344,7 @@ jobs:
         working-directory: userspace
         run: |
           cargo build -p suderra-installer \
+            --locked \
             --target x86_64-unknown-linux-musl \
             --release
 
@@ -352,6 +353,7 @@ jobs:
         working-directory: userspace
         run: |
           cross build -p suderra-installer \
+            --locked \
             --target aarch64-unknown-linux-musl \
             --release
 
@@ -603,7 +605,7 @@ jobs:
 
       - name: Validate release manifest schema
         working-directory: userspace
-        run: cargo run -p suderra-installer --target x86_64-unknown-linux-gnu -- validate-manifest ../release/manifest.json
+        run: cargo run --locked -p suderra-installer --target x86_64-unknown-linux-gnu -- validate-manifest ../release/manifest.json
 
       - name: Generate combined SHA256SUMS
         working-directory: release
