@@ -53,10 +53,12 @@ chmod 0600 *.key
 
 ## Build Sırasında Anahtar Bulma
 
-Build script'leri `SUDERRA_KEYS_DIR` env var arar:
+Buildroot paketleri trust-root kaynağı için `SUDERRA_TRUST_ROOTS_DIR` kullanır.
+`SUDERRA_KEYS_DIR` eski wrapper girdisi olarak hâlâ kabul edilir, ancak Buildroot
+package değişkenleriyle çakıştığı için paketlerde doğrudan kullanılmaz.
 
 ```bash
-export SUDERRA_KEYS_DIR=~/.suderra-keys/dev
+export SUDERRA_TRUST_ROOTS_DIR=~/.suderra-keys/dev
 ./scripts/build-in-docker.sh suderra_x86_64_defconfig
 ```
 

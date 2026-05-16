@@ -9,6 +9,7 @@ SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 DOCKERFILE="${PROJECT_ROOT}/ci/Dockerfile"
 RESOURCE_CHECK="${PROJECT_ROOT}/scripts/ci/check-runner-resources.sh"
+EXTERNAL_MK="${PROJECT_ROOT}/external.mk"
 
 require_pattern() {
     local pattern="$1"
@@ -59,11 +60,34 @@ grep -q 'SUDERRA_CONTAINER_KEYS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh
         echo "ERROR: build-in-docker must expose the container keyring path" >&2
         exit 1
     }
+grep -q 'SUDERRA_TRUST_ROOTS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must pass a non-package-colliding Buildroot trust-root variable" >&2
+        exit 1
+    }
 grep -q 'SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must propagate installer payload key profile" >&2
         exit 1
     }
+grep -Eq '^SUDERRA_TRUST_ROOTS_DIR[[:space:]]*:=' "${EXTERNAL_MK}" ||
+    {
+        echo "ERROR: external.mk must define SUDERRA_TRUST_ROOTS_DIR before package includes" >&2
+        exit 1
+    }
+if grep -Eq '^SUDERRA_KEYS_DIR[[:space:]]*[:?]?=' "${EXTERNAL_MK}"; then
+    echo "ERROR: external.mk must not assign SUDERRA_KEYS_DIR; Buildroot reserves it for the suderra-keys package" >&2
+    exit 1
+fi
+grep -q '^export SUDERRA_TRUST_ROOTS_DIR' "${EXTERNAL_MK}" ||
+    {
+        echo "ERROR: external.mk must export SUDERRA_TRUST_ROOTS_DIR into package builds" >&2
+        exit 1
+    }
+if grep -R '\$(SUDERRA_KEYS_DIR)' "${PROJECT_ROOT}/package" --include='*.mk'; then
+    echo "ERROR: package makefiles must not read SUDERRA_KEYS_DIR because it collides with Buildroot package variables" >&2
+    exit 1
+fi
 grep -q 'SUDERRA_RESOURCE_PATH' "${RESOURCE_CHECK}" ||
     {
         echo "ERROR: runner resource gate must support explicit build storage path" >&2

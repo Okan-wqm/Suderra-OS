@@ -12,7 +12,7 @@ config BR2_PACKAGE_SUDERRA_KEYS
 	  - /etc/suderra/os-installer-payload.ed25519.pub
 	  - /etc/suderra/edge-artifact.ed25519.pub
 
-	  Anahtarlar SUDERRA_KEYS_DIR env var ile belirtilir.
+	  Anahtarlar SUDERRA_TRUST_ROOTS_DIR env var ile belirtilir.
 	  DEV variant: ~/.suderra-keys/dev/
 	  PROD variant: CI'da kısa-ömürlü HSM session'dan elde edilir ve
 	  suderra-keys.profile dosyası "prod" içermelidir.

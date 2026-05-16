@@ -13,6 +13,7 @@ SUDERRA_OS_INSTALLER_LICENSE = Apache-2.0
 # Production builds must provide this through CI/HSM-backed key material.
 SUDERRA_INSTALLER_PAYLOAD_PUBKEY ?=
 SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE ?=
+SUDERRA_TRUST_ROOTS_DIR ?= $(HOME)/.suderra-keys/dev
 
 SUDERRA_OS_INSTALLER_DEPENDENCIES = host-rustc
 
@@ -32,10 +33,10 @@ define SUDERRA_OS_INSTALLER_INSTALL_TARGET_CMDS
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/etc/suderra
 	payload_pubkey="$(SUDERRA_INSTALLER_PAYLOAD_PUBKEY)"; \
 	payload_profile="$(SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE)"; \
-	if [ -z "$$payload_pubkey" ] && [ -s "$(SUDERRA_KEYS_DIR)/installer-payload.ed25519.pub" ]; then \
-		payload_pubkey="$(SUDERRA_KEYS_DIR)/installer-payload.ed25519.pub"; \
+	if [ -z "$$payload_pubkey" ] && [ -s "$(SUDERRA_TRUST_ROOTS_DIR)/installer-payload.ed25519.pub" ]; then \
+		payload_pubkey="$(SUDERRA_TRUST_ROOTS_DIR)/installer-payload.ed25519.pub"; \
 		if [ -z "$$payload_profile" ]; then \
-			payload_profile="$$(cat "$(SUDERRA_KEYS_DIR)/suderra-keys.profile" 2>/dev/null || true)"; \
+			payload_profile="$$(cat "$(SUDERRA_TRUST_ROOTS_DIR)/suderra-keys.profile" 2>/dev/null || true)"; \
 		fi; \
 	fi; \
 	if [ -n "$$payload_pubkey" ]; then \

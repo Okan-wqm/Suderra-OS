@@ -13,7 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 BUNDLE="${1:?Kullanım: $0 <bundle.raucb>}"
-KEYS_DIR="${SUDERRA_KEYS_DIR:-${HOME}/.suderra-keys/dev}"
+KEYS_DIR="${SUDERRA_TRUST_ROOTS_DIR:-${SUDERRA_KEYS_DIR:-${HOME}/.suderra-keys/dev}}"
 
 if [ ! -f "${BUNDLE}" ]; then
     echo "ERROR: Bundle yok: ${BUNDLE}"
