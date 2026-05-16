@@ -37,7 +37,11 @@ pub fn verify_keyless(artifact: &Path, signature: &Path) -> Result<VerifyOutcome
         .args([
             "verify-blob",
             "--certificate-identity-regexp",
-            "^https://github\\.com/Okan-wqm/suderra-os/",
+            // Sigstore OIDC subject must be the release workflow running on
+            // a SemVer tag — pinning the workflow path stops any other
+            // workflow in the repo from producing signatures that would
+            // pass this check.
+            r"^https://github\.com/Okan-wqm/suderra-os/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.\-]+)?$",
             "--certificate-oidc-issuer",
             "https://token.actions.githubusercontent.com",
             "--signature",

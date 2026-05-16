@@ -85,10 +85,11 @@ GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
 
 prepare_rpi4_installer_payload() {
-    default_rpi4="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz"
-    default_revpi4="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz"
-    rpi4_image="${SUDERRA_RPI4_TARGET_IMAGE_XZ:-${SUDERRA_TARGET_IMAGE_XZ:-${default_rpi4}}}"
-    revpi4_image="${SUDERRA_REVPI4_TARGET_IMAGE_XZ:-${default_revpi4}}"
+    # CI/release pipelines export these explicitly via MATRIX_PAYLOAD_IMAGE_EXPORTS.
+    # Local dev builds must point them at concrete artifacts; fall back paths
+    # would silently resolve against host paths inside the container.
+    rpi4_image="${SUDERRA_RPI4_TARGET_IMAGE_XZ:?SUDERRA_RPI4_TARGET_IMAGE_XZ must point to the RPi4 target image (.img.xz)}"
+    revpi4_image="${SUDERRA_REVPI4_TARGET_IMAGE_XZ:?SUDERRA_REVPI4_TARGET_IMAGE_XZ must point to the RevPi4 target image (.img.xz)}"
     sign_key="${SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY:-}"
     public_key="${SUDERRA_INSTALLER_PAYLOAD_PUBKEY:-}"
 
@@ -160,8 +161,8 @@ prepare_rpi4_installer_payload() {
     }
   ],
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "expires_at": "${SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT:-2099-01-01T00:00:00Z}",
-  "key_epoch": ${SUDERRA_INSTALLER_KEY_EPOCH:-1}
+  "expires_at": "${SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT:?SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT must be an ISO-8601 UTC timestamp}",
+  "key_epoch": ${SUDERRA_INSTALLER_KEY_EPOCH:?SUDERRA_INSTALLER_KEY_EPOCH must be set (positive integer)}
 }
 EOF
 
@@ -328,6 +329,44 @@ enforce_production_contract() {
     fi
     if ! openssl x509 -in "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.cert" -noout >/dev/null 2>&1; then
         echo "ERROR: ${IMAGE_OUTPUT_NAME}.cert must be a parseable X.509 certificate"
+        exit 1
+    fi
+
+    # Cryptographic gates — boyut/parse syntax kontrolü yetmez. Imza ve
+    # verity hash tree gerçek kriptografik testle doğrulanmalı.
+    cert_pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/${IMAGE_OUTPUT_NAME}.pubkey"
+    if ! openssl x509 -in "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.cert" \
+            -pubkey -noout > "${cert_pubkey}" 2>/dev/null; then
+        echo "ERROR: ${IMAGE_OUTPUT_NAME}.cert does not contain a usable public key"
+        exit 1
+    fi
+    if ! openssl dgst -sha256 -verify "${cert_pubkey}" \
+            -signature "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.sig" \
+            "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}" >/dev/null 2>&1; then
+        echo "ERROR: ${IMAGE_OUTPUT_NAME}.sig does not validate against ${IMAGE_OUTPUT_NAME}.cert"
+        rm -f "${cert_pubkey}"
+        exit 1
+    fi
+    rm -f "${cert_pubkey}"
+
+    # Verity hash tree must actually correspond to the rootfs it claims to
+    # protect. Without this check the file could be any 4KiB+ blob.
+    if command -v veritysetup >/dev/null 2>&1; then
+        declared_roothash="$(cat "${BINARIES_DIR}/rootfs.verity.roothash")"
+        if ! veritysetup verify \
+                "${BINARIES_DIR}/rootfs.img" \
+                "${BINARIES_DIR}/rootfs.verity" \
+                "${declared_roothash}" >/dev/null 2>&1; then
+            echo "ERROR: rootfs.verity hash tree does not match declared roothash"
+            exit 1
+        fi
+    else
+        echo "ERROR: veritysetup not available in build environment — production gate cannot pass"
+        exit 1
+    fi
+
+    if grep -q '^BR2_TARGET_ENABLE_ROOT_LOGIN=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must not enable BR2_TARGET_ENABLE_ROOT_LOGIN"
         exit 1
     fi
 }

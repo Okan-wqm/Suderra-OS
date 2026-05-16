@@ -187,8 +187,11 @@ if [[ "${VERIFY_SIGNATURE}" -eq 1 ]]; then
     [[ -f "${SIG_FILE}" ]] || die "Signature dosyası bulunamadı: ${SIG_FILE}"
 
     log_info "cosign keyless signature doğrulanıyor..."
+    # Pin the OIDC subject to release.yml on a SemVer tag so any other
+    # workflow in this repo cannot produce signatures that pass this check.
+    cosign_identity_re='^https://github\.com/Okan-wqm/suderra-os/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.\-]+)?$'
     if cosign verify-blob \
-        --certificate-identity-regexp "https://github.com/Okan-wqm/suderra-os" \
+        --certificate-identity-regexp "${cosign_identity_re}" \
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
         --signature "${SIG_FILE}" \
         "${IMAGE_ABS}" >/dev/null 2>&1; then
