@@ -19,15 +19,12 @@ SUDERRA_FIRSTBOOT_LICENSE_FILES = ../../LICENSE
 SUDERRA_FIRSTBOOT_DEPENDENCIES = host-rustc
 
 define SUDERRA_FIRSTBOOT_BUILD_CMDS
-	cd $(BR2_EXTERNAL_SUDERRA_PATH)/userspace && \
-		cargo build --release \
-			--target $(BR2_RUSTC_TARGET_NAME) \
-			--package suderra-firstboot
+	$(call SUDERRA_RUST_WORKSPACE_BUILD,suderra-firstboot)
 endef
 
 define SUDERRA_FIRSTBOOT_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 \
-		$(BR2_EXTERNAL_SUDERRA_PATH)/userspace/target/$(BR2_RUSTC_TARGET_NAME)/release/suderra-firstboot \
+		$(@D)/cargo-target/$(RUSTC_TARGET_NAME)/release/suderra-firstboot \
 		$(TARGET_DIR)/usr/bin/suderra-firstboot
 endef
 

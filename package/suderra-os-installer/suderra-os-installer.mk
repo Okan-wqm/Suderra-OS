@@ -18,17 +18,14 @@ SUDERRA_TRUST_ROOTS_DIR ?= $(HOME)/.suderra-keys/dev
 SUDERRA_OS_INSTALLER_DEPENDENCIES = host-rustc
 
 define SUDERRA_OS_INSTALLER_BUILD_CMDS
-	cd $(BR2_EXTERNAL_SUDERRA_PATH)/userspace && \
-		cargo build --release \
-			--target $(BR2_RUSTC_TARGET_NAME) \
-			--package suderra-installer
+	$(call SUDERRA_RUST_WORKSPACE_BUILD,suderra-installer)
 endef
 
 define SUDERRA_OS_INSTALLER_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/suderra-os-install \
 		$(TARGET_DIR)/usr/sbin/suderra-os-install
 	$(INSTALL) -D -m 0755 \
-		$(BR2_EXTERNAL_SUDERRA_PATH)/userspace/target/$(BR2_RUSTC_TARGET_NAME)/release/suderra-installer \
+		$(@D)/cargo-target/$(RUSTC_TARGET_NAME)/release/suderra-installer \
 		$(TARGET_DIR)/usr/bin/suderra-installer
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/etc/suderra
 	payload_pubkey="$(SUDERRA_INSTALLER_PAYLOAD_PUBKEY)"; \

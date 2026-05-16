@@ -68,7 +68,7 @@ target/x86_64-unknown-linux-musl/release/suderra-firstboot   # ~1-3 MB, static
 
 Buildroot her crate'i kendi paketi olarak build eder:
 
-- `package/suderra-firstboot/suderra-firstboot.mk` → `cd userspace/suderra-firstboot && cargo build --release`
+- `package/suderra-firstboot/suderra-firstboot.mk` → `$(call SUDERRA_RUST_WORKSPACE_BUILD,suderra-firstboot)`
 - Çıktı binary `/usr/bin/suderra-firstboot` olarak rootfs'e kopyalanır
 - systemd unit `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-firstboot.service` ile bağlanır
 

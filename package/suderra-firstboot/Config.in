@@ -1,6 +1,9 @@
 config BR2_PACKAGE_SUDERRA_FIRSTBOOT
 	bool "suderra-firstboot"
 	depends on BR2_INIT_SYSTEMD
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_HOST_RUSTC
 	help
 	  İlk-boot provisioning script.
 
@@ -10,3 +13,6 @@ config BR2_PACKAGE_SUDERRA_FIRSTBOOT
 	  - mTLS provisioning (cihazı cloud'a kaydet)
 	  - RAUC health-check: ilk boot başarılı ise mark good
 	  - Bir kez çalışır, sonra disable olur (systemd ConditionFirstBoot)
+
+comment "suderra-firstboot needs systemd, threads, and a Rust-supported target"
+	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

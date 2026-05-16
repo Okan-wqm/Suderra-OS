@@ -165,25 +165,25 @@ package/suderra-firstboot/
 Reçete:
 
 ```makefile
-SUDERRA_FIRSTBOOT_VERSION = $(SUDERRA_OS_VERSION)
-SUDERRA_FIRSTBOOT_SITE = $(BR2_EXTERNAL_SUDERRA_PATH)/userspace
-SUDERRA_FIRSTBOOT_SITE_METHOD = local
-SUDERRA_FIRSTBOOT_SUBDIR = suderra-firstboot
 SUDERRA_FIRSTBOOT_DEPENDENCIES = host-rustc
 
 define SUDERRA_FIRSTBOOT_BUILD_CMDS
-    cd $(@D) && cargo build --release \
-        --target $(BR2_RUSTC_TARGET_NAME)
+    $(call SUDERRA_RUST_WORKSPACE_BUILD,suderra-firstboot)
 endef
 
 define SUDERRA_FIRSTBOOT_INSTALL_TARGET_CMDS
     $(INSTALL) -D -m 0755 \
-        $(@D)/target/$(BR2_RUSTC_TARGET_NAME)/release/suderra-firstboot \
+        $(@D)/cargo-target/$(RUSTC_TARGET_NAME)/release/suderra-firstboot \
         $(TARGET_DIR)/usr/bin/suderra-firstboot
 endef
 
 $(eval $(generic-package))
 ```
+
+`SUDERRA_RUST_WORKSPACE_BUILD` lives in `external.mk` and is the required path
+for local workspace crates. It inherits Buildroot's `TARGET_CONFIGURE_OPTS`,
+`PKG_CARGO_ENV`, `RUSTC_TARGET_NAME`, cargo cache, linker settings, and writes
+outputs under the package-local `$(@D)/cargo-target`.
 
 ## Yeni Crate Ekleme
 
