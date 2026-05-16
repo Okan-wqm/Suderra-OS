@@ -9,6 +9,7 @@ KEYS_DIR="${TMPDIR}/keys"
 
 "${ROOT}/scripts/ci/prepare-ci-keyring.sh" "${KEYS_DIR}" >/dev/null
 "${ROOT}/scripts/ci/prepare-ci-keyring.sh" "${KEYS_DIR}" >/dev/null
+"${ROOT}/scripts/ci/validate-trust-roots.sh" "${KEYS_DIR}" --expected-profile ci --require-installer-signing
 
 for required in \
     suderra-keys.profile \

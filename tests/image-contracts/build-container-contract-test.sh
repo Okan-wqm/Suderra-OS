@@ -35,17 +35,17 @@ require_pattern 'getent group dbus' 'dbus group preflight'
 require_pattern 'groupadd -r dbus' 'dbus group creation'
 require_pattern 'SHELL \["/bin/bash", "-o", "pipefail", "-c"\]' 'Dockerfile pipefail shell'
 require_pattern '# hadolint ignore=DL3008' 'documented apt pinning exception'
-grep -q 'HOST_DL_DIR}:/workspace/dl:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+grep -q 'source=${HOST_DL_DIR},target=/workspace/dl' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must bind repo-local dl/ for CI cache compatibility" >&2
         exit 1
     }
-grep -q 'HOST_OUTPUT_DIR}:/workspace/output:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+grep -q 'source=${HOST_OUTPUT_DIR},target=/workspace/output' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must bind host output storage for CI disk compatibility" >&2
         exit 1
     }
-grep -q 'HOST_CCACHE_DIR}:/workspace/.ccache:rw' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+grep -q 'source=${HOST_CCACHE_DIR},target=/workspace/.ccache' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must bind repo-local .ccache/ for CI cache compatibility" >&2
         exit 1
@@ -60,6 +60,21 @@ grep -q 'SUDERRA_CONTAINER_KEYS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh
         echo "ERROR: build-in-docker must expose the container keyring path" >&2
         exit 1
     }
+grep -q 'CONTAINER_KEYS_DIR="${SUDERRA_CONTAINER_KEYS_DIR:-/tmp/suderra-keys/current}"' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must default keyring mounts to /tmp, not /home/builder" >&2
+        exit 1
+    }
+grep -q -- '--mount "type=bind,source=${HOST_KEYS_DIR},target=${CONTAINER_KEYS_DIR},readonly"' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must mount trust roots with explicit read-only bind semantics" >&2
+        exit 1
+    }
+grep -q 'validate-trust-roots.sh' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must preflight trust roots before expensive builds" >&2
+        exit 1
+    }
 grep -q 'SUDERRA_TRUST_ROOTS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must pass a non-package-colliding Buildroot trust-root variable" >&2
@@ -70,6 +85,10 @@ grep -q 'SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE' "${PROJECT_ROOT}/scripts/build-i
         echo "ERROR: build-in-docker must propagate installer payload key profile" >&2
         exit 1
     }
+if grep -q -- '-e SUDERRA_KEYS_DIR=' "${PROJECT_ROOT}/scripts/build-in-docker.sh"; then
+    echo "ERROR: build-in-docker must not export SUDERRA_KEYS_DIR into Buildroot scope" >&2
+    exit 1
+fi
 grep -Eq '^SUDERRA_TRUST_ROOTS_DIR[[:space:]]*:=' "${EXTERNAL_MK}" ||
     {
         echo "ERROR: external.mk must define SUDERRA_TRUST_ROOTS_DIR before package includes" >&2
@@ -123,3 +142,109 @@ grep -q 'prepare-ci-keyring.sh' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
         echo "ERROR: build workflow must prepare CI trust roots before Buildroot image builds" >&2
         exit 1
     }
+grep -q 'SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+    {
+        echo "ERROR: build workflow must use a container keyring path outside /home/builder" >&2
+        exit 1
+    }
+grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+    {
+        echo "ERROR: build workflow must validate trust-root visibility inside the build container" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current' "${PROJECT_ROOT}/.github/workflows/release.yml" ||
+    {
+        echo "ERROR: release workflow must use a container keyring path outside /home/builder" >&2
+        exit 1
+    }
+grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workflows/release.yml" ||
+    {
+        echo "ERROR: release workflow must validate trust-root visibility inside the build container" >&2
+        exit 1
+    }
+if grep -R '/home/builder/.suderra-keys/current' \
+    "${PROJECT_ROOT}/scripts/build-in-docker.sh" \
+    "${PROJECT_ROOT}/.github/workflows/build.yml" \
+    "${PROJECT_ROOT}/.github/workflows/release.yml"; then
+    echo "ERROR: CI keyring mounts must not target /home/builder" >&2
+    exit 1
+fi
+
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "${TMPDIR}"' EXIT
+KEYS_DIR="${TMPDIR}/keys"
+FAKE_BIN="${TMPDIR}/bin"
+FAKE_DOCKER_LOG="${TMPDIR}/docker.log"
+mkdir -p "${FAKE_BIN}" "${TMPDIR}/out" "${TMPDIR}/dl" "${TMPDIR}/ccache"
+"${PROJECT_ROOT}/scripts/ci/prepare-ci-keyring.sh" "${KEYS_DIR}" >/dev/null
+
+cat > "${FAKE_BIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+    printf '%s\n' "${arg}" >> "${FAKE_DOCKER_LOG:?}"
+done
+printf -- '---\n' >> "${FAKE_DOCKER_LOG:?}"
+case "${1:-}" in
+    image|run|build)
+        exit 0
+        ;;
+    *)
+        echo "unexpected fake docker command: $*" >&2
+        exit 2
+        ;;
+esac
+EOF
+chmod +x "${FAKE_BIN}/docker"
+
+PATH="${FAKE_BIN}:${PATH}" \
+FAKE_DOCKER_LOG="${FAKE_DOCKER_LOG}" \
+SUDERRA_HOST_KEYS_DIR="${KEYS_DIR}" \
+SUDERRA_CONTAINER_KEYS_DIR=/container/keys \
+SUDERRA_EXPECTED_KEYS_PROFILE=ci \
+SUDERRA_HOST_OUTPUT_DIR="${TMPDIR}/out" \
+SUDERRA_HOST_DL_DIR="${TMPDIR}/dl" \
+SUDERRA_HOST_CCACHE_DIR="${TMPDIR}/ccache" \
+    bash "${PROJECT_ROOT}/scripts/build-in-docker.sh" suderra_qemu_x86_64_defconfig >/dev/null
+
+grep -F -- "type=bind,source=${KEYS_DIR},target=/container/keys,readonly" "${FAKE_DOCKER_LOG}" >/dev/null ||
+    {
+        echo "ERROR: fake docker run did not receive the read-only keyring mount" >&2
+        exit 1
+    }
+grep -F -- "SUDERRA_TRUST_ROOTS_DIR=/container/keys" "${FAKE_DOCKER_LOG}" >/dev/null ||
+    {
+        echo "ERROR: fake docker run did not receive SUDERRA_TRUST_ROOTS_DIR" >&2
+        exit 1
+    }
+if grep -F -- "SUDERRA_KEYS_DIR=/container/keys" "${FAKE_DOCKER_LOG}" >/dev/null; then
+    echo "ERROR: fake docker run exported legacy SUDERRA_KEYS_DIR into Buildroot scope" >&2
+    exit 1
+fi
+if grep -F -- "target=/container/keys,rw" "${FAKE_DOCKER_LOG}" >/dev/null; then
+    echo "ERROR: fake docker run mounted the keyring writable" >&2
+    exit 1
+fi
+
+: > "${FAKE_DOCKER_LOG}"
+if PATH="${FAKE_BIN}:${PATH}" \
+    FAKE_DOCKER_LOG="${FAKE_DOCKER_LOG}" \
+    SUDERRA_HOST_KEYS_DIR="${TMPDIR}/missing" \
+    SUDERRA_CONTAINER_KEYS_DIR=/container/keys \
+    SUDERRA_HOST_OUTPUT_DIR="${TMPDIR}/out" \
+    SUDERRA_HOST_DL_DIR="${TMPDIR}/dl" \
+    SUDERRA_HOST_CCACHE_DIR="${TMPDIR}/ccache" \
+    bash "${PROJECT_ROOT}/scripts/build-in-docker.sh" suderra_qemu_x86_64_defconfig \
+        >"${TMPDIR}/missing.out" 2>"${TMPDIR}/missing.err"; then
+    echo "ERROR: build-in-docker accepted a missing explicit keyring" >&2
+    exit 1
+fi
+grep -q 'Suderra keys directory does not exist' "${TMPDIR}/missing.err" ||
+    {
+        echo "ERROR: missing keyring failure did not explain the broken contract" >&2
+        exit 1
+    }
+if [ -s "${FAKE_DOCKER_LOG}" ]; then
+    echo "ERROR: build-in-docker touched docker before failing a missing keyring" >&2
+    exit 1
+fi

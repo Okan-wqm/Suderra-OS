@@ -44,7 +44,8 @@ jobs:
       SUDERRA_HOST_DL_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/dl
       SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/ccache
       SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/keys
-      SUDERRA_CONTAINER_KEYS_DIR: /home/builder/.suderra-keys/current
+      SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
+      SUDERRA_EXPECTED_KEYS_PROFILE: ci
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}
@@ -73,6 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
+          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
 
       - name: Verify submodule pin matches index SHA
         id: br
@@ -145,6 +147,20 @@ jobs:
             exit 1
           fi
           tail -20 "${docker_log}"
+
+      - name: Verify container trust-root visibility
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            --mount "type=bind,source=${SUDERRA_HOST_KEYS_DIR},target=${SUDERRA_CONTAINER_KEYS_DIR},readonly" \
+            --mount "type=bind,source=${PWD},target=/workspace,readonly" \
+            -e SUDERRA_TRUST_ROOTS_DIR="${SUDERRA_CONTAINER_KEYS_DIR}" \
+            suderra-builder:latest \
+            bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_CONTAINER_KEYS_DIR}" \
+              --expected-profile ci \
+              --require-installer-signing
 
       - name: Buildroot defconfig parse (smoke test)
         run: |

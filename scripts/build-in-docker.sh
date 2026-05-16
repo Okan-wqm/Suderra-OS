@@ -12,56 +12,6 @@ IFS=$'\n\t'
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 
-# Container imajı hazır mı?
-if ! docker image inspect suderra-builder:latest >/dev/null 2>&1; then
-    echo "==> suderra-builder container yok, build ediliyor..."
-    docker build -t suderra-builder:latest "${PROJECT_ROOT}/ci/"
-fi
-
-HOST_DL_DIR="${SUDERRA_HOST_DL_DIR:-${PROJECT_ROOT}/dl}"
-HOST_CCACHE_DIR="${SUDERRA_HOST_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
-HOST_OUTPUT_DIR="${SUDERRA_HOST_OUTPUT_DIR:-${PROJECT_ROOT}/output}"
-mkdir -p "${HOST_DL_DIR}" "${HOST_CCACHE_DIR}" "${HOST_OUTPUT_DIR}"
-
-# Trust roots are host-owned material mounted read-only into the container.
-# Production builds must provide a prod-profiled directory from the release
-# signing path; CI/dev builds may use generated ci/dev profiles.
-HOST_KEYS_DIR="${SUDERRA_HOST_KEYS_DIR:-${SUDERRA_TRUST_ROOTS_DIR:-${SUDERRA_KEYS_DIR:-${HOME}/.suderra-keys/dev}}}"
-CONTAINER_KEYS_DIR="${SUDERRA_CONTAINER_KEYS_DIR:-/home/builder/.suderra-keys/current}"
-KEYS_MOUNT_ARGS=()
-if [ -d "${HOST_KEYS_DIR}" ]; then
-    KEYS_MOUNT_ARGS=(-v "${HOST_KEYS_DIR}:${CONTAINER_KEYS_DIR}:ro")
-elif [ -n "${SUDERRA_HOST_KEYS_DIR:-}" ] || [ -n "${SUDERRA_TRUST_ROOTS_DIR:-}" ] || [ -n "${SUDERRA_KEYS_DIR:-}" ]; then
-    echo "ERROR: Suderra keys directory does not exist: ${HOST_KEYS_DIR}" >&2
-    exit 1
-fi
-
-DOCKER_USER_ARGS=(
-    --user "$(id -u):$(id -g)"
-    -e HOME=/tmp
-)
-
-# Reproducible build için ortam değişkenleri
-SOURCE_DATE_EPOCH=$(git -C "${PROJECT_ROOT}" log -1 --format=%ct 2>/dev/null || echo "1704067200")
-EXTRA_ENV=()
-for name in \
-    SUDERRA_TARGET_IMAGE_XZ \
-    SUDERRA_RPI4_TARGET_IMAGE_XZ \
-    SUDERRA_REVPI4_TARGET_IMAGE_XZ \
-    SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY \
-    SUDERRA_INSTALLER_PAYLOAD_PUBKEY \
-    SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE \
-    SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT \
-    SUDERRA_INSTALLER_KEY_EPOCH \
-    SUDERRA_VERSION \
-    SUDERRA_BUILD_ID \
-    SUDERRA_VARIANT
-do
-    if [ -n "${!name:-}" ]; then
-        EXTRA_ENV+=("-e" "${name}=${!name}")
-    fi
-done
-
 # Help
 if [ "${1:-}" = "--help" ] || [ -z "${1:-}" ]; then
     cat <<EOF
@@ -77,29 +27,170 @@ $(find "${PROJECT_ROOT}/configs/" -maxdepth 1 -type f -printf '  %f\n' | sort)
   SUDERRA_TRUST_ROOTS_DIR # Build sırasında kullanılacak trust-root keyring (varsayılan: ~/.suderra-keys/dev)
   SUDERRA_KEYS_DIR        # Legacy alias; wrapper tarafından SUDERRA_TRUST_ROOTS_DIR'e aktarılır
   SUDERRA_HOST_KEYS_DIR   # Container'a readonly mount edilecek host keyring dizini
-  SUDERRA_CONTAINER_KEYS_DIR # Container içindeki keyring yolu
+  SUDERRA_CONTAINER_KEYS_DIR # Container içindeki keyring yolu (varsayılan: /tmp/suderra-keys/current)
   SOURCE_DATE_EPOCH       # Reproducible build için (varsayılan: git commit time)
 EOF
     exit 0
 fi
 
+HOST_DL_DIR="${SUDERRA_HOST_DL_DIR:-${PROJECT_ROOT}/dl}"
+HOST_CCACHE_DIR="${SUDERRA_HOST_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
+HOST_OUTPUT_DIR="${SUDERRA_HOST_OUTPUT_DIR:-${PROJECT_ROOT}/output}"
+mkdir -p "${HOST_DL_DIR}" "${HOST_CCACHE_DIR}" "${HOST_OUTPUT_DIR}"
+
+TRUST_ROOT_VALIDATOR="${PROJECT_ROOT}/scripts/ci/validate-trust-roots.sh"
+
+# Trust roots are host-owned material mounted read-only into the container.
+# Production builds must provide a prod-profiled directory from the release
+# signing path; CI/dev builds may use generated ci/dev profiles.
+HOST_KEYS_DIR="${SUDERRA_HOST_KEYS_DIR:-${SUDERRA_TRUST_ROOTS_DIR:-${SUDERRA_KEYS_DIR:-${HOME}/.suderra-keys/dev}}}"
+CONTAINER_KEYS_DIR="${SUDERRA_CONTAINER_KEYS_DIR:-/tmp/suderra-keys/current}"
+
+absolute_path() {
+    local path="$1"
+    local dir base
+
+    if [ "${path}" != "${path#/}" ]; then
+        printf '%s\n' "${path}"
+        return 0
+    fi
+
+    dir="$(dirname -- "${path}")"
+    base="$(basename -- "${path}")"
+    if resolved_dir="$(cd -- "${dir}" 2>/dev/null && pwd)"; then
+        printf '%s/%s\n' "${resolved_dir}" "${base}"
+    elif [ "${dir}" != "${dir#/}" ]; then
+        printf '%s/%s\n' "${dir}" "${base}"
+    else
+        printf '%s/%s/%s\n' "${PWD}" "${dir}" "${base}"
+    fi
+}
+
+HOST_KEYS_DIR="$(absolute_path "${HOST_KEYS_DIR}")"
+
+case "${CONTAINER_KEYS_DIR}" in
+    /*) ;;
+    *)
+        echo "ERROR: SUDERRA_CONTAINER_KEYS_DIR must be an absolute container path: ${CONTAINER_KEYS_DIR}" >&2
+        exit 1
+        ;;
+esac
+case "${CONTAINER_KEYS_DIR}" in
+    /home/builder|/home/builder/*)
+        echo "ERROR: SUDERRA_CONTAINER_KEYS_DIR may not live under /home/builder." >&2
+        echo "GitHub runner UIDs cannot reliably traverse that home directory; use /tmp/suderra-keys/current." >&2
+        exit 1
+        ;;
+esac
+
+if [ ! -d "${HOST_KEYS_DIR}" ]; then
+    echo "ERROR: Suderra keys directory does not exist: ${HOST_KEYS_DIR}" >&2
+    echo "Development keys: ./scripts/gen-dev-keys.sh" >&2
+    echo "CI keys: scripts/ci/prepare-ci-keyring.sh \"\${SUDERRA_HOST_KEYS_DIR}\"" >&2
+    exit 1
+fi
+
+VALIDATOR_ARGS=()
+if [ -n "${SUDERRA_EXPECTED_KEYS_PROFILE:-}" ]; then
+    VALIDATOR_ARGS+=(--expected-profile "${SUDERRA_EXPECTED_KEYS_PROFILE}")
+fi
+if [ "${SUDERRA_REQUIRE_INSTALLER_SIGNING:-0}" = "1" ]; then
+    VALIDATOR_ARGS+=(--require-installer-signing)
+fi
+
+bash "${TRUST_ROOT_VALIDATOR}" "${HOST_KEYS_DIR}" "${VALIDATOR_ARGS[@]}"
+
+KEYS_MOUNT_ARGS=(
+    --mount "type=bind,source=${HOST_KEYS_DIR},target=${CONTAINER_KEYS_DIR},readonly"
+)
+
+DOCKER_USER_ARGS=(
+    --user "$(id -u):$(id -g)"
+    -e HOME=/tmp
+)
+
+# Reproducible build için ortam değişkenleri
+SOURCE_DATE_EPOCH=$(git -C "${PROJECT_ROOT}" log -1 --format=%ct 2>/dev/null || echo "1704067200")
+EXTRA_ENV=()
+add_extra_env() {
+    local name="$1"
+    local value="${!name:-}"
+    local suffix
+
+    if [ -z "${value}" ]; then
+        return 0
+    fi
+
+    case "${name}" in
+        SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY|SUDERRA_INSTALLER_PAYLOAD_PUBKEY)
+            case "${value}" in
+                "${HOST_KEYS_DIR}"/*)
+                    suffix="${value#"${HOST_KEYS_DIR}/"}"
+                    value="${CONTAINER_KEYS_DIR}/${suffix}"
+                    ;;
+            esac
+            ;;
+    esac
+
+    EXTRA_ENV+=("-e" "${name}=${value}")
+}
+
+for name in \
+    SUDERRA_TARGET_IMAGE_XZ \
+    SUDERRA_RPI4_TARGET_IMAGE_XZ \
+    SUDERRA_REVPI4_TARGET_IMAGE_XZ \
+    SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY \
+    SUDERRA_INSTALLER_PAYLOAD_PUBKEY \
+    SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE \
+    SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT \
+    SUDERRA_INSTALLER_KEY_EPOCH \
+    SUDERRA_EXPECTED_KEYS_PROFILE \
+    SUDERRA_REQUIRE_INSTALLER_SIGNING \
+    SUDERRA_VERSION \
+    SUDERRA_BUILD_ID \
+    SUDERRA_VARIANT
+do
+    add_extra_env "${name}"
+done
+
+DOCKER_COMMON_ARGS=(
+    --mount "type=bind,source=${PROJECT_ROOT},target=/workspace"
+    --mount "type=bind,source=${HOST_OUTPUT_DIR},target=/workspace/output"
+    --mount "type=bind,source=${HOST_DL_DIR},target=/workspace/dl"
+    --mount "type=bind,source=${HOST_CCACHE_DIR},target=/workspace/.ccache"
+    "${KEYS_MOUNT_ARGS[@]}"
+    "${DOCKER_USER_ARGS[@]}"
+    -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
+    -e BR2_CCACHE_DIR=/workspace/.ccache
+    -e SUDERRA_TRUST_ROOTS_DIR="${CONTAINER_KEYS_DIR}"
+    "${EXTRA_ENV[@]}"
+    -w /workspace
+)
+
+container_preflight_and_exec() {
+    local container_cmd=("$@")
+
+    docker run --rm \
+        "${DOCKER_COMMON_ARGS[@]}" \
+        suderra-builder:latest \
+        /bin/bash -lc \
+        'validator_args=(--check-installer-env); if [ -n "${SUDERRA_EXPECTED_KEYS_PROFILE:-}" ]; then validator_args+=(--expected-profile "${SUDERRA_EXPECTED_KEYS_PROFILE}"); fi; if [ "${SUDERRA_REQUIRE_INSTALLER_SIGNING:-0}" = "1" ]; then validator_args+=(--require-installer-signing); fi; bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_TRUST_ROOTS_DIR:?}" "${validator_args[@]}"; exec "$@"' \
+        bash "${container_cmd[@]}"
+}
+
+# Container imajı hazır mı?
+if ! docker image inspect suderra-builder:latest >/dev/null 2>&1; then
+    echo "==> suderra-builder container yok, build ediliyor..."
+    docker build -t suderra-builder:latest "${PROJECT_ROOT}/ci/"
+fi
+
 # Shell modu
 if [ "${1}" = "--shell" ]; then
     exec docker run --rm -it \
-        -v "${PROJECT_ROOT}:/workspace:rw" \
-        -v "${HOST_OUTPUT_DIR}:/workspace/output:rw" \
-        -v "${HOST_DL_DIR}:/workspace/dl:rw" \
-        -v "${HOST_CCACHE_DIR}:/workspace/.ccache:rw" \
-        "${KEYS_MOUNT_ARGS[@]}" \
-        "${DOCKER_USER_ARGS[@]}" \
-        -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-        -e BR2_CCACHE_DIR=/workspace/.ccache \
-        -e SUDERRA_KEYS_DIR="${CONTAINER_KEYS_DIR}" \
-        -e SUDERRA_TRUST_ROOTS_DIR="${CONTAINER_KEYS_DIR}" \
-        "${EXTRA_ENV[@]}" \
-        -w /workspace \
+        "${DOCKER_COMMON_ARGS[@]}" \
         suderra-builder:latest \
-        /bin/bash
+        /bin/bash -lc \
+        'validator_args=(--check-installer-env); if [ -n "${SUDERRA_EXPECTED_KEYS_PROFILE:-}" ]; then validator_args+=(--expected-profile "${SUDERRA_EXPECTED_KEYS_PROFILE}"); fi; if [ "${SUDERRA_REQUIRE_INSTALLER_SIGNING:-0}" = "1" ]; then validator_args+=(--require-installer-signing); fi; bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_TRUST_ROOTS_DIR:?}" "${validator_args[@]}"; exec /bin/bash'
 fi
 
 # Build modu
@@ -108,21 +199,7 @@ echo "==> Suderra OS build (Docker): ${DEFCONFIG}"
 echo "==> SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
 
 run_build() {
-    docker run --rm \
-        -v "${PROJECT_ROOT}:/workspace:rw" \
-        -v "${HOST_OUTPUT_DIR}:/workspace/output:rw" \
-        -v "${HOST_DL_DIR}:/workspace/dl:rw" \
-        -v "${HOST_CCACHE_DIR}:/workspace/.ccache:rw" \
-        "${KEYS_MOUNT_ARGS[@]}" \
-        "${DOCKER_USER_ARGS[@]}" \
-        -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-        -e BR2_CCACHE_DIR=/workspace/.ccache \
-        -e SUDERRA_KEYS_DIR="${CONTAINER_KEYS_DIR}" \
-        -e SUDERRA_TRUST_ROOTS_DIR="${CONTAINER_KEYS_DIR}" \
-        "${EXTRA_ENV[@]}" \
-        -w /workspace \
-        suderra-builder:latest \
-        /workspace/scripts/build.sh "${DEFCONFIG}"
+    container_preflight_and_exec /workspace/scripts/build.sh "${DEFCONFIG}"
 }
 
 if [ -n "${SUDERRA_DOCKER_BUILD_LOG:-}" ]; then
@@ -134,18 +211,4 @@ if [ -n "${SUDERRA_DOCKER_BUILD_LOG:-}" ]; then
     exit "${status}"
 fi
 
-exec docker run --rm \
-    -v "${PROJECT_ROOT}:/workspace:rw" \
-    -v "${HOST_OUTPUT_DIR}:/workspace/output:rw" \
-    -v "${HOST_DL_DIR}:/workspace/dl:rw" \
-    -v "${HOST_CCACHE_DIR}:/workspace/.ccache:rw" \
-    "${KEYS_MOUNT_ARGS[@]}" \
-    "${DOCKER_USER_ARGS[@]}" \
-    -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-    -e BR2_CCACHE_DIR=/workspace/.ccache \
-    -e SUDERRA_KEYS_DIR="${CONTAINER_KEYS_DIR}" \
-    -e SUDERRA_TRUST_ROOTS_DIR="${CONTAINER_KEYS_DIR}" \
-    "${EXTRA_ENV[@]}" \
-    -w /workspace \
-    suderra-builder:latest \
-    /workspace/scripts/build.sh "${DEFCONFIG}"
+run_build

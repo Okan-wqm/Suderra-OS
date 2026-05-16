@@ -68,7 +68,7 @@ CI dev/lab imajları repo'ya key koymaz. Workflow, her job için kısa ömürlü
 ```bash
 scripts/ci/prepare-ci-keyring.sh /mnt/suderra-os/<defconfig>/keys
 export SUDERRA_HOST_KEYS_DIR=/mnt/suderra-os/<defconfig>/keys
-export SUDERRA_CONTAINER_KEYS_DIR=/home/builder/.suderra-keys/current
+export SUDERRA_CONTAINER_KEYS_DIR=/tmp/suderra-keys/current
 ```
 
 Bu CI keyring üretim için geçerli değildir; `prod` variant hâlâ yalnızca HSM/release
