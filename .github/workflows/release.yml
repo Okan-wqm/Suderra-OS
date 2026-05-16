@@ -119,11 +119,34 @@ jobs:
           set -euo pipefail
           scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
 
+      - name: Verify submodule pin matches index SHA
+        id: br
+        run: |
+          set -euo pipefail
+          expected_sha="$(git ls-tree HEAD buildroot | awk '{print $3}')"
+          actual_sha="$(git -C buildroot rev-parse HEAD)"
+          if [ "${expected_sha}" != "${actual_sha}" ]; then
+            echo "::error::Buildroot submodule SHA drift detected"
+            echo "  expected (index): ${expected_sha}"
+            echo "  actual (checkout): ${actual_sha}"
+            exit 1
+          fi
+          echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute installer payload metadata
+        id: payload_meta
+        run: |
+          set -euo pipefail
+          commit_epoch="$(git log -1 --format=%ct)"
+          expires_epoch=$((commit_epoch + 18 * 30 * 86400))
+          expires_at="$(date -u -d "@${expires_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
+
       - name: Cache Buildroot downloads
         uses: actions/cache@v5
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
-          key: br-dl-release-${{ hashFiles('buildroot/.version', format('configs/{0}', matrix.defconfig)) }}
+          key: br-dl-release-${{ steps.br.outputs.sha }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
 
       - name: Build container image
         env:
@@ -132,8 +155,15 @@ jobs:
           SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
           SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
         run: |
+          set -euo pipefail
           ./scripts/ci/check-runner-resources.sh
-          docker build -t suderra-builder ci/
+          docker_log=$(mktemp)
+          if ! docker build -t suderra-builder ci/ >"${docker_log}" 2>&1; then
+            echo "::error::docker build failed; full log follows"
+            cat "${docker_log}"
+            exit 1
+          fi
+          tail -20 "${docker_log}"
 
       - name: Build OS image
         env:
@@ -141,6 +171,8 @@ jobs:
           MATRIX_PAYLOAD_IMAGE_EXPORTS: ${{ matrix.payload_image_exports }}
           MATRIX_SIGNING: ${{ matrix.signing }}
           MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
+          SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT: ${{ steps.payload_meta.outputs.expires_at }}
+          SUDERRA_INSTALLER_KEY_EPOCH: "1"
         run: |
           set -euo pipefail
           mkdir -p build-logs

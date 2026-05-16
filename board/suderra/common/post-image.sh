@@ -85,10 +85,11 @@ GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
 
 prepare_rpi4_installer_payload() {
-    default_rpi4="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz"
-    default_revpi4="${BR2_EXTERNAL_SUDERRA_PATH}/output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz"
-    rpi4_image="${SUDERRA_RPI4_TARGET_IMAGE_XZ:-${SUDERRA_TARGET_IMAGE_XZ:-${default_rpi4}}}"
-    revpi4_image="${SUDERRA_REVPI4_TARGET_IMAGE_XZ:-${default_revpi4}}"
+    # CI/release pipelines export these explicitly via MATRIX_PAYLOAD_IMAGE_EXPORTS.
+    # Local dev builds must point them at concrete artifacts; fall back paths
+    # would silently resolve against host paths inside the container.
+    rpi4_image="${SUDERRA_RPI4_TARGET_IMAGE_XZ:?SUDERRA_RPI4_TARGET_IMAGE_XZ must point to the RPi4 target image (.img.xz)}"
+    revpi4_image="${SUDERRA_REVPI4_TARGET_IMAGE_XZ:?SUDERRA_REVPI4_TARGET_IMAGE_XZ must point to the RevPi4 target image (.img.xz)}"
     sign_key="${SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY:-}"
     public_key="${SUDERRA_INSTALLER_PAYLOAD_PUBKEY:-}"
 
@@ -160,8 +161,8 @@ prepare_rpi4_installer_payload() {
     }
   ],
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "expires_at": "${SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT:-2099-01-01T00:00:00Z}",
-  "key_epoch": ${SUDERRA_INSTALLER_KEY_EPOCH:-1}
+  "expires_at": "${SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT:?SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT must be an ISO-8601 UTC timestamp}",
+  "key_epoch": ${SUDERRA_INSTALLER_KEY_EPOCH:?SUDERRA_INSTALLER_KEY_EPOCH must be set (positive integer)}
 }
 EOF
 

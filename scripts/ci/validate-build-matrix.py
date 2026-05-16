@@ -202,7 +202,7 @@ def post_script_args(config: str) -> str | None:
     return match.group(1) if match else None
 
 
-def validate() -> int:
+def validate(strict_production_variant: bool = False) -> int:
     matrix = load_matrix()
     errors: list[str] = []
     names: set[str] = set()
@@ -366,6 +366,12 @@ def validate() -> int:
         if target["production_required"] and not target["production_ready"] and not target["blocker"]:
             errors.append(f"{name}: production blocker must be documented while production_ready=false")
 
+        if strict_production_variant and target["production_required"] and not has_prod_variant:
+            errors.append(
+                f"{name}: production_required target must select "
+                "BR2_PACKAGE_SUDERRA_VARIANT_PROD (strict mode)"
+            )
+
         if target["production_ready"]:
             if not has_prod_variant:
                 errors.append(f"{name}: production_ready target must select BR2_PACKAGE_SUDERRA_VARIANT_PROD")
@@ -528,7 +534,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("validate")
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument(
+        "--strict-production-variant",
+        action="store_true",
+        help=(
+            "Reject production_required defconfigs that do not select "
+            "BR2_PACKAGE_SUDERRA_VARIANT_PROD. Faz 3 wire-up'a kadar default'ta kapalı."
+        ),
+    )
 
     matrix_parser = subparsers.add_parser("github-matrix")
     matrix_parser.add_argument(
@@ -551,7 +565,7 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "validate":
-        return validate()
+        return validate(strict_production_variant=args.strict_production_variant)
     if args.command == "github-matrix":
         return github_matrix(args.selector)
     if args.command == "production-readiness":
