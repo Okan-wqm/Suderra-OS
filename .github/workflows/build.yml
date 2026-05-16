@@ -157,7 +157,7 @@ jobs:
           }
           export_payload_images() {
             local payload_exports=()
-            local entry env_name source_spec source_defconfig artifact image_path
+            local entry env_name source_spec source_defconfig artifact host_image_path container_image_path
             read -r -a payload_exports <<< "${MATRIX_PAYLOAD_IMAGE_EXPORTS}"
             for entry in "${payload_exports[@]}"; do
               [ -n "${entry}" ] || continue
@@ -165,12 +165,13 @@ jobs:
               source_spec="${entry#*=}"
               source_defconfig="${source_spec%%:*}"
               artifact="${source_spec#*:}"
-              image_path="/workspace/output/${source_defconfig}/images/${artifact}"
-              if [ ! -f "${image_path}" ]; then
-                echo "::error::Payload image contract missing ${image_path}"
+              host_image_path="${SUDERRA_HOST_OUTPUT_DIR}/${source_defconfig}/images/${artifact}"
+              container_image_path="/workspace/output/${source_defconfig}/images/${artifact}"
+              if [ ! -f "${host_image_path}" ]; then
+                echo "::error::Payload image contract missing ${host_image_path}"
                 exit 1
               fi
-              export "${env_name}=${image_path}"
+              export "${env_name}=${container_image_path}"
             done
           }
           if [ -s "configs/${{ matrix.defconfig }}" ] && grep -q "^BR2_" "configs/${{ matrix.defconfig }}"; then
