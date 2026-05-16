@@ -331,6 +331,44 @@ enforce_production_contract() {
         echo "ERROR: ${IMAGE_OUTPUT_NAME}.cert must be a parseable X.509 certificate"
         exit 1
     fi
+
+    # Cryptographic gates — boyut/parse syntax kontrolü yetmez. Imza ve
+    # verity hash tree gerçek kriptografik testle doğrulanmalı.
+    cert_pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/${IMAGE_OUTPUT_NAME}.pubkey"
+    if ! openssl x509 -in "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.cert" \
+            -pubkey -noout > "${cert_pubkey}" 2>/dev/null; then
+        echo "ERROR: ${IMAGE_OUTPUT_NAME}.cert does not contain a usable public key"
+        exit 1
+    fi
+    if ! openssl dgst -sha256 -verify "${cert_pubkey}" \
+            -signature "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}.sig" \
+            "${BINARIES_DIR}/${IMAGE_OUTPUT_NAME}" >/dev/null 2>&1; then
+        echo "ERROR: ${IMAGE_OUTPUT_NAME}.sig does not validate against ${IMAGE_OUTPUT_NAME}.cert"
+        rm -f "${cert_pubkey}"
+        exit 1
+    fi
+    rm -f "${cert_pubkey}"
+
+    # Verity hash tree must actually correspond to the rootfs it claims to
+    # protect. Without this check the file could be any 4KiB+ blob.
+    if command -v veritysetup >/dev/null 2>&1; then
+        declared_roothash="$(cat "${BINARIES_DIR}/rootfs.verity.roothash")"
+        if ! veritysetup verify \
+                "${BINARIES_DIR}/rootfs.img" \
+                "${BINARIES_DIR}/rootfs.verity" \
+                "${declared_roothash}" >/dev/null 2>&1; then
+            echo "ERROR: rootfs.verity hash tree does not match declared roothash"
+            exit 1
+        fi
+    else
+        echo "ERROR: veritysetup not available in build environment — production gate cannot pass"
+        exit 1
+    fi
+
+    if grep -q '^BR2_TARGET_ENABLE_ROOT_LOGIN=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must not enable BR2_TARGET_ENABLE_ROOT_LOGIN"
+        exit 1
+    fi
 }
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
