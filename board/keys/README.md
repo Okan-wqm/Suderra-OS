@@ -60,6 +60,18 @@ export SUDERRA_KEYS_DIR=~/.suderra-keys/dev
 ./scripts/build-in-docker.sh suderra_x86_64_defconfig
 ```
 
+CI dev/lab imajları repo'ya key koymaz. Workflow, her job için kısa ömürlü
+`ci` profilli trust-root setini üretir ve container'a salt-okunur mount eder:
+
+```bash
+scripts/ci/prepare-ci-keyring.sh /mnt/suderra-os/<defconfig>/keys
+export SUDERRA_HOST_KEYS_DIR=/mnt/suderra-os/<defconfig>/keys
+export SUDERRA_CONTAINER_KEYS_DIR=/home/builder/.suderra-keys/current
+```
+
+Bu CI keyring üretim için geçerli değildir; `prod` variant hâlâ yalnızca HSM/release
+signing yolundan gelen `prod` profilli keyring'i kabul eder.
+
 ## Üretim Anahtarları
 
 **ASLA repo'ya commit etme. ASLA dev laptop'unda saklama.**

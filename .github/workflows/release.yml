@@ -95,6 +95,8 @@ jobs:
       SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/output
       SUDERRA_HOST_DL_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/dl
       SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/ccache
+      SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/keys
+      SUDERRA_CONTAINER_KEYS_DIR: /home/builder/.suderra-keys/current
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
@@ -108,9 +110,14 @@ jobs:
       - name: Prepare CI build storage
         run: |
           set -euo pipefail
-          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}"
+          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}" "${SUDERRA_HOST_KEYS_DIR}"
           sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
           df -h "${SUDERRA_CI_STORAGE}"
+
+      - name: Prepare CI trust roots
+        run: |
+          set -euo pipefail
+          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
 
       - name: Cache Buildroot downloads
         uses: actions/cache@v5
@@ -156,15 +163,9 @@ jobs:
             if [ "${MATRIX_SIGNING}" != "payload-ed25519-required" ]; then
               return 0
             fi
-            mkdir -p .release-installer-keys
-            openssl genpkey -algorithm ED25519 \
-              -out .release-installer-keys/installer-payload.key
-            openssl pkey -in .release-installer-keys/installer-payload.key \
-              -pubout -out .release-installer-keys/installer-payload.pub.pem
-            chmod 0600 .release-installer-keys/installer-payload.key
-            chmod 0644 .release-installer-keys/installer-payload.pub.pem
-            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY=/workspace/.release-installer-keys/installer-payload.key
-            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY=/workspace/.release-installer-keys/installer-payload.pub.pem
+            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.key"
+            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.ed25519.pub"
+            export SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE=ci
           }
           export_payload_images() {
             local payload_exports=()

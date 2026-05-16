@@ -18,16 +18,23 @@ if ! docker image inspect suderra-builder:latest >/dev/null 2>&1; then
     docker build -t suderra-builder:latest "${PROJECT_ROOT}/ci/"
 fi
 
-# Geliştirme anahtarları varsa mount et
-KEYS_MOUNT_ARGS=()
-if [ -d "${HOME}/.suderra-keys" ]; then
-    KEYS_MOUNT_ARGS=(-v "${HOME}/.suderra-keys:/home/builder/.suderra-keys:ro")
-fi
-
 HOST_DL_DIR="${SUDERRA_HOST_DL_DIR:-${PROJECT_ROOT}/dl}"
 HOST_CCACHE_DIR="${SUDERRA_HOST_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
 HOST_OUTPUT_DIR="${SUDERRA_HOST_OUTPUT_DIR:-${PROJECT_ROOT}/output}"
 mkdir -p "${HOST_DL_DIR}" "${HOST_CCACHE_DIR}" "${HOST_OUTPUT_DIR}"
+
+# Trust roots are host-owned material mounted read-only into the container.
+# Production builds must provide a prod-profiled directory from the release
+# signing path; CI/dev builds may use generated ci/dev profiles.
+HOST_KEYS_DIR="${SUDERRA_HOST_KEYS_DIR:-${SUDERRA_KEYS_DIR:-${HOME}/.suderra-keys/dev}}"
+CONTAINER_KEYS_DIR="${SUDERRA_CONTAINER_KEYS_DIR:-/home/builder/.suderra-keys/current}"
+KEYS_MOUNT_ARGS=()
+if [ -d "${HOST_KEYS_DIR}" ]; then
+    KEYS_MOUNT_ARGS=(-v "${HOST_KEYS_DIR}:${CONTAINER_KEYS_DIR}:ro")
+elif [ -n "${SUDERRA_HOST_KEYS_DIR:-}" ] || [ -n "${SUDERRA_KEYS_DIR:-}" ]; then
+    echo "ERROR: Suderra keys directory does not exist: ${HOST_KEYS_DIR}" >&2
+    exit 1
+fi
 
 DOCKER_USER_ARGS=(
     --user "$(id -u):$(id -g)"
@@ -43,6 +50,7 @@ for name in \
     SUDERRA_REVPI4_TARGET_IMAGE_XZ \
     SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY \
     SUDERRA_INSTALLER_PAYLOAD_PUBKEY \
+    SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE \
     SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT \
     SUDERRA_INSTALLER_KEY_EPOCH \
     SUDERRA_VERSION \
@@ -63,10 +71,12 @@ Kullanım:
   $0 --help               # Bu yardım
 
 Mevcut defconfig'ler:
-$(ls -1 "${PROJECT_ROOT}/configs/" | sed 's/^/  /')
+$(find "${PROJECT_ROOT}/configs/" -maxdepth 1 -type f -printf '  %f\n' | sort)
 
 Çevre değişkenleri:
   SUDERRA_KEYS_DIR        # Build sırasında kullanılacak anahtarlar (varsayılan: ~/.suderra-keys/dev)
+  SUDERRA_HOST_KEYS_DIR   # Container'a readonly mount edilecek host keyring dizini
+  SUDERRA_CONTAINER_KEYS_DIR # Container içindeki keyring yolu
   SOURCE_DATE_EPOCH       # Reproducible build için (varsayılan: git commit time)
 EOF
     exit 0
@@ -83,7 +93,7 @@ if [ "${1}" = "--shell" ]; then
         "${DOCKER_USER_ARGS[@]}" \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
         -e BR2_CCACHE_DIR=/workspace/.ccache \
-        -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
+        -e SUDERRA_KEYS_DIR="${CONTAINER_KEYS_DIR}" \
         "${EXTRA_ENV[@]}" \
         -w /workspace \
         suderra-builder:latest \
@@ -105,7 +115,7 @@ run_build() {
         "${DOCKER_USER_ARGS[@]}" \
         -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
         -e BR2_CCACHE_DIR=/workspace/.ccache \
-        -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
+        -e SUDERRA_KEYS_DIR="${CONTAINER_KEYS_DIR}" \
         "${EXTRA_ENV[@]}" \
         -w /workspace \
         suderra-builder:latest \
@@ -130,7 +140,7 @@ exec docker run --rm \
     "${DOCKER_USER_ARGS[@]}" \
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     -e BR2_CCACHE_DIR=/workspace/.ccache \
-    -e SUDERRA_KEYS_DIR=/home/builder/.suderra-keys/dev \
+    -e SUDERRA_KEYS_DIR="${CONTAINER_KEYS_DIR}" \
     "${EXTRA_ENV[@]}" \
     -w /workspace \
     suderra-builder:latest \

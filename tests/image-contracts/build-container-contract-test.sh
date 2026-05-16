@@ -49,6 +49,21 @@ grep -q 'HOST_CCACHE_DIR}:/workspace/.ccache:rw' "${PROJECT_ROOT}/scripts/build-
         echo "ERROR: build-in-docker must bind repo-local .ccache/ for CI cache compatibility" >&2
         exit 1
     }
+grep -q 'SUDERRA_HOST_KEYS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must support explicit host keyring mounts" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_CONTAINER_KEYS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must expose the container keyring path" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must propagate installer payload key profile" >&2
+        exit 1
+    }
 grep -q 'SUDERRA_RESOURCE_PATH' "${RESOURCE_CHECK}" ||
     {
         echo "ERROR: runner resource gate must support explicit build storage path" >&2
@@ -77,5 +92,10 @@ grep -q 'MATRIX_PREBUILD_DEFCONFIGS' "${PROJECT_ROOT}/.github/workflows/build.ym
 grep -q 'MATRIX_PAYLOAD_IMAGE_EXPORTS' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
     {
         echo "ERROR: build workflow must consume matrix payload export contracts" >&2
+        exit 1
+    }
+grep -q 'prepare-ci-keyring.sh' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+    {
+        echo "ERROR: build workflow must prepare CI trust roots before Buildroot image builds" >&2
         exit 1
     }
