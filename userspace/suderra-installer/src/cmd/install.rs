@@ -73,10 +73,8 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
 
     if args.verify_signature {
         let manifest_sig_url = release.manifest_signature_url(args.mirror);
-        let manifest_sig_path = manifest_cache_dir.join(format!(
-            "{}-{}.json.sig",
-            args.package, version
-        ));
+        let manifest_sig_path =
+            manifest_cache_dir.join(format!("{}-{}.json.sig", args.package, version));
         info!("manifest signature indiriliyor: {manifest_sig_url}");
         download_file(&manifest_sig_url, &manifest_sig_path, None)
             .await
