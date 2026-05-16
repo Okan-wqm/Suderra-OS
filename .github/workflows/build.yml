@@ -97,7 +97,9 @@ jobs:
           expires_epoch=$((commit_epoch + 18 * 30 * 86400))
           expires_at="$(date -u -d "@${expires_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
           echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
+          echo "commit_epoch=${commit_epoch}" >> "$GITHUB_OUTPUT"
           echo "Installer payload expires_at: ${expires_at}"
+          echo "SOURCE_DATE_EPOCH: ${commit_epoch}"
 
       - name: Check runner resource contract
         env:
@@ -162,6 +164,10 @@ jobs:
           MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
           SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT: ${{ steps.payload_meta.outputs.expires_at }}
           SUDERRA_INSTALLER_KEY_EPOCH: "1"
+          # Pin reproducible-build timestamp at the workflow level so the
+          # value is visible in the audit log instead of relying on the
+          # build-in-docker.sh fallback resolving the right git ref.
+          SOURCE_DATE_EPOCH: ${{ steps.payload_meta.outputs.commit_epoch }}
         run: |
           set -euo pipefail
           set -x

@@ -107,8 +107,11 @@ BR2_PACKAGE_SUDERRA_KEYS=y
 # Build optimizations
 BR2_TARGET_GENERIC_HOSTNAME="suderra"
 BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
-BR2_TARGET_ENABLE_ROOT_LOGIN=y
-BR2_TARGET_GENERIC_ROOT_PASSWD="$$6$$suderra$$WEUTfdUxSdlVhtgwmC7hEqyXOBfFi5C99pczs8i8bnKiPd/wwrAntaBnNj1jeErSB260adcV1QZbYhFCSOyRI0"
+# Production defconfig: no interactive root login. The provision user
+# (board/suderra/common/users.txt) handles first-boot setup via a forced
+# command shell; runtime access is through Edge Agent's audit-logged
+# control plane. suderra-lockdown locks any remaining shells at runtime.
+# BR2_TARGET_ENABLE_ROOT_LOGIN is not set
 BR2_TARGET_GENERIC_GETTY=y
 BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
