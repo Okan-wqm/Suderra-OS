@@ -134,8 +134,11 @@ download_installer() {
     if command -v cosign >/dev/null 2>&1; then
         info "cosign signature doğrulanıyor..."
         if curl -fsSL "${URL}.sig" -o "${TMP}/installer.sig" 2>/dev/null; then
+            # Pin the OIDC subject to release.yml on a SemVer tag so any other
+            # workflow in this repo cannot produce signatures that pass.
+            cosign_identity_re="^https://github\\.com/${REPO}/\\.github/workflows/release\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.\\-]+)?$"
             if cosign verify-blob \
-                --certificate-identity-regexp "^https://github\\.com/${REPO}/" \
+                --certificate-identity-regexp "${cosign_identity_re}" \
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 --signature "${TMP}/installer.sig" \
                 "${TMP}/installer" >/dev/null 2>&1; then

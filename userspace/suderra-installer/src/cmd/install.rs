@@ -14,7 +14,7 @@
 
 use crate::audit::{Event, EventKind, EventResult};
 use crate::cli::InstallArgs;
-use crate::download::{download_file, fetch_text};
+use crate::download::download_file;
 use crate::manifest::{InstalledPackage, InstalledState, Manifest};
 use crate::sources::{Arch, PackageRelease};
 use crate::verify;
@@ -49,18 +49,64 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         arch,
     };
 
+    // Manifest authenticity: download manifest.json and its cosign signature
+    // to disk and verify before parsing. Without this step, a manipulated
+    // manifest could downgrade the install or substitute the bundle SHA256
+    // (the bundle's own cosign signature would still verify because the
+    // attacker would also be able to fetch a previously-signed older bundle).
     let manifest_url = release.manifest_url(args.mirror);
-    info!("manifest okunuyor: {manifest_url}");
-    let manifest_json = fetch_text(&manifest_url).await.with_context(|| {
-        format!(
-            "manifest indirilemedi: {manifest_url}\n\
-             - Paket adı doğru mu? '{}'\n\
-             - Sürüm doğru mu? '{}'\n\
-             - GitHub Releases'ta release yayınlandı mı?",
-            args.package, version
-        )
-    })?;
+    let manifest_cache_dir = PathBuf::from("/var/cache/suderra/installer/manifests");
+    tokio::fs::create_dir_all(&manifest_cache_dir).await?;
+    let manifest_path = manifest_cache_dir.join(format!("{}-{}.json", args.package, version));
+    info!("manifest indiriliyor: {manifest_url}");
+    download_file(&manifest_url, &manifest_path, None)
+        .await
+        .with_context(|| {
+            format!(
+                "manifest indirilemedi: {manifest_url}\n\
+                 - Paket adı doğru mu? '{}'\n\
+                 - Sürüm doğru mu? '{}'\n\
+                 - GitHub Releases'ta release yayınlandı mı?",
+                args.package, version
+            )
+        })?;
 
+    if args.verify_signature {
+        let manifest_sig_url = release.manifest_signature_url(args.mirror);
+        let manifest_sig_path = manifest_cache_dir.join(format!(
+            "{}-{}.json.sig",
+            args.package, version
+        ));
+        info!("manifest signature indiriliyor: {manifest_sig_url}");
+        download_file(&manifest_sig_url, &manifest_sig_path, None)
+            .await
+            .with_context(|| {
+                format!(
+                    "manifest signature indirilemedi: {manifest_sig_url}\n\
+                     Manifest doğrulanmadan paket kurulamaz."
+                )
+            })?;
+        verify::verify_keyless(&manifest_path, &manifest_sig_path).with_context(|| {
+            // Tampered manifest is not safe to leave on disk
+            let _ = std::fs::remove_file(&manifest_path);
+            let _ = std::fs::remove_file(&manifest_sig_path);
+            "manifest cosign doğrulaması başarısız"
+        })?;
+        Event::new(
+            EventKind::VerifySignature,
+            &args.package,
+            EventResult::Success,
+        )
+        .with_meta("target", "manifest.json")
+        .record()
+        .ok();
+    } else {
+        warn!("⚠ Manifest signature doğrulama devre dışı (--verify-signature=false)");
+    }
+
+    let manifest_json = tokio::fs::read_to_string(&manifest_path)
+        .await
+        .context("manifest okunamadı")?;
     let manifest = Manifest::from_json(&manifest_json).context("manifest JSON parse hatası")?;
     let package_info = manifest
         .find_package(&args.package, arch.as_str())

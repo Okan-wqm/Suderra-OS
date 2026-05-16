@@ -59,8 +59,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dosfstools \
     mtools \
     e2fsprogs \
-    # Signing / SBOM
+    # Signing / SBOM / dm-verity (production gate verification)
     openssl \
+    cryptsetup-bin \
     # QEMU for testing
     qemu-system-x86 \
     qemu-system-arm \

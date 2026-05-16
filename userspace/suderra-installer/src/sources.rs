@@ -150,6 +150,11 @@ impl PackageRelease {
         }
     }
 
+    /// Manifest cosign signature URL'i
+    pub fn manifest_signature_url(&self, mirror: Mirror) -> String {
+        format!("{}.sig", self.manifest_url(mirror))
+    }
+
     /// Mevcut sürüm listesi URL'i (latest, all versions)
     pub fn versions_url(&self, mirror: Mirror) -> String {
         match mirror {
