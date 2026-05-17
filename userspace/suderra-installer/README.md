@@ -56,13 +56,15 @@ Internet bağlantısı olmayan saha cihazı:
 
 ```bash
 # Başka makinede indir:
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb
-wget https://github.com/Okan-wqm/suderra-os/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb.sig
+wget https://github.com/Okan-wqm/Suderra-OS/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb
+wget https://github.com/Okan-wqm/Suderra-OS/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb.sig
+wget https://github.com/Okan-wqm/Suderra-OS/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb.cert
 
 # USB ile cihaza transfer, sonra:
 sudo suderra-installer install edge \
   --from-file suderra-edge-v1.6.0-aarch64.raucb \
-  --signature suderra-edge-v1.6.0-aarch64.raucb.sig
+  --signature suderra-edge-v1.6.0-aarch64.raucb.sig \
+  --certificate suderra-edge-v1.6.0-aarch64.raucb.cert
 ```
 
 ## Çalışma Akışı
@@ -89,7 +91,8 @@ sudo suderra-installer install edge \
 ┌──────────────────────────────────────────────────────────┐
 │  3. Signature indir + cosign verify                       │
 │     suderra-edge-v1.6.0-aarch64.raucb.sig                 │
-│     → certificate-identity-regexp = github.com/Okan-wqm/  │
+│     suderra-edge-v1.6.0-aarch64.raucb.cert                │
+│     → certificate identity = Okan-wqm/Suderra-OS release  │
 └──────────────────────────────────────────────────────────┘
               ↓
 ┌──────────────────────────────────────────────────────────┐

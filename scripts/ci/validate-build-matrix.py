@@ -575,6 +575,39 @@ def production_readiness(tag: str | None) -> int:
     return 0
 
 
+def candidate_readiness(tag: str | None) -> int:
+    if not tag:
+        print("ERROR: candidate-readiness requires --tag", file=sys.stderr)
+        return 2
+    if "-" not in tag:
+        return production_readiness(tag)
+
+    matrix = load_matrix()
+    blockers = [
+        target
+        for target in matrix["defconfigs"]
+        if bool(target.get("production_required")) and not bool(target.get("production_ready"))
+    ]
+    release_targets = [target for target in matrix["defconfigs"] if bool(target.get("release"))]
+    missing_blockers = [
+        target
+        for target in release_targets
+        if bool(target.get("production_required"))
+        and not bool(target.get("production_ready"))
+        and not str(target.get("blocker", "")).strip()
+    ]
+    if missing_blockers:
+        print("Candidate release has production-required targets without blocker rationale:", file=sys.stderr)
+        for target in missing_blockers:
+            print(f"- {target['name']}", file=sys.stderr)
+        return 1
+
+    print(f"candidate pre-release allowed with documented production blockers for {tag}")
+    for target in blockers:
+        print(f"- {target['name']}: {target['blocker']}")
+    return 0
+
+
 def target_by_defconfig(matrix: dict[str, Any], defconfig: str) -> dict[str, Any] | None:
     for target in matrix["defconfigs"]:
         if target.get("name") == defconfig:
@@ -681,6 +714,9 @@ def main() -> int:
     readiness_parser = subparsers.add_parser("production-readiness")
     readiness_parser.add_argument("--tag")
 
+    candidate_parser = subparsers.add_parser("candidate-readiness")
+    candidate_parser.add_argument("--tag", required=True)
+
     artifacts_parser = subparsers.add_parser("verify-artifacts")
     artifacts_parser.add_argument("--defconfig", required=True)
     artifacts_parser.add_argument("--images-dir", type=Path)
@@ -697,6 +733,8 @@ def main() -> int:
         return github_matrix(args.selector)
     if args.command == "production-readiness":
         return production_readiness(args.tag)
+    if args.command == "candidate-readiness":
+        return candidate_readiness(args.tag)
     if args.command == "verify-artifacts":
         return verify_artifacts(args.defconfig, args.images_dir)
     if args.command == "release-files":

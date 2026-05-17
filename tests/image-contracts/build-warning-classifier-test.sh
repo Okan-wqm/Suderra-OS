@@ -30,6 +30,28 @@ python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
     --json-output "${TMP_DIR}/upstream-warnings.json" \
     "${TMP_DIR}/upstream.log" >/dev/null
 
+python3 - "${TMP_DIR}/upstream-warnings.json" "${TMP_DIR}/upstream-policy.json" <<'PY'
+import json
+import sys
+
+evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
+policy = {
+    "schema_version": "suderra.build-warning-policy.v1",
+    "known_upstream": {
+        "owner": "build-platform",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "allowed_fingerprints": sorted(evidence["fingerprints"]),
+    },
+    "third_party": {"fail": True},
+}
+open(sys.argv[2], "w", encoding="utf-8").write(json.dumps(policy, indent=2) + "\n")
+PY
+
+python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${TMP_DIR}/upstream-policy.json" \
+    --json-output "${TMP_DIR}/upstream-warnings.json" \
+    "${TMP_DIR}/upstream.log" >/dev/null
+
 python3 - "${TMP_DIR}/upstream-warnings.json" <<'PY'
 import json
 import sys
@@ -70,5 +92,45 @@ python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" "${TMP_DIR}/thir
 
 if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" --fail-third-party "${TMP_DIR}/third-party.log" >/dev/null 2>&1; then
     echo "ERROR: --fail-third-party did not reject unclassified warning" >&2
+    exit 1
+fi
+
+if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
+    "${TMP_DIR}/third-party.log" >/dev/null 2>&1; then
+    echo "ERROR: warning policy did not reject unclassified third-party warning" >&2
+    exit 1
+fi
+
+cat > "${TMP_DIR}/new-upstream.log" <<'LOG'
+>>> busybox 1.36.1 Building
+applets/applets.c:42:2: warning: new upstream warning requiring triage [-Wformat]
+LOG
+
+if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${TMP_DIR}/upstream-policy.json" \
+    "${TMP_DIR}/new-upstream.log" >/dev/null 2>&1; then
+    echo "ERROR: warning policy did not reject an unapproved known-upstream fingerprint" >&2
+    exit 1
+fi
+
+cat > "${TMP_DIR}/expired-policy.json" <<'JSON'
+{
+  "schema_version": "suderra.build-warning-policy.v1",
+  "known_upstream": {
+    "owner": "build-platform",
+    "expires_at": "2000-01-01T00:00:00Z",
+    "allowed_fingerprints": []
+  },
+  "third_party": {
+    "fail": true
+  }
+}
+JSON
+
+if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${TMP_DIR}/expired-policy.json" \
+    "${TMP_DIR}/upstream.log" >/dev/null 2>&1; then
+    echo "ERROR: expired warning policy unexpectedly passed" >&2
     exit 1
 fi

@@ -35,6 +35,7 @@ pub async fn run(args: UpgradeArgs) -> Result<()> {
         verify_signature: args.verify_signature,
         from_file: None,
         signature: None,
+        certificate: None,
         yes: args.yes,
         mirror: Mirror::Github,
         start_service: true,

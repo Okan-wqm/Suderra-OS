@@ -157,7 +157,10 @@ CM4 IO Board'da ek olarak:
    [Edge Agent]      ← tenant manifest ile indirildiğinde çalışır
 ```
 
-**Önemli:** Suderra OS U-Boot kullanmaz — Pi firmware doğrudan Linux yükler. Faz 4'te RAUC A/B slot için U-Boot eklenir.
+**Önemli:** Mevcut alpha/lab Pi image'i Pi firmware üzerinden doğrudan Linux
+yükler. Production ARM hedefi ayrı bir kapıdır: U-Boot verified boot, signed
+FIT, immutable cmdline, dm-verity ve RAUC A/B evidence tamamlanmadan production
+claim yapılmaz.
 
 ## 5. Endüstriyel Notlar
 

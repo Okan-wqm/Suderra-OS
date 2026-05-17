@@ -46,6 +46,9 @@ docs/
 
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
+- [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
+- [release-lifecycle.md](operations/release-lifecycle.md) — alpha ve production release kapıları
+- [ci-log-and-warning-triage.md](operations/ci-log-and-warning-triage.md) — build warning/SARIF governance
 - [ota.md](operations/ota.md) — RAUC bundle oluştur, sun, rollback
 - [edge-agent-update.md](operations/edge-agent-update.md) — `suderra-agent` pin/hash/config güncelleme akışı
 - [verify-release.md](operations/verify-release.md) — cosign + SLSA + SBOM ile release doğrulama

@@ -27,6 +27,8 @@ def matrix_defconfigs(selector: str) -> set[str]:
 
 base = matrix_defconfigs("ci_build_base")
 payload = matrix_defconfigs("ci_build_payload")
+release_base = matrix_defconfigs("release_base")
+release_payload = matrix_defconfigs("release_payload")
 
 expected_base = {
     "suderra_qemu_x86_64_defconfig",
@@ -39,6 +41,26 @@ if base != expected_base:
     raise SystemExit(f"ci_build_base mismatch: {sorted(base)}")
 if payload != expected_payload:
     raise SystemExit(f"ci_build_payload mismatch: {sorted(payload)}")
+expected_release_base = {
+    "suderra_qemu_x86_64_defconfig",
+    "suderra_aarch64_rpi4_defconfig",
+    "suderra_aarch64_revpi4_defconfig",
+}
+if release_base != expected_release_base:
+    raise SystemExit(f"release_base mismatch: {sorted(release_base)}")
+if release_payload != expected_payload:
+    raise SystemExit(f"release_payload mismatch: {sorted(release_payload)}")
 if base & payload:
     raise SystemExit(f"base/payload matrix overlap: {sorted(base & payload)}")
+if release_base & release_payload:
+    raise SystemExit(f"release base/payload matrix overlap: {sorted(release_base & release_payload)}")
 PY
+
+python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" \
+    candidate-readiness --tag v0.1.0-alpha.1 >/dev/null
+
+if python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" \
+    production-readiness --tag v0.1.0 >/dev/null 2>&1; then
+    echo "ERROR: production readiness unexpectedly passed while production blockers remain" >&2
+    exit 1
+fi

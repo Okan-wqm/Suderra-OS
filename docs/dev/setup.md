@@ -14,7 +14,7 @@
 
 ```bash
 # 1. Repo clone (submodule'lerle birlikte)
-git clone --recurse-submodules git@github.com:Okan-wqm/suderra-os.git
+git clone --recurse-submodules git@github.com:Okan-wqm/Suderra-OS.git
 cd suderra-os
 
 # Eğer submodule'siz klonladıysan:

@@ -1,8 +1,8 @@
 # Suderra OS
 
-Sertleştirilmiş, immutable, OTA-güncellenebilir Linux tabanlı endüstriyel edge işletim sistemi. **Suderra Edge Agent** (Rust) için özel olarak inşa edilmiştir.
+Sertleştirilmiş, immutable ve OTA-güncellenebilir olması hedeflenen Linux tabanlı endüstriyel edge işletim sistemi. **Suderra Edge Agent** (Rust) için özel olarak inşa edilir.
 
-> **Status:** Faz 0 — Proje iskeleti. Henüz boot eden bir imaj yok. Yol haritası: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
+> **Status:** Alpha/lab build zinciri GitHub Actions'ta doğrulanıyor. Production release hâlâ bloklu; signed boot, dm-verity, RAUC, anti-rollback, prod key policy ve hardware evidence tamamlanmadan production-ready claim yapılmaz.
 
 ## Neden Suderra OS?
 
@@ -16,7 +16,7 @@ Sıradan Linux dağıtımları (Ubuntu, Debian) endüstriyel sahalarda çalışa
 | Persistence riski | Yüksek (mutable rootfs) | Yok (dm-verity + read-only) |
 | Supply chain | Geniş (binlerce paket) | Dar (~30-50 paket, pinli) |
 
-Suderra OS şunları sağlar:
+Suderra OS hedef mimarisi şunları sağlar. Uygulama durumu için release evidence ve readiness gate'leri esas alınır:
 
 - **Immutable rootfs** + `dm-verity` ile kriptografik bütünlük
 - **UEFI Secure Boot** zinciri (shim → kernel → initramfs)
@@ -29,7 +29,7 @@ Suderra OS şunları sağlar:
 
 ## Quick Start
 
-> Bu adımlar Faz 1 tamamlanınca çalışır. Şu anda iskelet aşamasında.
+> Bu komutlar lab/dev image'leri içindir. Production release için [docs/operations/release-lifecycle.md](docs/operations/release-lifecycle.md) kapıları geçmelidir.
 
 ```bash
 # 1. Geliştirme ortamı kurulumu
@@ -60,7 +60,7 @@ sudo ./scripts/flash-sd.sh /dev/sdX \
 |---|---|---|---|
 | QEMU x86_64 (test) | ✅ Faz 1 | `suderra_qemu_x86_64_defconfig` | `disk.img` |
 | Raspberry Pi 4 Model B | ✅ Faz 2-A | `suderra_aarch64_rpi4_defconfig` | `suderra-rpi4-target.img.xz` |
-| Pi 4 / CM4 USB installer | ✅ Faz 2-A | `suderra_aarch64_rpi4_usb_installer_defconfig` | `suderra-rpi4-usb-installer.img.xz` |
+| Pi 4 / CM4 / RevPi USB installer | ✅ Alpha/lab | `suderra_aarch64_rpi4_usb_installer_defconfig` | `suderra-pi-cm4-revpi-usb-installer.img.xz` |
 | Compute Module 4 (CM4) | ✅ Faz 2-A | `suderra_aarch64_rpi4_defconfig` | `suderra-rpi4-target.img.xz` |
 | Endüstriyel x86 PC (UEFI+TPM) | ⏳ Faz 2-C | `suderra_x86_64_defconfig` | `disk.img.xz` |
 | RevPi Connect 4 | ✅ Faz 2-B | `suderra_aarch64_revpi4_defconfig` | `suderra-revpi4-target.img.xz` |
@@ -128,6 +128,9 @@ Hızlı linkler:
 - **Rust workspace:** [docs/dev/rust-workspace.md](docs/dev/rust-workspace.md) + [userspace/README.md](userspace/README.md)
 - **Güvenlik:** [docs/security/threat-model.md](docs/security/threat-model.md), [SECURITY.md](SECURITY.md)
 - **Build:** [docs/operations/build.md](docs/operations/build.md)
+- **USB installer alpha validation:** [docs/operations/usb-installer-alpha-validation.md](docs/operations/usb-installer-alpha-validation.md)
+- **Release lifecycle:** [docs/operations/release-lifecycle.md](docs/operations/release-lifecycle.md)
+- **CI warning triage:** [docs/operations/ci-log-and-warning-triage.md](docs/operations/ci-log-and-warning-triage.md)
 - **Geliştirici kurulumu:** [docs/dev/setup.md](docs/dev/setup.md)
 - **OTA:** [docs/operations/ota.md](docs/operations/ota.md)
 - **Mimari karar kayıtları (ADR):** [docs/architecture/](docs/architecture/)

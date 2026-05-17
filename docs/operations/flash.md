@@ -17,7 +17,7 @@ güvenlik kontrolleri yapar.
 | Removable kontrolü | `/sys/block/.../removable` doğrular |
 | Mount unmount | Açık partition'ları otomatik kapatır |
 | SHA256 doğrulama | `MANIFEST.txt` veya `.sha256` dosyasından |
-| cosign signature | `--verify-signature` ile keyless verify |
+| cosign signature | `--verify-signature` ile `.sig` + `.cert` keyless verify |
 | xz auto-decompress | `.img.xz` doğrudan çalışır |
 | Readback verify | İlk 64 MiB geri okunup hash kontrol |
 | Progress indicator | dd `status=progress` + süre raporu |
@@ -28,8 +28,11 @@ güvenlik kontrolleri yapar.
 # Temel
 sudo ./scripts/flash-sd.sh /dev/sdX <image.img[.xz]>
 
-# Signature doğrulama (production releases için)
+# Signature doğrulama (production releases için; <image>.sig ve <image>.cert gerekir)
 sudo ./scripts/flash-sd.sh --verify-signature /dev/sdX <image>
+
+# LAB ONLY: hash dosyası olmayan geçici imajlar
+sudo ./scripts/flash-sd.sh --lab-allow-missing-hash /dev/sdX <image>
 
 # CI / scripting (onay sormaz)
 sudo ./scripts/flash-sd.sh --force /dev/sdX <image>
@@ -45,17 +48,21 @@ sudo ./scripts/flash-sd.sh --skip-verify /dev/sdX <image>
 Factory and field installs use two artifacts:
 
 - `suderra-rpi4-target.img.xz`: the OS image written to SD/eMMC.
-- `suderra-rpi4-usb-installer.img.xz`: the USB-booted installer image.
+- `suderra-pi-cm4-revpi-usb-installer.img.xz`: the USB-booted installer image.
 
 Build order:
 
 ```bash
 ./scripts/gen-dev-keys.sh
 export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${HOME}/.suderra-keys/dev/installer-payload.key"
-export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${HOME}/.suderra-keys/dev/installer-payload.pub.pem"
+export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${HOME}/.suderra-keys/dev/installer-payload.ed25519.pub"
+export SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT="2026-12-31T00:00:00Z"
+export SUDERRA_INSTALLER_KEY_EPOCH=1
 
 ./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
-export SUDERRA_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+./scripts/build-in-docker.sh suderra_aarch64_revpi4_defconfig
+export SUDERRA_RPI4_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
+export SUDERRA_REVPI4_TARGET_IMAGE_XZ=/workspace/output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz
 ./scripts/build-in-docker.sh suderra_aarch64_rpi4_usb_installer_defconfig
 ```
 
@@ -65,10 +72,19 @@ displayed target, then remove the USB stick after poweroff.
 Target selection is fail-closed:
 
 - the installer boot disk is excluded
-- eMMC is preferred over SD
-- one SD is accepted if no eMMC exists
+- on-board eMMC is preferred over on-board SD
+- removable USB/SATA-style `sd*` disks are refused by default
 - multiple equal-priority targets stop the install
-- USB targets are refused unless a factory flag explicitly allows them
+- USB targets are refused unless a factory flag explicitly allows them with a
+  `/dev/disk/by-id/usb-*` or removable whole-disk path
+- a generic Compute Module 4 model string is ambiguous and must fail closed
+  unless RevPi-compatible device-tree evidence is present or
+  `SUDERRA_INSTALLER_TARGET_BOARD=rpi4-cm4|revpi4` is set with recorded board
+  identity evidence
+
+The current USB installer is an alpha/lab provisioning image. Production ARM
+requires U-Boot verified boot, signed FIT, immutable cmdline, dm-verity, RAUC
+A/B rollback evidence, and production payload keys before promotion.
 
 ### 2.2. Raspberry Pi 4 / CM4 — Direct SD Card
 
@@ -264,6 +280,9 @@ for sd in /dev/sd{b..k}; do
 done
 wait
 ```
+
+`--force` only skips the interactive prompt. It does not bypass hash checks,
+root-disk protection, removable/size guards, or readback verification.
 
 ## 6. Mevcut Script'ler
 

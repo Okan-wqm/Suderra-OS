@@ -229,6 +229,10 @@ pub struct InstallArgs {
     #[arg(long, value_name = "SIG", requires = "from_file")]
     pub signature: Option<std::path::PathBuf>,
 
+    /// Yerel cosign certificate dosyası (--from-file ile birlikte)
+    #[arg(long, value_name = "CERT", requires = "from_file")]
+    pub certificate: Option<std::path::PathBuf>,
+
     /// Onay sorusunu atla (CI / scripting)
     #[arg(long, short)]
     pub yes: bool,

@@ -26,9 +26,9 @@ impl Mirror {
     /// Bu mirror için base URL döndür
     pub fn base_url(&self) -> &'static str {
         match self {
-            Mirror::Github => "https://github.com/Okan-wqm/suderra-os/releases/download",
+            Mirror::Github => "https://github.com/Okan-wqm/Suderra-OS/releases/download",
             Mirror::Suderra => "https://releases.suderra.com",
-            Mirror::Auto => "https://github.com/Okan-wqm/suderra-os/releases/download",
+            Mirror::Auto => "https://github.com/Okan-wqm/Suderra-OS/releases/download",
         }
     }
 
@@ -102,7 +102,7 @@ impl PackageRelease {
     /// Mirror için artifact (bundle) URL'i
     pub fn artifact_url(&self, mirror: Mirror) -> String {
         match mirror {
-            // GitHub: /Okan-wqm/suderra-os/releases/download/v1.6.0/suderra-edge-agent-aarch64.raucb
+            // GitHub: /Okan-wqm/Suderra-OS/releases/download/v1.6.0/suderra-edge-agent-aarch64.raucb
             Mirror::Github | Mirror::Auto => format!(
                 "{}/{}/suderra-{}-{}-{}.raucb",
                 mirror.base_url(),
@@ -127,6 +127,11 @@ impl PackageRelease {
     /// Cosign signature URL'i
     pub fn signature_url(&self, mirror: Mirror) -> String {
         format!("{}.sig", self.artifact_url(mirror))
+    }
+
+    /// Cosign certificate URL'i
+    pub fn certificate_url(&self, mirror: Mirror) -> String {
+        format!("{}.cert", self.artifact_url(mirror))
     }
 
     /// SHA256 checksum URL'i
@@ -155,12 +160,17 @@ impl PackageRelease {
         format!("{}.sig", self.manifest_url(mirror))
     }
 
+    /// Manifest cosign certificate URL'i
+    pub fn manifest_certificate_url(&self, mirror: Mirror) -> String {
+        format!("{}.cert", self.manifest_url(mirror))
+    }
+
     /// Mevcut sürüm listesi URL'i (latest, all versions)
     pub fn versions_url(&self, mirror: Mirror) -> String {
         match mirror {
             Mirror::Github | Mirror::Auto => {
-                // GitHub API: /repos/Okan-wqm/suderra-os/releases
-                "https://api.github.com/repos/Okan-wqm/suderra-os/releases".to_string()
+                // GitHub API: /repos/Okan-wqm/Suderra-OS/releases
+                "https://api.github.com/repos/Okan-wqm/Suderra-OS/releases".to_string()
             }
             Mirror::Suderra => format!("{}/{}/versions.json", mirror.base_url(), self.package),
         }
@@ -181,7 +191,7 @@ mod tests {
         let url = release.artifact_url(Mirror::Github);
         assert_eq!(
             url,
-            "https://github.com/Okan-wqm/suderra-os/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb"
+            "https://github.com/Okan-wqm/Suderra-OS/releases/download/v1.6.0/suderra-edge-v1.6.0-aarch64.raucb"
         );
     }
 

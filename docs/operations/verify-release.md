@@ -3,6 +3,10 @@
 Müşteri veya yetkili teknisyen, indirdiği Suderra OS artifact'inin Suderra
 release workflow'undan geldiğini ve değişmediğini doğrulayabilir.
 
+Alpha/pre-release artifact'leri lab validation içindir. Production doğrulama
+akışı ancak `production-readiness` ve production-tier release evidence geçtiğinde
+tamamlanmış sayılır.
+
 Örnekler `v1.0.0` ve Raspberry Pi 4 artifact'i içindir. Diğer imajlar
 `ci/build-matrix.yml` içindeki `release_artifact` değerleriyle aynı adları
 kullanır.
@@ -11,7 +15,7 @@ kullanır.
 
 ```bash
 VERSION=v1.0.0
-REPO=Okan-wqm/suderra-os
+REPO=Okan-wqm/Suderra-OS
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 ARTIFACT=suderra-rpi4-target.img.xz
 

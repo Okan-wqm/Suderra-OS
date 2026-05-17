@@ -1,6 +1,6 @@
 [Unit]
 Description=Suderra OS USB self-installer
-Documentation=https://github.com/Okan-wqm/suderra-os
+Documentation=https://github.com/Okan-wqm/Suderra-OS
 DefaultDependencies=no
 After=local-fs.target systemd-udev-settle.service
 Wants=systemd-udev-settle.service

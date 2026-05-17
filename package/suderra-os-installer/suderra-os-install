@@ -4,6 +4,8 @@ set -eu
 PAYLOAD_DIR="${SUDERRA_INSTALLER_PAYLOAD_DIR:-/run/suderra-installer/payload}"
 SYS_BLOCK="${SUDERRA_INSTALLER_SYS_BLOCK:-/sys/block}"
 DEV_DIR="${SUDERRA_INSTALLER_DEV_DIR:-/dev}"
+PROC_MODEL="${SUDERRA_INSTALLER_PROC_MODEL:-/proc/device-tree/model}"
+PROC_COMPATIBLE="${SUDERRA_INSTALLER_PROC_COMPATIBLE:-/proc/device-tree/compatible}"
 PUBKEY="${SUDERRA_INSTALLER_PUBKEY:-/etc/suderra/os-installer-payload.ed25519.pub}"
 VERIFY_BIN="${SUDERRA_INSTALLER_VERIFY_BIN:-/usr/bin/suderra-installer}"
 MIN_BYTES="${SUDERRA_INSTALLER_MIN_BYTES:-8589934592}"
@@ -45,20 +47,43 @@ die() {
 
 detect_target_board() {
     if [ -n "${TARGET_BOARD}" ]; then
-        printf '%s\n' "${TARGET_BOARD}"
-        return 0
+        case "${TARGET_BOARD}" in
+            rpi4-cm4|revpi4)
+                printf '%s\n' "${TARGET_BOARD}"
+                return 0
+                ;;
+            *)
+                die "unsupported explicit target board: ${TARGET_BOARD}"
+                ;;
+        esac
     fi
 
-    if [ -r /proc/device-tree/model ]; then
-        model="$(tr -d '\000' < /proc/device-tree/model)"
+    if [ -r "${PROC_MODEL}" ]; then
+        model="$(tr -d '\000' < "${PROC_MODEL}")"
         case "${model}" in
-            *RevPi*|*Revolution\ Pi*)
+            *RevPi\ Connect\ 4*|*Revolution\ Pi\ Connect\ 4*)
                 printf '%s\n' "revpi4"
                 return 0
                 ;;
-            *Raspberry\ Pi*|*Compute\ Module*)
+        esac
+    fi
+
+    if [ -r "${PROC_COMPATIBLE}" ]; then
+        if tr '\000' '\n' < "${PROC_COMPATIBLE}" | grep -Eiq '(revpi|revolution[- ]?pi|kunbus)'; then
+            printf '%s\n' "revpi4"
+            return 0
+        fi
+    fi
+
+    if [ -r "${PROC_MODEL}" ]; then
+        model="$(tr -d '\000' < "${PROC_MODEL}")"
+        case "${model}" in
+            Raspberry\ Pi\ 4\ Model\ B*|*Raspberry\ Pi\ 4\ Model\ B*)
                 printf '%s\n' "rpi4-cm4"
                 return 0
+                ;;
+            Raspberry\ Pi\ Compute\ Module\ 4*|*Raspberry\ Pi\ Compute\ Module\ 4*)
+                die "ambiguous Compute Module 4 target; set SUDERRA_INSTALLER_TARGET_BOARD=rpi4-cm4 or revpi4 after board identity evidence"
                 ;;
         esac
     fi
@@ -135,7 +160,7 @@ source_disk() {
     if [ "${root_source}" = "/dev/root" ]; then
         root_source="$(readlink -f /dev/root 2>/dev/null || printf '%s\n' /dev/root)"
     fi
-    if [ -n "${root_source}" ] && [ "${root_source#${DEV_DIR}/}" != "${root_source}" ]; then
+    if [ -n "${root_source}" ] && [ "${root_source#"${DEV_DIR}"/}" != "${root_source}" ]; then
         parent="$(lsblk -n -o PKNAME "${root_source}" 2>/dev/null | head -n 1 || true)"
         if [ -n "${parent}" ]; then
             printf '%s\n' "${parent}"
@@ -157,7 +182,7 @@ mounted_disk_for_path() {
             source="$(readlink -f /dev/root 2>/dev/null || printf '%s\n' /dev/root)"
             ;;
     esac
-    [ "${source#${DEV_DIR}/}" != "${source}" ] || return 0
+    [ "${source#"${DEV_DIR}"/}" != "${source}" ] || return 0
     parent="$(lsblk -n -o PKNAME "${source}" 2>/dev/null | head -n 1 || true)"
     if [ -n "${parent}" ]; then
         printf '%s\n' "${parent}"
@@ -228,6 +253,16 @@ select_target() {
             die "explicit USB target is an installer source disk: ${USB_TARGET_BY_ID}"
         devpath="${SYS_BLOCK}/${name}"
         [ -e "${devpath}" ] || die "explicit USB target is not in ${SYS_BLOCK}: ${name}"
+        removable="$(read_sys_value "${devpath}/removable" "0")"
+        by_id_name="$(basename "${USB_TARGET_BY_ID}")"
+        case "${by_id_name}" in
+            usb-*)
+                ;;
+            *)
+                [ "${removable}" = "1" ] ||
+                    die "explicit USB target must use a usb-* by-id path or a removable whole disk"
+                ;;
+        esac
         sectors="$(read_sys_value "${devpath}/size" "0")"
         bytes=$((sectors * 512))
         [ "${bytes}" -ge "${MIN_BYTES}" ] ||

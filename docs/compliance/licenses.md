@@ -40,7 +40,7 @@ Müşteriye satılan her cihaz ile birlikte:
 Önerilen: GitHub'da kalıcı bir tag her release ile:
 
 ```
-https://github.com/Okan-wqm/suderra-os/releases/tag/v1.0.0
+https://github.com/Okan-wqm/Suderra-OS/releases/tag/v1.0.0
 └── source-bundle.tar.xz       (GPL kaynaklar + patches)
 ```
 

@@ -31,6 +31,21 @@ The generator creates a valid but blocked skeleton. A release gate should use
 `--require-pass --check-files`; this requires the referenced files to exist
 inside the same target bundle and requires all mandatory evidence to be passed.
 
+Pre-release tags use the alpha evidence tier:
+
+```bash
+python3 scripts/evidence/release-evidence.py validate \
+    --release-tier alpha \
+    --require-pass \
+    --check-files \
+    release-evidence/v0.1.0-alpha.1/rpi4/evidence.json
+```
+
+Alpha evidence keeps build, security, QEMU/hardware, approval, and residual-risk
+checks strict, but it does not claim production controls such as signed VEX,
+production artifact signing, dm-verity, RAUC, or lockdown evidence. GA releases
+must use the default production tier.
+
 ## Schema
 
 Required top-level fields:
@@ -87,8 +102,10 @@ Then set:
 
 ## Hardware Evidence
 
-Production hardware targets require at least one representative device record.
-The evidence bundle should include:
+Production hardware targets require the board coverage encoded in the evidence
+schema. For the USB installer alpha path that means all four board IDs:
+`raspberry-pi-4-model-b`, `cm4-lite-sd`, `cm4-emmc-io-board`, and
+`revpi-connect-4`. The evidence bundle should include:
 
 - Board model, serial number, operator, and test timestamp in the device record.
 - Serial console boot log.
@@ -110,9 +127,9 @@ release-evidence/v1.0.0/rpi4/security/nmap.xml
 release-evidence/v1.0.0/rpi4/security/systemd-security.txt
 ```
 
-`--require-pass` requires the aggregate hardware status to be `passed`, at
-least one device entry, and all required runtime checks to have passed evidence
-files.
+`--require-pass` requires the aggregate hardware status to be `passed`, every
+target-required board ID to have a passed device entry, and all required runtime
+checks to have passed evidence files.
 
 ## Residual Risk
 

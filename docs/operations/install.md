@@ -1,7 +1,9 @@
 # Suderra OS Kurulum Rehberi
 
 > **Hedef kitle:** Saha mühendisleri, sistem entegratörleri, DevOps ekipleri.
-> **Önkoşul yok** — temiz bir laptop + hedef hardware yeterli.
+> **Önkoşul yok** — temiz bir laptop + hedef hardware yeterli. Bu rehber
+> alpha/lab image akışını anlatır; production release için
+> [release lifecycle](release-lifecycle.md) kapıları geçmelidir.
 
 Bu rehber **sıfırdan başlayıp** çalışan bir Suderra OS + Edge Agent kurulumuna ulaştırır. Üç bölüm:
 
@@ -19,13 +21,15 @@ Bu rehber **sıfırdan başlayıp** çalışan bir Suderra OS + Edge Agent kurul
 **Raspberry Pi 4 için:**
 
 ```bash
-# 1. Image indir + doğrula (GitHub Releases)
-wget https://github.com/Okan-wqm/suderra-os/releases/latest/download/suderra-os-rpi4.img.xz
-wget https://github.com/Okan-wqm/suderra-os/releases/latest/download/suderra-os-rpi4.img.xz.sha256
-sha256sum -c suderra-os-rpi4.img.xz.sha256
+# 1. Image indir + doğrula (exact tag; alpha için latest kullanma)
+VERSION=v0.1.0-alpha.1
+URL_BASE="https://github.com/Okan-wqm/Suderra-OS/releases/download/${VERSION}"
+wget "${URL_BASE}/suderra-rpi4-target.img.xz"
+wget "${URL_BASE}/suderra-rpi4-target.img.xz.sha256"
+sha256sum -c suderra-rpi4-target.img.xz.sha256
 
 # 2. SD karta yaz (Suderra repo'nun script'i — güvenlik kontrolü dahil)
-sudo ./scripts/flash-sd.sh /dev/sdX suderra-os-rpi4.img.xz
+sudo ./scripts/flash-sd.sh /dev/sdX suderra-rpi4-target.img.xz
 
 # 3. SD'yi Pi'ye tak, güç ver — boot ~30 saniye
 
@@ -69,13 +73,15 @@ systemctl status suderra-edge-agent
 **Seçenek A: GitHub Releases (önerilen)**
 
 ```bash
-# Latest release URL'i
-URL_BASE="https://github.com/Okan-wqm/suderra-os/releases/latest/download"
+# Exact tag URL'i. Alpha/pre-release artifact'leri latest ile alınmaz.
+VERSION=v0.1.0-alpha.1
+URL_BASE="https://github.com/Okan-wqm/Suderra-OS/releases/download/${VERSION}"
 
 # Image + checksum + signature
-wget "${URL_BASE}/suderra-os-rpi4.img.xz"
-wget "${URL_BASE}/suderra-os-rpi4.img.xz.sha256"
-wget "${URL_BASE}/suderra-os-rpi4.img.xz.sig"      # cosign signature
+wget "${URL_BASE}/suderra-rpi4-target.img.xz"
+wget "${URL_BASE}/suderra-rpi4-target.img.xz.sha256"
+wget "${URL_BASE}/suderra-rpi4-target.img.xz.sig"      # cosign signature
+wget "${URL_BASE}/suderra-rpi4-target.img.xz.cert"     # cosign certificate
 ```
 
 **Seçenek B: Mirror (releases.suderra.com)**
@@ -83,15 +89,15 @@ wget "${URL_BASE}/suderra-os-rpi4.img.xz.sig"      # cosign signature
 ```bash
 # Daha hızlı CDN, aynı içerik (cosign ile aynı imza)
 URL_BASE="https://releases.suderra.com/os/latest"
-wget "${URL_BASE}/suderra-os-rpi4.img.xz"
+wget "${URL_BASE}/suderra-rpi4-target.img.xz"
 # ... aynı şekilde
 ```
 
 **Seçenek C: Lokal build (geliştiriciler için)**
 
 ```bash
-git clone --recurse-submodules https://github.com/Okan-wqm/suderra-os
-cd suderra-os
+git clone --recurse-submodules https://github.com/Okan-wqm/Suderra-OS
+cd Suderra-OS
 ./scripts/build-in-docker.sh suderra_aarch64_rpi4_defconfig
 # Çıktı: output/suderra_aarch64_rpi4_defconfig/images/suderra-rpi4-target.img.xz
 # Süre: ~30-60 dk (ilk build), ~5-10 dk (sonraki)
@@ -102,8 +108,8 @@ cd suderra-os
 **SHA256 kontrolü (zorunlu):**
 
 ```bash
-sha256sum -c suderra-os-rpi4.img.xz.sha256
-# Çıktı: suderra-os-rpi4.img.xz: OK
+sha256sum -c suderra-rpi4-target.img.xz.sha256
+# Çıktı: suderra-rpi4-target.img.xz: OK
 ```
 
 **cosign keyless signature (önerilen, supply chain güvenliği):**
@@ -116,10 +122,11 @@ chmod +x /usr/local/bin/cosign
 
 # Doğrula
 cosign verify-blob \
-  --certificate-identity-regexp "https://github.com/Okan-wqm/suderra-os" \
+  --certificate suderra-rpi4-target.img.xz.cert \
+  --certificate-identity-regexp "https://github.com/Okan-wqm/Suderra-OS" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --signature suderra-os-rpi4.img.xz.sig \
-  suderra-os-rpi4.img.xz
+  --signature suderra-rpi4-target.img.xz.sig \
+  suderra-rpi4-target.img.xz
 # Çıktı: Verified OK
 ```
 
@@ -134,10 +141,10 @@ lsblk
 #              └─sdb1  1    1.0G  0 part
 
 # Yaz (güvenlik kontrolü + hash doğrulama + readback verify)
-sudo ./scripts/flash-sd.sh /dev/sdb suderra-os-rpi4.img.xz
+sudo ./scripts/flash-sd.sh /dev/sdb suderra-rpi4-target.img.xz
 
 # Veya signature doğrulamalı:
-sudo ./scripts/flash-sd.sh --verify-signature /dev/sdb suderra-os-rpi4.img.xz
+sudo ./scripts/flash-sd.sh --verify-signature /dev/sdb suderra-rpi4-target.img.xz
 ```
 
 `flash-sd.sh` şunları otomatik yapar:
@@ -151,15 +158,15 @@ sudo ./scripts/flash-sd.sh --verify-signature /dev/sdb suderra-os-rpi4.img.xz
 **Yöntem 2: Raspberry Pi Imager**
 
 1. https://rpi.com/imager indir + kur
-2. "Choose OS" → "Use custom image" → `suderra-os-rpi4.img.xz`
+2. "Choose OS" → "Use custom image" → `suderra-rpi4-target.img.xz`
 3. "Choose Storage" → SD card seç
 4. Write
 
 **Yöntem 3: Manuel dd (gelişmiş kullanıcılar)**
 
 ```bash
-xz -d suderra-os-rpi4.img.xz
-sudo dd if=suderra-os-rpi4.img of=/dev/sdb bs=4M conv=fsync status=progress
+xz -d suderra-rpi4-target.img.xz
+sudo dd if=suderra-rpi4-target.img of=/dev/sdb bs=4M conv=fsync status=progress
 sync
 ```
 
@@ -231,11 +238,17 @@ Gereksinimler:
 ### 3.2. Image İndirme
 
 ```bash
-URL_BASE="https://github.com/Okan-wqm/suderra-os/releases/latest/download"
+VERSION=v1.0.0
+URL_BASE="https://github.com/Okan-wqm/Suderra-OS/releases/download/${VERSION}"
 wget "${URL_BASE}/suderra-os-x86_64.img.xz"
 wget "${URL_BASE}/suderra-os-x86_64.img.xz.sha256"
 wget "${URL_BASE}/suderra-os-x86_64.img.xz.sig"
+wget "${URL_BASE}/suderra-os-x86_64.img.xz.cert"
 ```
+
+Production x86 artifact'i yalnızca `production-readiness` ve production-tier
+release evidence geçtikten sonra yayınlanır. Alpha/lab release için `latest`
+URL'i kullanılmaz; exact tag seçilir.
 
 ### 3.3. USB Stick'e Yazma
 
@@ -324,11 +337,13 @@ Bu komut:
 # Başka makinede indir
 wget https://releases.suderra.com/edge/latest/suderra-edge-agent-aarch64.raucb
 wget https://releases.suderra.com/edge/latest/suderra-edge-agent-aarch64.raucb.sig
+wget https://releases.suderra.com/edge/latest/suderra-edge-agent-aarch64.raucb.cert
 
 # USB ile Pi'ye taşı, sonra:
 sudo suderra-installer install edge \
   --from-file suderra-edge-agent-aarch64.raucb \
-  --signature suderra-edge-agent-aarch64.raucb.sig
+  --signature suderra-edge-agent-aarch64.raucb.sig \
+  --certificate suderra-edge-agent-aarch64.raucb.cert
 ```
 
 ### 5.4. Konfigürasyon
@@ -452,8 +467,8 @@ Detaylı: [docs/operations/factory-reset.md](factory-reset.md)
 
 ## Yardım
 
-- **Issue:** https://github.com/Okan-wqm/suderra-os/issues
-- **Discussions:** https://github.com/Okan-wqm/suderra-os/discussions
+- **Issue:** https://github.com/Okan-wqm/Suderra-OS/issues
+- **Discussions:** https://github.com/Okan-wqm/Suderra-OS/discussions
 - **Docs:** https://docs.suderra.example/ (yakında)
 
 ## Bir Sonraki

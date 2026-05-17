@@ -24,7 +24,7 @@ GitHub branch protection ayarları. Bu doküman maintainer tarafından GitHub UI
 | - `Build / Build qemu-x86_64` | ✓ (Faz 1+) | Build çalışır |
 | - `Build / Build rpi4` | ✓ | RPi4 image contract |
 | - `Build / Build revpi4` | ✓ | RevPi4 image contract |
-| - `Build / Build pi-cm4-revpi-usb-installer` | ✓ | USB installer image contract |
+| - `Build / Build payload image pi-cm4-revpi-usb-installer` | ✓ | USB installer image contract |
 | - `Build / QEMU boot smoke test (qemu-x86_64)` | ✓ | Boot smoke |
 | - `Security Scan / Trivy (filesystem)` | ✓ | CVE scan |
 | - `Security Scan / Trivy (config / Dockerfile)` | ✓ | Config security |
@@ -73,7 +73,7 @@ Manual `workflow_dispatch` release sadece seçilen workflow ref'i input tag ile 
 GitHub Rulesets ile programatik uygulama:
 
 ```bash
-gh api repos/Okan-wqm/suderra-os/rulesets \
+gh api repos/Okan-wqm/Suderra-OS/rulesets \
     --method POST \
     --header "Accept: application/vnd.github+json" \
     --input - <<EOF

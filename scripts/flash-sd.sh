@@ -8,7 +8,7 @@
 #   1. Root yetkisi kontrolü
 #   2. Hedef cihaz removable mı? (root disk koruma)
 #   3. Cihaz mount edilmiş mi?
-#   4. Image SHA256 hash MANIFEST.txt ile eşleşiyor mu?
+#   4. Image SHA256 hash MANIFEST.txt veya .sha256 ile eşleşiyor mu?
 #   5. Image cosign signature'ı var mı? (--verify-signature)
 #   6. xz sıkıştırılmışsa otomatik açar
 #   7. dd progress + sync
@@ -18,6 +18,7 @@
 #   sudo ./scripts/flash-sd.sh /dev/sdX <image>
 #   sudo ./scripts/flash-sd.sh /dev/sdX <image.xz>
 #   sudo ./scripts/flash-sd.sh --verify-signature /dev/sdX <image.xz>
+#   sudo ./scripts/flash-sd.sh --lab-allow-missing-hash /dev/sdX <image.xz>
 #
 # Örnek:
 #   sudo ./scripts/flash-sd.sh /dev/sdb \
@@ -70,6 +71,8 @@ Argümanlar:
 
 Seçenekler:
   --verify-signature  cosign ile imza doğrulaması (releases için)
+  --lab-allow-missing-hash
+                      LAB ONLY: MANIFEST.txt/.sha256 yoksa hash gate'ini atla
   --skip-verify       Geri okuma doğrulamasını atla (hızlı, önerilmez)
   --force             Onay sorusunu atla (CI / scripting)
   -h, --help          Bu yardımı göster
@@ -88,12 +91,14 @@ Güvenlik:
   - SADECE removable cihazlara yazar (root disk koruma)
   - Cihaz mount ediliyse durur
   - SHA256 doğrulaması zorunlu (MANIFEST.txt veya .sha256 dosyası)
+  - Hash dosyası olmayan lab imajları için açık --lab-allow-missing-hash gerekir
   - --force olmadan kullanıcı onayı gerekir
 EOF
     exit 0
 }
 
 VERIFY_SIGNATURE=0
+LAB_ALLOW_MISSING_HASH=0
 SKIP_VERIFY=0
 FORCE=0
 DEVICE=""
@@ -103,6 +108,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)          usage ;;
         --verify-signature) VERIFY_SIGNATURE=1; shift ;;
+        --lab-allow-missing-hash) LAB_ALLOW_MISSING_HASH=1; shift ;;
         --skip-verify)      SKIP_VERIFY=1; shift ;;
         --force)            FORCE=1; shift ;;
         -*)                 die "Bilinmeyen seçenek: $1" ;;
@@ -173,7 +179,12 @@ verify_hash() {
         fi
     fi
 
-    log_warn "Hash dosyası bulunamadı (MANIFEST.txt veya ${IMAGE_NAME}.sha256). Doğrulama atlandı."
+    if [[ "${LAB_ALLOW_MISSING_HASH}" -eq 1 ]]; then
+        log_warn "LAB ONLY: Hash dosyası bulunamadı (MANIFEST.txt veya ${IMAGE_NAME}.sha256). Hash gate'i açık istisna ile atlandı."
+        return 0
+    fi
+
+    die "Hash dosyası bulunamadı (MANIFEST.txt veya ${IMAGE_NAME}.sha256). Release/lab evidence için checksum zorunlu. Sadece kontrollü lab istisnasında --lab-allow-missing-hash kullan."
 }
 verify_hash "${IMAGE_ABS}"
 
@@ -184,13 +195,16 @@ if [[ "${VERIFY_SIGNATURE}" -eq 1 ]]; then
     command -v cosign >/dev/null 2>&1 || die "cosign kurulu değil. https://docs.sigstore.dev/cosign/installation/"
 
     SIG_FILE="${IMAGE_ABS}.sig"
+    CERT_FILE="${IMAGE_ABS}.cert"
     [[ -f "${SIG_FILE}" ]] || die "Signature dosyası bulunamadı: ${SIG_FILE}"
+    [[ -f "${CERT_FILE}" ]] || die "Certificate dosyası bulunamadı: ${CERT_FILE}"
 
     log_info "cosign keyless signature doğrulanıyor..."
     # Pin the OIDC subject to release.yml on a SemVer tag so any other
     # workflow in this repo cannot produce signatures that pass this check.
-    cosign_identity_re='^https://github\.com/Okan-wqm/suderra-os/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.\-]+)?$'
+    cosign_identity_re='^https://github\.com/Okan-wqm/Suderra-OS/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.\-]+)?$'
     if cosign verify-blob \
+        --certificate "${CERT_FILE}" \
         --certificate-identity-regexp "${cosign_identity_re}" \
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
         --signature "${SIG_FILE}" \
@@ -228,10 +242,36 @@ log_info "Açılmış image: ${IMAGE_SIZE_MB} MiB"
 # ----------------------------------------------------------------------------
 [[ -b "${DEVICE}" ]] || die "${DEVICE} bir blok cihazı değil"
 
+disk_parent_name() {
+    local source="$1"
+    local resolved name parent
+
+    resolved="$(readlink -f "${source}" 2>/dev/null || printf '%s\n' "${source}")"
+    name="$(basename "${resolved}")"
+    parent="$(lsblk -no PKNAME "${resolved}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
+    if [[ -n "${parent}" ]]; then
+        printf '%s\n' "${parent}"
+        return 0
+    fi
+    printf '%s\n' "${name}"
+}
+
+root_disk_name() {
+    local root_source
+
+    root_source="$(findmnt -no SOURCE / 2>/dev/null || true)"
+    if [[ "${root_source}" == "/dev/root" ]]; then
+        root_source="$(readlink -f /dev/root 2>/dev/null || printf '%s\n' /dev/root)"
+    fi
+    [[ -n "${root_source}" ]] || die "Root filesystem kaynağı tespit edilemedi"
+    disk_parent_name "${root_source}"
+}
+
 # Root disk koruma — DEVICE şu anda root olarak mount edilmiş diskte mi?
-ROOT_DEVICE=$(findmnt -no SOURCE / | sed 's/[0-9]*$//')
-if [[ "${DEVICE}" == "${ROOT_DEVICE}" ]] || [[ "${ROOT_DEVICE}" == "${DEVICE}"* ]]; then
-    die "${DEVICE} ROOT diski! İşletim sistemini siler. İptal edildi."
+ROOT_DISK="$(root_disk_name)"
+TARGET_DISK="$(disk_parent_name "${DEVICE}")"
+if [[ -n "${ROOT_DISK}" && "${TARGET_DISK}" == "${ROOT_DISK}" ]]; then
+    die "${DEVICE} ROOT diski (${ROOT_DISK})! İşletim sistemini siler. İptal edildi."
 fi
 
 # Removable mı? (USB / SD card / eMMC card reader)
@@ -269,7 +309,9 @@ fi
 MOUNTED_PARTS=$(lsblk -ln -o NAME,MOUNTPOINT "${DEVICE}" 2>/dev/null | awk '$2 != "" {print $1": "$2}' || true)
 if [[ -n "${MOUNTED_PARTS}" ]]; then
     log_warn "${DEVICE} üzerinde mount edilmiş partition'lar var:"
-    echo "${MOUNTED_PARTS}" | sed 's/^/         /'
+    while IFS= read -r mounted_part; do
+        printf '         %s\n' "${mounted_part}"
+    done <<< "${MOUNTED_PARTS}"
     log_info "Otomatik unmount yapılıyor..."
     for part in $(lsblk -ln -o NAME "${DEVICE}" | tail -n +2); do
         umount "/dev/${part}" 2>/dev/null || true

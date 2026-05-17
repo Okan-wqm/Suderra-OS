@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import re
 import sys
@@ -129,6 +130,81 @@ def evidence(warnings: list[WarningLine]) -> dict[str, object]:
     }
 
 
+def parse_utc_timestamp(value: object, path: str) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError(f"{path} must be an ISO-8601 UTC timestamp ending in Z")
+    try:
+        return datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ValueError(f"{path} must be an ISO-8601 UTC timestamp") from exc
+
+
+def policy_failures(policy_path: Path, warnings: list[WarningLine]) -> list[str]:
+    try:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return [f"cannot read warning policy {policy_path}: {exc}"]
+    except json.JSONDecodeError as exc:
+        return [f"warning policy {policy_path} is not valid JSON: {exc}"]
+
+    failures: list[str] = []
+    if not isinstance(policy, dict):
+        return [f"warning policy {policy_path} root must be an object"]
+    if policy.get("schema_version") != "suderra.build-warning-policy.v1":
+        failures.append("warning policy schema_version must be suderra.build-warning-policy.v1")
+
+    known_upstream = policy.get("known_upstream")
+    if not isinstance(known_upstream, dict):
+        failures.append("warning policy known_upstream must be an object")
+        known_upstream = {}
+    owner = known_upstream.get("owner")
+    if not isinstance(owner, str) or not owner.strip():
+        failures.append("warning policy known_upstream.owner must be set")
+    allowed_fingerprints = known_upstream.get("allowed_fingerprints")
+    if not isinstance(allowed_fingerprints, list) or not all(
+        isinstance(fingerprint, str) and fingerprint.strip()
+        for fingerprint in allowed_fingerprints
+    ):
+        failures.append("warning policy known_upstream.allowed_fingerprints must be a string list")
+        allowed_fingerprints = []
+    try:
+        expires_at = parse_utc_timestamp(known_upstream.get("expires_at"), "known_upstream.expires_at")
+    except ValueError as exc:
+        failures.append(str(exc))
+        expires_at = None
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        failures.append("warning policy known_upstream.expires_at is expired")
+
+    third_party = policy.get("third_party")
+    if not isinstance(third_party, dict):
+        failures.append("warning policy third_party must be an object")
+        third_party = {}
+    if third_party.get("fail") is not True:
+        failures.append("warning policy third_party.fail must be true")
+
+    if failures:
+        return failures
+
+    summary = summarize(warnings)
+    if summary["known-upstream"] and not owner:
+        failures.append("known-upstream warnings require a policy owner")
+    known_upstream_fingerprints = sorted(
+        {warning.fingerprint for warning in warnings if warning.category == "known-upstream"}
+    )
+    unknown_known_upstream = sorted(set(known_upstream_fingerprints) - set(allowed_fingerprints))
+    if unknown_known_upstream:
+        failures.append(
+            f"{len(unknown_known_upstream)} known-upstream warning fingerprint(s) are not policy-approved"
+        )
+        failures.extend(
+            f"unapproved known-upstream fingerprint: {fingerprint}"
+            for fingerprint in unknown_known_upstream[:20]
+        )
+    if summary["third-party"] and third_party.get("fail") is True:
+        failures.append(f"{summary['third-party']} unclassified third-party warning(s) require triage")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("logs", nargs="+", type=Path, help="Build log file(s) to inspect")
@@ -146,6 +222,11 @@ def main() -> int:
         "--fail-third-party",
         action="store_true",
         help="Also fail on unclassified third-party warnings",
+    )
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        help="Enforce warning governance policy with owner/expiry and third-party fail-closed behavior",
     )
     args = parser.parse_args()
 
@@ -166,7 +247,9 @@ def main() -> int:
         for warning in all_warnings
         if warning.category == "owned" or (args.fail_third_party and warning.category == "third-party")
     ]
+    policy_errors = policy_failures(args.policy, all_warnings) if args.policy else []
     evidence_doc["failing"] = [warning.__dict__ for warning in failing]
+    evidence_doc["policy_errors"] = policy_errors
 
     if args.json_output:
         args.json_output.parent.mkdir(parents=True, exist_ok=True)
@@ -186,8 +269,10 @@ def main() -> int:
             print(f"{warning.path}:{warning.line_number}: {warning.category}: {warning.text}")
         if len(failing) > 50:
             print(f"... {len(failing) - 50} additional failing warning(s) omitted")
+        for error in policy_errors:
+            print(f"policy: {error}")
 
-    if failing:
+    if failing or policy_errors:
         return 1
     return 0
 

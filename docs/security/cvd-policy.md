@@ -29,14 +29,14 @@ Açıkları bulanlarla işbirliği yaparak, son kullanıcıya zarar verme süres
 **Tercih sırası:**
 
 1. **GitHub Security Advisory** (private)
-   - <https://github.com/Okan-wqm/suderra-os/security/advisories/new>
+   - <https://github.com/Okan-wqm/Suderra-OS/security/advisories/new>
 
 2. **PGP-encrypted E-mail**
    - `security@suderra.example`
    - PGP key: [docs/security/pgp-key.asc](pgp-key.asc) (TODO Faz 0.5'te eklenecek)
 
 3. **`.well-known/security.txt`** (machine-readable)
-   - <https://github.com/Okan-wqm/suderra-os/.well-known/security.txt>
+   - <https://github.com/Okan-wqm/Suderra-OS/.well-known/security.txt>
 
 **Asla:**
 
@@ -113,7 +113,7 @@ Lütfen bildiriminizde şunları içerin:
 
 ## Hall of Fame
 
-Bildirilen ve düzeltilen zafiyetlerin credit'i [GitHub Security Advisories](https://github.com/Okan-wqm/suderra-os/security/advisories) sayfasında ve release notes'larda yer alır.
+Bildirilen ve düzeltilen zafiyetlerin credit'i [GitHub Security Advisories](https://github.com/Okan-wqm/Suderra-OS/security/advisories) sayfasında ve release notes'larda yer alır.
 
 ## "Yapma" Listesi
 

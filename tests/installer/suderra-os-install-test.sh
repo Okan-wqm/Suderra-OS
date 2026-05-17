@@ -31,7 +31,7 @@ make_disk() {
 }
 
 reset_sys() {
-    rm -rf "${TMPDIR}/sys" "${TMPDIR}/payload" "${TMPDIR}/keys" "${TMPDIR}/dev"
+    rm -rf "${TMPDIR:?}/sys" "${TMPDIR:?}/payload" "${TMPDIR:?}/keys" "${TMPDIR:?}/dev"
     mkdir -p "${TMPDIR}/sys/block" "${TMPDIR}/payload" "${TMPDIR}/keys"
     mkdir -p "${TMPDIR}/dev/disk/by-id"
 }
@@ -93,17 +93,119 @@ test_usb_target_requires_factory_flag() {
     expect_fail run_select sda
 
     touch "${TMPDIR}/dev/sdb"
-    ln -s ../../sdb "${TMPDIR}/dev/disk/by-id/suderra-usb-target"
+    ln -s ../../sdb "${TMPDIR}/dev/disk/by-id/usb-suderra-target"
     actual="$(
         SUDERRA_INSTALLER_SYS_BLOCK="${TMPDIR}/sys/block" \
         SUDERRA_INSTALLER_SOURCE_DISK=sda \
         SUDERRA_INSTALLER_MIN_BYTES=1 \
         SUDERRA_INSTALLER_DEV_DIR="${TMPDIR}/dev" \
         SUDERRA_INSTALLER_ALLOW_USB_TARGET=1 \
-        SUDERRA_INSTALLER_USB_TARGET_BY_ID="${TMPDIR}/dev/disk/by-id/suderra-usb-target" \
+        SUDERRA_INSTALLER_USB_TARGET_BY_ID="${TMPDIR}/dev/disk/by-id/usb-suderra-target" \
         "${INSTALLER}" --select-target
     )"
-    expect_eq "${TMPDIR}/dev/disk/by-id/suderra-usb-target" "${actual}"
+    expect_eq "${TMPDIR}/dev/disk/by-id/usb-suderra-target" "${actual}"
+}
+
+test_usb_target_non_usb_by_id_requires_removable() {
+    reset_sys
+    make_disk sdb 16777216 0
+    touch "${TMPDIR}/dev/sdb"
+    ln -s ../../sdb "${TMPDIR}/dev/disk/by-id/ata-fixed-target"
+    expect_fail env \
+        SUDERRA_INSTALLER_SYS_BLOCK="${TMPDIR}/sys/block" \
+        SUDERRA_INSTALLER_SOURCE_DISK=sda \
+        SUDERRA_INSTALLER_MIN_BYTES=1 \
+        SUDERRA_INSTALLER_DEV_DIR="${TMPDIR}/dev" \
+        SUDERRA_INSTALLER_ALLOW_USB_TARGET=1 \
+        SUDERRA_INSTALLER_USB_TARGET_BY_ID="${TMPDIR}/dev/disk/by-id/ata-fixed-target" \
+        "${INSTALLER}" --select-target
+}
+
+test_board_detection_allowlist() {
+    prepare_payload
+    printf 'Raspberry Pi 4 Model B Rev 1.5\000' > "${TMPDIR}/model"
+    SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+    SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+    SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+    SUDERRA_INSTALLER_PROC_MODEL="${TMPDIR}/model" \
+    SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+    SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+    SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+    "${INSTALLER}" --verify-payload >/tmp/suderra-board-detect.out
+    grep -q "Payload verified" /tmp/suderra-board-detect.out
+}
+
+test_unsupported_pi_model_rejected() {
+    prepare_payload
+    printf 'Raspberry Pi 5 Model B Rev 1.0\000' > "${TMPDIR}/model"
+    expect_fail env \
+        SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+        SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+        SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+        SUDERRA_INSTALLER_PROC_MODEL="${TMPDIR}/model" \
+        SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+        SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+        SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+        "${INSTALLER}" --verify-payload
+}
+
+test_revpi_model_detected() {
+    prepare_payload
+    printf 'RevPi Connect 4 Rev 1.0\000' > "${TMPDIR}/model"
+    SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+    SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+    SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+    SUDERRA_INSTALLER_PROC_MODEL="${TMPDIR}/model" \
+    SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+    SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+    SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+    "${INSTALLER}" --verify-payload >/tmp/suderra-revpi-detect.out
+    grep -q "Verifying signed installer payload for revpi4" /tmp/suderra-revpi-detect.out
+}
+
+test_revpi_compatible_detected_with_generic_cm4_model() {
+    prepare_payload
+    printf 'Raspberry Pi Compute Module 4 Rev 1.1\000' > "${TMPDIR}/model"
+    printf 'raspberrypi,4-compute-module\000kunbus,revpi-connect-4\000' > "${TMPDIR}/compatible"
+    SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+    SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+    SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+    SUDERRA_INSTALLER_PROC_MODEL="${TMPDIR}/model" \
+    SUDERRA_INSTALLER_PROC_COMPATIBLE="${TMPDIR}/compatible" \
+    SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+    SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+    SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+    "${INSTALLER}" --verify-payload >/tmp/suderra-revpi-compatible.out
+    grep -q "Verifying signed installer payload for revpi4" /tmp/suderra-revpi-compatible.out
+}
+
+test_generic_cm4_requires_explicit_board() {
+    prepare_payload
+    printf 'Raspberry Pi Compute Module 4 Rev 1.1\000' > "${TMPDIR}/model"
+    expect_fail env \
+        SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+        SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+        SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+        SUDERRA_INSTALLER_PROC_MODEL="${TMPDIR}/model" \
+        SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+        SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+        SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+        "${INSTALLER}" --verify-payload
+}
+
+test_generic_cm4_explicit_override_allowed() {
+    prepare_payload
+    printf 'Raspberry Pi Compute Module 4 Rev 1.1\000' > "${TMPDIR}/model"
+    SUDERRA_INSTALLER_PAYLOAD_DIR="${TMPDIR}/payload" \
+    SUDERRA_INSTALLER_PUBKEY="${TMPDIR}/keys/payload.pub.pem" \
+    SUDERRA_INSTALLER_VERIFY_BIN="${VERIFY_BIN}" \
+    SUDERRA_INSTALLER_PROC_MODEL="${TMPDIR}/model" \
+    SUDERRA_INSTALLER_TARGET_BOARD=rpi4-cm4 \
+    SUDERRA_INSTALLER_TARGET_ARCH=aarch64 \
+    SUDERRA_INSTALLER_REPORT_DIR="${TMPDIR}/report" \
+    SUDERRA_AUDIT_LOG="${TMPDIR}/audit.log" \
+    "${INSTALLER}" --verify-payload >/tmp/suderra-cm4-override.out
+    grep -q "Verifying signed installer payload for rpi4-cm4" /tmp/suderra-cm4-override.out
 }
 
 write_manifest() {
@@ -120,11 +222,24 @@ write_manifest() {
   "kind": "suderra.usb-payload-index.v1",
   "board_family": "pi-cm4-revpi",
   "compatible_models": ["rpi4-cm4", "revpi4"],
-  "payloads": [
+    "payloads": [
     {
       "name": "rpi4",
       "board_family": "rpi4-cm4",
       "compatible_models": ["rpi4-cm4"],
+      "arch": "aarch64",
+      "image_path": "suderra-rpi4-target.img.xz",
+      "compressed_sha256": "${sha}",
+      "compressed_size_bytes": ${size},
+      "uncompressed_sha256": "${uncompressed_sha}",
+      "uncompressed_size_bytes": ${uncompressed_size},
+      "min_storage_bytes": 1024,
+      "rollback_floor": "${rollback_floor}"
+    },
+    {
+      "name": "revpi4",
+      "board_family": "revpi4",
+      "compatible_models": ["revpi4"],
       "arch": "aarch64",
       "image_path": "suderra-rpi4-target.img.xz",
       "compressed_sha256": "${sha}",
@@ -186,18 +301,18 @@ verify_payload() {
 test_manifest_signature_required() {
     prepare_payload
     rm -f "${TMPDIR}/payload/manifest.sig"
-    expect_fail verify_payload
+    expect_fail verify_payload rpi4-cm4
 }
 
 test_manifest_sha_required() {
     prepare_payload
     printf 'tampered' > "${TMPDIR}/payload/suderra-rpi4-target.img.xz"
-    expect_fail verify_payload
+    expect_fail verify_payload rpi4-cm4
 }
 
 test_manifest_expiry_required() {
     MANIFEST_EXPIRES_AT="2000-01-01T00:00:00Z" prepare_payload
-    expect_fail verify_payload
+    expect_fail verify_payload rpi4-cm4
 }
 
 test_manifest_wrong_board_rejected() {
@@ -230,7 +345,7 @@ test_manifest_wrong_arch_rejected() {
 
 test_manifest_verifies() {
     prepare_payload
-    verify_payload
+    verify_payload rpi4-cm4
 }
 
 for test_name in \
@@ -239,6 +354,13 @@ for test_name in \
     test_sd_fallback \
     test_multiple_equal_targets_fail \
     test_usb_target_requires_factory_flag \
+    test_usb_target_non_usb_by_id_requires_removable \
+    test_board_detection_allowlist \
+    test_unsupported_pi_model_rejected \
+    test_revpi_model_detected \
+    test_revpi_compatible_detected_with_generic_cm4_model \
+    test_generic_cm4_requires_explicit_board \
+    test_generic_cm4_explicit_override_allowed \
     test_manifest_signature_required \
     test_manifest_sha_required \
     test_manifest_expiry_required \

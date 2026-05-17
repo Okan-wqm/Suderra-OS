@@ -205,6 +205,7 @@ jobs:
             timeout --kill-after=60s "${remaining}s" \
               ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
             python3 scripts/ci/classify-build-warnings.py \
+              --policy ci/build-warning-policy.json \
               --json-output "build-logs/${defconfig}.warnings.json" \
               "${log_path}"
           }
@@ -474,6 +475,7 @@ jobs:
             timeout --kill-after=60s "${remaining}s" \
               ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
             python3 scripts/ci/classify-build-warnings.py \
+              --policy ci/build-warning-policy.json \
               --json-output "build-logs/${defconfig}.warnings.json" \
               "${log_path}"
           }

@@ -83,7 +83,7 @@ Tahmini: **Gold Faz 6+** elde edilir.
 - Security policy check
 - Vulnerability disclosure check
 
-Skor: <https://api.securityscorecards.dev/projects/github.com/Okan-wqm/suderra-os>
+Skor: <https://api.securityscorecards.dev/projects/github.com/Okan-wqm/Suderra-OS>
 
 ## Başvuru Adımları (Faz 0.5)
 

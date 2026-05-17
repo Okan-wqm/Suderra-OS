@@ -92,6 +92,16 @@ REQUIRED_HARDWARE_CHECKS = (
     "thermal",
     "lockdown",
 )
+REQUIRED_HARDWARE_BOARDS_BY_TARGET = {
+    "rpi4": ("raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"),
+    "pi-cm4-revpi-usb-installer": (
+        "raspberry-pi-4-model-b",
+        "cm4-lite-sd",
+        "cm4-emmc-io-board",
+        "revpi-connect-4",
+    ),
+    "revpi4": ("revpi-connect-4",),
+}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 
@@ -488,6 +498,7 @@ def validate_artifacts(
     validation: Validation,
     evidence: dict[str, Any],
     require_pass: bool,
+    release_tier: str,
 ) -> None:
     artifacts = evidence.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
@@ -511,28 +522,50 @@ def validate_artifacts(
         if not isinstance(signature, dict):
             validation.error(f"{path}.signature", "must be an object")
         else:
-            check_relative_path(validation, f"{path}.signature.path", signature.get("path"), True)
+            require_signed_controls = require_pass and release_tier == "production"
+            signature_path = (
+                signature.get("path")
+                if require_signed_controls or signature.get("verified") is True
+                else None
+            )
+            certificate_path = (
+                signature.get("certificate")
+                if require_signed_controls or signature.get("verified") is True
+                else None
+            )
+            check_relative_path(validation, f"{path}.signature.path", signature_path, require_signed_controls)
             check_relative_path(
                 validation,
                 f"{path}.signature.certificate",
-                signature.get("certificate"),
-                True,
+                certificate_path,
+                require_signed_controls,
             )
             check_bool(validation, f"{path}.signature.verified", signature.get("verified"))
-            if require_pass and signature.get("verified") is not True:
+            if require_signed_controls and signature.get("verified") is not True:
                 validation.error(f"{path}.signature.verified", "must be true for release-ready evidence")
 
         provenance = artifact.get("provenance")
         if not isinstance(provenance, dict):
             validation.error(f"{path}.provenance", "must be an object")
         else:
-            check_relative_path(validation, f"{path}.provenance.path", provenance.get("path"), True)
+            require_provenance = require_pass and release_tier == "production"
+            provenance_path = (
+                provenance.get("path")
+                if require_provenance or provenance.get("verified") is True
+                else None
+            )
+            check_relative_path(validation, f"{path}.provenance.path", provenance_path, require_provenance)
             check_bool(validation, f"{path}.provenance.verified", provenance.get("verified"))
-            if require_pass and provenance.get("verified") is not True:
+            if require_provenance and provenance.get("verified") is not True:
                 validation.error(f"{path}.provenance.verified", "must be true for release-ready evidence")
 
 
-def validate_sbom(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+def validate_sbom(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+) -> None:
     sbom = evidence.get("sbom")
     if not isinstance(sbom, dict):
         validation.error("$.sbom", "must be an object")
@@ -558,11 +591,16 @@ def validate_sbom(validation: Validation, evidence: dict[str, Any], require_pass
                     validation.error("$.sbom.component_count", "CycloneDX components must be non-empty")
                 if isinstance(sbom.get("component_count"), int) and sbom["component_count"] != actual_count:
                     validation.error("$.sbom.component_count", "does not match CycloneDX components length")
-    if require_pass and sbom.get("signature_verified") is not True:
+    if require_pass and release_tier == "production" and sbom.get("signature_verified") is not True:
         validation.error("$.sbom.signature_verified", "must be true for release-ready evidence")
 
 
-def validate_vex(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+def validate_vex(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+) -> None:
     vex = evidence.get("vex")
     if not isinstance(vex, dict):
         validation.error("$.vex", "must be an object")
@@ -573,9 +611,9 @@ def validate_vex(validation: Validation, evidence: dict[str, Any], require_pass:
     check_sha256(validation, "$.vex.sha256", vex.get("sha256"), present)
     check_file_sha256(validation, "$.vex.sha256", vex.get("path"), vex.get("sha256"))
     check_bool(validation, "$.vex.signature_verified", vex.get("signature_verified"))
-    if require_pass and not present:
+    if require_pass and release_tier == "production" and not present:
         validation.error("$.vex.status", "must be present for release-ready evidence")
-    if present and require_pass and vex.get("signature_verified") is not True:
+    if present and require_pass and release_tier == "production" and vex.get("signature_verified") is not True:
         validation.error("$.vex.signature_verified", "must be true when VEX is present")
 
 
@@ -713,9 +751,27 @@ def validate_hardware(validation: Validation, evidence: dict[str, Any], require_
             validation.error("$.hardware.status", "must be passed when hardware evidence is required")
         if not devices:
             validation.error("$.hardware.devices", "must include at least one device")
+        required_boards = REQUIRED_HARDWARE_BOARDS_BY_TARGET.get(str(evidence.get("target", "")), ())
+        if required_boards:
+            seen_boards = {
+                device.get("board")
+                for device in devices
+                if isinstance(device, dict) and isinstance(device.get("board"), str)
+            }
+            missing_boards = sorted(set(required_boards) - seen_boards)
+            if missing_boards:
+                validation.error(
+                    "$.hardware.devices",
+                    f"missing required board evidence: {', '.join(missing_boards)}",
+                )
 
 
-def validate_runtime_checks(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+def validate_runtime_checks(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+) -> None:
     runtime_checks = evidence.get("runtime_checks")
     if not isinstance(runtime_checks, dict):
         validation.error("$.runtime_checks", "must be an object")
@@ -734,9 +790,9 @@ def validate_runtime_checks(validation: Validation, evidence: dict[str, Any], re
             validation,
             f"{path}.evidence",
             check.get("evidence"),
-            require_pass and bool(check.get("required")),
+            require_pass and release_tier == "production" and bool(check.get("required")),
         )
-        if require_pass and check.get("required") and check.get("status") != "passed":
+        if require_pass and release_tier == "production" and check.get("required") and check.get("status") != "passed":
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
 
 
@@ -915,6 +971,7 @@ def validate_evidence(
     matrix_path: Path | None,
     require_pass: bool,
     check_files: bool,
+    release_tier: str,
 ) -> list[str]:
     validation = Validation(evidence_path, check_files)
     try:
@@ -954,9 +1011,9 @@ def validate_evidence(
 
     validate_target_contract(validation, evidence, matrix)
     validate_source(validation, evidence, require_pass)
-    validate_artifacts(validation, evidence, require_pass)
-    validate_sbom(validation, evidence, require_pass)
-    validate_vex(validation, evidence, require_pass)
+    validate_artifacts(validation, evidence, require_pass, release_tier)
+    validate_sbom(validation, evidence, require_pass, release_tier)
+    validate_vex(validation, evidence, require_pass, release_tier)
     validate_reproducibility(validation, evidence, require_pass)
     expected_security_scans = None
     if matrix is not None:
@@ -971,7 +1028,7 @@ def validate_evidence(
     )
     validate_qemu(validation, evidence, require_pass)
     validate_hardware(validation, evidence, require_pass)
-    validate_runtime_checks(validation, evidence, require_pass)
+    validate_runtime_checks(validation, evidence, require_pass, release_tier)
     validate_approvals(validation, evidence, require_pass)
     validate_release_decision(validation, evidence, require_pass)
     validate_residual_risk(validation, evidence, require_pass)
@@ -988,9 +1045,14 @@ def schema_contract() -> dict[str, Any]:
         "vex_status_values": sorted(VEX_STATUS_VALUES),
         "residual_risk_status_values": sorted(RISK_STATUS_VALUES),
         "release_decision_status_values": sorted(DECISION_STATUS_VALUES),
+        "release_tiers": ["alpha", "production"],
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
         "required_qemu_checks": list(REQUIRED_QEMU_CHECKS),
         "required_hardware_checks": list(REQUIRED_HARDWARE_CHECKS),
+        "required_hardware_boards_by_target": {
+            target: list(boards)
+            for target, boards in sorted(REQUIRED_HARDWARE_BOARDS_BY_TARGET.items())
+        },
         "release_ready_invariants": [
             "source.dirty is false and source.git_commit is a full commit sha",
             "artifact hashes, sizes, signatures, and provenance are present, verified, and match referenced files",
@@ -1032,7 +1094,13 @@ def generate_command(args: argparse.Namespace) -> int:
 
 
 def validate_command(args: argparse.Namespace) -> int:
-    errors = validate_evidence(args.evidence, args.matrix, args.require_pass, args.check_files)
+    errors = validate_evidence(
+        args.evidence,
+        args.matrix,
+        args.require_pass,
+        args.check_files,
+        args.release_tier,
+    )
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
@@ -1059,6 +1127,12 @@ def main() -> int:
     validate.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     validate.add_argument("--require-pass", action="store_true")
     validate.add_argument("--check-files", action="store_true")
+    validate.add_argument(
+        "--release-tier",
+        choices=("alpha", "production"),
+        default="production",
+        help="alpha relaxes production-only signing, VEX, and runtime gates while keeping build/hardware evidence strict",
+    )
     validate.set_defaults(func=validate_command)
 
     schema = subparsers.add_parser("schema", help="print the canonical evidence contract")

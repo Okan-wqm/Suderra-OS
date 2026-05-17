@@ -87,7 +87,7 @@ async fn list_available(args: &ListArgs) -> Result<Vec<AvailableRow>> {
 }
 
 async fn fetch_available_from_github(release: &PackageRelease) -> Result<Vec<AvailableRow>> {
-    let url = "https://api.github.com/repos/Okan-wqm/suderra-os/releases";
+    let url = "https://api.github.com/repos/Okan-wqm/Suderra-OS/releases";
     let json = fetch_text(url).await?;
     let releases: Vec<serde_json::Value> = serde_json::from_str(&json)?;
     let mut rows = vec![];

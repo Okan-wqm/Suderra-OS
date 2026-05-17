@@ -73,8 +73,11 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
 
     if args.verify_signature {
         let manifest_sig_url = release.manifest_signature_url(args.mirror);
+        let manifest_cert_url = release.manifest_certificate_url(args.mirror);
         let manifest_sig_path =
             manifest_cache_dir.join(format!("{}-{}.json.sig", args.package, version));
+        let manifest_cert_path =
+            manifest_cache_dir.join(format!("{}-{}.json.cert", args.package, version));
         info!("manifest signature indiriliyor: {manifest_sig_url}");
         download_file(&manifest_sig_url, &manifest_sig_path, None)
             .await
@@ -84,12 +87,23 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
                      Manifest doğrulanmadan paket kurulamaz."
                 )
             })?;
-        verify::verify_keyless(&manifest_path, &manifest_sig_path).with_context(|| {
-            // Tampered manifest is not safe to leave on disk
-            let _ = std::fs::remove_file(&manifest_path);
-            let _ = std::fs::remove_file(&manifest_sig_path);
-            "manifest cosign doğrulaması başarısız"
-        })?;
+        info!("manifest certificate indiriliyor: {manifest_cert_url}");
+        download_file(&manifest_cert_url, &manifest_cert_path, None)
+            .await
+            .with_context(|| {
+                format!(
+                    "manifest certificate indirilemedi: {manifest_cert_url}\n\
+                     Manifest doğrulanmadan paket kurulamaz."
+                )
+            })?;
+        verify::verify_keyless(&manifest_path, &manifest_sig_path, &manifest_cert_path)
+            .with_context(|| {
+                // Tampered manifest is not safe to leave on disk
+                let _ = std::fs::remove_file(&manifest_path);
+                let _ = std::fs::remove_file(&manifest_sig_path);
+                let _ = std::fs::remove_file(&manifest_cert_path);
+                "manifest cosign doğrulaması başarısız"
+            })?;
         Event::new(
             EventKind::VerifySignature,
             &args.package,
@@ -180,12 +194,23 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     let mut signature_verified = false;
     if args.verify_signature {
         let sig_url = release.signature_url(args.mirror);
+        let cert_url = release.certificate_url(args.mirror);
         let sig_path = target_dir.join(format!("{}.sig", &package_info.file));
+        let cert_path = target_dir.join(format!("{}.cert", &package_info.file));
         info!("signature indiriliyor: {sig_url}");
 
         match download_file(&sig_url, &sig_path, None).await {
             Ok(_) => {
-                match verify::verify_keyless(&target, &sig_path) {
+                info!("certificate indiriliyor: {cert_url}");
+                download_file(&cert_url, &cert_path, None)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "certificate indirilemedi: {cert_url}\n\
+                         Artifact doğrulanmadan paket kurulamaz."
+                        )
+                    })?;
+                match verify::verify_keyless(&target, &sig_path, &cert_path) {
                     Ok(_outcome) => {
                         signature_verified = true;
                         Event::new(
@@ -271,10 +296,16 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
         if !sig.exists() {
             bail!("Signature dosyası bulunamadı: {}", sig.display());
         }
-        verify::verify_keyless(local, sig)?;
+        let cert = args.certificate.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("--from-file imzalı kurulum için --certificate gerektirir")
+        })?;
+        if !cert.exists() {
+            bail!("Certificate dosyası bulunamadı: {}", cert.display());
+        }
+        verify::verify_keyless(local, sig, cert)?;
         signature_verified = true;
     } else if args.verify_signature {
-        bail!("--from-file imzalı kurulum için --signature gerektirir");
+        bail!("--from-file imzalı kurulum için --signature ve --certificate gerektirir");
     } else {
         warn!(
             "Signature doğrulama devre dışı; yalnızca geliştirme/lab kullanımı için kabul edilir"

@@ -10,8 +10,9 @@
 //! Bu modül `cosign verify-blob` mantığını çağırır:
 //!
 //!   cosign verify-blob \
-//!     --certificate-identity-regexp "https://github.com/Okan-wqm/suderra-os" \
+//!     --certificate-identity-regexp "https://github.com/Okan-wqm/Suderra-OS" \
 //!     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+//!     --certificate <cert> \
 //!     --signature <sig> \
 //!     <artifact>
 //!
@@ -27,7 +28,11 @@ use tracing::{debug, info, warn};
 ///
 /// Suderra resmi release'lerinin GitHub Actions üzerinden imzalandığını
 /// doğrular. Identity policy: certificate-identity-regexp + OIDC issuer.
-pub fn verify_keyless(artifact: &Path, signature: &Path) -> Result<VerifyOutcome> {
+pub fn verify_keyless(
+    artifact: &Path,
+    signature: &Path,
+    certificate: &Path,
+) -> Result<VerifyOutcome> {
     let cosign = which_cosign()?;
 
     info!("cosign keyless doğrulama çalışıyor: {}", artifact.display());
@@ -36,12 +41,16 @@ pub fn verify_keyless(artifact: &Path, signature: &Path) -> Result<VerifyOutcome
     let output = Command::new(&cosign)
         .args([
             "verify-blob",
+            "--certificate",
+        ])
+        .arg(certificate)
+        .args([
             "--certificate-identity-regexp",
             // Sigstore OIDC subject must be the release workflow running on
             // a SemVer tag — pinning the workflow path stops any other
             // workflow in the repo from producing signatures that would
             // pass this check.
-            r"^https://github\.com/Okan-wqm/suderra-os/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.\-]+)?$",
+            r"^https://github\.com/Okan-wqm/Suderra-OS/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.\-]+)?$",
             "--certificate-oidc-issuer",
             "https://token.actions.githubusercontent.com",
             "--signature",

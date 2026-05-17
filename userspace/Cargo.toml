@@ -22,7 +22,7 @@ edition = "2021"
 rust-version = "1.86"
 authors = ["Suderra OS Contributors"]
 license = "Apache-2.0"
-repository = "https://github.com/Okan-wqm/suderra-os"
+repository = "https://github.com/Okan-wqm/Suderra-OS"
 readme = "README.md"
 
 # Ortak bağımlılıklar — tek versiyon, tüm crate'ler aynısını kullanır

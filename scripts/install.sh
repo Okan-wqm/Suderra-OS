@@ -8,7 +8,7 @@
 #   curl -fsSL https://get.suderra.com | sudo sh -s -- --mirror suderra
 #
 # Veya repo'dan:
-#   curl -fsSL https://raw.githubusercontent.com/Okan-wqm/suderra-os/main/scripts/install.sh | sudo sh
+#   curl -fsSL https://raw.githubusercontent.com/Okan-wqm/Suderra-OS/main/scripts/install.sh | sudo sh
 #
 # Ne yapar:
 #   1. Mimari + OS tespit (Suderra OS mu, başka mı)
@@ -27,7 +27,7 @@ set -eu
 # ----------------------------------------------------------------------------
 # Konfigürasyon (env override desteklenir)
 # ----------------------------------------------------------------------------
-REPO="${SUDERRA_REPO:-Okan-wqm/suderra-os}"
+REPO="${SUDERRA_REPO:-Okan-wqm/Suderra-OS}"
 VERSION="${SUDERRA_VERSION:-latest}"
 PACKAGE="${SUDERRA_PACKAGE:-edge}"
 MIRROR="${SUDERRA_MIRROR:-github}"
@@ -58,7 +58,7 @@ Seçenekler:
   -h, --help        Bu yardımı göster
 
 Ortam değişkenleri:
-  SUDERRA_REPO              GitHub repo (default: Okan-wqm/suderra-os)
+  SUDERRA_REPO              GitHub repo (default: Okan-wqm/Suderra-OS)
   SUDERRA_VERSION           Sürüm
   SUDERRA_PACKAGE           Paket adı
   SUDERRA_MIRROR            Mirror tercihi
@@ -127,17 +127,20 @@ download_installer() {
         fi
         ok "SHA256 doğrulandı"
     else
-        warn "SHA256 dosyası bulunamadı, doğrulama atlanıyor"
+        rm -rf "$TMP"
+        fail "SHA256 dosyası bulunamadı; doğrulanmamış installer kurulumu reddedildi"
     fi
 
     # cosign varsa signature doğrula
     if command -v cosign >/dev/null 2>&1; then
         info "cosign signature doğrulanıyor..."
-        if curl -fsSL "${URL}.sig" -o "${TMP}/installer.sig" 2>/dev/null; then
+        if curl -fsSL "${URL}.sig" -o "${TMP}/installer.sig" 2>/dev/null &&
+            curl -fsSL "${URL}.cert" -o "${TMP}/installer.cert" 2>/dev/null; then
             # Pin the OIDC subject to release.yml on a SemVer tag so any other
             # workflow in this repo cannot produce signatures that pass.
             cosign_identity_re="^https://github\\.com/${REPO}/\\.github/workflows/release\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.\\-]+)?$"
             if cosign verify-blob \
+                --certificate "${TMP}/installer.cert" \
                 --certificate-identity-regexp "${cosign_identity_re}" \
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 --signature "${TMP}/installer.sig" \
@@ -148,11 +151,12 @@ download_installer() {
                 fail "cosign signature doğrulanamadı!"
             fi
         else
-            warn "Signature dosyası yok, atlanıyor"
+            rm -rf "$TMP"
+            fail "Signature/certificate dosyası yok; imzasız installer kurulumu reddedildi"
         fi
     else
-        warn "cosign kurulu değil — signature doğrulaması atlandı"
-        warn "  Production'da kur: https://docs.sigstore.dev/cosign/installation/"
+        rm -rf "$TMP"
+        fail "cosign kurulu değil; signature doğrulaması olmadan installer kurulumu reddedildi"
     fi
 
     install -m 0755 "${TMP}/installer" "$INSTALLER_PATH"

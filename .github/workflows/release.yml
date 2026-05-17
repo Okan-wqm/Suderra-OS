@@ -12,6 +12,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -52,6 +53,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       release_matrix: ${{ steps.matrix.outputs.release_matrix }}
+      release_base_matrix: ${{ steps.matrix.outputs.release_base_matrix }}
+      release_payload_matrix: ${{ steps.matrix.outputs.release_payload_matrix }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -68,10 +71,14 @@ jobs:
         id: matrix
         run: |
           set -euo pipefail
-          echo "release_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector release)" >> "$GITHUB_OUTPUT"
+          {
+            echo "release_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector release)"
+            echo "release_base_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector release_base)"
+            echo "release_payload_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector release_payload)"
+          } >> "$GITHUB_OUTPUT"
 
-  production-readiness:
-    name: Production readiness gate
+  release-readiness:
+    name: Release readiness gate
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -79,15 +86,15 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
-      - name: Enforce GA production readiness
-        run: python3 scripts/ci/validate-build-matrix.py production-readiness --tag "${{ needs.validate.outputs.version }}"
+      - name: Enforce release readiness
+        run: python3 scripts/ci/validate-build-matrix.py candidate-readiness --tag "${{ needs.validate.outputs.version }}"
 
   # =========================================================================
   # Build — Her defconfig için paralel matrix
   # =========================================================================
   build:
     name: Build ${{ matrix.name }}
-    needs: [validate, matrix, production-readiness]
+    needs: [validate, matrix, release-readiness]
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
     env:
@@ -100,7 +107,7 @@ jobs:
       SUDERRA_EXPECTED_KEYS_PROFILE: ci
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
+      matrix: ${{ fromJson(needs.matrix.outputs.release_base_matrix) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -209,6 +216,7 @@ jobs:
             timeout --kill-after=60s "${remaining}s" \
               ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
             python3 scripts/ci/classify-build-warnings.py \
+              --policy ci/build-warning-policy.json \
               --json-output "build-logs/${defconfig}.warnings.json" \
               "${log_path}"
           }
@@ -266,6 +274,14 @@ jobs:
             --defconfig "${{ matrix.defconfig }}" \
             --images-dir "$OUT_DIR"
 
+      - name: Upload image contract artifact for payload builds
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.defconfig }}-image
+          path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Rename for release
         run: |
           set -euo pipefail
@@ -307,12 +323,241 @@ jobs:
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.sig
           retention-days: 7
 
+  build-payload:
+    name: Build payload image ${{ matrix.name }}
+    needs: [validate, matrix, release-readiness, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    env:
+      SUDERRA_CI_STORAGE: /mnt/suderra-os-release/${{ matrix.defconfig }}
+      SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/output
+      SUDERRA_HOST_DL_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/dl
+      SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/ccache
+      SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/keys
+      SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
+      SUDERRA_EXPECTED_KEYS_PROFILE: ci
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.release_payload_matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Prepare CI build storage
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}" "${SUDERRA_HOST_KEYS_DIR}"
+          sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
+          df -h "${SUDERRA_CI_STORAGE}"
+
+      - name: Prepare CI trust roots
+        run: |
+          set -euo pipefail
+          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
+          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
+
+      - name: Compute installer payload metadata
+        id: payload_meta
+        run: |
+          set -euo pipefail
+          commit_epoch="$(git log -1 --format=%ct)"
+          expires_epoch=$((commit_epoch + 18 * 30 * 86400))
+          expires_at="$(date -u -d "@${expires_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
+          echo "commit_epoch=${commit_epoch}" >> "$GITHUB_OUTPUT"
+
+      - name: Build container image
+        env:
+          SUDERRA_RESOURCE_PATH: ${{ env.SUDERRA_CI_STORAGE }}
+          SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
+          SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
+          SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
+        run: |
+          set -euo pipefail
+          ./scripts/ci/check-runner-resources.sh
+          docker_log=$(mktemp)
+          if ! docker build -t suderra-builder ci/ >"${docker_log}" 2>&1; then
+            echo "::error::docker build failed; full log follows"
+            cat "${docker_log}"
+            exit 1
+          fi
+          tail -20 "${docker_log}"
+
+      - name: Verify container trust-root visibility
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            --mount "type=bind,source=${SUDERRA_HOST_KEYS_DIR},target=${SUDERRA_CONTAINER_KEYS_DIR},readonly" \
+            --mount "type=bind,source=${PWD},target=/workspace,readonly" \
+            -e SUDERRA_TRUST_ROOTS_DIR="${SUDERRA_CONTAINER_KEYS_DIR}" \
+            suderra-builder:latest \
+            bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_CONTAINER_KEYS_DIR}" \
+              --expected-profile ci \
+              --require-installer-signing
+
+      - name: Download payload image artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
+        run: |
+          set -euo pipefail
+          mkdir -p payload-artifacts
+          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
+          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
+            [ -n "${prebuild_defconfig}" ] || continue
+            gh run download "${GITHUB_RUN_ID}" \
+              --name "${prebuild_defconfig}-image" \
+              --dir "payload-artifacts/${prebuild_defconfig}-image"
+          done
+
+      - name: Materialize payload image contracts
+        env:
+          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
+        run: |
+          set -euo pipefail
+          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
+          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
+            [ -n "${prebuild_defconfig}" ] || continue
+            artifact_dir="payload-artifacts/${prebuild_defconfig}-image"
+            images_dir="${SUDERRA_HOST_OUTPUT_DIR}/${prebuild_defconfig}/images"
+            if [ ! -d "${artifact_dir}" ]; then
+              echo "::error::Missing upstream payload artifact ${artifact_dir}"
+              exit 1
+            fi
+            mkdir -p "${images_dir}"
+            cp -a "${artifact_dir}/." "${images_dir}/"
+            python3 scripts/ci/validate-build-matrix.py verify-artifacts \
+              --defconfig "${prebuild_defconfig}" \
+              --images-dir "${images_dir}"
+          done
+
+      - name: Build image (payload packaging run)
+        env:
+          MATRIX_PAYLOAD_IMAGE_EXPORTS: ${{ matrix.payload_image_exports }}
+          MATRIX_SIGNING: ${{ matrix.signing }}
+          MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
+          SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT: ${{ steps.payload_meta.outputs.expires_at }}
+          SUDERRA_INSTALLER_KEY_EPOCH: "1"
+          SOURCE_DATE_EPOCH: ${{ steps.payload_meta.outputs.commit_epoch }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-logs
+          build_deadline=$((SECONDS + MATRIX_BUILD_STEP_TIMEOUT_MINUTES * 60))
+          build_and_check() {
+            local defconfig="$1"
+            local log_path="build-logs/${defconfig}.log"
+            local remaining=$((build_deadline - SECONDS))
+            if [ "${remaining}" -le 0 ]; then
+              echo "::error::Build step timeout budget exhausted before ${defconfig}"
+              exit 124
+            fi
+            timeout --kill-after=60s "${remaining}s" \
+              ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
+            python3 scripts/ci/classify-build-warnings.py \
+              --policy ci/build-warning-policy.json \
+              --json-output "build-logs/${defconfig}.warnings.json" \
+              "${log_path}"
+          }
+          prepare_payload_signing_keys() {
+            if [ "${MATRIX_SIGNING}" != "payload-ed25519-required" ]; then
+              return 0
+            fi
+            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.key"
+            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.ed25519.pub"
+            export SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE=ci
+          }
+          export_payload_images() {
+            local payload_exports=()
+            local entry env_name source_spec source_defconfig artifact host_image_path container_image_path
+            read -r -a payload_exports <<< "${MATRIX_PAYLOAD_IMAGE_EXPORTS}"
+            for entry in "${payload_exports[@]}"; do
+              [ -n "${entry}" ] || continue
+              env_name="${entry%%=*}"
+              source_spec="${entry#*=}"
+              source_defconfig="${source_spec%%:*}"
+              artifact="${source_spec#*:}"
+              host_image_path="${SUDERRA_HOST_OUTPUT_DIR}/${source_defconfig}/images/${artifact}"
+              container_image_path="/workspace/output/${source_defconfig}/images/${artifact}"
+              if [ ! -f "${host_image_path}" ]; then
+                echo "::error::Payload image contract missing ${host_image_path}"
+                exit 1
+              fi
+              export "${env_name}=${container_image_path}"
+            done
+          }
+          prepare_payload_signing_keys
+          export_payload_images
+          build_and_check "${{ matrix.defconfig }}"
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.defconfig }}-build-logs
+          path: build-logs/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Verify build artifacts
+        run: |
+          set -euo pipefail
+          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
+          ls -lh "$OUT_DIR/"
+          python3 scripts/ci/validate-build-matrix.py verify-artifacts \
+            --defconfig "${{ matrix.defconfig }}" \
+            --images-dir "$OUT_DIR"
+
+      - name: Rename for release
+        run: |
+          set -euo pipefail
+          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
+          BASE="${{ matrix.release }}"
+          src_xz="$OUT_DIR/${{ matrix.artifact }}.xz"
+          dst_xz="$OUT_DIR/${BASE}.xz"
+          src_raw="$OUT_DIR/${{ matrix.artifact }}"
+          dst_raw="$OUT_DIR/${BASE}"
+          if [ "$src_xz" != "$dst_xz" ]; then
+            mv "$src_xz" "$dst_xz"
+          fi
+          if [ -f "$src_raw" ] && [ "$src_raw" != "$dst_raw" ]; then
+            mv "$src_raw" "$dst_raw"
+          fi
+          if [ -f "$OUT_DIR/MANIFEST.txt" ]; then
+            mv "$OUT_DIR/MANIFEST.txt" "$OUT_DIR/${BASE}.manifest.txt"
+          fi
+          CONTROL_BASE="${BASE%.img}"
+          if [ -f "$OUT_DIR/manifest.json" ]; then
+            mv "$OUT_DIR/manifest.json" "$OUT_DIR/${CONTROL_BASE}.payload-manifest.json"
+          fi
+          if [ -f "$OUT_DIR/manifest.sig" ]; then
+            mv "$OUT_DIR/manifest.sig" "$OUT_DIR/${CONTROL_BASE}.payload-manifest.sig"
+          fi
+          ( cd "$OUT_DIR" && sha256sum "${BASE}.xz" > "${BASE}.xz.sha256" )
+          ls -lh "$OUT_DIR/"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.name }}
+          path: |
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.img.xz
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.sha256
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.manifest.txt
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.json
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.sig
+          retention-days: 7
+
   # =========================================================================
   # Build suderra-installer binary (multi-arch)
   # =========================================================================
   build-installer:
     name: Build suderra-installer (${{ matrix.arch }})
-    needs: [validate, production-readiness]
+    needs: [validate, release-readiness]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -378,7 +623,7 @@ jobs:
   # =========================================================================
   sbom:
     name: SBOM generation
-    needs: [validate, build]
+    needs: [validate, build, build-payload]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -436,7 +681,7 @@ jobs:
 
   release-evidence:
     name: Release evidence gate (${{ matrix.name }})
-    needs: [validate, matrix, build, build-installer, sbom]
+    needs: [validate, matrix, build, build-payload, build-installer, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
@@ -450,12 +695,17 @@ jobs:
       - name: Validate release evidence bundle
         run: |
           set -euo pipefail
+          tier="production"
+          case "${{ needs.validate.outputs.version }}" in
+            *-*) tier="alpha" ;;
+          esac
           evidence="release-evidence/${{ needs.validate.outputs.version }}/${{ matrix.target }}/evidence.json"
           if [ ! -f "${evidence}" ]; then
             echo "::error::Missing release evidence: ${evidence}"
             exit 1
           fi
           python3 scripts/evidence/release-evidence.py validate "${evidence}" \
+            --release-tier "${tier}" \
             --require-pass \
             --check-files
 
@@ -464,12 +714,13 @@ jobs:
   # =========================================================================
   release:
     name: Sign + Publish release
-    needs: [validate, build, build-installer, sbom, release-evidence]
+    needs: [validate, build, build-payload, build-installer, sbom, release-evidence]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: release-publish
     permissions:
+      actions: read
       contents: write
       id-token: write       # Sigstore keyless
       attestations: write
@@ -672,18 +923,28 @@ jobs:
           body: |
             # Suderra OS ${{ needs.validate.outputs.version }}
 
-            > Sertleştirilmiş, immutable, OTA-güncellenebilir Linux tabanlı
-            > endüstriyel edge işletim sistemi.
+            > Candidate/pre-release artifact'leri lab validation içindir.
+            > Production-ready claim yalnızca production evidence ve
+            > production-readiness gate geçtiğinde yapılır.
 
             ## Kurulum
 
             ```bash
             # Raspberry Pi 4 / CM4:
             BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}"
-            curl -fsSL "${BASE_URL}/suderra-rpi4-target.img.xz" -o sdcard.img.xz
-            curl -fsSL "${BASE_URL}/suderra-rpi4-target.img.xz.sha256" -o sdcard.img.xz.sha256
-            sha256sum -c sdcard.img.xz.sha256
-            sudo ./scripts/flash-sd.sh /dev/sdX sdcard.img.xz
+            curl -fsSLO "${BASE_URL}/suderra-rpi4-target.img.xz"
+            curl -fsSLO "${BASE_URL}/suderra-rpi4-target.img.xz.sha256"
+            sha256sum -c suderra-rpi4-target.img.xz.sha256
+            sudo ./scripts/flash-sd.sh /dev/sdX suderra-rpi4-target.img.xz
+            ```
+
+            ```bash
+            # Pi 4 / CM4 / RevPi USB self-installer:
+            BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}"
+            curl -fsSLO "${BASE_URL}/suderra-pi-cm4-revpi-usb-installer.img.xz"
+            curl -fsSLO "${BASE_URL}/suderra-pi-cm4-revpi-usb-installer.img.xz.sha256"
+            sha256sum -c suderra-pi-cm4-revpi-usb-installer.img.xz.sha256
+            sudo ./scripts/flash-sd.sh /dev/sdX suderra-pi-cm4-revpi-usb-installer.img.xz
             ```
 
             ## Doğrulama (cosign keyless)
@@ -706,7 +967,10 @@ jobs:
             sudo suderra-installer install edge
             ```
 
-            Detaylar: [docs/operations/install.md](docs/operations/install.md)
+            Detaylar:
+            - [docs/operations/install.md](docs/operations/install.md)
+            - [docs/operations/usb-installer-alpha-validation.md](docs/operations/usb-installer-alpha-validation.md)
+            - [docs/operations/release-lifecycle.md](docs/operations/release-lifecycle.md)
 
             ## Artifacts
 

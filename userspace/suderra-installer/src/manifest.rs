@@ -19,7 +19,7 @@
 //!       "min_os_version": "0.1.0"
 //!     }
 //!   ],
-//!   "changelog_url": "https://github.com/Okan-wqm/suderra-os/releases/tag/v1.6.0",
+//!   "changelog_url": "https://github.com/Okan-wqm/Suderra-OS/releases/tag/v1.6.0",
 //!   "sbom_url": "https://.../sbom.cyclonedx.json"
 //! }
 //! ```

@@ -45,9 +45,13 @@ jobs:
             --skip-dirs buildroot,output,dl \
             --exit-code 1 \
             .
+      - name: Validate SARIF
+        id: validate_trivy_fs_sarif
+        if: always() && hashFiles('trivy-fs.sarif') != ''
+        run: python3 scripts/ci/validate-sarif.py trivy-fs.sarif
 
       - name: Upload SARIF
-        if: always() && hashFiles('trivy-fs.sarif') != ''
+        if: always() && steps.validate_trivy_fs_sarif.outcome == 'success'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-fs.sarif'
@@ -83,9 +87,13 @@ jobs:
             --severity CRITICAL,HIGH,MEDIUM \
             --exit-code 1 \
             .
+      - name: Validate SARIF
+        id: validate_trivy_config_sarif
+        if: always() && hashFiles('trivy-config.sarif') != ''
+        run: python3 scripts/ci/validate-sarif.py trivy-config.sarif
 
       - name: Upload SARIF
-        if: always() && hashFiles('trivy-config.sarif') != ''
+        if: always() && steps.validate_trivy_config_sarif.outcome == 'success'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-config.sarif'
@@ -127,8 +135,12 @@ jobs:
             --file results.sarif \
             --fail-on high \
             --only-fixed
-      - name: Upload SARIF
+      - name: Validate SARIF
+        id: validate_grype_sarif
         if: always() && hashFiles('results.sarif') != ''
+        run: python3 scripts/ci/validate-sarif.py results.sarif
+      - name: Upload SARIF
+        if: always() && steps.validate_grype_sarif.outcome == 'success'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
