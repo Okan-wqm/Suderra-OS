@@ -32,9 +32,11 @@ jobs:
         id: matrix
         run: |
           set -euo pipefail
-          echo "build_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build_base)" >> "$GITHUB_OUTPUT"
-          echo "payload_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build_payload)" >> "$GITHUB_OUTPUT"
-          echo "qemu_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector qemu_test)" >> "$GITHUB_OUTPUT"
+          {
+            echo "build_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build_base)"
+            echo "payload_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build_payload)"
+            echo "qemu_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector qemu_test)"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.name }}
