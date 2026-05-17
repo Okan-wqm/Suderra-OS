@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -30,6 +32,44 @@ FAIL_PATTERNS = {
         r"(Out of memory|oom-kill|Failed to start|Dependency failed|You are in emergency mode)"
     ),
 }
+OVMF_CODE_CANDIDATES = (
+    "/usr/share/OVMF/OVMF_CODE_4M.fd",
+    "/usr/share/OVMF/OVMF_CODE.fd",
+    "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd",
+    "/usr/share/OVMF/OVMF_CODE.secboot.fd",
+    "/usr/share/qemu/edk2-x86_64-code.fd",
+    "/usr/share/qemu/OVMF.fd",
+    "/usr/share/ovmf/OVMF.fd",
+    "/usr/share/edk2/ovmf/OVMF_CODE.fd",
+    "/usr/share/edk2/ovmf/OVMF_CODE.secboot.fd",
+    "/usr/share/edk2/x64/OVMF_CODE.fd",
+    "/usr/share/edk2/x64/OVMF_CODE.4m.fd",
+    "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd",
+    "/usr/share/edk2-ovmf/x64/OVMF_CODE_4M.fd",
+)
+OVMF_SEARCH_ROOTS = (
+    Path("/usr/share/OVMF"),
+    Path("/usr/share/ovmf"),
+    Path("/usr/share/qemu"),
+    Path("/usr/share/edk2"),
+    Path("/usr/share/edk2-ovmf"),
+)
+
+
+@dataclass(frozen=True)
+class FirmwareConfig:
+    mode: str
+    code: Path
+    vars_template: Path | None
+    vars_runtime: Path | None
+
+    def evidence(self) -> dict[str, str | None]:
+        return {
+            "mode": self.mode,
+            "code": str(self.code),
+            "vars_template": str(self.vars_template) if self.vars_template else None,
+            "vars_runtime": str(self.vars_runtime) if self.vars_runtime else None,
+        }
 
 
 def now_utc() -> str:
@@ -104,7 +144,140 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def launch_qemu(args: argparse.Namespace, qmp_socket: Path, serial_log: Path, stdout_log: Path, stderr_log: Path):
+def evaluate(serial: str) -> tuple[dict[str, bool], dict[str, bool]]:
+    passed = {name: bool(pattern.search(serial)) for name, pattern in PASS_PATTERNS.items()}
+    failed = {name: bool(pattern.search(serial)) for name, pattern in FAIL_PATTERNS.items()}
+    return passed, failed
+
+
+def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
+    path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def is_ovmf_code_split(path: Path) -> bool:
+    name = path.name.lower()
+    return "code" in name or name.startswith("edk2-x86_64-code")
+
+
+def sibling_vars_candidates(code: Path) -> list[Path]:
+    name = code.name
+    replacements = (
+        ("CODE_4M.secboot", "VARS_4M"),
+        ("CODE_4M", "VARS_4M"),
+        ("CODE.secboot", "VARS"),
+        ("CODE", "VARS"),
+        ("code", "vars"),
+    )
+    candidates: list[Path] = []
+    for old, new in replacements:
+        if old in name:
+            candidates.append(code.with_name(name.replace(old, new)))
+    candidates.extend(
+        candidate
+        for pattern in ("*VARS*.fd", "*vars*.fd", "*-vars.fd")
+        for candidate in sorted(code.parent.glob(pattern))
+    )
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        lowered = candidate.name.lower()
+        if any(token in lowered for token in ("ia32", "arm", "aarch64", "riscv")):
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique.append(candidate)
+    return unique
+
+
+def find_ovmf_code() -> Path | None:
+    for candidate in (Path(item) for item in OVMF_CODE_CANDIDATES):
+        if candidate.is_file():
+            return candidate
+
+    candidates: list[Path] = []
+    for root in OVMF_SEARCH_ROOTS:
+        if not root.exists():
+            continue
+        for pattern in ("OVMF_CODE*.fd", "OVMF.fd", "edk2-x86_64-code*.fd"):
+            candidates.extend(root.glob(f"**/{pattern}"))
+
+    for candidate in sorted(candidates):
+        lowered = candidate.name.lower()
+        if any(token in lowered for token in ("vars", "ia32", "arm", "aarch64", "riscv")):
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def find_ovmf_vars(code: Path) -> Path | None:
+    for candidate in sibling_vars_candidates(code):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def copy_vars_template(vars_template: Path, prefix: Path) -> Path:
+    vars_runtime = prefix.with_suffix(".ovmf-vars.fd")
+    shutil.copyfile(vars_template, vars_runtime)
+    vars_runtime.chmod(0o600)
+    return vars_runtime
+
+
+def resolve_ovmf_firmware(args: argparse.Namespace, prefix: Path) -> FirmwareConfig:
+    requested = str(args.ovmf)
+    code = find_ovmf_code() if requested == "auto" else args.ovmf
+    if code is None or not code.is_file():
+        raise FileNotFoundError(f"OVMF firmware not found: {requested}")
+
+    if args.ovmf_mode == "auto":
+        mode = "pflash" if is_ovmf_code_split(code) else "bios"
+    else:
+        mode = args.ovmf_mode
+
+    if mode == "bios":
+        return FirmwareConfig(mode=mode, code=code, vars_template=None, vars_runtime=None)
+
+    vars_template = args.ovmf_vars or (Path(os.environ["OVMF_VARS"]) if os.environ.get("OVMF_VARS") else None)
+    if vars_template is None:
+        vars_template = find_ovmf_vars(code)
+    if vars_template is None or not vars_template.is_file():
+        raise FileNotFoundError(
+            "OVMF pflash variables template not found for "
+            f"{code}; set OVMF_VARS=/path/to/OVMF_VARS.fd"
+        )
+
+    return FirmwareConfig(
+        mode=mode,
+        code=code,
+        vars_template=vars_template,
+        vars_runtime=copy_vars_template(vars_template, prefix),
+    )
+
+
+def firmware_qemu_args(firmware: FirmwareConfig) -> list[str]:
+    if firmware.mode == "bios":
+        return ["-bios", str(firmware.code)]
+    if firmware.vars_runtime is None:
+        raise ValueError("pflash firmware requires a runtime vars store")
+    return [
+        "-drive",
+        f"if=pflash,format=raw,unit=0,readonly=on,file={firmware.code}",
+        "-drive",
+        f"if=pflash,format=raw,unit=1,file={firmware.vars_runtime}",
+    ]
+
+
+def launch_qemu(
+    args: argparse.Namespace,
+    firmware: FirmwareConfig,
+    qmp_socket: Path,
+    serial_log: Path,
+    stdout_log: Path,
+    stderr_log: Path,
+):
     qemu_args = [
         "qemu-system-x86_64",
         "-machine",
@@ -128,8 +301,7 @@ def launch_qemu(args: argparse.Namespace, qmp_socket: Path, serial_log: Path, st
         "-no-reboot",
         "-fw_cfg",
         "name=opt/org.tianocore/X-Cpuhp-Bugcheck-Override,string=yes",
-        "-bios",
-        str(args.ovmf),
+        *firmware_qemu_args(firmware),
         "-qmp",
         f"unix:{qmp_socket},server=on,wait=off",
     ]
@@ -142,16 +314,6 @@ def launch_qemu(args: argparse.Namespace, qmp_socket: Path, serial_log: Path, st
         stderr_handle.close()
         raise
     return process, stdout_handle, stderr_handle, qemu_args
-
-
-def evaluate(serial: str) -> tuple[dict[str, bool], dict[str, bool]]:
-    passed = {name: bool(pattern.search(serial)) for name, pattern in PASS_PATTERNS.items()}
-    failed = {name: bool(pattern.search(serial)) for name, pattern in FAIL_PATTERNS.items()}
-    return passed, failed
-
-
-def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
-    path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -180,10 +342,12 @@ def run(args: argparse.Namespace) -> int:
     start = now_utc()
     qemu_args: list[str] = []
     error: str | None = None
+    firmware: FirmwareConfig | None = None
 
     try:
+        firmware = resolve_ovmf_firmware(args, prefix)
         process, stdout_handle, stderr_handle, qemu_args = launch_qemu(
-            args, qmp_socket, serial_log, stdout_log, stderr_log
+            args, firmware, qmp_socket, serial_log, stdout_log, stderr_log
         )
         qmp_sock, qmp_events = qmp_connect(qmp_socket, min(args.timeout, 30))
         deadline = time.monotonic() + args.timeout
@@ -241,7 +405,8 @@ def run(args: argparse.Namespace) -> int:
         "started_at": start,
         "completed_at": now_utc(),
         "image": str(args.image),
-        "ovmf": str(args.ovmf),
+        "ovmf": str(firmware.code if firmware else args.ovmf),
+        "firmware": firmware.evidence() if firmware else {"requested": str(args.ovmf), "mode": args.ovmf_mode},
         "timeout_seconds": args.timeout,
         "qemu_exit_status": qemu_status,
         "qemu_args": qemu_args,
@@ -286,7 +451,9 @@ def run(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", type=Path, required=True)
-    parser.add_argument("--ovmf", type=Path, required=True)
+    parser.add_argument("--ovmf", type=Path, default=Path("auto"))
+    parser.add_argument("--ovmf-vars", type=Path)
+    parser.add_argument("--ovmf-mode", choices=("auto", "bios", "pflash"), default="auto")
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--memory", default="256M")
@@ -296,8 +463,11 @@ def main() -> int:
     if not args.image.is_file():
         print(f"ERROR: image not found: {args.image}", file=sys.stderr)
         return 2
-    if not args.ovmf.is_file():
+    if str(args.ovmf) != "auto" and not args.ovmf.is_file():
         print(f"ERROR: OVMF not found: {args.ovmf}", file=sys.stderr)
+        return 2
+    if args.ovmf_vars is not None and not args.ovmf_vars.is_file():
+        print(f"ERROR: OVMF vars template not found: {args.ovmf_vars}", file=sys.stderr)
         return 2
     if args.timeout < 1:
         print("ERROR: timeout must be positive", file=sys.stderr)
