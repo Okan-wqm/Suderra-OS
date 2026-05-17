@@ -83,6 +83,7 @@ echo "    Variant: ${SUDERRA_OS_VARIANT}"
 # 1. genimage config seçimi — defconfig'e göre dispatch
 GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
+GRUB_CFG=""
 
 prepare_rpi4_installer_payload() {
     # CI/release pipelines export these explicitly via MATRIX_PAYLOAD_IMAGE_EXPORTS.
@@ -188,10 +189,12 @@ case "${DEFCONFIG_NAME}" in
     suderra_qemu_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage-qemu.cfg"
         IMAGE_OUTPUT_NAME="disk.img"
+        GRUB_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/grub-qemu.cfg"
         ;;
     suderra_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage.cfg"
         IMAGE_OUTPUT_NAME="disk.img"
+        GRUB_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/grub.cfg"
         ;;
     suderra_aarch64_rpi4*)
         if [ "${DEFCONFIG_NAME}" = "suderra_aarch64_rpi4_usb_installer" ]; then
@@ -220,6 +223,15 @@ esac
 if [ ! -f "${GENIMAGE_CFG}" ]; then
     echo "ERROR: genimage.cfg yok: ${GENIMAGE_CFG}"
     exit 1
+fi
+
+if [ -n "${GRUB_CFG}" ]; then
+    if [ ! -f "${GRUB_CFG}" ]; then
+        echo "ERROR: GRUB config yok: ${GRUB_CFG}"
+        exit 1
+    fi
+    echo "==> GRUB boot contract kuruluyor: $(basename "${GRUB_CFG}")"
+    install -D -m 0644 "${GRUB_CFG}" "${BINARIES_DIR}/efi-part/EFI/BOOT/grub.cfg"
 fi
 
 # genimage host tool'u Buildroot'ta otomatik kurulur (BR2_PACKAGE_HOST_GENIMAGE)

@@ -9,6 +9,8 @@ SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 HARNESS="${PROJECT_ROOT}/tests/qemu/qmp-acceptance.py"
 BOOT_TEST="${PROJECT_ROOT}/tests/qemu/boot-test.sh"
+POST_IMAGE="${PROJECT_ROOT}/board/suderra/common/post-image.sh"
+QEMU_GRUB="${PROJECT_ROOT}/board/suderra/x86_64/grub-qemu.cfg"
 
 python3 -m py_compile "${HARNESS}"
 "${HARNESS}" --help >/dev/null
@@ -62,5 +64,21 @@ if ! grep -q 'qmp-acceptance.py' "${BOOT_TEST}"; then
 fi
 if grep -q 'timeout "${TIMEOUT}" qemu-system-x86_64' "${BOOT_TEST}"; then
     echo "ERROR: boot-test.sh still uses direct timeout/grep smoke execution" >&2
+    exit 1
+fi
+if ! grep -q 'linux /bzImage' "${QEMU_GRUB}"; then
+    echo "ERROR: QEMU GRUB config must boot the kernel path exported into the EFI partition" >&2
+    exit 1
+fi
+if grep -q '/boot/bzImage' "${QEMU_GRUB}"; then
+    echo "ERROR: QEMU GRUB config must not use the rootfs /boot path for the EFI kernel" >&2
+    exit 1
+fi
+if grep -q '^#' "${QEMU_GRUB}"; then
+    echo "ERROR: QEMU GRUB runtime config must avoid comment commands in serial boot evidence" >&2
+    exit 1
+fi
+if ! grep -q 'efi-part/EFI/BOOT/grub.cfg' "${POST_IMAGE}"; then
+    echo "ERROR: post-image.sh must install the authoritative GRUB config into the EFI image tree" >&2
     exit 1
 fi
