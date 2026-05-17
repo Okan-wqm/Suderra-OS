@@ -84,6 +84,7 @@ echo "    Variant: ${SUDERRA_OS_VARIANT}"
 GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
 GRUB_CFG=""
+GENIMAGE_ROOTPATH="${TARGET_DIR:-${BINARIES_DIR}/../target}"
 
 prepare_rpi4_installer_payload() {
     # CI/release pipelines export these explicitly via MATRIX_PAYLOAD_IMAGE_EXPORTS.
@@ -183,6 +184,19 @@ PY
         -sigfile "${BINARIES_DIR}/manifest.sig" \
         -in "${BINARIES_DIR}/manifest.canonical"
     rm -f "${BINARIES_DIR}/manifest.canonical"
+
+    payload_root="${BINARIES_DIR}/installer-payload-root"
+    rm -rf "${payload_root}"
+    install -d -m 0755 "${payload_root}"
+    for payload_file in \
+        suderra-rpi4-target.img.xz \
+        suderra-revpi4-target.img.xz \
+        manifest.json \
+        manifest.sig
+    do
+        ln -f "${BINARIES_DIR}/${payload_file}" "${payload_root}/${payload_file}"
+    done
+    GENIMAGE_ROOTPATH="${payload_root}"
 }
 
 case "${DEFCONFIG_NAME}" in
@@ -241,7 +255,7 @@ rm -rf "${GENIMAGE_TMP}"
 echo "==> genimage çağrılıyor: $(basename "${GENIMAGE_CFG}")"
 genimage \
     --config "${GENIMAGE_CFG}" \
-    --rootpath "${TARGET_DIR:-${BINARIES_DIR}/../target}" \
+    --rootpath "${GENIMAGE_ROOTPATH}" \
     --inputpath "${BINARIES_DIR}" \
     --outputpath "${BINARIES_DIR}" \
     --tmppath "${GENIMAGE_TMP}"
