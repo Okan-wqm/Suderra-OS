@@ -57,6 +57,12 @@ TARGET_FIELDS = {
 VALID_ARCHES = {"x86_64", "aarch64"}
 VALID_TABLES = {"gpt", "mbr"}
 SAFE_ARTIFACT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+GENIMAGE_LABEL_LIMITS = {
+    "vfat": 11,
+    "ext2": 16,
+    "ext3": 16,
+    "ext4": 16,
+}
 
 
 def strip_comment(line: str) -> str:
@@ -202,6 +208,94 @@ def post_script_args(config: str) -> str | None:
     return match.group(1) if match else None
 
 
+def display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def genimage_label_errors(name: str, path: Path, text: str) -> list[str]:
+    errors: list[str] = []
+    block_stack: list[str | None] = []
+
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = strip_comment(raw).strip()
+        if not line:
+            continue
+
+        if re.fullmatch(r"}\s*", line):
+            if block_stack:
+                block_stack.pop()
+            continue
+
+        block_match = re.fullmatch(
+            r"([A-Za-z0-9_.-]+)(?:\s+[A-Za-z0-9_.-]+)?\s*\{",
+            line,
+        )
+        if block_match:
+            block_kind = block_match.group(1)
+            block_stack.append(block_kind if block_kind in GENIMAGE_LABEL_LIMITS else None)
+            continue
+
+        label_match = re.fullmatch(r"""label\s*=\s*["']([^"']*)["']""", line)
+        if not label_match:
+            continue
+
+        filesystem = next((block for block in reversed(block_stack) if block), None)
+        if not filesystem:
+            continue
+
+        label = label_match.group(1)
+        limit = GENIMAGE_LABEL_LIMITS[filesystem]
+        if len(label) > limit:
+            errors.append(
+                f"{name}: genimage {display_path(path)}:{lineno} "
+                f"{filesystem} label {label!r} is {len(label)} characters; max is {limit}"
+            )
+
+    return errors
+
+
+def genimage_partition_table_errors(
+    name: str,
+    expected: str,
+    path: Path,
+    text: str,
+) -> list[str]:
+    errors: list[str] = []
+    matches = [
+        (lineno, match.group(1))
+        for lineno, line in enumerate(text.splitlines(), start=1)
+        if (
+            match := re.search(
+                r"""^\s*partition-table-type\s*=\s*["']([^"']+)["']""",
+                line,
+            )
+        )
+    ]
+
+    if not matches:
+        return [
+            f"{name}: genimage {display_path(path)} "
+            f"must declare partition-table-type={expected!r}"
+        ]
+
+    for lineno, actual in matches:
+        if actual not in VALID_TABLES:
+            errors.append(
+                f"{name}: genimage {display_path(path)}:{lineno} uses unsupported "
+                f"partition-table-type {actual!r}; expected one of {sorted(VALID_TABLES)}"
+            )
+        elif actual != expected:
+            errors.append(
+                f"{name}: genimage {display_path(path)}:{lineno} partition-table-type "
+                f"{actual!r} does not match matrix partition_table {expected!r}"
+            )
+
+    return errors
+
+
 def validate(strict_production_variant: bool = False) -> int:
     matrix = load_matrix()
     errors: list[str] = []
@@ -317,10 +411,21 @@ def validate(strict_production_variant: bool = False) -> int:
         genimage_path = ROOT / str(target["genimage"])
         if not genimage_path.is_file():
             errors.append(f"{name}: missing genimage contract {target['genimage']}")
-        elif re.search(r"^\s*partition-label\s*=", genimage_path.read_text(encoding="utf-8"), re.MULTILINE):
-            errors.append(
-                f"{name}: genimage {target['genimage']} uses unsupported partition-label; "
-                "GPT labels come from partition section names"
+        else:
+            genimage_contract = genimage_path.read_text(encoding="utf-8")
+            if re.search(r"^\s*partition-label\s*=", genimage_contract, re.MULTILINE):
+                errors.append(
+                    f"{name}: genimage {target['genimage']} uses unsupported partition-label; "
+                    "GPT labels come from partition section names"
+                )
+            errors.extend(genimage_label_errors(name, genimage_path, genimage_contract))
+            errors.extend(
+                genimage_partition_table_errors(
+                    name,
+                    str(target["partition_table"]),
+                    genimage_path,
+                    genimage_contract,
+                )
             )
 
         config = read_config(name)
