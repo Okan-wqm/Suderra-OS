@@ -56,6 +56,13 @@ TARGET_FIELDS = {
 
 VALID_ARCHES = {"x86_64", "aarch64"}
 VALID_TABLES = {"gpt", "mbr"}
+BOOLEAN_SELECTORS = {"ci_build", "qemu_test", "release", "production_required"}
+MATRIX_SELECTORS = BOOLEAN_SELECTORS | {
+    "ci_build_base",
+    "ci_build_payload",
+    "release_base",
+    "release_payload",
+}
 SAFE_ARTIFACT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 GENIMAGE_LABEL_LIMITS = {
     "vfat": 11,
@@ -496,11 +503,26 @@ def validate(strict_production_variant: bool = False) -> int:
     return 0
 
 
+def target_matches_selector(target: dict[str, Any], selector: str) -> bool:
+    prebuilds = list_field(target, "prebuild_defconfigs")
+    if selector in BOOLEAN_SELECTORS:
+        return bool(target.get(selector, False))
+    if selector == "ci_build_base":
+        return bool(target.get("ci_build", False)) and not prebuilds
+    if selector == "ci_build_payload":
+        return bool(target.get("ci_build", False)) and bool(prebuilds)
+    if selector == "release_base":
+        return bool(target.get("release", False)) and not prebuilds
+    if selector == "release_payload":
+        return bool(target.get("release", False)) and bool(prebuilds)
+    raise ValueError(f"unsupported selector: {selector}")
+
+
 def github_matrix(selector: str) -> int:
     matrix = load_matrix()
     include = []
     for target in matrix["defconfigs"]:
-        if not bool(target.get(selector, False)):
+        if not target_matches_selector(target, selector):
             continue
         release_artifact = str(target["release_artifact"])
         release_base = release_artifact[:-3] if release_artifact.endswith(".xz") else release_artifact
@@ -652,7 +674,7 @@ def main() -> int:
     matrix_parser = subparsers.add_parser("github-matrix")
     matrix_parser.add_argument(
         "--selector",
-        choices=("ci_build", "qemu_test", "release", "production_required"),
+        choices=sorted(MATRIX_SELECTORS),
         required=True,
     )
 

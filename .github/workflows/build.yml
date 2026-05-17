@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -21,6 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       build_matrix: ${{ steps.matrix.outputs.build_matrix }}
+      payload_matrix: ${{ steps.matrix.outputs.payload_matrix }}
       qemu_matrix: ${{ steps.matrix.outputs.qemu_matrix }}
     steps:
       - uses: actions/checkout@v6
@@ -30,7 +32,8 @@ jobs:
         id: matrix
         run: |
           set -euo pipefail
-          echo "build_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build)" >> "$GITHUB_OUTPUT"
+          echo "build_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build_base)" >> "$GITHUB_OUTPUT"
+          echo "payload_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector ci_build_payload)" >> "$GITHUB_OUTPUT"
           echo "qemu_matrix=$(python3 scripts/ci/validate-build-matrix.py github-matrix --selector qemu_test)" >> "$GITHUB_OUTPUT"
 
   build:
@@ -243,6 +246,265 @@ jobs:
             echo "::error::Defconfig ${{ matrix.defconfig }} missing or empty"
             exit 1
           fi
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.defconfig }}-build-logs
+          path: build-logs/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Verify image contract artifact
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/validate-build-matrix.py verify-artifacts \
+            --defconfig "${{ matrix.defconfig }}" \
+            --images-dir "${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
+
+      - name: Upload image artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.defconfig }}-image
+          path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
+          retention-days: 30
+          if-no-files-found: error
+
+  build-payload:
+    name: Build payload image ${{ matrix.name }}
+    needs: [matrix, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    env:
+      SUDERRA_CI_STORAGE: /mnt/suderra-os/${{ matrix.defconfig }}
+      SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/output
+      SUDERRA_HOST_DL_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/dl
+      SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/ccache
+      SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/keys
+      SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
+      SUDERRA_EXPECTED_KEYS_PROFILE: ci
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.payload_matrix) }}
+    steps:
+      - name: Show runner environment
+        run: |
+          set -euo pipefail
+          set -x
+          uname -a
+          df -h
+          free -h
+          docker --version
+          ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Prepare CI build storage
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}" "${SUDERRA_HOST_KEYS_DIR}"
+          sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
+          df -h "${SUDERRA_CI_STORAGE}"
+
+      - name: Prepare CI trust roots
+        run: |
+          set -euo pipefail
+          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
+          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
+
+      - name: Verify submodule pin matches index SHA
+        id: br
+        run: |
+          set -euo pipefail
+          expected_sha="$(git ls-tree HEAD buildroot | awk '{print $3}')"
+          actual_sha="$(git -C buildroot rev-parse HEAD)"
+          if [ "${expected_sha}" != "${actual_sha}" ]; then
+            echo "::error::Buildroot submodule SHA drift detected"
+            echo "  expected (index): ${expected_sha}"
+            echo "  actual (checkout): ${actual_sha}"
+            exit 1
+          fi
+          echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
+          echo "Buildroot pinned at ${expected_sha}"
+
+      - name: Compute installer payload metadata
+        id: payload_meta
+        run: |
+          set -euo pipefail
+          commit_epoch="$(git log -1 --format=%ct)"
+          expires_epoch=$((commit_epoch + 18 * 30 * 86400))
+          expires_at="$(date -u -d "@${expires_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
+          echo "commit_epoch=${commit_epoch}" >> "$GITHUB_OUTPUT"
+          echo "Installer payload expires_at: ${expires_at}"
+          echo "SOURCE_DATE_EPOCH: ${commit_epoch}"
+
+      - name: Check runner resource contract
+        env:
+          SUDERRA_RESOURCE_PATH: ${{ env.SUDERRA_CI_STORAGE }}
+          SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
+          SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
+          SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
+        run: ./scripts/ci/check-runner-resources.sh
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.SUDERRA_HOST_DL_DIR }}
+          key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.SUDERRA_HOST_CCACHE_DIR }}
+          key: ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-
+            ccache-${{ matrix.defconfig }}-
+
+      - name: Verify submodule + paths
+        run: |
+          set -euo pipefail
+          set -x
+          ls -la
+          git submodule status
+          find buildroot -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -10
+          find configs -maxdepth 1 -type f -printf '%f\n' | sort
+          head -5 "configs/${{ matrix.defconfig }}"
+
+      - name: Build container
+        run: |
+          set -euo pipefail
+          set -x
+          docker_log=$(mktemp)
+          if ! docker build -t suderra-builder ci/ >"${docker_log}" 2>&1; then
+            echo "::error::docker build failed; full log follows"
+            cat "${docker_log}"
+            exit 1
+          fi
+          tail -20 "${docker_log}"
+
+      - name: Verify container trust-root visibility
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            --mount "type=bind,source=${SUDERRA_HOST_KEYS_DIR},target=${SUDERRA_CONTAINER_KEYS_DIR},readonly" \
+            --mount "type=bind,source=${PWD},target=/workspace,readonly" \
+            -e SUDERRA_TRUST_ROOTS_DIR="${SUDERRA_CONTAINER_KEYS_DIR}" \
+            suderra-builder:latest \
+            bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_CONTAINER_KEYS_DIR}" \
+              --expected-profile ci \
+              --require-installer-signing
+
+      - name: Buildroot defconfig parse (smoke test)
+        run: |
+          set -euo pipefail
+          set -x
+          make -C buildroot \
+            BR2_EXTERNAL="$(pwd)" \
+            O="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}" \
+            "${{ matrix.defconfig }}" 2>&1 | tail -30
+
+      - name: Download payload image artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
+        run: |
+          set -euo pipefail
+          set -x
+          mkdir -p payload-artifacts
+          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
+          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
+            [ -n "${prebuild_defconfig}" ] || continue
+            gh run download "${GITHUB_RUN_ID}" \
+              --name "${prebuild_defconfig}-image" \
+              --dir "payload-artifacts/${prebuild_defconfig}-image"
+          done
+
+      - name: Materialize payload image contracts
+        env:
+          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
+        run: |
+          set -euo pipefail
+          set -x
+          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
+          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
+            [ -n "${prebuild_defconfig}" ] || continue
+            artifact_dir="payload-artifacts/${prebuild_defconfig}-image"
+            images_dir="${SUDERRA_HOST_OUTPUT_DIR}/${prebuild_defconfig}/images"
+            if [ ! -d "${artifact_dir}" ]; then
+              echo "::error::Missing upstream payload artifact ${artifact_dir}"
+              exit 1
+            fi
+            mkdir -p "${images_dir}"
+            cp -a "${artifact_dir}/." "${images_dir}/"
+            python3 scripts/ci/validate-build-matrix.py verify-artifacts \
+              --defconfig "${prebuild_defconfig}" \
+              --images-dir "${images_dir}"
+          done
+
+      - name: Build image (payload packaging run)
+        env:
+          MATRIX_PAYLOAD_IMAGE_EXPORTS: ${{ matrix.payload_image_exports }}
+          MATRIX_SIGNING: ${{ matrix.signing }}
+          MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
+          SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT: ${{ steps.payload_meta.outputs.expires_at }}
+          SUDERRA_INSTALLER_KEY_EPOCH: "1"
+          SOURCE_DATE_EPOCH: ${{ steps.payload_meta.outputs.commit_epoch }}
+        run: |
+          set -euo pipefail
+          set -x
+          mkdir -p build-logs
+          build_deadline=$((SECONDS + MATRIX_BUILD_STEP_TIMEOUT_MINUTES * 60))
+          build_and_check() {
+            local defconfig="$1"
+            local log_path="build-logs/${defconfig}.log"
+            local remaining=$((build_deadline - SECONDS))
+            if [ "${remaining}" -le 0 ]; then
+              echo "::error::Build step timeout budget exhausted before ${defconfig}"
+              exit 124
+            fi
+            timeout --kill-after=60s "${remaining}s" \
+              ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
+            python3 scripts/ci/classify-build-warnings.py \
+              --json-output "build-logs/${defconfig}.warnings.json" \
+              "${log_path}"
+          }
+          prepare_payload_signing_keys() {
+            if [ "${MATRIX_SIGNING}" != "payload-ed25519-required" ]; then
+              return 0
+            fi
+            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.key"
+            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.ed25519.pub"
+            export SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE=ci
+          }
+          export_payload_images() {
+            local payload_exports=()
+            local entry env_name source_spec source_defconfig artifact host_image_path container_image_path
+            read -r -a payload_exports <<< "${MATRIX_PAYLOAD_IMAGE_EXPORTS}"
+            for entry in "${payload_exports[@]}"; do
+              [ -n "${entry}" ] || continue
+              env_name="${entry%%=*}"
+              source_spec="${entry#*=}"
+              source_defconfig="${source_spec%%:*}"
+              artifact="${source_spec#*:}"
+              host_image_path="${SUDERRA_HOST_OUTPUT_DIR}/${source_defconfig}/images/${artifact}"
+              container_image_path="/workspace/output/${source_defconfig}/images/${artifact}"
+              if [ ! -f "${host_image_path}" ]; then
+                echo "::error::Payload image contract missing ${host_image_path}"
+                exit 1
+              fi
+              export "${env_name}=${container_image_path}"
+            done
+          }
+          prepare_payload_signing_keys
+          export_payload_images
+          build_and_check "${{ matrix.defconfig }}"
 
       - name: Upload build logs
         if: always()
