@@ -670,7 +670,7 @@ def release_files(version: str, release_dir: Path, signed: bool) -> int:
                 errors.append(f"missing installer release file: {artifact}")
 
     if signed:
-        for artifact in ("manifest.json", "SHA256SUMS"):
+        for artifact in ("manifest.json", "SHA256SUMS", "release-assets.json"):
             path = release_dir / artifact
             if not path.is_file() or path.stat().st_size <= 0:
                 errors.append(f"missing signed release control file: {artifact}")

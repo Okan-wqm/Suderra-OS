@@ -679,42 +679,12 @@ jobs:
           path: sbom/
           retention-days: 30
 
-  release-evidence:
-    name: Release evidence gate (${{ matrix.name }})
-    needs: [validate, matrix, build, build-payload, build-installer, sbom]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.matrix.outputs.release_matrix) }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.validate.outputs.version }}
-          fetch-depth: 0
-      - name: Validate release evidence bundle
-        run: |
-          set -euo pipefail
-          tier="production"
-          case "${{ needs.validate.outputs.version }}" in
-            *-*) tier="alpha" ;;
-          esac
-          evidence="release-evidence/${{ needs.validate.outputs.version }}/${{ matrix.target }}/evidence.json"
-          if [ ! -f "${evidence}" ]; then
-            echo "::error::Missing release evidence: ${evidence}"
-            exit 1
-          fi
-          python3 scripts/evidence/release-evidence.py validate "${evidence}" \
-            --release-tier "${tier}" \
-            --require-pass \
-            --check-files
-
   # =========================================================================
   # Cosign Sign + GitHub Release
   # =========================================================================
   release:
-    name: Sign + Publish release
-    needs: [validate, build, build-payload, build-installer, sbom, release-evidence]
+    name: Stage, sign, attest, verify, publish release
+    needs: [validate, matrix, build, build-payload, build-installer, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
@@ -728,6 +698,16 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate.outputs.version }}
+          fetch-depth: 0
+
+      - name: Validate full-matrix lab evidence input
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/validate-lab-input.py validate-matrix \
+            --version "${{ needs.validate.outputs.version }}" \
+            --root release-lab-input \
+            --require-pass \
+            --check-files
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.7.0
@@ -806,6 +786,7 @@ jobs:
           import os
           import sys
           from datetime import datetime, timezone
+          import subprocess
 
           def sha256(path: str) -> str:
               digest = hashlib.sha256()
@@ -841,9 +822,17 @@ jobs:
 
           version = os.environ["VERSION"]
           repository = os.environ["REPOSITORY"]
+          source_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+          if not source_epoch:
+              source_epoch = subprocess.check_output(
+                  ["git", "log", "-1", "--format=%ct"],
+                  cwd="..",
+                  text=True,
+              ).strip()
+          release_date = datetime.fromtimestamp(int(source_epoch), timezone.utc)
           manifest = {
               "version": version,
-              "release_date": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "release_date": release_date.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
               "packages": packages,
               "changelog_url": f"https://github.com/{repository}/releases/tag/{version}",
               "sbom_url": f"https://github.com/{repository}/releases/download/{version}/",
@@ -857,6 +846,15 @@ jobs:
       - name: Validate release manifest schema
         working-directory: userspace
         run: cargo run --locked -p suderra-installer --target x86_64-unknown-linux-gnu -- validate-manifest ../release/manifest.json
+
+      - name: Generate immutable release asset manifest
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/release-evidence.py asset-manifest \
+            --version "${{ needs.validate.outputs.version }}" \
+            --release-dir release \
+            --output release/release-assets.json
+          cat release/release-assets.json
 
       - name: Generate combined SHA256SUMS
         working-directory: release
@@ -909,8 +907,78 @@ jobs:
             release/suderra-installer-v*-x86_64
             release/suderra-installer-v*-aarch64
             release/*.cyclonedx.json
+            release/release-assets.json
             release/SHA256SUMS
             release/manifest.json
+
+      - name: Machine-verify release bytes
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COSIGN_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p machine-verification
+          sha256sum -c SHA256SUMS | tee machine-verification/sha256sums.log
+          : > machine-verification/cosign.log
+          find . -maxdepth 1 -type f \
+            ! -name '*.sig' \
+            ! -name '*.cert' \
+            -printf '%f\0' | sort -z | while IFS= read -r -d '' f; do
+              {
+                echo "==> cosign verify ${f}"
+                cosign verify-blob \
+                  --certificate "${f}.cert" \
+                  --certificate-identity "${COSIGN_IDENTITY}" \
+                  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                  --signature "${f}.sig" \
+                  "${f}"
+              } 2>&1 | tee -a machine-verification/cosign.log
+            done
+          : > machine-verification/attestations.log
+          find . -maxdepth 1 -type f \
+            ! -name '*.sig' \
+            ! -name '*.cert' \
+            -printf '%f\0' | sort -z | while IFS= read -r -d '' f; do
+              {
+                echo "==> gh attestation verify ${f}"
+                gh attestation verify "${f}" --repo "${GITHUB_REPOSITORY}"
+              } 2>&1 | tee -a machine-verification/attestations.log
+            done
+
+      - name: Assemble and validate final release evidence
+        run: |
+          set -euo pipefail
+          rm -rf release-evidence-generated
+          python3 scripts/evidence/release-evidence.py assemble-release \
+            --version "${{ needs.validate.outputs.version }}" \
+            --release-dir release \
+            --output-root release-evidence-generated \
+            --input-root . \
+            --lab-root release-lab-input \
+            --governance-root release-governance \
+            --force
+          tier="production"
+          case "${{ needs.validate.outputs.version }}" in
+            *-*) tier="alpha" ;;
+          esac
+          find "release-evidence-generated/${{ needs.validate.outputs.version }}" \
+            -name evidence.json \
+            -print0 | sort -z | while IFS= read -r -d '' evidence; do
+              python3 scripts/evidence/release-evidence.py validate "${evidence}" \
+                --release-tier "${tier}" \
+                --require-pass \
+                --check-files
+            done
+
+      - name: Upload signed release evidence inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: signed-release-${{ needs.validate.outputs.version }}
+          path: |
+            release/
+            release-evidence-generated/
+          retention-days: 30
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v2
@@ -989,6 +1057,7 @@ jobs:
             release/suderra-*.payload-manifest.sig
             release/suderra-installer-*
             release/*.cyclonedx.json
+            release/release-assets.json
             release/SHA256SUMS
             release/manifest.json
             release/*.sig
@@ -997,4 +1066,4 @@ jobs:
       - name: Release summary
         run: |
           echo "::notice::Draft release created: ${{ needs.validate.outputs.version }}"
-          echo "::notice::Manual approval required to publish (Settings → Releases → Edit Draft)"
+          echo "::notice::Release publish is controlled by the release-publish protected environment"

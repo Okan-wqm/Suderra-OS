@@ -1,6 +1,8 @@
 # Branch Protection Rules
 
-GitHub branch protection ayarları. Bu doküman maintainer tarafından GitHub UI üzerinden uygulanır.
+GitHub branch protection ayarları. Phase 0 release governance gate olarak bu
+ayarlar yalnızca dokümante edilmez; GitHub API snapshot'ları release evidence
+bundle içinde saklanır.
 
 ## `main` Branch
 
@@ -67,6 +69,9 @@ Release workflow sadece `release` job'ında `contents: write`, `id-token: write`
 okur.
 Manual `workflow_dispatch` release sadece seçilen workflow ref'i input tag ile aynı
 `refs/tags/v*` olduğunda geçer; branch ref'inden tag artifact'i imzalanmaz.
+Alpha `release-publish` için tek release owner onayı kabul edilir. Pilot,
+public pre-release ve production yayınlarında release owner ile
+security/compliance approver farklı GitHub kullanıcıları olmalıdır.
 
 ## Rule sets API (GitHub UI dışında)
 
@@ -105,10 +110,23 @@ GitHub App `DCO` (dco-app) etkinleştirilmeli:
 
 ## Doğrulama
 
-Maintainer ayda en az 1 kez:
+Maintainer her release öncesi ve ayda en az 1 kez:
 
-- Yukarıdaki ayarların aktif olduğunu kontrol etmeli
-- Audit log'a bak (kim ayarları değiştirdi)
+- Yukarıdaki ayarların aktif olduğunu kontrol etmeli.
+- Audit log'a bakmalı (kim ayarları değiştirdi).
+- Aşağıdaki API snapshot'larını evidence'a koymalı:
+
+```bash
+mkdir -p release-governance/<version>
+gh api repos/Okan-wqm/Suderra-OS/rulesets \
+  > release-governance/<version>/rulesets.json
+gh api repos/Okan-wqm/Suderra-OS/branches/main/protection \
+  > release-governance/<version>/main-branch-protection.json
+gh api repos/Okan-wqm/Suderra-OS/environments/release-publish \
+  > release-governance/<version>/release-publish-environment.json
+gh api repos/Okan-wqm/Suderra-OS/tags/protection \
+  > release-governance/<version>/tag-protection.json
+```
 
 ## OpenSSF Scorecard ile İzleme
 
@@ -119,7 +137,7 @@ Maintainer ayda en az 1 kez:
 
 ## Yapılacaklar
 
-- [ ] Faz 0.5: Yukarıdaki ayarları uygula
+- [ ] Faz 0: Yukarıdaki ayarları uygula ve API snapshot'larını release evidence'a bağla
 - [ ] Faz 4: Required reviewers 1→2 (security/kernel için)
 - [ ] Faz 4: `release-publish` protected environment reviewers aktif
 - [ ] Faz 6: Required deployments (production verify)

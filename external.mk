@@ -62,4 +62,8 @@ include $(sort $(wildcard $(BR2_EXTERNAL_SUDERRA_PATH)/package/*/*.mk))
 # Sürüm bilgisini os-release için ortam değişkenine aktar
 export SUDERRA_VERSION   ?= $(call qstrip,$(BR2_PACKAGE_SUDERRA_VERSION))
 export SUDERRA_BUILD_ID  ?= $(call qstrip,$(BR2_PACKAGE_SUDERRA_BUILD_ID))
+ifneq ($(origin SOURCE_DATE_EPOCH),undefined)
+export SUDERRA_BUILD_DATE ?= $(shell date -u -d "@$(SOURCE_DATE_EPOCH)" +%Y-%m-%dT%H:%M:%SZ)
+else
 export SUDERRA_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+endif

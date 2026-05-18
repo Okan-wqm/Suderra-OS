@@ -80,6 +80,15 @@ else
 fi
 echo "    Variant: ${SUDERRA_OS_VARIANT}"
 
+reproducible_timestamp() {
+    local epoch="${SOURCE_DATE_EPOCH:-}"
+    if [ -n "${epoch}" ]; then
+        date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ
+    else
+        date -u +%Y-%m-%dT%H:%M:%SZ
+    fi
+}
+
 # 1. genimage config seçimi — defconfig'e göre dispatch
 GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
@@ -162,7 +171,7 @@ prepare_rpi4_installer_payload() {
       "rollback_floor": "${SUDERRA_ROLLBACK_FLOOR:-v0.1.0-alpha}"
     }
   ],
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "created_at": "$(reproducible_timestamp)",
   "expires_at": "${SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT:?SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT must be an ISO-8601 UTC timestamp}",
   "key_epoch": ${SUDERRA_INSTALLER_KEY_EPOCH:?SUDERRA_INSTALLER_KEY_EPOCH must be set (positive integer)}
 }
@@ -271,7 +280,7 @@ if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ]; then
 
     {
         echo "# Suderra OS — release manifest"
-        echo "# Build: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# Build: $(reproducible_timestamp)"
         echo "# Defconfig: ${DEFCONFIG_NAME}"
         echo "# Arch: ${ARCH}"
         echo ""

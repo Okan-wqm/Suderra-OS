@@ -5,9 +5,26 @@
 # CI, release governance, and supply-chain verification changes require owner review.
 .github/workflows/*.yml @okan-wqm
 .github/CODEOWNERS @okan-wqm
+CODEOWNERS @okan-wqm
 ci/build-matrix.yml @okan-wqm
+ci/build-warning-policy.json @okan-wqm
 docs/dev/branch-protection.md @okan-wqm
+docs/operations/release-evidence.md @okan-wqm
+docs/operations/release-lifecycle.md @okan-wqm
+docs/operations/usb-installer-alpha-validation.md @okan-wqm
 docs/operations/verify-release.md @okan-wqm
+docs/security/key-management.md @okan-wqm
 docs/security/sbom-process.md @okan-wqm
+board/keys/** @okan-wqm
+board/suderra/common/kernel-fragment.config @okan-wqm
+board/suderra/common/post-image.sh @okan-wqm
+board/suderra/x86_64/** @okan-wqm
+board/suderra/aarch64*/** @okan-wqm
+package/suderra-keys/** @okan-wqm
 scripts/ci/validate-build-matrix.py @okan-wqm
+scripts/evidence/** @okan-wqm
+scripts/sign-bundle.sh @okan-wqm
+scripts/verify-reproducible.sh @okan-wqm
 scripts/lint.sh @okan-wqm
+tests/image-contracts/** @okan-wqm
+tests/ota/** @okan-wqm

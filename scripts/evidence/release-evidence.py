@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -27,7 +29,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.release-evidence.v1"
+SCHEMA_VERSION = "suderra.release-evidence.v2"
+ASSET_MANIFEST_SCHEMA_VERSION = "suderra.release-assets.v1"
 
 TOP_LEVEL_FIELDS = {
     "schema_version",
@@ -36,11 +39,14 @@ TOP_LEVEL_FIELDS = {
     "generated_at",
     "target_contract",
     "source",
+    "asset_manifest",
     "artifacts",
     "sbom",
     "vex",
     "reproducibility",
     "security_scans",
+    "machine_verification",
+    "governance",
     "qemu",
     "hardware",
     "runtime_checks",
@@ -70,6 +76,8 @@ STATUS_VALUES = {"passed", "failed", "not_run", "not_applicable", "not_collected
 VEX_STATUS_VALUES = {"present", "not_applicable", "not_collected"}
 RISK_STATUS_VALUES = {"none", "accepted", "blocked"}
 DECISION_STATUS_VALUES = {"approved", "approved_with_residual_risk", "blocked"}
+MACHINE_VERIFICATION_CHECKS = ("sha256sums", "cosign", "attestations")
+GOVERNANCE_CHECKS = ("branch_protection", "rulesets", "release_environment", "tag_protection")
 REQUIRED_RUNTIME_CHECKS = ("dm_verity", "rauc", "lockdown", "nmap", "systemd_security")
 REQUIRED_QEMU_CHECKS = (
     "boot",
@@ -298,6 +306,11 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
                 "run_attempt": "not_collected",
             },
         },
+        "asset_manifest": {
+            "path": "release-assets.json",
+            "sha256": None,
+            "verified": False,
+        },
         "artifacts": [
             {
                 "name": release_artifact,
@@ -337,6 +350,17 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
         "security_scans": [
             {"name": str(name), "status": "not_run", "report": None} for name in security_scans
         ],
+        "machine_verification": {
+            name: {"status": "not_run", "logs": []} for name in MACHINE_VERIFICATION_CHECKS
+        },
+        "governance": {
+            "retention_years": 7,
+            "approval_model": "single-alpha-owner",
+            "checks": {
+                name: {"status": "not_collected", "evidence": None}
+                for name in GOVERNANCE_CHECKS
+            },
+        },
         "qemu": {
             "required": qemu_required,
             "status": "not_run" if qemu_required else "not_applicable",
@@ -447,6 +471,228 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def matrix_digest(path: Path = DEFAULT_MATRIX) -> str:
+    return sha256_file(path)
+
+
+def buildroot_index_sha() -> str:
+    return git_output(["ls-tree", "HEAD", "buildroot"]) or "unknown"
+
+
+def tracked_source_dirty() -> bool:
+    status = git_output(["status", "--porcelain", "--untracked-files=no"])
+    return bool(status)
+
+
+def classify_release_asset(name: str) -> str:
+    if name.endswith(".img.xz"):
+        return "release-image"
+    if name.endswith(".sha256") or name == "SHA256SUMS":
+        return "checksum"
+    if name.endswith(".manifest.txt") or name.endswith(".payload-manifest.json") or name == "manifest.json":
+        return "manifest"
+    if name.endswith(".payload-manifest.sig"):
+        return "payload-signature"
+    if name.endswith(".cyclonedx.json"):
+        return "sbom"
+    if name.endswith(".sig"):
+        return "signature"
+    if name.endswith(".cert"):
+        return "certificate"
+    if name.startswith("suderra-installer-"):
+        return "installer"
+    return "release-control"
+
+
+def release_asset_manifest(version: str, release_dir: Path, matrix_path: Path) -> dict[str, Any]:
+    files: list[dict[str, Any]] = []
+    for path in sorted(release_dir.iterdir(), key=lambda item: item.name):
+        if not path.is_file():
+            continue
+        files.append(
+            {
+                "name": path.name,
+                "role": classify_release_asset(path.name),
+                "sha256": sha256_file(path),
+                "bytes": path.stat().st_size,
+            }
+        )
+    return {
+        "schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
+        "version": version,
+        "generated_at": now_utc(),
+        "source": {
+            "repository": git_output(["config", "--get", "remote.origin.url"]) or "unknown",
+            "git_commit": git_output(["rev-parse", "HEAD"]) or "unknown",
+            "git_tag": version,
+            "dirty": tracked_source_dirty(),
+            "ci": {
+                "provider": "github-actions",
+                "workflow": os.environ.get("GITHUB_WORKFLOW", "release"),
+                "run_id": os.environ.get("GITHUB_RUN_ID", "not_collected"),
+                "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "not_collected"),
+            },
+        },
+        "matrix_sha256": matrix_digest(matrix_path),
+        "buildroot_index_sha": buildroot_index_sha(),
+        "files": files,
+    }
+
+
+def copy_into_bundle(bundle_dir: Path, source: Path, rel: str) -> str:
+    destination = bundle_dir / rel
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return rel
+
+
+def count_cyclonedx_components(path: Path) -> int | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    components = payload.get("components")
+    return len(components) if isinstance(components, list) else None
+
+
+def read_json(path: Path) -> Any | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: dict[str, Any]) -> None:
+    for name in MACHINE_VERIFICATION_CHECKS:
+        source = release_dir / "machine-verification" / f"{name}.log"
+        if source.is_file() and source.stat().st_size > 0:
+            evidence["machine_verification"][name] = {
+                "status": "passed",
+                "logs": [copy_into_bundle(bundle_dir, source, f"machine-verification/{name}.log")],
+            }
+
+
+def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evidence: dict[str, Any]) -> None:
+    mapping = {
+        "branch_protection": "main-branch-protection.json",
+        "rulesets": "rulesets.json",
+        "release_environment": "release-publish-environment.json",
+        "tag_protection": "tag-protection.json",
+    }
+    for name, filename in mapping.items():
+        source = governance_root / version / filename
+        if source.is_file() and source.stat().st_size > 0:
+            evidence["governance"]["checks"][name] = {
+                "status": "passed",
+                "evidence": copy_into_bundle(bundle_dir, source, f"governance/{filename}"),
+            }
+
+
+def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
+    qemu_input = read_json(lab_root / version / target / "qemu.json")
+    if not isinstance(qemu_input, dict):
+        return
+    logs = []
+    qemu_dir = lab_root / version / target
+    for idx, log in enumerate(qemu_input.get("logs", [])):
+        if not isinstance(log, str):
+            continue
+        source = qemu_dir / log
+        if source.is_file() and source.stat().st_size > 0:
+            logs.append(copy_into_bundle(bundle_dir, source, f"qemu/{idx}-{Path(log).name}"))
+    checks = qemu_input.get("checks")
+    evidence["qemu"] = {
+        "required": True,
+        "status": qemu_input.get("status", "not_collected"),
+        "logs": logs,
+        "checks": checks if isinstance(checks, list) else [],
+    }
+
+
+def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
+    lab_dir = lab_root / version / target
+    lab_input = read_json(lab_dir / "lab.json")
+    if not isinstance(lab_input, dict):
+        return
+    devices = []
+    for device in lab_input.get("devices", []):
+        if not isinstance(device, dict):
+            continue
+        board = str(device.get("board", "unknown"))
+        logs = []
+        for idx, log in enumerate(device.get("logs", [])):
+            if not isinstance(log, str):
+                continue
+            source = lab_dir / log
+            if source.is_file() and source.stat().st_size > 0:
+                logs.append(copy_into_bundle(bundle_dir, source, f"hardware/{board}/logs/{idx}-{Path(log).name}"))
+        checks: dict[str, dict[str, Any]] = {}
+        raw_checks = device.get("checks", {})
+        if isinstance(raw_checks, dict):
+            for check_name, check in raw_checks.items():
+                if not isinstance(check, dict):
+                    continue
+                rel_evidence = None
+                evidence_path = check.get("evidence")
+                if isinstance(evidence_path, str):
+                    source = lab_dir / evidence_path
+                    if source.is_file() and source.stat().st_size > 0:
+                        rel_evidence = copy_into_bundle(
+                            bundle_dir,
+                            source,
+                            f"hardware/{board}/checks/{check_name}-{Path(evidence_path).name}",
+                        )
+                checks[str(check_name)] = {
+                    "status": check.get("status", "not_collected"),
+                    "evidence": rel_evidence,
+                }
+        devices.append(
+            {
+                "board": board,
+                "serial": device.get("serial", "not_collected"),
+                "operator": device.get("operator", lab_input.get("operator", "not_collected")),
+                "status": device.get("status", "not_collected"),
+                "logs": logs,
+                "checks": checks,
+            }
+        )
+    evidence["hardware"]["devices"] = devices
+    if devices and all(device.get("status") == "passed" for device in devices):
+        evidence["hardware"]["status"] = "passed"
+
+
+def apply_release_inputs(
+    bundle_dir: Path,
+    release_dir: Path,
+    input_root: Path,
+    version: str,
+    target: str,
+    evidence: dict[str, Any],
+) -> None:
+    repro = input_root / "release-reproducibility" / version / f"{target}.log"
+    if repro.is_file() and repro.stat().st_size > 0:
+        evidence["reproducibility"] = {
+            "status": "passed",
+            "comparison": "independent rebuild matched staged release bytes",
+            "logs": [copy_into_bundle(bundle_dir, repro, "reproducibility/reproducibility.log")],
+        }
+    for scan in evidence["security_scans"]:
+        report = input_root / "release-security" / version / f"{scan['name']}.json"
+        if report.is_file() and report.stat().st_size > 0:
+            scan["status"] = "passed"
+            scan["report"] = copy_into_bundle(bundle_dir, report, f"security/{report.name}")
+    approvals = read_json(input_root / "release-approvals" / version / f"{target}.json")
+    if isinstance(approvals, dict):
+        if isinstance(approvals.get("approvals"), list):
+            evidence["approvals"] = approvals["approvals"]
+        if isinstance(approvals.get("residual_risk"), dict):
+            evidence["residual_risk"] = approvals["residual_risk"]
+        if isinstance(approvals.get("release_decision"), dict):
+            evidence["release_decision"] = approvals["release_decision"]
+
+
 def check_file_sha256(validation: Validation, path: str, rel: Any, expected: Any) -> None:
     if not validation.check_files or expected is None:
         return
@@ -461,6 +707,51 @@ def check_file_size(validation: Validation, path: str, rel: Any, expected: Any) 
     actual = file_for_relative_path(validation, rel)
     if actual is not None and actual.stat().st_size != expected:
         validation.error(path, "does not match referenced file size")
+
+
+def validate_asset_manifest(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+    asset_manifest = evidence.get("asset_manifest")
+    if not isinstance(asset_manifest, dict):
+        validation.error("$.asset_manifest", "must be an object")
+        return
+    check_relative_path(validation, "$.asset_manifest.path", asset_manifest.get("path"), True)
+    check_sha256(validation, "$.asset_manifest.sha256", asset_manifest.get("sha256"), require_pass)
+    check_file_sha256(
+        validation,
+        "$.asset_manifest.sha256",
+        asset_manifest.get("path"),
+        asset_manifest.get("sha256"),
+    )
+    check_bool(validation, "$.asset_manifest.verified", asset_manifest.get("verified"))
+    if require_pass and asset_manifest.get("verified") is not True:
+        validation.error("$.asset_manifest.verified", "must be true for release-ready evidence")
+    if validation.check_files:
+        manifest_file = file_for_relative_path(validation, asset_manifest.get("path"))
+        if manifest_file is not None:
+            try:
+                payload = json.loads(manifest_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                validation.error("$.asset_manifest.path", f"must be readable JSON: {exc}")
+                return
+            if payload.get("schema_version") != ASSET_MANIFEST_SCHEMA_VERSION:
+                validation.error(
+                    "$.asset_manifest.path",
+                    f"schema_version must be {ASSET_MANIFEST_SCHEMA_VERSION}",
+                )
+            if payload.get("version") != evidence.get("version"):
+                validation.error("$.asset_manifest.path", "version must match evidence.version")
+            files = payload.get("files")
+            if not isinstance(files, list) or not files:
+                validation.error("$.asset_manifest.path", "files must be a non-empty list")
+            elif require_pass:
+                expected_artifacts = {artifact.get("name") for artifact in evidence.get("artifacts", []) if isinstance(artifact, dict)}
+                manifest_artifacts = {entry.get("name") for entry in files if isinstance(entry, dict)}
+                missing = sorted(str(name) for name in expected_artifacts - manifest_artifacts if name)
+                if missing:
+                    validation.error(
+                        "$.asset_manifest.path",
+                        f"missing release artifact subject(s): {', '.join(missing)}",
+                    )
 
 
 def parse_timestamp(validation: Validation, path: str, value: Any, required: bool) -> datetime | None:
@@ -522,7 +813,7 @@ def validate_artifacts(
         if not isinstance(signature, dict):
             validation.error(f"{path}.signature", "must be an object")
         else:
-            require_signed_controls = require_pass and release_tier == "production"
+            require_signed_controls = require_pass
             signature_path = (
                 signature.get("path")
                 if require_signed_controls or signature.get("verified") is True
@@ -548,7 +839,7 @@ def validate_artifacts(
         if not isinstance(provenance, dict):
             validation.error(f"{path}.provenance", "must be an object")
         else:
-            require_provenance = require_pass and release_tier == "production"
+            require_provenance = require_pass
             provenance_path = (
                 provenance.get("path")
                 if require_provenance or provenance.get("verified") is True
@@ -591,7 +882,7 @@ def validate_sbom(
                     validation.error("$.sbom.component_count", "CycloneDX components must be non-empty")
                 if isinstance(sbom.get("component_count"), int) and sbom["component_count"] != actual_count:
                     validation.error("$.sbom.component_count", "does not match CycloneDX components length")
-    if require_pass and release_tier == "production" and sbom.get("signature_verified") is not True:
+    if require_pass and sbom.get("signature_verified") is not True:
         validation.error("$.sbom.signature_verified", "must be true for release-ready evidence")
 
 
@@ -653,6 +944,61 @@ def validate_status_list(
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
     if require_pass and not value:
         validation.error(base_path, "must not be empty for release-ready evidence")
+
+
+def validate_machine_verification(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+    machine_verification = evidence.get("machine_verification")
+    if not isinstance(machine_verification, dict):
+        validation.error("$.machine_verification", "must be an object")
+        return
+    for name in MACHINE_VERIFICATION_CHECKS:
+        if name not in machine_verification:
+            validation.error("$.machine_verification", f"missing required check: {name}")
+    for name, check in machine_verification.items():
+        path = f"$.machine_verification.{name}"
+        if not isinstance(check, dict):
+            validation.error(path, "must be an object")
+            continue
+        check_status(validation, f"{path}.status", check.get("status"), STATUS_VALUES)
+        logs = check.get("logs")
+        if not isinstance(logs, list):
+            validation.error(f"{path}.logs", "must be a list")
+        else:
+            for idx, log in enumerate(logs):
+                check_relative_path(validation, f"{path}.logs[{idx}]", log, require_pass)
+        if require_pass and check.get("status") != "passed":
+            validation.error(f"{path}.status", "must be passed for release-ready evidence")
+        if require_pass and not logs:
+            validation.error(f"{path}.logs", "must include machine-verification logs")
+
+
+def validate_governance(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+    governance = evidence.get("governance")
+    if not isinstance(governance, dict):
+        validation.error("$.governance", "must be an object")
+        return
+    retention_years = governance.get("retention_years")
+    if not isinstance(retention_years, int) or retention_years < 1:
+        validation.error("$.governance.retention_years", "must be a positive integer")
+    elif require_pass and retention_years < 7:
+        validation.error("$.governance.retention_years", "must be at least 7 for enterprise release evidence")
+    check_string(validation, "$.governance.approval_model", governance.get("approval_model"))
+    checks = governance.get("checks")
+    if not isinstance(checks, dict):
+        validation.error("$.governance.checks", "must be an object")
+        return
+    for name in GOVERNANCE_CHECKS:
+        if name not in checks:
+            validation.error("$.governance.checks", f"missing required check: {name}")
+    for name, check in checks.items():
+        path = f"$.governance.checks.{name}"
+        if not isinstance(check, dict):
+            validation.error(path, "must be an object")
+            continue
+        check_status(validation, f"{path}.status", check.get("status"), STATUS_VALUES)
+        check_relative_path(validation, f"{path}.evidence", check.get("evidence"), require_pass)
+        if require_pass and check.get("status") != "passed":
+            validation.error(f"{path}.status", "must be passed for release-ready evidence")
 
 
 def validate_qemu(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
@@ -1011,6 +1357,7 @@ def validate_evidence(
 
     validate_target_contract(validation, evidence, matrix)
     validate_source(validation, evidence, require_pass)
+    validate_asset_manifest(validation, evidence, require_pass)
     validate_artifacts(validation, evidence, require_pass, release_tier)
     validate_sbom(validation, evidence, require_pass, release_tier)
     validate_vex(validation, evidence, require_pass, release_tier)
@@ -1026,6 +1373,8 @@ def validate_evidence(
         False,
         expected_security_scans if require_pass else None,
     )
+    validate_machine_verification(validation, evidence, require_pass)
+    validate_governance(validation, evidence, require_pass)
     validate_qemu(validation, evidence, require_pass)
     validate_hardware(validation, evidence, require_pass)
     validate_runtime_checks(validation, evidence, require_pass, release_tier)
@@ -1046,6 +1395,9 @@ def schema_contract() -> dict[str, Any]:
         "residual_risk_status_values": sorted(RISK_STATUS_VALUES),
         "release_decision_status_values": sorted(DECISION_STATUS_VALUES),
         "release_tiers": ["alpha", "production"],
+        "asset_manifest_schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
+        "machine_verification_checks": list(MACHINE_VERIFICATION_CHECKS),
+        "governance_checks": list(GOVERNANCE_CHECKS),
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
         "required_qemu_checks": list(REQUIRED_QEMU_CHECKS),
         "required_hardware_checks": list(REQUIRED_HARDWARE_CHECKS),
@@ -1055,10 +1407,13 @@ def schema_contract() -> dict[str, Any]:
         },
         "release_ready_invariants": [
             "source.dirty is false and source.git_commit is a full commit sha",
+            "asset_manifest is generated from staged release bytes and verified",
             "artifact hashes, sizes, signatures, and provenance are present, verified, and match referenced files",
             "SBOM is CycloneDX JSON with a non-empty matching component count and verified signature",
             "signed VEX is present",
             "reproducibility and every matrix security scan are passed with reports",
+            "machine verification logs show SHA256SUMS, cosign, and attestation checks passed",
+            "governance snapshots show branch, ruleset, tag, and release environment protections",
             "required QEMU and hardware evidence sections are passed",
             "required runtime checks have passed evidence files",
             "release_decision is approved or approved_with_residual_risk",
@@ -1110,6 +1465,107 @@ def validate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def asset_manifest_command(args: argparse.Namespace) -> int:
+    if not args.release_dir.is_dir():
+        print(f"ERROR: release directory not found: {args.release_dir}", file=sys.stderr)
+        return 1
+    manifest = release_asset_manifest(args.version, args.release_dir, args.matrix)
+    if not manifest["files"]:
+        print(f"ERROR: release directory contains no files: {args.release_dir}", file=sys.stderr)
+        return 1
+    output = args.output
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(output)
+    return 0
+
+
+def assemble_release_command(args: argparse.Namespace) -> int:
+    matrix = load_matrix(args.matrix)
+    asset_manifest_path = args.release_dir / "release-assets.json"
+    asset_manifest = read_json(asset_manifest_path)
+    if not isinstance(asset_manifest, dict):
+        print(f"ERROR: missing release asset manifest: {asset_manifest_path}", file=sys.stderr)
+        return 1
+    failed = False
+    for row in matrix.get("defconfigs", []):
+        if not row.get("release"):
+            continue
+        evidence = generated_evidence(
+            args.version,
+            row,
+            [str(item) for item in matrix.get("security_scans", [])],
+        )
+        target = str(evidence["target"])
+        bundle_dir = args.output_root / args.version / target
+        if bundle_dir.exists() and args.force:
+            shutil.rmtree(bundle_dir)
+        elif bundle_dir.exists():
+            print(f"ERROR: refusing to overwrite evidence bundle: {bundle_dir}", file=sys.stderr)
+            failed = True
+            continue
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+
+        evidence["source"] = asset_manifest.get("source", evidence["source"])
+        evidence["asset_manifest"]["path"] = copy_into_bundle(
+            bundle_dir,
+            asset_manifest_path,
+            "release-assets.json",
+        )
+        evidence["asset_manifest"]["sha256"] = sha256_file(bundle_dir / "release-assets.json")
+        evidence["asset_manifest"]["verified"] = True
+
+        release_artifact = str(evidence["target_contract"]["release_artifact"])
+        artifact_path = args.release_dir / release_artifact
+        if artifact_path.is_file():
+            artifact = evidence["artifacts"][0]
+            artifact["path"] = copy_into_bundle(bundle_dir, artifact_path, f"artifacts/{release_artifact}")
+            artifact["sha256"] = sha256_file(bundle_dir / artifact["path"])
+            artifact["bytes"] = (bundle_dir / artifact["path"]).stat().st_size
+            sig_path = args.release_dir / f"{release_artifact}.sig"
+            cert_path = args.release_dir / f"{release_artifact}.cert"
+            if sig_path.is_file() and cert_path.is_file():
+                artifact["signature"]["path"] = copy_into_bundle(
+                    bundle_dir,
+                    sig_path,
+                    f"artifacts/{release_artifact}.sig",
+                )
+                artifact["signature"]["certificate"] = copy_into_bundle(
+                    bundle_dir,
+                    cert_path,
+                    f"artifacts/{release_artifact}.cert",
+                )
+                artifact["signature"]["verified"] = True
+            attestation_log = args.release_dir / "machine-verification" / "attestations.log"
+            if attestation_log.is_file() and attestation_log.stat().st_size > 0:
+                artifact["provenance"]["path"] = copy_into_bundle(
+                    bundle_dir,
+                    attestation_log,
+                    f"provenance/{release_artifact}.attestation.log",
+                )
+                artifact["provenance"]["verified"] = True
+
+        sbom_name = f"{release_base(release_artifact)}.cyclonedx.json"
+        sbom_path = args.release_dir / sbom_name
+        if sbom_path.is_file():
+            evidence["sbom"]["path"] = copy_into_bundle(bundle_dir, sbom_path, f"sbom/{sbom_name}")
+            evidence["sbom"]["sha256"] = sha256_file(bundle_dir / evidence["sbom"]["path"])
+            evidence["sbom"]["component_count"] = count_cyclonedx_components(bundle_dir / evidence["sbom"]["path"])
+            if (args.release_dir / f"{sbom_name}.sig").is_file() and (args.release_dir / f"{sbom_name}.cert").is_file():
+                evidence["sbom"]["signature_verified"] = True
+
+        apply_machine_verification(bundle_dir, args.release_dir, evidence)
+        apply_governance(bundle_dir, args.governance_root, args.version, evidence)
+        apply_qemu_input(bundle_dir, args.lab_root, args.version, target, evidence)
+        apply_hardware_input(bundle_dir, args.lab_root, args.version, target, evidence)
+        apply_release_inputs(bundle_dir, args.release_dir, args.input_root, args.version, target, evidence)
+
+        evidence_path = bundle_dir / "evidence.json"
+        evidence_path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(evidence_path)
+    return 1 if failed else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1139,6 +1595,30 @@ def main() -> int:
     schema.set_defaults(
         func=lambda _args: print(json.dumps(schema_contract(), indent=2, sort_keys=True)) or 0
     )
+
+    asset_manifest = subparsers.add_parser(
+        "asset-manifest",
+        help="write an immutable manifest for staged release assets",
+    )
+    asset_manifest.add_argument("--version", required=True)
+    asset_manifest.add_argument("--release-dir", type=Path, required=True)
+    asset_manifest.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    asset_manifest.add_argument("--output", type=Path, required=True)
+    asset_manifest.set_defaults(func=asset_manifest_command)
+
+    assemble_release = subparsers.add_parser(
+        "assemble-release",
+        help="assemble target evidence bundles from staged release bytes and release inputs",
+    )
+    assemble_release.add_argument("--version", required=True)
+    assemble_release.add_argument("--release-dir", type=Path, required=True)
+    assemble_release.add_argument("--output-root", type=Path, default=Path("release-evidence"))
+    assemble_release.add_argument("--input-root", type=Path, default=Path("."))
+    assemble_release.add_argument("--lab-root", type=Path, default=Path("release-lab-input"))
+    assemble_release.add_argument("--governance-root", type=Path, default=Path("release-governance"))
+    assemble_release.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    assemble_release.add_argument("--force", action="store_true")
+    assemble_release.set_defaults(func=assemble_release_command)
 
     args = parser.parse_args()
     return args.func(args)

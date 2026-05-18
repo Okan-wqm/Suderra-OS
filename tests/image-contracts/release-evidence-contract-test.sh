@@ -82,6 +82,29 @@ for artifact in data["artifacts"]:
     write_text(artifact["signature"]["certificate"], "synthetic cosign certificate\n")
     write_text(artifact["provenance"]["path"], "synthetic provenance\n")
 
+asset_manifest = {
+    "schema_version": "suderra.release-assets.v1",
+    "version": data["version"],
+    "generated_at": data["generated_at"],
+    "source": data["source"],
+    "matrix_sha256": "0" * 64,
+    "buildroot_index_sha": "160000 commit buildroot " + "1" * 40,
+    "files": [
+        {
+            "name": artifact["name"],
+            "role": artifact["role"],
+            "sha256": artifact["sha256"],
+            "bytes": artifact["bytes"],
+        }
+        for artifact in data["artifacts"]
+    ],
+}
+data["asset_manifest"]["sha256"], _ = write_text(
+    data["asset_manifest"]["path"],
+    json.dumps(asset_manifest, sort_keys=True) + "\n",
+)
+data["asset_manifest"]["verified"] = True
+
 sbom_payload = {
     "bomFormat": "CycloneDX",
     "specVersion": "1.6",
@@ -111,6 +134,16 @@ data["reproducibility"]["logs"] = ["logs/reproducibility.log"]
 for scan in data["security_scans"]:
     scan["status"] = "passed"
     scan["report"] = f"security/{scan['name']}.json"
+
+for name, check in data["machine_verification"].items():
+    check["status"] = "passed"
+    check["logs"] = [f"machine/{name}.log"]
+
+data["governance"]["retention_years"] = 7
+data["governance"]["approval_model"] = "single-alpha-owner"
+for name, check in data["governance"]["checks"].items():
+    check["status"] = "passed"
+    check["evidence"] = f"governance/{name}.json"
 
 data["qemu"]["status"] = "passed"
 data["qemu"]["logs"] = ["qemu/boot.log"]
@@ -142,6 +175,11 @@ for rel in data["reproducibility"]["logs"]:
     write_text(rel, "synthetic reproducibility transcript\n")
 for scan in data["security_scans"]:
     write_text(scan["report"], json.dumps({"scan": scan["name"], "status": "passed"}) + "\n")
+for check in data["machine_verification"].values():
+    for rel in check["logs"]:
+        write_text(rel, "synthetic machine verification transcript\n")
+for check in data["governance"]["checks"].values():
+    write_text(check["evidence"], json.dumps({"status": "passed"}, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU serial and journal evidence\n")
 
@@ -185,8 +223,34 @@ for artifact in data["artifacts"]:
     digest, size = write_text(artifact["path"], "alpha image artifact\n")
     artifact["sha256"] = digest
     artifact["bytes"] = size
-    artifact["signature"]["verified"] = False
-    artifact["provenance"]["verified"] = False
+    artifact["signature"]["verified"] = True
+    artifact["provenance"]["verified"] = True
+    write_text(artifact["signature"]["path"], "synthetic alpha cosign signature\n")
+    write_text(artifact["signature"]["certificate"], "synthetic alpha cosign certificate\n")
+    write_text(artifact["provenance"]["path"], "synthetic alpha provenance\n")
+
+asset_manifest = {
+    "schema_version": "suderra.release-assets.v1",
+    "version": data["version"],
+    "generated_at": data["generated_at"],
+    "source": data["source"],
+    "matrix_sha256": "0" * 64,
+    "buildroot_index_sha": "160000 commit buildroot " + "1" * 40,
+    "files": [
+        {
+            "name": artifact["name"],
+            "role": artifact["role"],
+            "sha256": artifact["sha256"],
+            "bytes": artifact["bytes"],
+        }
+        for artifact in data["artifacts"]
+    ],
+}
+data["asset_manifest"]["sha256"], _ = write_text(
+    data["asset_manifest"]["path"],
+    json.dumps(asset_manifest, sort_keys=True) + "\n",
+)
+data["asset_manifest"]["verified"] = True
 
 sbom_payload = {
     "bomFormat": "CycloneDX",
@@ -198,7 +262,7 @@ data["sbom"]["sha256"], _ = write_text(
     json.dumps(sbom_payload, sort_keys=True) + "\n",
 )
 data["sbom"]["component_count"] = 1
-data["sbom"]["signature_verified"] = False
+data["sbom"]["signature_verified"] = True
 data["vex"]["status"] = "not_collected"
 data["reproducibility"]["status"] = "passed"
 data["reproducibility"]["comparison"] = "single alpha candidate build accepted with residual risk"
@@ -207,6 +271,16 @@ data["reproducibility"]["logs"] = ["logs/reproducibility.log"]
 for scan in data["security_scans"]:
     scan["status"] = "passed"
     scan["report"] = f"security/{scan['name']}.json"
+
+for name, check in data["machine_verification"].items():
+    check["status"] = "passed"
+    check["logs"] = [f"machine/{name}.log"]
+
+data["governance"]["retention_years"] = 7
+data["governance"]["approval_model"] = "single-alpha-owner"
+for name, check in data["governance"]["checks"].items():
+    check["status"] = "passed"
+    check["evidence"] = f"governance/{name}.json"
 
 data["qemu"]["status"] = "passed"
 data["qemu"]["logs"] = ["qemu/boot.log"]
@@ -253,6 +327,11 @@ for rel in data["reproducibility"]["logs"]:
     write_text(rel, "synthetic alpha reproducibility transcript\n")
 for scan in data["security_scans"]:
     write_text(scan["report"], json.dumps({"scan": scan["name"], "status": "passed"}) + "\n")
+for check in data["machine_verification"].values():
+    for rel in check["logs"]:
+        write_text(rel, "synthetic alpha machine verification transcript\n")
+for check in data["governance"]["checks"].values():
+    write_text(check["evidence"], json.dumps({"status": "passed"}, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU alpha evidence\n")
 

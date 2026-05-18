@@ -63,6 +63,52 @@ python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" release-files \
     --release-dir "${RELEASE_DIR}" \
     >/dev/null
 
+python3 - "${RELEASE_DIR}" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+release_dir = Path(sys.argv[1])
+manifest = {
+    "schema_version": "suderra.release-assets.v1",
+    "version": "v9.9.9",
+    "generated_at": "2026-05-18T00:00:00Z",
+    "source": {"git_commit": "0" * 40},
+    "matrix_sha256": "0" * 64,
+    "buildroot_index_sha": "160000 commit buildroot " + "1" * 40,
+    "files": [],
+}
+for path in sorted(release_dir.iterdir()):
+    if path.is_file():
+        payload = path.read_bytes()
+        manifest["files"].append(
+            {
+                "name": path.name,
+                "role": "contract-fixture",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "bytes": len(payload),
+            }
+        )
+(release_dir / "release-assets.json").write_text(
+    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+(release_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+(release_dir / "SHA256SUMS").write_text("0  fixture\n", encoding="utf-8")
+for path in list(release_dir.iterdir()):
+    if not path.is_file() or path.name.endswith((".sig", ".cert")):
+        continue
+    (release_dir / f"{path.name}.sig").write_text("signature\n", encoding="utf-8")
+    (release_dir / f"{path.name}.cert").write_text("certificate\n", encoding="utf-8")
+PY
+
+python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" release-files \
+    --version v9.9.9 \
+    --release-dir "${RELEASE_DIR}" \
+    --signed \
+    >/dev/null
+
 rm -f "${RELEASE_DIR}/suderra-pi-cm4-revpi-usb-installer.payload-manifest.sig"
 if python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" release-files \
     --version v9.9.9 \
@@ -86,5 +132,10 @@ grep -q 'release/suderra-\*.payload-manifest.json' "${RELEASE_WORKFLOW}" ||
 grep -q 'release/suderra-\*.payload-manifest.sig' "${RELEASE_WORKFLOW}" ||
     {
         echo "ERROR: release workflow does not publish payload manifest signature assets" >&2
+        exit 1
+    }
+grep -q 'release/release-assets.json' "${RELEASE_WORKFLOW}" ||
+    {
+        echo "ERROR: release workflow does not publish immutable release asset manifest" >&2
         exit 1
     }
