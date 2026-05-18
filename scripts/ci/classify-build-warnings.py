@@ -37,13 +37,22 @@ KNOWN_UPSTREAM_PATTERNS = (
     re.compile(r"(?:^|/|\.\./)gcc/\.\./libgcc/.+warning:"),
     re.compile(r"^gengtype-lex\.cc:.+warning:"),
     re.compile(r"^plural\.y:.+warning:"),
+    re.compile(r"\bPOSIX Yacc does not support\b"),
     re.compile(r"^configure: WARNING:"),
     re.compile(r"^config\.status: WARNING:"),
     re.compile(r"^checking for makeinfo\.\.\. configure: WARNING:"),
     re.compile(r"^libtool: install: warning:"),
+    re.compile(r"^libtool: link: warning:"),
     re.compile(r"\bWARNING: 'makeinfo' is missing"),
 )
-LOCATION_RE = re.compile(r"^(?P<location>.*?):\d+(?::\d+)?: (?P<body>warning: .*)$")
+LOCATION_RE = re.compile(r"^(?P<location>.*?):\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?P<body>warning: .*)$")
+STABLE_WARNING_MARKERS = (
+    "configure: WARNING:",
+    "config.status: WARNING:",
+    "libtool: install: warning:",
+    "libtool: link: warning:",
+    "WARNING: 'makeinfo' is missing",
+)
 
 
 @dataclass(frozen=True)
@@ -64,25 +73,41 @@ def is_suderra_package(package: str | None) -> bool:
 
 
 def classify(text: str, package: str | None) -> str:
+    stable_text = stable_warning_text(text)
     if BUILD_ENV_FAILURE_RE.search(text):
         return "owned"
     if OWNED_PATH_RE.search(text):
         return "owned"
     if is_suderra_package(package):
         return "owned"
-    if any(pattern.search(text) for pattern in KNOWN_UPSTREAM_PATTERNS):
+    if any(pattern.search(stable_text) for pattern in KNOWN_UPSTREAM_PATTERNS):
         return "known-upstream"
     if package:
         return "known-upstream"
     return "third-party"
 
 
+def stable_warning_text(text: str) -> str:
+    stripped = text.strip()
+    for marker in STABLE_WARNING_MARKERS:
+        marker_index = stripped.find(marker)
+        if marker_index >= 0:
+            return stripped[marker_index:]
+    return stripped
+
+
 def fingerprint(text: str) -> str:
-    match = LOCATION_RE.match(text)
+    stable_text = stable_warning_text(text)
+    match = LOCATION_RE.match(stable_text)
     if not match:
-        return text
+        return stable_text
     location = re.sub(r"(?:\.\./)+", "", match.group("location"))
-    return f"{location}: {match.group('body')}"
+    body = match.group("body")
+    if body.startswith("warning: POSIX Yacc does not support"):
+        return body
+    if not location:
+        return body
+    return f"{location}: {body}"
 
 
 def collect(path: Path) -> list[WarningLine]:

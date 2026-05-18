@@ -17,8 +17,13 @@ cat > "${TMP_DIR}/upstream.log" <<'LOG'
 ../../../../libsanitizer/asan/asan_interceptors.cpp:134:5: warning: ISO C++ forbids braced-groups within expressions [-Wpedantic]
 gengtype-lex.cc:356:15: warning: this statement may fall through [-Wimplicit-fallthrough=]
 plural.y:51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
+:51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 libtool: install: warning: remember to run `libtool --finish /tmp/example'
+checking if /tmp/tool supports -c -o file.o... libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries
+libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries
 configure: WARNING: using cross tools not prefixed with host triplet
+checking for a BSD-compatible install... configure: WARNING: Continuing even with errors mentioned immediately above this line.
+configure: WARNING: Continuing even with errors mentioned immediately above this line.
 >>> host-flex 2.6.4 Building
 parse.y:360:41: warning: '%s' directive output may be truncated [-Wformat-truncation=]
 scan.c:8390:13: warning: conflicting types for built-in function 'malloc' [-Wbuiltin-declaration-mismatch]
@@ -57,8 +62,11 @@ import json
 import sys
 
 evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
-assert evidence["summary"] == {"known-upstream": 11, "owned": 0, "third-party": 0}
-assert evidence["unique_fingerprints"] == 11
+assert evidence["summary"] == {"known-upstream": 16, "owned": 0, "third-party": 0}
+assert evidence["unique_fingerprints"] == 13
+assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 2
+assert evidence["fingerprints"]["libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries"] == 2
+assert evidence["fingerprints"]["configure: WARNING: Continuing even with errors mentioned immediately above this line."] == 2
 assert not evidence["failing"]
 PY
 
