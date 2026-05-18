@@ -34,6 +34,7 @@ REQUIRED_CHECKS = {
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_LOG_ROLES = {"serial", "qmp-events", "qemu-stderr"}
+PLACEHOLDER_VALUES = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
 SEMANTIC_CHECKS = {
     "zero-failed-units",
     "os-release",
@@ -56,9 +57,16 @@ def check_string(errors: list[str], path: str, value: Any) -> None:
         error(errors, path, "must be a non-empty string")
 
 
+def check_non_placeholder(errors: list[str], path: str, value: Any) -> None:
+    if isinstance(value, str) and value.strip() in PLACEHOLDER_VALUES:
+        error(errors, path, "must not be placeholder evidence")
+
+
 def check_sha256(errors: list[str], path: str, value: Any) -> None:
     if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
         error(errors, path, "must be a lowercase sha256 hex digest")
+    elif value == "0" * 64:
+        error(errors, path, "must not be the all-zero sha256 digest")
 
 
 def sha256_file(path: Path) -> str:
@@ -78,6 +86,7 @@ def check_relative_file(
     value: Any,
     check_files: bool,
     expected_sha256: str | None = None,
+    allow_empty: bool = False,
 ) -> Path | None:
     check_string(errors, path, value)
     if not isinstance(value, str):
@@ -87,7 +96,7 @@ def check_relative_file(
         error(errors, path, "must be relative and must not contain '..'")
         return None
     actual = root / rel
-    if check_files and (not actual.is_file() or actual.stat().st_size <= 0):
+    if check_files and (not actual.is_file() or (actual.stat().st_size <= 0 and not allow_empty)):
         error(errors, path, f"referenced file is missing or empty: {value}")
         return actual
     if check_files and expected_sha256 is not None and actual.is_file():
@@ -159,6 +168,8 @@ def validate(
             error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
     for field in ("version", "target", "generated_at", "image", "qemu_version", "firmware"):
         check_string(errors, f"$.{field}", payload.get(field))
+        if profile == "release-candidate" and payload.get("status") == "passed":
+            check_non_placeholder(errors, f"$.{field}", payload.get(field))
     check_sha256(errors, "$.image_sha256", payload.get("image_sha256"))
     check_sha256(errors, "$.firmware_sha256", payload.get("firmware_sha256"))
     check_binding(errors, payload, expected_version, expected_target, expected_source_sha, expected_artifact_sha256)
@@ -181,7 +192,16 @@ def validate(
                 log_roles.add(item["role"])
             check_sha256(errors, f"$.logs[{idx}].sha256", item.get("sha256"))
             expected_sha = item.get("sha256") if isinstance(item.get("sha256"), str) else None
-            check_relative_file(errors, root, f"$.logs[{idx}].path", item.get("path"), check_files, expected_sha)
+            allow_empty = item.get("role") == "qemu-stderr"
+            check_relative_file(
+                errors,
+                root,
+                f"$.logs[{idx}].path",
+                item.get("path"),
+                check_files,
+                expected_sha,
+                allow_empty,
+            )
     if profile == "release-candidate":
         missing_roles = sorted(REQUIRED_LOG_ROLES - log_roles)
         if missing_roles:
@@ -204,8 +224,12 @@ def validate(
         if profile == "release-candidate" and name in SEMANTIC_CHECKS:
             if not isinstance(result.get("evidence"), str) or not result.get("evidence", "").strip():
                 error(errors, f"$.checks.{name}.evidence", "must describe machine-collected evidence")
+            else:
+                check_non_placeholder(errors, f"$.checks.{name}.evidence", result.get("evidence"))
             if not isinstance(result.get("source"), str) or not result.get("source", "").strip():
                 error(errors, f"$.checks.{name}.source", "must name the guest command or log source")
+            else:
+                check_non_placeholder(errors, f"$.checks.{name}.source", result.get("source"))
     facts = payload.get("guest_facts")
     if not isinstance(facts, dict):
         error(errors, "$.guest_facts", "must be an object")
@@ -213,6 +237,19 @@ def validate(
         for field in ("os_release", "kernel", "rootfs", "network", "listeners", "firewall", "firstboot", "lockdown"):
             if field not in facts:
                 error(errors, f"$.guest_facts.{field}", "must be collected for release-candidate QEMU input")
+            elif field != "listeners":
+                value = facts[field]
+                if isinstance(value, str):
+                    if not value.strip():
+                        error(errors, f"$.guest_facts.{field}", "must not be empty")
+                    check_non_placeholder(errors, f"$.guest_facts.{field}", value)
+                elif isinstance(value, dict) and not value:
+                    error(errors, f"$.guest_facts.{field}", "must not be an empty object")
+                elif value is None:
+                    error(errors, f"$.guest_facts.{field}", "must not be null")
+        listeners = facts.get("listeners")
+        if "listeners" in facts and not isinstance(listeners, list):
+            error(errors, "$.guest_facts.listeners", "must be a list")
     return errors
 
 

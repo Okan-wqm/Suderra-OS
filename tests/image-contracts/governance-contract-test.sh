@@ -40,6 +40,7 @@ rulesets = [
         "target": "branch",
         "enforcement": "active",
         "bypass_actors": [],
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
         "rules": [
             {"type": "pull_request"},
             {"type": "required_signatures"},
@@ -52,6 +53,7 @@ rulesets = [
         "target": "tag",
         "enforcement": "active",
         "bypass_actors": [],
+        "conditions": {"ref_name": {"include": [policy["release_environment"]["allowed_ref"]], "exclude": []}},
         "rules": [{"type": "non_fast_forward"}],
     },
 ]

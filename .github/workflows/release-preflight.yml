@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-preflight-${{ inputs.version }}-${{ inputs.source_sha }}
+  group: release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inputs.source_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -73,6 +73,8 @@ jobs:
               raise SystemExit(f"source_run_id head_sha {run.get('head_sha')} does not match {source_sha}")
           if run.get("status") != "completed" or run.get("conclusion") != "success":
               raise SystemExit(f"source Build run is not successful: {run.get('status')} {run.get('conclusion')}")
+          if profile == "release-candidate" and run.get("head_branch") != "main":
+              raise SystemExit(f"release-candidate source Build run must come from main, got {run.get('head_branch')!r}")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"run_attempt={run.get('run_attempt', 1)}\n")
           PY
@@ -85,6 +87,13 @@ jobs:
 
       - name: Validate build matrix
         run: python3 scripts/ci/validate-build-matrix.py validate
+
+      - name: Verify source commit is protected-main derived
+        if: ${{ inputs.profile == 'release-candidate' }}
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "${SOURCE_SHA}" origin/main
 
       - name: Download source Build artifacts
         env:
@@ -162,7 +171,7 @@ jobs:
       - name: Upload preflight evidence bundle
         uses: actions/upload-artifact@v7
         with:
-          name: release-preflight-${{ inputs.version }}-${{ inputs.source_sha }}
+          name: release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inputs.source_sha }}
           path: |
             source-run.json
             release-inputs/

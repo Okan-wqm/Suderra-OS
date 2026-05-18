@@ -262,25 +262,63 @@ for scan in (
     "trivy",
     "grype",
 ):
-    write_json(root / "release-security" / version / f"{scan}.json", {"scan": scan, "status": "passed"})
+    write_json(
+        root / "release-security" / version / f"{scan}.json",
+        {
+            "schema_version": "suderra.release-security-report.v1",
+            "version": version,
+            "source_sha": source_sha,
+            "source_run_id": "123456789",
+            "scan": scan,
+            "status": "passed",
+            "generated_at": "2026-05-13T00:00:00Z",
+            "tool": scan,
+            "tool_version": "contract",
+            "evidence_type": "contract-log",
+            "evidence_sha256": hashlib.sha256(f"{scan} passed\n".encode("utf-8")).hexdigest(),
+            "severity_counts": {"critical": 0, "high": 0},
+        },
+    )
 
 binding_artifacts = []
-for target, artifact in (
-    ("qemu-x86_64", "disk.img"),
-    ("rpi4", "suderra-rpi4-target.img"),
-    ("pi-cm4-revpi-usb-installer", "suderra-pi-cm4-revpi-usb-installer.img"),
-    ("revpi4", "suderra-revpi4-target.img"),
+for defconfig, target, artifacts in (
+    ("suderra_qemu_x86_64_defconfig", "qemu-x86_64", ("disk.img", "disk.img.xz", "MANIFEST.txt")),
+    (
+        "suderra_aarch64_rpi4_defconfig",
+        "rpi4",
+        ("suderra-rpi4-target.img", "suderra-rpi4-target.img.xz", "MANIFEST.txt"),
+    ),
+    (
+        "suderra_aarch64_rpi4_usb_installer_defconfig",
+        "pi-cm4-revpi-usb-installer",
+        (
+            "suderra-pi-cm4-revpi-usb-installer.img",
+            "suderra-pi-cm4-revpi-usb-installer.img.xz",
+            "MANIFEST.txt",
+            "manifest.json",
+            "manifest.sig",
+        ),
+    ),
+    (
+        "suderra_aarch64_revpi4_defconfig",
+        "revpi4",
+        ("suderra-revpi4-target.img", "suderra-revpi4-target.img.xz", "MANIFEST.txt"),
+    ),
 ):
-    binding_artifacts.append(
-        {
-            "defconfig": f"contract-{target}",
-            "target": target,
-            "artifact": artifact,
-            "path": f"{target}/{artifact}",
-            "bytes": 1024,
-            "sha256": "1" * 64,
-        }
-    )
+    for artifact in artifacts:
+        digest = "a" * 64 if target == "qemu-x86_64" and artifact == "disk.img" else hashlib.sha256(
+            f"{defconfig}:{artifact}".encode("utf-8")
+        ).hexdigest()
+        binding_artifacts.append(
+            {
+                "defconfig": defconfig,
+                "target": target,
+                "artifact": artifact,
+                "path": f"{defconfig}-image/{artifact}",
+                "bytes": 1024,
+                "sha256": digest,
+            }
+        )
 write_json(
     root / "release-inputs" / version / "release-candidate.json",
     {

@@ -180,7 +180,7 @@ jobs:
           SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
         run: |
           set -euo pipefail
-          artifact_name="release-preflight-${VERSION}-${SOURCE_SHA}"
+          artifact_name="release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}"
           while read -r run_id; do
             [ -n "${run_id}" ] || continue
             if gh run download "${run_id}" \
@@ -949,6 +949,14 @@ jobs:
           python3 scripts/ci/validate-build-matrix.py release-files \
             --version "${{ needs.validate.outputs.version }}" \
             --release-dir release
+
+      - name: Validate staged release binding
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/validate-release-artifact-binding.py \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --release-dir release \
+            --matrix ci/build-matrix.yml
 
       - name: Build manifest.json (suderra-installer manifest format)
         working-directory: release

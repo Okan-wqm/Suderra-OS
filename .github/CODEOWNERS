@@ -10,10 +10,12 @@ ci/build-matrix.yml @okan-wqm
 ci/build-warning-policy.json @okan-wqm
 ci/github-governance-policy.yml @okan-wqm
 docs/dev/branch-protection.md @okan-wqm
+docs/operations/** @okan-wqm
 docs/operations/release-evidence.md @okan-wqm
 docs/operations/release-lifecycle.md @okan-wqm
 docs/operations/usb-installer-alpha-validation.md @okan-wqm
 docs/operations/verify-release.md @okan-wqm
+docs/security/** @okan-wqm
 docs/security/key-management.md @okan-wqm
 docs/security/sbom-process.md @okan-wqm
 board/keys/** @okan-wqm
@@ -29,3 +31,4 @@ scripts/verify-reproducible.sh @okan-wqm
 scripts/lint.sh @okan-wqm
 tests/image-contracts/** @okan-wqm
 tests/ota/** @okan-wqm
+tests/qemu/** @okan-wqm

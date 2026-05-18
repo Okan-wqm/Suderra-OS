@@ -20,6 +20,7 @@ DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v1"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+PLACEHOLDER_VALUES = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
 
 
 def run(args: list[str]) -> list[str]:
@@ -38,14 +39,23 @@ def read_json(path: Path) -> Any | None:
         return None
 
 
-def load_matrix(path: Path) -> dict[str, Any]:
+def load_matrix_module() -> Any:
     script = ROOT / "scripts" / "ci" / "validate-build-matrix.py"
     spec = importlib.util.spec_from_file_location("validate_build_matrix", script)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot import {script}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.load_matrix(path)
+    return module
+
+
+def load_matrix(path: Path) -> dict[str, Any]:
+    return load_matrix_module().load_matrix(path)
+
+
+def load_matrix_with_module(path: Path) -> tuple[dict[str, Any], Any]:
+    module = load_matrix_module()
+    return module.load_matrix(path), module
 
 
 def sha256_file(path: Path) -> str:
@@ -56,6 +66,10 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def is_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() in PLACEHOLDER_VALUES
 
 
 def git_output(args: list[str]) -> str:
@@ -102,6 +116,15 @@ def validate_binding(
         failures.append("binding source_sha must match --source-sha")
     if args.source_run_id is not None and str(binding.get("source_run_id")) != str(args.source_run_id):
         failures.append("binding source_run_id must match --source-run-id")
+    source_run_attempt = binding.get("source_run_attempt")
+    try:
+        valid_attempt = int(str(source_run_attempt))
+    except (TypeError, ValueError):
+        valid_attempt = 0
+    if valid_attempt <= 0:
+        failures.append("binding source_run_attempt must be a positive run attempt")
+    if binding.get("build_workflow_name") != args.build_workflow_name:
+        failures.append(f"binding build_workflow_name must be {args.build_workflow_name}")
     source_sha = binding.get("source_sha")
     if not isinstance(source_sha, str) or not SOURCE_SHA_RE.fullmatch(source_sha):
         failures.append("binding source_sha must be a lowercase git commit sha")
@@ -119,6 +142,18 @@ def validate_binding(
             expected_buildroot = None
         if expected_buildroot is not None and buildroot_index_sha != expected_buildroot:
             failures.append("binding buildroot_index_sha does not match source_sha tree")
+    try:
+        matrix, matrix_module = load_matrix_with_module(matrix_path)
+        expected_rows = [row for row in matrix.get("defconfigs", []) if row.get("release")]
+        expected_artifacts: dict[tuple[str, str], dict[str, Any]] = {
+            (str(row["name"]), artifact): row
+            for row in expected_rows
+            for artifact in matrix_module.expected_artifacts(row)
+        }
+    except Exception as exc:
+        failures.append(f"cannot load expected release artifact contract: {exc}")
+        expected_artifacts = {}
+
     artifacts = binding.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         failures.append("binding artifacts must be a non-empty list")
@@ -130,22 +165,55 @@ def validate_binding(
                 failures.append(f"binding artifacts[{index}] must be an object")
                 continue
             key = (str(artifact.get("defconfig")), str(artifact.get("artifact")))
+            expected_row = expected_artifacts.get(key)
+            if expected_artifacts and expected_row is None:
+                failures.append(f"unexpected binding artifact: {key[0]} {key[1]}")
+            elif expected_row is not None and artifact.get("target") != expected_row.get("target"):
+                failures.append(f"binding artifact {key[0]} {key[1]} target must be {expected_row.get('target')}")
             if key in seen:
                 failures.append(f"duplicate binding artifact: {key[0]} {key[1]}")
             seen.add(key)
             digest = artifact.get("sha256")
             if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
                 failures.append(f"binding artifact {key[0]} {key[1]} has invalid sha256")
+            elif digest == "0" * 64:
+                failures.append(f"binding artifact {key[0]} {key[1]} must not use all-zero sha256")
             if not isinstance(artifact.get("bytes"), int) or artifact.get("bytes", 0) <= 0:
                 failures.append(f"binding artifact {key[0]} {key[1]} must have positive byte size")
             rel = artifact.get("path")
+            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
+                failures.append(f"binding artifact {key[0]} {key[1]} path must be a relative non-placeholder path")
             if artifact_root is not None and isinstance(rel, str):
                 path = artifact_root / rel
                 if not path.is_file():
                     failures.append(f"binding artifact file missing: {path}")
                 elif isinstance(digest, str) and sha256_file(path) != digest:
                     failures.append(f"binding artifact sha mismatch: {path}")
+        if expected_artifacts:
+            missing = sorted(set(expected_artifacts) - seen)
+            if missing:
+                failures.append(
+                    "binding artifacts missing matrix-required files: "
+                    + ", ".join(f"{defconfig}:{artifact}" for defconfig, artifact in missing)
+                )
     return failures
+
+
+def binding_artifact_sha256(binding: dict[str, Any] | None, target: str, artifact_name: str) -> str | None:
+    if not isinstance(binding, dict):
+        return None
+    artifacts = binding.get("artifacts")
+    if not isinstance(artifacts, list):
+        return None
+    matches = [
+        item.get("sha256")
+        for item in artifacts
+        if isinstance(item, dict)
+        and item.get("target") == target
+        and item.get("artifact") == artifact_name
+        and isinstance(item.get("sha256"), str)
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def validate_approval(path: Path, version: str, target: str) -> list[str]:
@@ -176,15 +244,36 @@ def validate_repro(path: Path) -> list[str]:
     return []
 
 
-def validate_security_report(path: Path, scan: str) -> list[str]:
+def validate_security_report(
+    path: Path,
+    scan: str,
+    version: str,
+    source_sha: str | None,
+    source_run_id: str | None,
+) -> list[str]:
     payload = read_json(path)
     if not isinstance(payload, dict):
         return [f"missing or invalid release security report: {path}"]
     failures = []
+    if payload.get("schema_version") != "suderra.release-security-report.v1":
+        failures.append(f"security report schema_version mismatch: {path}")
+    if payload.get("version") != version:
+        failures.append(f"security report version mismatch: {path}")
+    if source_sha is not None and payload.get("source_sha") != source_sha:
+        failures.append(f"security report source_sha mismatch: {path}")
+    if source_run_id is not None and str(payload.get("source_run_id")) != str(source_run_id):
+        failures.append(f"security report source_run_id mismatch: {path}")
     if payload.get("scan", scan) != scan:
         failures.append(f"security report scan mismatch: {path}")
     if payload.get("status") != "passed":
         failures.append(f"security report status must be passed: {path}")
+    for field in ("generated_at", "tool", "tool_version", "evidence_type", "evidence_sha256"):
+        value = payload.get(field)
+        if field == "evidence_sha256":
+            if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
+                failures.append(f"security report evidence_sha256 must be a non-zero sha256: {path}")
+        elif not isinstance(value, str) or not value.strip() or is_placeholder(value):
+            failures.append(f"security report missing {field}: {path}")
     counts = payload.get("severity_counts")
     if isinstance(counts, dict):
         for severity in ("critical", "high"):
@@ -205,6 +294,7 @@ def main() -> int:
     parser.add_argument("--binding-manifest", type=Path)
     parser.add_argument("--source-sha")
     parser.add_argument("--source-run-id")
+    parser.add_argument("--build-workflow-name", default="Build")
     parser.add_argument("--artifact-root", type=Path)
     args = parser.parse_args()
 
@@ -217,6 +307,9 @@ def main() -> int:
     bound_source_sha = args.source_sha
     if bound_source_sha is None and isinstance(binding, dict) and isinstance(binding.get("source_sha"), str):
         bound_source_sha = binding["source_sha"]
+    bound_source_run_id = args.source_run_id
+    if bound_source_run_id is None and isinstance(binding, dict) and binding.get("source_run_id") is not None:
+        bound_source_run_id = str(binding["source_run_id"])
     if args.profile == "technical-dry-run":
         if failures:
             for failure in failures:
@@ -243,6 +336,8 @@ def main() -> int:
     ]
     if bound_source_sha:
         lab_args.extend(["--expected-source-sha", bound_source_sha])
+    if bound_source_run_id:
+        lab_args.extend(["--expected-source-run-id", bound_source_run_id])
     if args.check_files:
         lab_args.append("--check-files")
     failures.extend(run(lab_args))
@@ -261,6 +356,9 @@ def main() -> int:
             ]
             if bound_source_sha:
                 qemu_args.extend(["--expected-source-sha", bound_source_sha])
+            expected_qemu_sha = binding_artifact_sha256(binding, str(row["target"]), str(row["artifact"]))
+            if expected_qemu_sha:
+                qemu_args.extend(["--expected-artifact-sha256", expected_qemu_sha])
             if args.check_files:
                 qemu_args.append("--check-files")
             failures.extend(run(qemu_args))
@@ -272,7 +370,7 @@ def main() -> int:
             failures.extend(validate_repro(repro))
     for scan in matrix.get("security_scans", []):
         report = args.root / "release-security" / args.version / f"{scan}.json"
-        failures.extend(validate_security_report(report, str(scan)))
+        failures.extend(validate_security_report(report, str(scan), args.version, bound_source_sha, bound_source_run_id))
 
     if failures:
         for failure in failures:

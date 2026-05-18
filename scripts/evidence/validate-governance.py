@@ -64,6 +64,20 @@ def ruleset_named(rulesets: Any, name: str, target: str | None = None) -> dict[s
     return None
 
 
+def ruleset_ref_includes(ruleset: dict[str, Any], expected: str, aliases: set[str]) -> bool:
+    conditions = ruleset.get("conditions")
+    if not isinstance(conditions, dict):
+        return False
+    ref_name = conditions.get("ref_name")
+    if not isinstance(ref_name, dict):
+        return False
+    includes = ref_name.get("include")
+    if not isinstance(includes, list):
+        return False
+    accepted = {expected, *aliases}
+    return any(isinstance(item, str) and item in accepted for item in includes)
+
+
 def environment_reviewers(environment: dict[str, Any]) -> int:
     protection_rules = environment.get("protection_rules")
     if not isinstance(protection_rules, list):
@@ -141,6 +155,13 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
         for required_rule in ("pull_request", "required_signatures", "non_fast_forward", "required_linear_history"):
             if not has_rule(rules, required_rule):
                 failures.append(f"branch ruleset missing rule: {required_rule}")
+        protected_branch = str(policy.get("protected_branch", "main"))
+        if not ruleset_ref_includes(
+            branch_ruleset,
+            f"refs/heads/{protected_branch}",
+            {protected_branch, "~DEFAULT_BRANCH"},
+        ):
+            failures.append(f"branch ruleset must apply to refs/heads/{protected_branch}")
 
     tag_ruleset = ruleset_named(rulesets, str(rule_policy.get("tag_name", "")), "tag")
     if tag_ruleset is None:
@@ -154,6 +175,9 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
         rules = tag_ruleset.get("rules") if isinstance(tag_ruleset.get("rules"), list) else []
         if not has_rule(rules, "non_fast_forward"):
             failures.append("tag ruleset missing rule: non_fast_forward")
+        allowed_ref = str(policy.get("release_environment", {}).get("allowed_ref", "refs/tags/v*"))
+        if not ruleset_ref_includes(tag_ruleset, allowed_ref, {allowed_ref.removeprefix("refs/tags/")}):
+            failures.append(f"tag ruleset must apply to {allowed_ref}")
     if tag_protection:
         warnings.append("legacy tag protection snapshot is ignored; release tags must be governed by rulesets")
 
@@ -171,6 +195,10 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
         if isinstance(deployment_policy, dict):
             if deployment_policy.get("protected_branches") is True and deployment_policy.get("custom_branch_policies") is not True:
                 failures.append("release environment must use selected tag refs, not only protected branches")
+            if env_policy.get("allowed_ref") and deployment_policy.get("custom_branch_policies") is not True:
+                failures.append("release environment must use custom selected tag refs")
+        elif env_policy.get("allowed_ref"):
+            failures.append("release environment deployment branch policy must be collected")
 
     if isinstance(workflow_permissions, dict):
         default_workflow_permissions = workflow_permissions.get("default_workflow_permissions")

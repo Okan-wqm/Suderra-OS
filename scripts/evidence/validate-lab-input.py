@@ -270,6 +270,7 @@ def validate_lab(
     expected_target: str | None = None,
     profile: str = "release-candidate",
     expected_source_sha: str | None = None,
+    expected_source_run_id: str | None = None,
 ) -> list[str]:
     root = path.parent
     errors: list[str] = []
@@ -321,6 +322,12 @@ def validate_lab(
                 error(errors, "$.artifact_binding.source_sha", "must be a lowercase git commit sha")
             elif expected_source_sha is not None and source_sha != expected_source_sha:
                 error(errors, "$.artifact_binding.source_sha", f"must match bound source sha {expected_source_sha}")
+            if expected_source_run_id is not None and str(binding.get("source_run_id")) != str(expected_source_run_id):
+                error(
+                    errors,
+                    "$.artifact_binding.source_run_id",
+                    f"must match bound source Build run {expected_source_run_id}",
+                )
             check_sha256(errors, "$.artifact_binding.release_assets_sha256", binding.get("release_assets_sha256"))
     devices = payload.get("devices")
     if not isinstance(devices, list) or not devices:
@@ -464,6 +471,7 @@ def validate_command(args: argparse.Namespace) -> int:
         args.expected_target,
         args.profile,
         args.expected_source_sha,
+        args.expected_source_run_id,
     )
     if errors:
         for item in errors:
@@ -487,6 +495,7 @@ def validate_matrix_command(args: argparse.Namespace) -> int:
                 target,
                 args.profile,
                 args.expected_source_sha,
+                args.expected_source_run_id,
             )
         )
     if failures:
@@ -507,6 +516,7 @@ def main() -> int:
     validate.add_argument("--expected-version")
     validate.add_argument("--expected-target")
     validate.add_argument("--expected-source-sha")
+    validate.add_argument("--expected-source-run-id")
     validate.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
     validate.set_defaults(func=validate_command)
     validate_matrix = subparsers.add_parser("validate-matrix")
@@ -516,6 +526,7 @@ def main() -> int:
     validate_matrix.add_argument("--require-pass", action="store_true")
     validate_matrix.add_argument("--check-files", action="store_true")
     validate_matrix.add_argument("--expected-source-sha")
+    validate_matrix.add_argument("--expected-source-run-id")
     validate_matrix.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
     validate_matrix.set_defaults(func=validate_matrix_command)
     args = parser.parse_args()

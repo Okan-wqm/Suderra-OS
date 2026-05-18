@@ -42,6 +42,18 @@ grep -q 'release-preflight-' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight artifact name must include version and source_sha" >&2
     exit 1
 }
+grep -Fq 'release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inputs.source_sha }}' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight artifact name must include profile, version, and source_sha" >&2
+    exit 1
+}
+grep -Fq 'release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must bind only release-candidate preflight artifacts" >&2
+    exit 1
+}
+grep -q 'validate-release-artifact-binding.py' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must compare staged release bytes to the preflight binding" >&2
+    exit 1
+}
 grep -q 'preflight-binding:' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must require a successful release preflight binding" >&2
     exit 1

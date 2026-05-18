@@ -273,8 +273,14 @@ def init_command(args: argparse.Namespace) -> int:
                 "schema_version": "suderra.release-security-report.v1",
                 "version": args.version,
                 "source_sha": args.source_sha,
+                "source_run_id": str(args.source_run_id),
                 "scan": scan,
                 "status": "not_run",
+                "generated_at": "TO_BE_COLLECTED",
+                "tool": "TO_BE_COLLECTED",
+                "tool_version": "TO_BE_COLLECTED",
+                "evidence_type": "TO_BE_COLLECTED",
+                "evidence_sha256": "0" * 64,
             },
         )
     if errors:

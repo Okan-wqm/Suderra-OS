@@ -34,14 +34,25 @@ gh workflow run "Release Preflight" \
   -f profile=release-candidate
 ```
 
-The workflow artifact name is:
+`release-candidate` accepts only a successful `Build` run whose `head_branch` is
+`main`; the workflow also verifies that `source_sha` is an ancestor of
+`origin/main`. Technical dry runs may be used against other branches for binding
+debugging, but they cannot feed the tag release workflow.
+
+The workflow artifact name includes the profile so a later technical dry run
+cannot shadow an approved release-candidate bundle:
 
 ```text
-release-preflight-<version>-<source_sha>
+release-preflight-<profile>-<version>-<source_sha>
 ```
 
-The release tag workflow searches for a successful preflight artifact for the
-tag commit. If it cannot find one, publication stops before image builds.
+The release tag workflow searches only for:
+
+```text
+release-preflight-release-candidate-<version>-<source_sha>
+```
+
+If it cannot find one, publication stops before image builds.
 
 `release-candidate` preflight also validates live GitHub governance. The token
 must be able to read branch protection, repository rulesets, environments,
@@ -61,4 +72,31 @@ The candidate bundle must include:
 - `release-reproducibility/<version>/<target>.log`
 
 All evidence must reference the same source commit, Build run ID, Buildroot
-submodule SHA, matrix hash, and artifact digests.
+submodule SHA, matrix hash, and artifact digests. The binding manifest must
+cover the exact `ci/build-matrix.yml` release artifact set; extra, missing,
+all-zero, absolute-path, or placeholder artifact entries fail closed.
+
+## Release Byte Binding
+
+Release-candidate preflight binds raw Build artifacts from one successful
+`Build` run. The tag workflow later rebuilds, stages, signs, and attests
+release-named files. Before signing, `validate-release-artifact-binding.py`
+maps staged release files back to their preflight-bound source artifacts and
+compares SHA-256 digests:
+
+- `<matrix artifact>.xz` -> `<release_artifact>`
+- `MANIFEST.txt` -> `<release base>.manifest.txt`
+- `manifest.json` -> `<release base>.payload-manifest.json`
+- `manifest.sig` -> `<release base>.payload-manifest.sig`
+
+Any staged image, manifest, or payload signature that does not match the bound
+Build run stops the release. This keeps `source_run_id` evidence meaningful even
+when the tag workflow performs a reproducible rebuild.
+
+## Acceptance Binding
+
+Release QEMU input is validated against both `source_sha` and the bound raw
+QEMU image digest (`disk.img`). Hardware lab input is validated against
+`source_sha` and the bound Build run ID. Security reports must include the same
+version, source commit, source Build run, tool metadata, and a non-zero digest
+for the retained scan evidence.

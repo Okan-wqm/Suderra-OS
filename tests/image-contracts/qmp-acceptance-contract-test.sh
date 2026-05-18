@@ -156,8 +156,23 @@ PY
 python3 "${PROJECT_ROOT}/scripts/evidence/validate-qemu-input.py" \
     --require-pass \
     --check-files \
+    --expected-artifact-sha256 "$(printf '%064d' 0 | tr '0' 'a')" \
     "${QEMU_INPUT}" \
     >/dev/null
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-qemu-input.py" \
+    --require-pass \
+    --check-files \
+    --expected-artifact-sha256 "$(printf '%064d' 0 | tr '0' 'c')" \
+    "${QEMU_INPUT}" \
+    2>"${TMPDIR}/qemu-hash.err"; then
+    echo "ERROR: QEMU input validator accepted the wrong bound image sha" >&2
+    exit 1
+fi
+grep -q "bound artifact sha256" "${TMPDIR}/qemu-hash.err" || {
+    echo "ERROR: QEMU image hash mismatch did not mention bound artifact sha256" >&2
+    cat "${TMPDIR}/qemu-hash.err" >&2
+    exit 1
+}
 python3 - "${QEMU_INPUT}" <<'PY'
 import json
 import sys
