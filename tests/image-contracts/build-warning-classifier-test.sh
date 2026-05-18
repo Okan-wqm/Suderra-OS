@@ -29,6 +29,8 @@ configure: WARNING: Continuing even with errors mentioned immediately above this
 >>> host-fakeroot 1.36 Building
 awk: ./wrapawk: warning: regexp escape sequence `\#' is not a known regexp operator
 ./wrapawk:27: warning: regexp escape sequence `\#' is not a known regexp operator
+awk: warning: regexp escape sequence `\#' is not a known regexp operator
+warning: regexp escape sequence `\#' is not a known regexp operator
 >>> host-flex 2.6.4 Building
 parse.y:360:41: warning: '%s' directive output may be truncated [-Wformat-truncation=]
 scan.c:8390:13: warning: conflicting types for built-in function 'malloc' [-Wbuiltin-declaration-mismatch]
@@ -73,13 +75,13 @@ import json
 import sys
 
 evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
-assert evidence["summary"] == {"known-upstream": 24, "owned": 0, "third-party": 0}
+assert evidence["summary"] == {"known-upstream": 26, "owned": 0, "third-party": 0}
 assert evidence["unique_fingerprints"] == 17
 assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 2
 assert evidence["fingerprints"]["libtool: install: warning: remember to run `libtool --finish $OUTPUT_DIR/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'"] == 2
 assert evidence["fingerprints"]["libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries"] == 2
 assert evidence["fingerprints"]["configure: WARNING: Continuing even with errors mentioned immediately above this line."] == 2
-assert evidence["fingerprints"]["host-fakeroot: ./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"] == 2
+assert evidence["fingerprints"]["host-fakeroot: ./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"] == 4
 assert evidence["fingerprints"]["host-gcc-final: Makefile: warning: overriding recipe for target 'all-multi'"] == 2
 assert evidence["fingerprints"]["host-systemd: $OUTPUT_DIR/build/host-systemd-256.7/meson.build: WARNING:"] == 2
 assert not evidence["failing"]

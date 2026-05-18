@@ -36,6 +36,10 @@ python3 scripts/ci/classify-build-warnings.py \
 The warning evidence stores every fingerprint. If the unique fingerprint count
 changes, attach the new evidence JSON to the review. New fingerprints must be
 fixed or added to `allowed_fingerprints` with owner approval and an expiry.
+Package-specific canonicalization is allowed only when it collapses equivalent
+upstream diagnostics from different host tools into the same reviewed
+fingerprint; it must have a contract test that preserves fail-closed behavior
+for unrelated warnings.
 
 ## SARIF Uploads
 

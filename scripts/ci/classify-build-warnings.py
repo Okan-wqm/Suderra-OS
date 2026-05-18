@@ -60,6 +60,9 @@ STABLE_WARNING_MARKERS = (
     "WARNING: 'makeinfo' is missing",
 )
 AWK_SCRIPT_WARNING_RE = re.compile(r"^awk: (?P<script>\./[^:]+)(?::\d+(?:[.-]\d+)*)?: warning:(?P<body>.*)$")
+FAKEROOT_WRAPAWK_REGEXP_WARNING = (
+    "./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,16 @@ def fingerprint(text: str) -> str:
     return f"{location}: {body}"
 
 
+def canonical_package_fingerprint(package: str | None, raw_fingerprint: str) -> str:
+    if package == "host-fakeroot" and raw_fingerprint in {
+        "warning: regexp escape sequence `\\#' is not a known regexp operator",
+        "awk: warning: regexp escape sequence `\\#' is not a known regexp operator",
+        FAKEROOT_WRAPAWK_REGEXP_WARNING,
+    }:
+        return FAKEROOT_WRAPAWK_REGEXP_WARNING
+    return raw_fingerprint
+
+
 def collect(path: Path) -> list[WarningLine]:
     warnings: list[WarningLine] = []
     current_package: str | None = None
@@ -139,7 +152,7 @@ def collect(path: Path) -> list[WarningLine]:
             current_package = "buildroot-kconfig"
         if not (WARNING_RE.search(raw) or BUILD_ENV_FAILURE_RE.search(raw)):
             continue
-        raw_fingerprint = fingerprint(raw.strip())
+        raw_fingerprint = canonical_package_fingerprint(current_package, fingerprint(raw.strip()))
         if current_package and not OWNED_PATH_RE.search(raw):
             raw_fingerprint = f"{current_package}: {raw_fingerprint}"
         warnings.append(
