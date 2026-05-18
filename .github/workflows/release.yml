@@ -4,19 +4,17 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (örn: v0.1.0-alpha)'
-        required: true
-        type: string
 
 permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 env:
-  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
   # =========================================================================
@@ -89,12 +87,74 @@ jobs:
       - name: Enforce release readiness
         run: python3 scripts/ci/validate-build-matrix.py candidate-readiness --tag "${{ needs.validate.outputs.version }}"
 
+  governance:
+    name: Governance policy gate
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+      - name: Collect GitHub governance snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/collect-governance.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --version "${{ needs.validate.outputs.version }}" \
+            --output-root release-governance \
+            --repo-root .
+      - name: Validate GitHub governance policy
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/validate-governance.py \
+            --policy ci/github-governance-policy.yml \
+            --snapshot-root "release-governance/${{ needs.validate.outputs.version }}" \
+            --output "release-governance/${{ needs.validate.outputs.version }}/governance-policy-validation.json"
+      - name: Upload governance evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-governance-${{ needs.validate.outputs.version }}
+          path: release-governance/
+          retention-days: 30
+
+  input-preflight:
+    name: Release input preflight
+    needs: [validate, governance]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+      - name: Download governance evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: release-governance-${{ needs.validate.outputs.version }}
+          path: .
+      - name: Validate release inputs
+        run: |
+          set -euo pipefail
+          tier="production"
+          case "${{ needs.validate.outputs.version }}" in
+            *-*) tier="alpha" ;;
+          esac
+          python3 scripts/evidence/validate-release-inputs.py \
+            --version "${{ needs.validate.outputs.version }}" \
+            --release-tier "${tier}" \
+            --check-files
+
   # =========================================================================
   # Build — Her defconfig için paralel matrix
   # =========================================================================
   build:
     name: Build ${{ matrix.name }}
-    needs: [validate, matrix, release-readiness]
+    needs: [validate, matrix, release-readiness, input-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
     env:
@@ -557,7 +617,7 @@ jobs:
   # =========================================================================
   build-installer:
     name: Build suderra-installer (${{ matrix.arch }})
-    needs: [validate, release-readiness]
+    needs: [validate, release-readiness, input-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -682,16 +742,14 @@ jobs:
   # =========================================================================
   # Cosign Sign + GitHub Release
   # =========================================================================
-  release:
-    name: Stage, sign, attest, verify, publish release
-    needs: [validate, matrix, build, build-payload, build-installer, sbom]
+  release-evidence:
+    name: Stage, sign, attest, verify, assemble evidence
+    needs: [validate, matrix, governance, build, build-payload, build-installer, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment:
-      name: release-publish
     permissions:
       actions: read
-      contents: write
+      contents: read
       id-token: write       # Sigstore keyless
       attestations: write
     steps:
@@ -721,6 +779,12 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts/
+
+      - name: Download governance evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: release-governance-${{ needs.validate.outputs.version }}
+          path: .
 
       - name: Stage release files
         run: |
@@ -980,6 +1044,27 @@ jobs:
             release-evidence-generated/
           retention-days: 30
 
+  publish:
+    name: Publish draft GitHub Release
+    needs: [validate, release-evidence]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: release-publish
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+
+      - name: Download signed release bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: signed-release-${{ needs.validate.outputs.version }}
+          path: signed-release/
+
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -1050,20 +1135,21 @@ jobs:
             - Non-signature release asset'leri için `.sig` + `.cert` cosign keyless imzaları
             - OS images, installer binaries, SBOM, payload manifests ve release control dosyaları için GitHub Artifact Attestations
           files: |
-            release/suderra-*.img.xz
-            release/suderra-*.sha256
-            release/suderra-*.manifest.txt
-            release/suderra-*.payload-manifest.json
-            release/suderra-*.payload-manifest.sig
-            release/suderra-installer-*
-            release/*.cyclonedx.json
-            release/release-assets.json
-            release/SHA256SUMS
-            release/manifest.json
-            release/*.sig
-            release/*.cert
+            signed-release/release/suderra-*.img.xz
+            signed-release/release/suderra-*.sha256
+            signed-release/release/suderra-*.manifest.txt
+            signed-release/release/suderra-*.payload-manifest.json
+            signed-release/release/suderra-*.payload-manifest.sig
+            signed-release/release/suderra-installer-*
+            signed-release/release/*.cyclonedx.json
+            signed-release/release/release-assets.json
+            signed-release/release/SHA256SUMS
+            signed-release/release/manifest.json
+            signed-release/release/*.sig
+            signed-release/release/*.cert
+            signed-release/release-evidence-generated/**/*.json
 
       - name: Release summary
         run: |
           echo "::notice::Draft release created: ${{ needs.validate.outputs.version }}"
-          echo "::notice::Release publish is controlled by the release-publish protected environment"
+          echo "::notice::Release publish is controlled by a protected environment"

@@ -178,8 +178,11 @@ for scan in data["security_scans"]:
 for check in data["machine_verification"].values():
     for rel in check["logs"]:
         write_text(rel, "synthetic machine verification transcript\n")
-for check in data["governance"]["checks"].values():
-    write_text(check["evidence"], json.dumps({"status": "passed"}, sort_keys=True) + "\n")
+for name, check in data["governance"]["checks"].items():
+    payload = {"status": "passed"}
+    if name == "policy_validation":
+        payload["schema_version"] = "suderra.github-governance-validation.v1"
+    write_text(check["evidence"], json.dumps(payload, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU serial and journal evidence\n")
 
@@ -187,6 +190,39 @@ evidence_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", enco
 PY
 
 python3 "${TOOL}" validate "${EVIDENCE}" --require-pass --check-files >/dev/null
+
+if python3 "${TOOL}" validate "${EVIDENCE}" --release-tier alpha --require-pass --check-files 2>"${TMPDIR}/tier.err"; then
+    echo "ERROR: GA evidence unexpectedly validated with alpha release tier" >&2
+    exit 1
+fi
+if ! grep -q "release tier must be production" "${TMPDIR}/tier.err"; then
+    echo "ERROR: release tier mismatch did not fail closed" >&2
+    cat "${TMPDIR}/tier.err" >&2
+    exit 1
+fi
+
+REQUIRED_BYPASS="${TMPDIR}/release-evidence/v9.9.9/qemu-x86_64-required-bypass/evidence.json"
+mkdir -p "$(dirname "${REQUIRED_BYPASS}")"
+cp "${EVIDENCE}" "${REQUIRED_BYPASS}"
+python3 - "${REQUIRED_BYPASS}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["qemu"]["required"] = False
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate "${REQUIRED_BYPASS}" --require-pass --check-files 2>"${TMPDIR}/required.err"; then
+    echo "ERROR: release evidence accepted a matrix-required QEMU bypass" >&2
+    exit 1
+fi
+if ! grep -q "matrix-derived requirement" "${TMPDIR}/required.err"; then
+    echo "ERROR: required-gate bypass failure did not cite matrix-derived requirement" >&2
+    cat "${TMPDIR}/required.err" >&2
+    exit 1
+fi
 
 ALPHA="${TMPDIR}/release-evidence/v9.9.9-alpha.1/qemu-x86_64/evidence.json"
 python3 "${TOOL}" generate \
@@ -330,8 +366,11 @@ for scan in data["security_scans"]:
 for check in data["machine_verification"].values():
     for rel in check["logs"]:
         write_text(rel, "synthetic alpha machine verification transcript\n")
-for check in data["governance"]["checks"].values():
-    write_text(check["evidence"], json.dumps({"status": "passed"}, sort_keys=True) + "\n")
+for name, check in data["governance"]["checks"].items():
+    payload = {"status": "passed"}
+    if name == "policy_validation":
+        payload["schema_version"] = "suderra.github-governance-validation.v1"
+    write_text(check["evidence"], json.dumps(payload, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU alpha evidence\n")
 

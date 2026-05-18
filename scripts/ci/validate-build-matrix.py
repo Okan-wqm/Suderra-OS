@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -575,7 +576,7 @@ def production_readiness(tag: str | None) -> int:
     return 0
 
 
-def candidate_readiness(tag: str | None) -> int:
+def candidate_readiness(tag: str | None, require_inputs: bool = False) -> int:
     if not tag:
         print("ERROR: candidate-readiness requires --tag", file=sys.stderr)
         return 2
@@ -605,6 +606,22 @@ def candidate_readiness(tag: str | None) -> int:
     print(f"candidate pre-release allowed with documented production blockers for {tag}")
     for target in blockers:
         print(f"- {target['name']}: {target['blocker']}")
+    if require_inputs:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/evidence/validate-release-inputs.py",
+                "--version",
+                tag,
+                "--release-tier",
+                "alpha",
+                "--check-files",
+            ],
+            cwd=ROOT,
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
     return 0
 
 
@@ -716,6 +733,7 @@ def main() -> int:
 
     candidate_parser = subparsers.add_parser("candidate-readiness")
     candidate_parser.add_argument("--tag", required=True)
+    candidate_parser.add_argument("--require-inputs", action="store_true")
 
     artifacts_parser = subparsers.add_parser("verify-artifacts")
     artifacts_parser.add_argument("--defconfig", required=True)
@@ -734,7 +752,7 @@ def main() -> int:
     if args.command == "production-readiness":
         return production_readiness(args.tag)
     if args.command == "candidate-readiness":
-        return candidate_readiness(args.tag)
+        return candidate_readiness(args.tag, args.require_inputs)
     if args.command == "verify-artifacts":
         return verify_artifacts(args.defconfig, args.images_dir)
     if args.command == "release-files":

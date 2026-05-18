@@ -1,0 +1,54 @@
+{
+  "schema_version": "suderra.github-governance-policy.v1",
+  "repository": "Okan-wqm/Suderra-OS",
+  "protected_branch": "main",
+  "required_checks": [
+    "Lint / Build Matrix Contract",
+    "Lint / GitHub Actions Lint",
+    "Lint / Image Contract + Installer Tests",
+    "Lint / ShellCheck",
+    "Lint / Markdown Lint",
+    "Lint / Secret Scan (gitleaks)",
+    "Lint / YAML Lint",
+    "Build / Build matrix contract",
+    "Build / Build qemu-x86_64",
+    "Build / Build rpi4",
+    "Build / Build revpi4",
+    "Build / Build payload image pi-cm4-revpi-usb-installer",
+    "Build / QEMU boot smoke test (qemu-x86_64)",
+    "Security Scan / Trivy (filesystem)",
+    "Security Scan / Trivy (config / Dockerfile)",
+    "Security Scan / Gitleaks (secret scan)",
+    "Security Scan / Grype (filesystem)",
+    "Security Scan / VEX JSON syntax",
+    "Hadolint (Dockerfile lint) / Hadolint",
+    "Rust Userspace / Format + Clippy + Test",
+    "Rust Userspace / Build (x86_64-unknown-linux-musl)",
+    "Rust Userspace / Build (aarch64-unknown-linux-musl)",
+    "Rust Userspace / Security (audit + deny)",
+    "Rust Userspace / MSRV check (Rust 1.86)"
+  ],
+  "release_environment": {
+    "name": "release-publish",
+    "allowed_ref": "refs/tags/v*",
+    "minimum_reviewers": 1
+  },
+  "required_codeowners_patterns": [
+    ".github/workflows/*.yml",
+    ".github/CODEOWNERS",
+    "ci/build-matrix.yml",
+    "ci/github-governance-policy.yml",
+    "scripts/evidence/**",
+    "scripts/ci/validate-build-matrix.py",
+    "board/keys/**",
+    "board/suderra/common/post-image.sh",
+    "tests/image-contracts/**"
+  ],
+  "ruleset": {
+    "branch_name": "main-protection",
+    "tag_name": "release-tag-protection",
+    "allow_bypass_actors": false
+  },
+  "retention_years": 7,
+  "audit_log_lookback_days": 30
+}

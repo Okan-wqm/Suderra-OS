@@ -1,10 +1,16 @@
 # Release Evidence
 
-Every release candidate must have one evidence bundle per target:
+Every release candidate must have one evidence bundle per target. The canonical
+generated root is:
 
 ```text
 release-evidence/<version>/<target>/evidence.json
 ```
+
+Generated CI evidence roots may use a suffix such as
+`release-evidence-generated/<version>/<target>/evidence.json`; the validator
+binds the bundle to the final `<version>/<target>/evidence.json` suffix rather
+than to a hardcoded root directory.
 
 `evidence.json` is the canonical release evidence index. It records the target
 contract, build source, immutable asset manifest, artifact hashes, signatures,
@@ -34,7 +40,10 @@ and machine-verified. A release gate should use `--require-pass --check-files`;
 this requires referenced files to exist inside the same target bundle and
 requires all mandatory evidence to be passed.
 
-Pre-release tags use the alpha evidence tier:
+The validator derives the release tier from the SemVer tag. Pre-release tags use
+the alpha evidence tier; GA tags such as `v1.0.0` must validate as production.
+Passing `--release-tier` is allowed for clarity, but a mismatch fails unless the
+unsafe development-only `--allow-tier-override` flag is present.
 
 ```bash
 python3 scripts/evidence/release-evidence.py validate \
@@ -45,10 +54,12 @@ python3 scripts/evidence/release-evidence.py validate \
 ```
 
 Alpha evidence keeps build, security, signatures, attestations,
-QEMU/hardware, governance, approval, and residual-risk checks strict. Alpha may
-use CI/lab signing material and may omit production-only controls such as
-signed VEX, dm-verity, RAUC, and lockdown evidence. GA releases must use the
-default production tier.
+QEMU/hardware, governance, approval, and residual-risk checks strict. The
+required QEMU, hardware, and runtime checks are derived from `ci/build-matrix.yml`
+and the target contract; evidence JSON cannot mark a matrix-required gate as not
+required. Alpha may use CI/lab signing material and may omit production-only
+controls such as signed VEX, dm-verity, RAUC, and lockdown evidence. GA releases
+must use the production tier and cannot validate as alpha.
 
 ## Schema
 
@@ -56,7 +67,7 @@ Required top-level fields:
 
 | Field | Purpose |
 |---|---|
-| `schema_version` | Must be `suderra.release-evidence.v2`. |
+| `schema_version` | Must be `suderra.release-evidence.v3`. |
 | `version`, `target` | Must match the bundle path components. |
 | `target_contract` | Snapshot from `ci/build-matrix.yml`. |
 | `source` | Repository, tag, commit, clean/dirty state, and CI run ID. |
@@ -66,7 +77,7 @@ Required top-level fields:
 | `reproducibility` | Independent rebuild comparison and logs. |
 | `security_scans` | Reports listed by the build matrix. |
 | `machine_verification` | SHA256SUMS, cosign, and attestation verification logs. |
-| `governance` | Branch protection, ruleset, tag protection, and release environment snapshots. |
+| `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
 | `hardware` | Board serial logs and hardware acceptance results. |
 | `runtime_checks` | `dm_verity`, `rauc`, `lockdown`, `nmap`, and `systemd_security`. |
@@ -96,11 +107,68 @@ python3 scripts/evidence/release-evidence.py assemble-release \
 The command consumes staged release assets, `release-assets.json`, machine
 verification logs, lab input, governance snapshots, security/reproducibility
 reports, QEMU logs, and approval records. It intentionally produces bundles
-that fail `--require-pass` until every required input is present.
+that fail `--require-pass` until every required input is present. Legacy v2
+evidence can be updated structurally with:
+
+```bash
+python3 scripts/evidence/release-evidence.py migrate \
+    release-evidence/v0.1.0-alpha.1/rpi4/evidence.json \
+    --output /tmp/evidence-v3.json
+```
+
+Migration does not manufacture missing release evidence; it only updates the
+schema shape before normal validation.
+
+## Governance Evidence
+
+GitHub governance is policy-driven. `ci/github-governance-policy.yml` is the
+source of truth for required checks, CODEOWNERS coverage, ruleset names, and the
+protected `release-publish` environment. The release workflow collects GitHub API
+snapshots and validates them before build fan-out:
+
+```bash
+python3 scripts/evidence/collect-governance.py \
+    --repo Okan-wqm/Suderra-OS \
+    --version v0.1.0-alpha.1 \
+    --output-root release-governance \
+    --repo-root .
+
+python3 scripts/evidence/validate-governance.py \
+    --policy ci/github-governance-policy.yml \
+    --snapshot-root release-governance/v0.1.0-alpha.1 \
+    --output release-governance/v0.1.0-alpha.1/governance-policy-validation.json
+```
+
+`governance-policy-validation.json` must use
+`suderra.github-governance-validation.v1` and `status: passed`. Final evidence
+requires that file plus branch protection, ruleset, release environment, tag
+protection, workflow permission, CODEOWNERS, and audit snapshots.
 
 ## QEMU Evidence
 
-For a target with `qemu_test: true`, collect at minimum:
+For a target with `qemu_test: true`, release input preflight requires a
+structured QEMU input file:
+
+```text
+release-lab-input/<version>/<target>/qemu.json
+```
+
+Validate it before tagging:
+
+```bash
+python3 scripts/evidence/validate-qemu-input.py \
+    --require-pass \
+    --check-files \
+    release-lab-input/v0.1.0-alpha.1/qemu-x86_64/qemu.json
+```
+
+The file uses `suderra.qemu-acceptance.v2` and must contain image and firmware
+hashes, QEMU version, guest facts, logs, and required checks:
+`boot`, `systemd`, `zero-failed-units`, `no-kernel-panic`,
+`no-emergency-mode`, `os-release`, `kernel`, `rootfs`, `network`,
+`firstboot-idempotence`, `lockdown-transition`, `listeners`, and `firewall`.
+
+At minimum collect:
 
 - QEMU command line and boot log.
 - Kernel and systemd boot completion log.
@@ -114,7 +182,8 @@ release-evidence/v1.0.0/qemu-x86_64/qemu/boot.log
 release-evidence/v1.0.0/qemu-x86_64/qemu/app-startup.log
 ```
 
-Then set:
+The assembler converts passed QEMU input into release evidence. The generated
+release evidence shape remains:
 
 ```json
 "qemu": {
@@ -168,10 +237,17 @@ release-evidence/v1.0.0/rpi4/security/systemd-security.txt
 ```
 
 Hardware collection starts as lab input under
-`release-lab-input/<version>/<target>/lab.json`. The release workflow validates
-that input, then binds it into the final generated release evidence. `--require-pass`
-requires the aggregate hardware status to be `passed`, every target-required
-board ID to have a passed device entry, and all required runtime checks to have
+`release-lab-input/<version>/<target>/lab.json`. The file uses
+`suderra.lab-evidence.v2`; every device must include board serial, SKU or
+hardware revision, storage serial, UART adapter, power supply, boot firmware,
+operator, timestamp, logs, and per-check evidence. USB installer negative tests
+must include `failure_code` so closed-fail behavior is identifiable in release
+review.
+
+The release workflow validates lab input, then binds it into the final generated
+release evidence. `--require-pass` requires the aggregate hardware status to be
+`passed`, every target-required board ID to have a passed device entry, all
+required USB negative tests to pass, and all required runtime checks to have
 passed evidence files.
 
 ## Residual Risk

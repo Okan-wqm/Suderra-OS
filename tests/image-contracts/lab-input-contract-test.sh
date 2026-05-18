@@ -93,13 +93,14 @@ for name in [
     negative_tests.append(
         {
             "name": name,
+            "failure_code": f"expected-{name}",
             "status": "passed",
             "evidence": write(f"negative/{name}.txt"),
         }
     )
 
 lab = {
-    "schema_version": "suderra.lab-evidence.v1",
+    "schema_version": "suderra.lab-evidence.v2",
     "version": "v9.9.9-alpha.1",
     "target": "pi-cm4-revpi-usb-installer",
     "generated_at": "2026-05-18T00:00:00Z",

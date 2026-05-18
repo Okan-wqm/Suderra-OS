@@ -6,7 +6,7 @@
 The evidence contract intentionally uses only JSON plus Python's standard
 library. A release bundle is rooted at:
 
-    release-evidence/<version>/<target>/evidence.json
+    <evidence-root>/<version>/<target>/evidence.json
 
 The validator checks the schema on every run and can also enforce the stricter
 "ready for release" invariants with --require-pass.
@@ -29,7 +29,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.release-evidence.v2"
+SCHEMA_VERSION = "suderra.release-evidence.v3"
+LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2"}
 ASSET_MANIFEST_SCHEMA_VERSION = "suderra.release-assets.v1"
 
 TOP_LEVEL_FIELDS = {
@@ -77,7 +78,16 @@ VEX_STATUS_VALUES = {"present", "not_applicable", "not_collected"}
 RISK_STATUS_VALUES = {"none", "accepted", "blocked"}
 DECISION_STATUS_VALUES = {"approved", "approved_with_residual_risk", "blocked"}
 MACHINE_VERIFICATION_CHECKS = ("sha256sums", "cosign", "attestations")
-GOVERNANCE_CHECKS = ("branch_protection", "rulesets", "release_environment", "tag_protection")
+GOVERNANCE_CHECKS = (
+    "policy_validation",
+    "branch_protection",
+    "rulesets",
+    "release_environment",
+    "tag_protection",
+    "workflow_permissions",
+    "codeowners",
+    "audit_log",
+)
 REQUIRED_RUNTIME_CHECKS = ("dm_verity", "rauc", "lockdown", "nmap", "systemd_security")
 REQUIRED_QEMU_CHECKS = (
     "boot",
@@ -109,6 +119,19 @@ REQUIRED_HARDWARE_BOARDS_BY_TARGET = {
         "revpi-connect-4",
     ),
     "revpi4": ("revpi-connect-4",),
+}
+ALLOWED_RELEASE_ASSET_ROLES = {
+    "release-image",
+    "checksum",
+    "manifest",
+    "payload-signature",
+    "sbom",
+    "signature",
+    "certificate",
+    "installer",
+    "release-control",
+    "attestation",
+    "evidence",
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
@@ -495,6 +518,10 @@ def classify_release_asset(name: str) -> str:
         return "payload-signature"
     if name.endswith(".cyclonedx.json"):
         return "sbom"
+    if name.endswith(".intoto.jsonl") or name.endswith(".attestation.json"):
+        return "attestation"
+    if name.startswith("release-evidence-") and (name.endswith(".tar.zst") or name.endswith(".tar.gz")):
+        return "evidence"
     if name.endswith(".sig"):
         return "signature"
     if name.endswith(".cert"):
@@ -576,10 +603,14 @@ def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: di
 
 def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evidence: dict[str, Any]) -> None:
     mapping = {
+        "policy_validation": "governance-policy-validation.json",
         "branch_protection": "main-branch-protection.json",
         "rulesets": "rulesets.json",
         "release_environment": "release-publish-environment.json",
         "tag_protection": "tag-protection.json",
+        "workflow_permissions": "workflow-permissions.json",
+        "codeowners": "codeowners.json",
+        "audit_log": "audit-log.json",
     }
     for name, filename in mapping.items():
         source = governance_root / version / filename
@@ -597,12 +628,22 @@ def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str
     logs = []
     qemu_dir = lab_root / version / target
     for idx, log in enumerate(qemu_input.get("logs", [])):
-        if not isinstance(log, str):
+        if isinstance(log, str):
+            log_path = log
+        elif isinstance(log, dict) and isinstance(log.get("path"), str):
+            log_path = log["path"]
+        else:
             continue
-        source = qemu_dir / log
+        source = qemu_dir / log_path
         if source.is_file() and source.stat().st_size > 0:
-            logs.append(copy_into_bundle(bundle_dir, source, f"qemu/{idx}-{Path(log).name}"))
+            logs.append(copy_into_bundle(bundle_dir, source, f"qemu/{idx}-{Path(log_path).name}"))
     checks = qemu_input.get("checks")
+    if isinstance(checks, dict):
+        checks = [
+            str(name)
+            for name, result in checks.items()
+            if isinstance(result, dict) and result.get("status") == "passed"
+        ]
     evidence["qemu"] = {
         "required": True,
         "status": qemu_input.get("status", "not_collected"),
@@ -652,6 +693,12 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
             {
                 "board": board,
                 "serial": device.get("serial", "not_collected"),
+                "sku": device.get("sku", "not_collected"),
+                "storage_serial": device.get("storage_serial", "not_collected"),
+                "uart_adapter": device.get("uart_adapter", "not_collected"),
+                "power_supply": device.get("power_supply", "not_collected"),
+                "boot_firmware": device.get("boot_firmware", "not_collected"),
+                "tested_at": device.get("tested_at", "not_collected"),
                 "operator": device.get("operator", lab_input.get("operator", "not_collected")),
                 "status": device.get("status", "not_collected"),
                 "logs": logs,
@@ -659,6 +706,30 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
             }
         )
     evidence["hardware"]["devices"] = devices
+    negative_tests = []
+    for item in lab_input.get("negative_tests", []):
+        if not isinstance(item, dict):
+            continue
+        evidence_path = item.get("evidence")
+        rel_evidence = None
+        if isinstance(evidence_path, str):
+            source = lab_dir / evidence_path
+            if source.is_file() and source.stat().st_size > 0:
+                rel_evidence = copy_into_bundle(
+                    bundle_dir,
+                    source,
+                    f"hardware/negative-tests/{Path(evidence_path).name}",
+                )
+        negative_tests.append(
+            {
+                "name": item.get("name", "unknown"),
+                "failure_code": item.get("failure_code", "not_collected"),
+                "status": item.get("status", "not_collected"),
+                "evidence": rel_evidence,
+            }
+        )
+    if negative_tests:
+        evidence["hardware"]["negative_tests"] = negative_tests
     if devices and all(device.get("status") == "passed" for device in devices):
         evidence["hardware"]["status"] = "passed"
 
@@ -743,15 +814,56 @@ def validate_asset_manifest(validation: Validation, evidence: dict[str, Any], re
             files = payload.get("files")
             if not isinstance(files, list) or not files:
                 validation.error("$.asset_manifest.path", "files must be a non-empty list")
-            elif require_pass:
-                expected_artifacts = {artifact.get("name") for artifact in evidence.get("artifacts", []) if isinstance(artifact, dict)}
-                manifest_artifacts = {entry.get("name") for entry in files if isinstance(entry, dict)}
+            else:
+                seen_names: set[str] = set()
+                manifest_by_name: dict[str, dict[str, Any]] = {}
+                for idx, entry in enumerate(files):
+                    entry_path = f"$.asset_manifest.files[{idx}]"
+                    if not isinstance(entry, dict):
+                        validation.error(entry_path, "must be an object")
+                        continue
+                    name = entry.get("name")
+                    role = entry.get("role")
+                    check_string(validation, f"{entry_path}.name", name)
+                    check_string(validation, f"{entry_path}.role", role)
+                    check_sha256(validation, f"{entry_path}.sha256", entry.get("sha256"), True)
+                    check_positive_int(validation, f"{entry_path}.bytes", entry.get("bytes"), True)
+                    if isinstance(role, str) and role not in ALLOWED_RELEASE_ASSET_ROLES:
+                        validation.error(f"{entry_path}.role", f"must be one of: {', '.join(sorted(ALLOWED_RELEASE_ASSET_ROLES))}")
+                    if isinstance(name, str):
+                        if name in seen_names:
+                            validation.error(f"{entry_path}.name", "must be unique within release-assets.json")
+                        seen_names.add(name)
+                        manifest_by_name[name] = entry
+                expected_artifacts = {
+                    artifact.get("name")
+                    for artifact in evidence.get("artifacts", [])
+                    if isinstance(artifact, dict)
+                }
+                manifest_artifacts = set(manifest_by_name)
                 missing = sorted(str(name) for name in expected_artifacts - manifest_artifacts if name)
                 if missing:
                     validation.error(
                         "$.asset_manifest.path",
                         f"missing release artifact subject(s): {', '.join(missing)}",
                     )
+                for idx, artifact in enumerate(evidence.get("artifacts", [])):
+                    if not isinstance(artifact, dict):
+                        continue
+                    name = artifact.get("name")
+                    if not isinstance(name, str) or name not in manifest_by_name:
+                        continue
+                    manifest_entry = manifest_by_name[name]
+                    if artifact.get("sha256") and manifest_entry.get("sha256") != artifact.get("sha256"):
+                        validation.error(
+                            f"$.artifacts[{idx}].sha256",
+                            "does not match release-assets.json entry",
+                        )
+                    if artifact.get("bytes") and manifest_entry.get("bytes") != artifact.get("bytes"):
+                        validation.error(
+                            f"$.artifacts[{idx}].bytes",
+                            "does not match release-assets.json entry",
+                        )
 
 
 def parse_timestamp(validation: Validation, path: str, value: Any, required: bool) -> datetime | None:
@@ -773,10 +885,10 @@ def parse_timestamp(validation: Validation, path: str, value: Any, required: boo
 
 def check_path_contract(validation: Validation, evidence: dict[str, Any]) -> None:
     parts = validation.evidence_path.as_posix().split("/")
-    if len(parts) < 4 or parts[-4] != "release-evidence" or parts[-1] != "evidence.json":
+    if len(parts) < 3 or parts[-1] != "evidence.json":
         validation.error(
             "$path",
-            "must end with release-evidence/<version>/<target>/evidence.json",
+            "must end with <version>/<target>/evidence.json",
         )
         return
     if parts[-3] != evidence.get("version"):
@@ -999,14 +1111,36 @@ def validate_governance(validation: Validation, evidence: dict[str, Any], requir
         check_relative_path(validation, f"{path}.evidence", check.get("evidence"), require_pass)
         if require_pass and check.get("status") != "passed":
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
+        if require_pass and name == "policy_validation":
+            report = file_for_relative_path(validation, check.get("evidence"))
+            if report is None:
+                continue
+            payload = read_json(report)
+            if not isinstance(payload, dict):
+                validation.error(f"{path}.evidence", "must be a governance validation JSON object")
+                continue
+            if payload.get("schema_version") != "suderra.github-governance-validation.v1":
+                validation.error(
+                    f"{path}.evidence",
+                    "schema_version must be suderra.github-governance-validation.v1",
+                )
+            if payload.get("status") != "passed":
+                validation.error(f"{path}.evidence", "governance policy validation must be passed")
 
 
-def validate_qemu(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+def validate_qemu(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    expected_required: bool,
+) -> None:
     qemu = evidence.get("qemu")
     if not isinstance(qemu, dict):
         validation.error("$.qemu", "must be an object")
         return
     check_bool(validation, "$.qemu.required", qemu.get("required"))
+    if isinstance(qemu.get("required"), bool) and qemu.get("required") != expected_required:
+        validation.error("$.qemu.required", f"must match matrix-derived requirement {expected_required}")
     check_status(validation, "$.qemu.status", qemu.get("status"), STATUS_VALUES)
     logs = qemu.get("logs")
     if not isinstance(logs, list):
@@ -1022,7 +1156,7 @@ def validate_qemu(validation: Validation, evidence: dict[str, Any], require_pass
             if not is_non_empty_string(check):
                 validation.error(f"$.qemu.checks[{idx}]", "must be a non-empty string")
 
-    if require_pass and qemu.get("required"):
+    if require_pass and expected_required:
         if qemu.get("status") != "passed":
             validation.error("$.qemu.status", "must be passed when QEMU evidence is required")
         if not logs:
@@ -1032,12 +1166,19 @@ def validate_qemu(validation: Validation, evidence: dict[str, Any], require_pass
             validation.error("$.qemu.checks", f"missing required checks: {', '.join(missing_checks)}")
 
 
-def validate_hardware(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+def validate_hardware(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    expected_required: bool,
+) -> None:
     hardware = evidence.get("hardware")
     if not isinstance(hardware, dict):
         validation.error("$.hardware", "must be an object")
         return
     check_bool(validation, "$.hardware.required", hardware.get("required"))
+    if isinstance(hardware.get("required"), bool) and hardware.get("required") != expected_required:
+        validation.error("$.hardware.required", f"must match matrix-derived requirement {expected_required}")
     check_status(validation, "$.hardware.status", hardware.get("status"), STATUS_VALUES)
     devices = hardware.get("devices")
     if not isinstance(devices, list):
@@ -1051,6 +1192,9 @@ def validate_hardware(validation: Validation, evidence: dict[str, Any], require_
             continue
         for field in ("board", "serial", "operator"):
             check_string(validation, f"{path}.{field}", device.get(field))
+        for field in ("sku", "storage_serial", "uart_adapter", "power_supply", "boot_firmware", "tested_at"):
+            if field in device:
+                check_string(validation, f"{path}.{field}", device.get(field))
         check_status(validation, f"{path}.status", device.get("status"), STATUS_VALUES)
         logs = device.get("logs")
         if not isinstance(logs, list):
@@ -1073,15 +1217,15 @@ def validate_hardware(validation: Validation, evidence: dict[str, Any], require_
                     f"{check_path}.evidence",
                     check.get("evidence"),
                     require_pass
-                    and bool(hardware.get("required"))
+                    and expected_required
                     and check_name in REQUIRED_HARDWARE_CHECKS,
                 )
                 if require_pass and check.get("status") != "passed":
                     validation.error(f"{check_path}.status", "must be passed for release-ready evidence")
 
-        if require_pass and hardware.get("required") and device.get("status") != "passed":
+        if require_pass and expected_required and device.get("status") != "passed":
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
-        if require_pass and hardware.get("required"):
+        if require_pass and expected_required:
             if not logs:
                 validation.error(f"{path}.logs", "must include serial/install logs")
             if isinstance(checks, dict):
@@ -1092,7 +1236,7 @@ def validate_hardware(validation: Validation, evidence: dict[str, Any], require_
                         f"missing required checks: {', '.join(missing_checks)}",
                     )
 
-    if require_pass and hardware.get("required"):
+    if require_pass and expected_required:
         if hardware.get("status") != "passed":
             validation.error("$.hardware.status", "must be passed when hardware evidence is required")
         if not devices:
@@ -1110,6 +1254,22 @@ def validate_hardware(validation: Validation, evidence: dict[str, Any], require_
                     "$.hardware.devices",
                     f"missing required board evidence: {', '.join(missing_boards)}",
                 )
+        if evidence.get("target") == "pi-cm4-revpi-usb-installer":
+            negative_tests = hardware.get("negative_tests")
+            if not isinstance(negative_tests, list) or not negative_tests:
+                validation.error("$.hardware.negative_tests", "must include USB installer negative tests")
+            else:
+                for idx, item in enumerate(negative_tests):
+                    item_path = f"$.hardware.negative_tests[{idx}]"
+                    if not isinstance(item, dict):
+                        validation.error(item_path, "must be an object")
+                        continue
+                    for field in ("name", "failure_code"):
+                        check_string(validation, f"{item_path}.{field}", item.get(field))
+                    check_status(validation, f"{item_path}.status", item.get("status"), STATUS_VALUES)
+                    check_relative_path(validation, f"{item_path}.evidence", item.get("evidence"), True)
+                    if item.get("status") != "passed":
+                        validation.error(f"{item_path}.status", "must be passed for release-ready evidence")
 
 
 def validate_runtime_checks(
@@ -1117,6 +1277,7 @@ def validate_runtime_checks(
     evidence: dict[str, Any],
     require_pass: bool,
     release_tier: str,
+    expected_required: bool,
 ) -> None:
     runtime_checks = evidence.get("runtime_checks")
     if not isinstance(runtime_checks, dict):
@@ -1131,14 +1292,16 @@ def validate_runtime_checks(
             validation.error(path, "must be an object")
             continue
         check_bool(validation, f"{path}.required", check.get("required"))
+        if isinstance(check.get("required"), bool) and check.get("required") != expected_required:
+            validation.error(f"{path}.required", f"must match matrix-derived requirement {expected_required}")
         check_status(validation, f"{path}.status", check.get("status"), STATUS_VALUES)
         check_relative_path(
             validation,
             f"{path}.evidence",
             check.get("evidence"),
-            require_pass and release_tier == "production" and bool(check.get("required")),
+            require_pass and release_tier == "production" and expected_required,
         )
-        if require_pass and release_tier == "production" and check.get("required") and check.get("status") != "passed":
+        if require_pass and release_tier == "production" and expected_required and check.get("status") != "passed":
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
 
 
@@ -1312,12 +1475,35 @@ def validate_target_contract(
             )
 
 
+def release_tier_from_version(version: Any) -> str:
+    if isinstance(version, str) and "-" in version:
+        return "alpha"
+    return "production"
+
+
+def expected_gate_requirements(
+    evidence: dict[str, Any],
+    matrix: dict[str, Any] | None,
+) -> tuple[bool, bool, bool]:
+    contract = evidence.get("target_contract")
+    if not isinstance(contract, dict):
+        return False, False, False
+    row = targets_by_id(matrix).get(str(evidence.get("target", ""))) if matrix is not None else None
+    qemu_required = bool(row.get("qemu_test", False)) if isinstance(row, dict) else False
+    production_required = bool(contract.get("production_required"))
+    acceptance = str(contract.get("acceptance", ""))
+    hardware_required = production_required or "hardware" in acceptance
+    runtime_required = production_required
+    return qemu_required, hardware_required, runtime_required
+
+
 def validate_evidence(
     evidence_path: Path,
     matrix_path: Path | None,
     require_pass: bool,
     check_files: bool,
-    release_tier: str,
+    release_tier: str | None,
+    allow_tier_override: bool = False,
 ) -> list[str]:
     validation = Validation(evidence_path, check_files)
     try:
@@ -1345,6 +1531,13 @@ def validate_evidence(
         value = evidence.get(field)
         if isinstance(value, str) and not SAFE_ID_RE.fullmatch(value):
             validation.error(f"$.{field}", "must be a safe path identifier")
+    inferred_tier = release_tier_from_version(evidence.get("version"))
+    effective_tier = release_tier or inferred_tier
+    if release_tier is not None and release_tier != inferred_tier and not allow_tier_override:
+        validation.error(
+            "$.version",
+            f"release tier must be {inferred_tier} for version {evidence.get('version')!r}",
+        )
 
     check_path_contract(validation, evidence)
 
@@ -1356,11 +1549,12 @@ def validate_evidence(
             validation.error("$matrix", f"cannot read matrix: {exc}")
 
     validate_target_contract(validation, evidence, matrix)
+    qemu_required, hardware_required, runtime_required = expected_gate_requirements(evidence, matrix)
     validate_source(validation, evidence, require_pass)
     validate_asset_manifest(validation, evidence, require_pass)
-    validate_artifacts(validation, evidence, require_pass, release_tier)
-    validate_sbom(validation, evidence, require_pass, release_tier)
-    validate_vex(validation, evidence, require_pass, release_tier)
+    validate_artifacts(validation, evidence, require_pass, effective_tier)
+    validate_sbom(validation, evidence, require_pass, effective_tier)
+    validate_vex(validation, evidence, require_pass, effective_tier)
     validate_reproducibility(validation, evidence, require_pass)
     expected_security_scans = None
     if matrix is not None:
@@ -1375,9 +1569,9 @@ def validate_evidence(
     )
     validate_machine_verification(validation, evidence, require_pass)
     validate_governance(validation, evidence, require_pass)
-    validate_qemu(validation, evidence, require_pass)
-    validate_hardware(validation, evidence, require_pass)
-    validate_runtime_checks(validation, evidence, require_pass, release_tier)
+    validate_qemu(validation, evidence, require_pass, qemu_required)
+    validate_hardware(validation, evidence, require_pass, hardware_required)
+    validate_runtime_checks(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_approvals(validation, evidence, require_pass)
     validate_release_decision(validation, evidence, require_pass)
     validate_residual_risk(validation, evidence, require_pass)
@@ -1455,6 +1649,7 @@ def validate_command(args: argparse.Namespace) -> int:
         args.require_pass,
         args.check_files,
         args.release_tier,
+        args.allow_tier_override,
     )
     if errors:
         for error in errors:
@@ -1462,6 +1657,38 @@ def validate_command(args: argparse.Namespace) -> int:
         return 1
     mode = "release-ready" if args.require_pass else "schema"
     print(f"validated {mode} evidence: {args.evidence}")
+    return 0
+
+
+def migrate_command(args: argparse.Namespace) -> int:
+    try:
+        evidence = json.loads(args.input.read_text(encoding="utf-8"))
+    except OSError as exc:
+        print(f"ERROR: cannot read evidence: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: invalid JSON: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(evidence, dict):
+        print("ERROR: top-level JSON value must be an object", file=sys.stderr)
+        return 1
+    if evidence.get("schema_version") not in LEGACY_SCHEMA_VERSIONS | {SCHEMA_VERSION}:
+        print(f"ERROR: unsupported schema_version: {evidence.get('schema_version')!r}", file=sys.stderr)
+        return 1
+    evidence["schema_version"] = SCHEMA_VERSION
+    governance = evidence.setdefault("governance", {})
+    if isinstance(governance, dict):
+        checks = governance.setdefault("checks", {})
+        if isinstance(checks, dict):
+            for name in GOVERNANCE_CHECKS:
+                checks.setdefault(name, {"status": "not_collected", "evidence": None})
+    output = args.output or args.input
+    if output.exists() and output != args.input and not args.force:
+        print(f"ERROR: refusing to overwrite existing evidence file: {output}", file=sys.stderr)
+        return 1
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(output)
     return 0
 
 
@@ -1586,10 +1813,21 @@ def main() -> int:
     validate.add_argument(
         "--release-tier",
         choices=("alpha", "production"),
-        default="production",
-        help="alpha relaxes production-only signing, VEX, and runtime gates while keeping build/hardware evidence strict",
+        default=None,
+        help="defaults from SemVer; alpha relaxes production-only VEX/runtime gates",
+    )
+    validate.add_argument(
+        "--allow-tier-override",
+        action="store_true",
+        help="unsafe/dev-only: allow --release-tier to disagree with the SemVer tag",
     )
     validate.set_defaults(func=validate_command)
+
+    migrate = subparsers.add_parser("migrate", help="migrate legacy evidence JSON to the current schema")
+    migrate.add_argument("input", type=Path)
+    migrate.add_argument("--output", type=Path)
+    migrate.add_argument("--force", action="store_true")
+    migrate.set_defaults(func=migrate_command)
 
     schema = subparsers.add_parser("schema", help="print the canonical evidence contract")
     schema.set_defaults(

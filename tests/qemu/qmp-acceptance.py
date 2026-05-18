@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 import re
@@ -21,11 +22,27 @@ from pathlib import Path
 from typing import Any
 
 
+SCHEMA_VERSION = "suderra.qemu-acceptance.v2"
 PASS_PATTERNS = {
     "banner": re.compile(r"Suderra OS"),
     "systemd": re.compile(r"(Welcome to|Reached target|systemd\[1\])"),
     "provisioning-ready": re.compile(r"(suderra login| login:|Reached target|reached target|multi-user\.target)"),
 }
+RELEASE_CHECK_NAMES = (
+    "boot",
+    "systemd",
+    "zero-failed-units",
+    "no-kernel-panic",
+    "no-emergency-mode",
+    "os-release",
+    "kernel",
+    "rootfs",
+    "network",
+    "firstboot-idempotence",
+    "lockdown-transition",
+    "listeners",
+    "firewall",
+)
 FAIL_PATTERNS = {
     "kernel-panic": re.compile(r"Kernel panic"),
     "oom-or-systemd-failure": re.compile(
@@ -148,6 +165,58 @@ def evaluate(serial: str) -> tuple[dict[str, bool], dict[str, bool]]:
     passed = {name: bool(pattern.search(serial)) for name, pattern in PASS_PATTERNS.items()}
     failed = {name: bool(pattern.search(serial)) for name, pattern in FAIL_PATTERNS.items()}
     return passed, failed
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sha256_or_zero(path: Path) -> str:
+    if path.is_file():
+        return sha256_file(path)
+    return "0" * 64
+
+
+def qemu_version() -> str:
+    try:
+        return subprocess.check_output(
+            ["qemu-system-x86_64", "--version"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        ).splitlines()[0]
+    except (OSError, subprocess.CalledProcessError, IndexError):
+        return "not_collected"
+
+
+def relative_log_entry(evidence_dir: Path, role: str, path: Path) -> dict[str, str] | None:
+    if not path.is_file() or path.stat().st_size <= 0:
+        return None
+    try:
+        rel = path.relative_to(evidence_dir)
+    except ValueError:
+        return None
+    return {
+        "role": role,
+        "path": rel.as_posix(),
+        "sha256": sha256_file(path),
+    }
+
+
+def release_checks(passed: dict[str, bool], failed: dict[str, bool]) -> dict[str, dict[str, str]]:
+    checks = {name: {"status": "not_applicable"} for name in RELEASE_CHECK_NAMES}
+    checks["boot"] = {
+        "status": "passed" if passed.get("banner") or passed.get("provisioning-ready") else "failed",
+    }
+    checks["systemd"] = {"status": "passed" if passed.get("systemd") else "failed"}
+    checks["no-kernel-panic"] = {"status": "failed" if failed.get("kernel-panic") else "passed"}
+    checks["no-emergency-mode"] = {
+        "status": "failed" if failed.get("oom-or-systemd-failure") else "passed",
+    }
+    return checks
 
 
 def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
@@ -325,7 +394,8 @@ def run(args: argparse.Namespace) -> int:
     stdout_log = prefix.with_suffix(".qemu-stdout.log")
     stderr_log = prefix.with_suffix(".qemu-stderr.log")
     qmp_log = prefix.with_suffix(".qmp.json")
-    evidence_log = prefix.with_suffix(".acceptance.json")
+    evidence_log = args.evidence_output or prefix.with_suffix(".acceptance.json")
+    evidence_log.parent.mkdir(parents=True, exist_ok=True)
     qmp_socket = Path(
         tempfile.mktemp(
             prefix="suderra-qmp-",
@@ -400,29 +470,45 @@ def run(args: argparse.Namespace) -> int:
         failed_checks.append(f"qemu-exit-{qemu_status}")
 
     qmp_log.write_text(json.dumps(qmp_events, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    log_entries = [
+        entry
+        for entry in (
+            relative_log_entry(evidence_log.parent, "serial", serial_log),
+            relative_log_entry(evidence_log.parent, "qmp-events", qmp_log),
+            relative_log_entry(evidence_log.parent, "qemu-stdout", stdout_log),
+            relative_log_entry(evidence_log.parent, "qemu-stderr", stderr_log),
+        )
+        if entry is not None
+    ]
     evidence = {
-        "schema_version": "suderra.qemu-acceptance.v1",
+        "schema_version": SCHEMA_VERSION,
+        "version": args.version,
+        "target": args.target,
+        "generated_at": now_utc(),
         "started_at": start,
         "completed_at": now_utc(),
         "image": str(args.image),
+        "image_sha256": sha256_file(args.image),
         "ovmf": str(firmware.code if firmware else args.ovmf),
-        "firmware": firmware.evidence() if firmware else {"requested": str(args.ovmf), "mode": args.ovmf_mode},
+        "firmware": str(firmware.code if firmware else args.ovmf),
+        "firmware_sha256": sha256_or_zero(firmware.code if firmware else args.ovmf),
+        "qemu_version": qemu_version(),
         "timeout_seconds": args.timeout,
         "qemu_exit_status": qemu_status,
         "qemu_args": qemu_args,
-        "checks": {
-            "passed": passed,
-            "failed": failed,
-            "missing": missing_checks,
-            "failing": failed_checks,
-        },
-        "logs": {
-            "serial": str(serial_log),
-            "qemu_stdout": str(stdout_log),
-            "qemu_stderr": str(stderr_log),
-            "qmp_events": str(qmp_log),
+        "checks": release_checks(passed, failed),
+        "logs": log_entries,
+        "guest_facts": {
+            "firmware": firmware.evidence() if firmware else {"requested": str(args.ovmf), "mode": args.ovmf_mode},
+            "legacy_checks": {
+                "passed": passed,
+                "failed": failed,
+                "missing": missing_checks,
+                "failing": failed_checks,
+            },
         },
         "error": error,
+        "status": "passed" if success else "failed",
         "result": "passed" if success else "failed",
     }
     write_evidence(evidence_log, evidence)
@@ -456,6 +542,9 @@ def main() -> int:
     parser.add_argument("--ovmf-mode", choices=("auto", "bios", "pflash"), default="auto")
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--log-dir", type=Path, required=True)
+    parser.add_argument("--evidence-output", type=Path)
+    parser.add_argument("--version", default=os.environ.get("SUDERRA_RELEASE_VERSION", "dev"))
+    parser.add_argument("--target", default=os.environ.get("SUDERRA_TARGET", "qemu-x86_64"))
     parser.add_argument("--memory", default="256M")
     parser.add_argument("--smp", default="2")
     args = parser.parse_args()

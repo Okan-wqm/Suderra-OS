@@ -8,6 +8,7 @@
 CODEOWNERS @okan-wqm
 ci/build-matrix.yml @okan-wqm
 ci/build-warning-policy.json @okan-wqm
+ci/github-governance-policy.yml @okan-wqm
 docs/dev/branch-protection.md @okan-wqm
 docs/operations/release-evidence.md @okan-wqm
 docs/operations/release-lifecycle.md @okan-wqm

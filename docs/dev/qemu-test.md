@@ -130,13 +130,15 @@ Faz 2'de inline shell yerine `/usr/bin/suderra-firstboot` Rust binary çağrıl�
 
 ## CI Headless Test
 
-`tests/qemu/boot-test.sh` artık **çalışır** durumda:
+`tests/qemu/boot-test.sh` QMP acceptance harness kullanır ve
+`suderra.qemu-acceptance.v2` JSON çıktısı üretir:
 
 - 90s timeout
 - Banner doğrulama: "Suderra OS"
 - Kernel panic yok kontrolü
 - systemd başlatma kontrolü
 - Login prompt veya target hazır
+- Image hash, OVMF firmware hash, QMP event log ve serial log kanıtı
 
 ```bash
 # Manuel
@@ -151,6 +153,30 @@ Faz 2'de inline shell yerine `/usr/bin/suderra-firstboot` Rust binary çağrıl�
 
 - `BOOT_TEST_TIMEOUT=90` (default 90s)
 - `SUDERRA_DISK_IMG=/path/to/disk.img` (override)
+- `BOOT_TEST_LOG_DIR=/path/to/logs` (acceptance JSON ve log kökü)
+- `SUDERRA_RELEASE_VERSION=v0.1.0-alpha.1` ve `SUDERRA_TARGET=qemu-x86_64`
+  (release input için metadata)
+
+Release input preflight için `qemu.json` şu path'te olmalı ve ayrı validator'dan
+geçmelidir:
+
+```bash
+python3 tests/qemu/qmp-acceptance.py \
+  --image output/suderra_qemu_x86_64_defconfig/images/disk.img \
+  --log-dir release-lab-input/v0.1.0-alpha.1/qemu-x86_64 \
+  --evidence-output release-lab-input/v0.1.0-alpha.1/qemu-x86_64/qemu.json \
+  --version v0.1.0-alpha.1 \
+  --target qemu-x86_64
+
+python3 scripts/evidence/validate-qemu-input.py \
+  --require-pass \
+  --check-files \
+  release-lab-input/v0.1.0-alpha.1/qemu-x86_64/qemu.json
+```
+
+The default boot smoke does not by itself prove release-grade checks such as
+firstboot idempotence or lockdown transition; those must be collected before
+tagging.
 
 ## Kernel Config Detayı
 

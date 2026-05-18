@@ -1,8 +1,9 @@
 # Branch Protection Rules
 
 GitHub branch protection ayarları. Phase 0 release governance gate olarak bu
-ayarlar yalnızca dokümante edilmez; GitHub API snapshot'ları release evidence
-bundle içinde saklanır.
+ayarlar yalnızca dokümante edilmez; `ci/github-governance-policy.yml` içinde
+makine tarafından doğrulanır ve GitHub API snapshot'ları release evidence bundle
+içinde saklanır.
 
 ## `main` Branch
 
@@ -64,11 +65,17 @@ Aynı kurallar + ek:
 - Deployment branches/tags: selected refs `refs/tags/v*`
 - Secrets: bu workflow için secret gerekmez; cosign ve provenance GitHub OIDC ile çalışır
 
-Release workflow sadece `release` job'ında `contents: write`, `id-token: write` ve
-`attestations: write` izni alır. Diğer release işleri repository içeriğini read-only
-okur.
-Manual `workflow_dispatch` release sadece seçilen workflow ref'i input tag ile aynı
-`refs/tags/v*` olduğunda geçer; branch ref'inden tag artifact'i imzalanmaz.
+Release workflow iki yetki alanına ayrılmıştır:
+
+- `release-evidence` job'ı staged release bytes, cosign imzaları, GitHub
+  attestations, machine verification ve evidence üretir. Bu job `contents: read`,
+  `id-token: write` ve `attestations: write` kullanır; release yayınlama yetkisi
+  yoktur.
+- `publish` job'ı sadece `release-publish` protected environment altında çalışır
+  ve tek `contents: write` yetkisine sahip job'dır.
+
+Manual `workflow_dispatch` release yoktur. Release workflow yalnızca
+`refs/tags/v*` push ile çalışır; branch ref'inden tag artifact'i imzalanmaz.
 Alpha `release-publish` için tek release owner onayı kabul edilir. Pilot,
 public pre-release ve production yayınlarında release owner ile
 security/compliance approver farklı GitHub kullanıcıları olmalıdır.
@@ -114,18 +121,20 @@ Maintainer her release öncesi ve ayda en az 1 kez:
 
 - Yukarıdaki ayarların aktif olduğunu kontrol etmeli.
 - Audit log'a bakmalı (kim ayarları değiştirdi).
-- Aşağıdaki API snapshot'larını evidence'a koymalı:
+- Aşağıdaki API snapshot'larını evidence'a koymalı veya release workflow'daki
+  collector ile üretmeli:
 
 ```bash
-mkdir -p release-governance/<version>
-gh api repos/Okan-wqm/Suderra-OS/rulesets \
-  > release-governance/<version>/rulesets.json
-gh api repos/Okan-wqm/Suderra-OS/branches/main/protection \
-  > release-governance/<version>/main-branch-protection.json
-gh api repos/Okan-wqm/Suderra-OS/environments/release-publish \
-  > release-governance/<version>/release-publish-environment.json
-gh api repos/Okan-wqm/Suderra-OS/tags/protection \
-  > release-governance/<version>/tag-protection.json
+python3 scripts/evidence/collect-governance.py \
+  --repo Okan-wqm/Suderra-OS \
+  --version <version> \
+  --output-root release-governance \
+  --repo-root .
+
+python3 scripts/evidence/validate-governance.py \
+  --policy ci/github-governance-policy.yml \
+  --snapshot-root release-governance/<version> \
+  --output release-governance/<version>/governance-policy-validation.json
 ```
 
 ## OpenSSF Scorecard ile İzleme
@@ -137,7 +146,7 @@ gh api repos/Okan-wqm/Suderra-OS/tags/protection \
 
 ## Yapılacaklar
 
-- [ ] Faz 0: Yukarıdaki ayarları uygula ve API snapshot'larını release evidence'a bağla
+- [x] Faz 0: Governance policy, collector ve validator release evidence'a bağlandı
 - [ ] Faz 4: Required reviewers 1→2 (security/kernel için)
 - [ ] Faz 4: `release-publish` protected environment reviewers aktif
 - [ ] Faz 6: Required deployments (production verify)

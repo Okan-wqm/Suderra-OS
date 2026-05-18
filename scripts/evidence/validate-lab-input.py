@@ -20,7 +20,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.lab-evidence.v1"
+SCHEMA_VERSION = "suderra.lab-evidence.v2"
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 STATUS_VALUES = {"passed", "failed", "not_run", "not_applicable", "not_collected"}
 REQUIRED_DEVICE_FIELDS = (
@@ -319,6 +319,7 @@ def validate_lab(
             error(errors, item_path, "must be an object")
             continue
         check_string(errors, f"{item_path}.name", item.get("name"))
+        check_string(errors, f"{item_path}.failure_code", item.get("failure_code"))
         check_status(errors, f"{item_path}.status", item.get("status"))
         check_relative_file(errors, root, f"{item_path}.evidence", item.get("evidence"), check_files)
         if require_pass and item.get("status") != "passed":

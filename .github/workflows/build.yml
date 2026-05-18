@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: [main, "claude/**"]
-    tags: ['v*']
   pull_request:
     branches: [main, "claude/**"]
   workflow_dispatch:
