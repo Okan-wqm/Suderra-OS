@@ -3,8 +3,8 @@
   "known_upstream": {
     "owner": "build-platform",
     "expires_at": "2026-11-17T00:00:00Z",
-    "evidence_run_id": "26011776886",
-    "evidence_commit": "4a7c629f731fd8fd6898b871f3621c21d5537a33",
+    "evidence_run_id": "26016305663",
+    "evidence_commit": "323ce0ee1d4dd437e72adce6f56d2f5d1521415e",
     "rationale": "Buildroot/toolchain warning fingerprints are allowlisted only after triage against CI build logs; expiry forces periodic review.",
     "allowed_fingerprints": [
       "busybox: applets/usage.c: warning: ignoring return value of 'write' declared with attribute 'warn_unused_result' [-Wunused-result]",
@@ -127,7 +127,6 @@
       "host-gcc-final: Makefile: warning: overriding recipe for target 'all-multi'",
       "host-gcc-final: c++tools/server.cc: warning: ignoring return value of 'int pipe(int*)' declared with attribute 'warn_unused_result' [-Wunused-result]",
       "host-gcc-final: c++tools/server.cc: warning: ignoring return value of 'ssize_t write(int, const void*, size_t)' declared with attribute 'warn_unused_result' [-Wunused-result]",
-      "host-gcc-final: checking sys/filio.h usability... Makefile: warning: overriding recipe for target 'all-multi'",
       "host-gcc-final: configure: WARNING:",
       "host-gcc-final: configure: WARNING: fixed-point is not supported for this target, ignored",
       "host-gcc-final: ctype_members.cc: warning: comparison of unsigned expression in '>= 0' is always true [-Wtype-limits]",

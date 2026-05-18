@@ -49,6 +49,9 @@ LOCATION_RE = re.compile(
     r"^(?P<location>.*?):\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?P<body>(?:warning|WARNING):.*)$"
 )
 BUILD_OUTPUT_PATH_RE = re.compile(r"(?:/workspace/|\.\./)?output/[^/\s'`]+/")
+AUTOCONF_PREFIXED_LOCATION_RE = re.compile(
+    r"^checking .*?\.\.\. (?P<diagnostic>.*?:\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?:warning|WARNING):.*)$"
+)
 STABLE_WARNING_MARKERS = (
     "configure: WARNING:",
     "config.status: WARNING:",
@@ -110,6 +113,9 @@ def normalize_warning_text(text: str) -> str:
 
 def fingerprint(text: str) -> str:
     stable_text = stable_warning_text(text)
+    probe_match = AUTOCONF_PREFIXED_LOCATION_RE.match(stable_text)
+    if probe_match:
+        stable_text = probe_match.group("diagnostic")
     match = LOCATION_RE.match(stable_text)
     if not match:
         return stable_text
