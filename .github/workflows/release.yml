@@ -123,9 +123,107 @@ jobs:
           path: release-governance/
           retention-days: 30
 
+  preflight-binding:
+    name: Bind approved release preflight
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+          fetch-depth: 0
+      - name: Resolve tag commit
+        id: tag
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")"
+          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+      - name: Find successful release-candidate preflight
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow "Release Preflight" \
+            --json databaseId,conclusion,status,headSha,createdAt \
+            --status success \
+            --limit 50 > preflight-runs.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          runs = json.loads(Path("preflight-runs.json").read_text(encoding="utf-8"))
+          candidates = [
+              run for run in runs
+              if run.get("status") == "completed"
+              and run.get("conclusion") == "success"
+          ]
+          if not candidates:
+              raise SystemExit("no successful Release Preflight runs found")
+          Path("preflight-run-ids.txt").write_text(
+              "\n".join(str(run["databaseId"]) for run in candidates) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Download bound release preflight artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          artifact_name="release-preflight-${VERSION}-${SOURCE_SHA}"
+          while read -r run_id; do
+            [ -n "${run_id}" ] || continue
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name "${artifact_name}" \
+              --dir .; then
+              echo "Downloaded ${artifact_name} from preflight run ${run_id}"
+              exit 0
+            fi
+          done < preflight-run-ids.txt
+          echo "::error::No successful Release Preflight artifact named ${artifact_name} was found"
+          exit 1
+      - name: Validate downloaded preflight binding
+        run: |
+          set -euo pipefail
+          tier="production"
+          case "${{ needs.validate.outputs.version }}" in
+            *-*) tier="alpha" ;;
+          esac
+          python3 scripts/evidence/validate-release-inputs.py \
+            --version "${{ needs.validate.outputs.version }}" \
+            --release-tier "${tier}" \
+            --profile release-candidate \
+            --root . \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --source-sha "${{ steps.tag.outputs.source_sha }}" \
+            --check-files
+      - name: Upload release input bundle for tag workflow
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-inputs-${{ needs.validate.outputs.version }}
+          path: |
+            release-inputs/
+            release-lab-input/
+            release-governance/
+            release-approvals/
+            release-security/
+            release-reproducibility/
+          retention-days: 30
+
   input-preflight:
     name: Release input preflight
-    needs: [validate, governance]
+    needs: [validate, governance, preflight-binding]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -137,6 +235,11 @@ jobs:
         with:
           name: release-governance-${{ needs.validate.outputs.version }}
           path: .
+      - name: Download preflight-bound release inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: release-inputs-${{ needs.validate.outputs.version }}
+          path: .
       - name: Validate release inputs
         run: |
           set -euo pipefail
@@ -147,6 +250,9 @@ jobs:
           python3 scripts/evidence/validate-release-inputs.py \
             --version "${{ needs.validate.outputs.version }}" \
             --release-tier "${tier}" \
+            --profile release-candidate \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
             --check-files
 
   # =========================================================================
@@ -758,12 +864,20 @@ jobs:
           ref: ${{ needs.validate.outputs.version }}
           fetch-depth: 0
 
+      - name: Download preflight-bound release inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: release-inputs-${{ needs.validate.outputs.version }}
+          path: .
+
       - name: Validate full-matrix lab evidence input
         run: |
           set -euo pipefail
           python3 scripts/evidence/validate-lab-input.py validate-matrix \
             --version "${{ needs.validate.outputs.version }}" \
             --root release-lab-input \
+            --profile release-candidate \
+            --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
             --require-pass \
             --check-files
 

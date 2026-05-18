@@ -9,6 +9,7 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -16,6 +17,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
+BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v1"
+SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def run(args: list[str]) -> list[str]:
@@ -44,19 +48,182 @@ def load_matrix(path: Path) -> dict[str, Any]:
     return module.load_matrix(path)
 
 
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_output(args: list[str]) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def load_binding(path: Path | None, failures: list[str]) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        failures.append(f"binding manifest missing or invalid JSON: {path}")
+        return None
+    if payload.get("schema_version") != BINDING_SCHEMA_VERSION:
+        failures.append(f"binding manifest schema_version must be {BINDING_SCHEMA_VERSION}: {path}")
+    return payload
+
+
+def validate_binding(
+    binding: dict[str, Any] | None,
+    args: argparse.Namespace,
+    matrix_path: Path,
+) -> list[str]:
+    if binding is None:
+        if args.profile == "release-candidate":
+            return ["release-candidate profile requires --binding-manifest"]
+        return []
+    failures: list[str] = []
+    if binding.get("version") != args.version:
+        failures.append("binding version must match requested version")
+    if binding.get("profile") != args.profile:
+        failures.append("binding profile must match requested profile")
+    if args.source_sha is not None and binding.get("source_sha") != args.source_sha:
+        failures.append("binding source_sha must match --source-sha")
+    if args.source_run_id is not None and str(binding.get("source_run_id")) != str(args.source_run_id):
+        failures.append("binding source_run_id must match --source-run-id")
+    source_sha = binding.get("source_sha")
+    if not isinstance(source_sha, str) or not SOURCE_SHA_RE.fullmatch(source_sha):
+        failures.append("binding source_sha must be a lowercase git commit sha")
+    matrix_sha256 = binding.get("matrix_sha256")
+    if not isinstance(matrix_sha256, str) or not SHA256_RE.fullmatch(matrix_sha256):
+        failures.append("binding matrix_sha256 must be a lowercase sha256")
+    elif matrix_path.is_file() and sha256_file(matrix_path) != matrix_sha256:
+        failures.append("binding matrix_sha256 does not match current ci/build-matrix.yml")
+    buildroot_index_sha = binding.get("buildroot_index_sha")
+    if isinstance(source_sha, str) and SOURCE_SHA_RE.fullmatch(source_sha):
+        try:
+            expected_buildroot = git_output(["ls-tree", source_sha, "buildroot"]).split()[2]
+        except Exception as exc:
+            failures.append(f"cannot resolve Buildroot submodule for binding source_sha: {exc}")
+            expected_buildroot = None
+        if expected_buildroot is not None and buildroot_index_sha != expected_buildroot:
+            failures.append("binding buildroot_index_sha does not match source_sha tree")
+    artifacts = binding.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        failures.append("binding artifacts must be a non-empty list")
+    else:
+        seen: set[tuple[str, str]] = set()
+        artifact_root = args.artifact_root
+        for index, artifact in enumerate(artifacts):
+            if not isinstance(artifact, dict):
+                failures.append(f"binding artifacts[{index}] must be an object")
+                continue
+            key = (str(artifact.get("defconfig")), str(artifact.get("artifact")))
+            if key in seen:
+                failures.append(f"duplicate binding artifact: {key[0]} {key[1]}")
+            seen.add(key)
+            digest = artifact.get("sha256")
+            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+                failures.append(f"binding artifact {key[0]} {key[1]} has invalid sha256")
+            if not isinstance(artifact.get("bytes"), int) or artifact.get("bytes", 0) <= 0:
+                failures.append(f"binding artifact {key[0]} {key[1]} must have positive byte size")
+            rel = artifact.get("path")
+            if artifact_root is not None and isinstance(rel, str):
+                path = artifact_root / rel
+                if not path.is_file():
+                    failures.append(f"binding artifact file missing: {path}")
+                elif isinstance(digest, str) and sha256_file(path) != digest:
+                    failures.append(f"binding artifact sha mismatch: {path}")
+    return failures
+
+
+def validate_approval(path: Path, version: str, target: str) -> list[str]:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return [f"missing or invalid approval input: {path}"]
+    failures = []
+    if payload.get("version", version) != version:
+        failures.append(f"approval version mismatch: {path}")
+    if payload.get("target", target) != target:
+        failures.append(f"approval target mismatch: {path}")
+    if payload.get("status") != "approved":
+        failures.append(f"approval status must be approved: {path}")
+    for field in ("approver", "approved_at"):
+        if not isinstance(payload.get(field), str) or not payload[field].strip():
+            failures.append(f"approval missing {field}: {path}")
+    return failures
+
+
+def validate_repro(path: Path) -> list[str]:
+    if not path.is_file() or path.stat().st_size <= 0:
+        return [f"missing reproducibility input: {path}"]
+    text = path.read_text(encoding="utf-8", errors="replace").lower()
+    if any(token in text for token in ("mismatch", "failed", "error", "different digest")):
+        return [f"reproducibility input reports mismatch or failure: {path}"]
+    if "matched" not in text and "passed" not in text:
+        return [f"reproducibility input must report matched or passed: {path}"]
+    return []
+
+
+def validate_security_report(path: Path, scan: str) -> list[str]:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return [f"missing or invalid release security report: {path}"]
+    failures = []
+    if payload.get("scan", scan) != scan:
+        failures.append(f"security report scan mismatch: {path}")
+    if payload.get("status") != "passed":
+        failures.append(f"security report status must be passed: {path}")
+    counts = payload.get("severity_counts")
+    if isinstance(counts, dict):
+        for severity in ("critical", "high"):
+            value = counts.get(severity, 0)
+            if isinstance(value, int) and value > 0:
+                failures.append(f"security report has {severity} findings: {path}")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--release-tier", choices=("alpha", "production"), required=True)
+    parser.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--check-files", action="store_true")
+    parser.add_argument("--binding-manifest", type=Path)
+    parser.add_argument("--source-sha")
+    parser.add_argument("--source-run-id")
+    parser.add_argument("--artifact-root", type=Path)
     args = parser.parse_args()
 
     failures: list[str] = []
     inferred_tier = "alpha" if "-" in args.version else "production"
     if args.release_tier != inferred_tier:
         failures.append(f"release tier must be {inferred_tier} for version {args.version}")
+    binding = load_binding(args.binding_manifest, failures)
+    failures.extend(validate_binding(binding, args, args.matrix))
+    bound_source_sha = args.source_sha
+    if bound_source_sha is None and isinstance(binding, dict) and isinstance(binding.get("source_sha"), str):
+        bound_source_sha = binding["source_sha"]
+    if args.profile == "technical-dry-run":
+        if failures:
+            for failure in failures:
+                print(f"ERROR: {failure}", file=sys.stderr)
+            return 1
+        print(f"validated technical dry-run release inputs for {args.version}")
+        return 0
     governance_report = args.root / "release-governance" / args.version / "governance-policy-validation.json"
     governance = read_json(governance_report)
     if not isinstance(governance, dict) or governance.get("status") != "passed":
@@ -71,7 +238,11 @@ def main() -> int:
         "--root",
         str(args.root / "release-lab-input"),
         "--require-pass",
+        "--profile",
+        args.profile,
     ]
+    if bound_source_sha:
+        lab_args.extend(["--expected-source-sha", bound_source_sha])
     if args.check_files:
         lab_args.append("--check-files")
     failures.extend(run(lab_args))
@@ -85,7 +256,11 @@ def main() -> int:
                 "scripts/evidence/validate-qemu-input.py",
                 str(qemu),
                 "--require-pass",
+                "--profile",
+                args.profile,
             ]
+            if bound_source_sha:
+                qemu_args.extend(["--expected-source-sha", bound_source_sha])
             if args.check_files:
                 qemu_args.append("--check-files")
             failures.extend(run(qemu_args))
@@ -93,14 +268,11 @@ def main() -> int:
             target = str(row["target"])
             approval = args.root / "release-approvals" / args.version / f"{target}.json"
             repro = args.root / "release-reproducibility" / args.version / f"{target}.log"
-            if not approval.is_file():
-                failures.append(f"missing approval input: {approval}")
-            if not repro.is_file() or repro.stat().st_size <= 0:
-                failures.append(f"missing reproducibility input: {repro}")
+            failures.extend(validate_approval(approval, args.version, target))
+            failures.extend(validate_repro(repro))
     for scan in matrix.get("security_scans", []):
         report = args.root / "release-security" / args.version / f"{scan}.json"
-        if not report.is_file() or report.stat().st_size <= 0:
-            failures.append(f"missing release security report: {report}")
+        failures.extend(validate_security_report(report, str(scan)))
 
     if failures:
         for failure in failures:

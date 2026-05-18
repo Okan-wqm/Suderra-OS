@@ -122,7 +122,7 @@ or target-selection failure.
 
 ## Lab Input JSON
 
-Create one structured lab input file using `suderra.lab-evidence.v2`:
+Create one structured lab input file using `suderra.lab-evidence.v3`:
 
 ```text
 release-lab-input/<version>/pi-cm4-revpi-usb-installer/lab.json

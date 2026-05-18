@@ -49,6 +49,7 @@ docs/
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
 - [release-lifecycle.md](operations/release-lifecycle.md) — alpha ve production release kapıları
 - [release-evidence.md](operations/release-evidence.md) — release evidence v3, governance, QEMU ve lab input sözleşmeleri
+- [release-preflight.md](operations/release-preflight.md) — source/run/artifact binding ile release-candidate preflight
 - [ci-log-and-warning-triage.md](operations/ci-log-and-warning-triage.md) — build warning/SARIF governance
 - [ota.md](operations/ota.md) — RAUC bundle oluştur, sun, rollback
 - [edge-agent-update.md](operations/edge-agent-update.md) — `suderra-agent` pin/hash/config güncelleme akışı

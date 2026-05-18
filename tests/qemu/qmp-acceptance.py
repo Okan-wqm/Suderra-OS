@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "suderra.qemu-acceptance.v2"
+SCHEMA_VERSION = "suderra.qemu-acceptance.v3"
 PASS_PATTERNS = {
     "banner": re.compile(r"Suderra OS"),
     "systemd": re.compile(r"(Welcome to|Reached target|systemd\[1\])"),
@@ -206,15 +206,35 @@ def relative_log_entry(evidence_dir: Path, role: str, path: Path) -> dict[str, s
     }
 
 
-def release_checks(passed: dict[str, bool], failed: dict[str, bool]) -> dict[str, dict[str, str]]:
-    checks = {name: {"status": "not_applicable"} for name in RELEASE_CHECK_NAMES}
+def release_checks(passed: dict[str, bool], failed: dict[str, bool], profile: str = "smoke") -> dict[str, dict[str, str]]:
+    uncollected_status = "failed" if profile == "release-candidate" else "not_applicable"
+    checks = {
+        name: {
+            "status": uncollected_status,
+            "evidence": f"not collected by {profile} QEMU harness profile",
+            "source": "harness-profile",
+        }
+        for name in RELEASE_CHECK_NAMES
+    }
     checks["boot"] = {
         "status": "passed" if passed.get("banner") or passed.get("provisioning-ready") else "failed",
+        "evidence": "serial banner or login prompt observed",
+        "source": "serial",
     }
-    checks["systemd"] = {"status": "passed" if passed.get("systemd") else "failed"}
-    checks["no-kernel-panic"] = {"status": "failed" if failed.get("kernel-panic") else "passed"}
+    checks["systemd"] = {
+        "status": "passed" if passed.get("systemd") else "failed",
+        "evidence": "systemd boot text observed on serial",
+        "source": "serial",
+    }
+    checks["no-kernel-panic"] = {
+        "status": "failed" if failed.get("kernel-panic") else "passed",
+        "evidence": "serial log scanned for Kernel panic",
+        "source": "serial",
+    }
     checks["no-emergency-mode"] = {
         "status": "failed" if failed.get("oom-or-systemd-failure") else "passed",
+        "evidence": "serial log scanned for emergency/failure patterns",
+        "source": "serial",
     }
     return checks
 
@@ -465,7 +485,16 @@ def run(args: argparse.Namespace) -> int:
     qemu_status = process.returncode if process is not None else None
     failed_checks = [name for name, hit in failed.items() if hit]
     missing_checks = [name for name, hit in passed.items() if not hit]
+    checks = release_checks(passed, failed, args.profile)
     success = not failed_checks and not missing_checks and error is None
+    if args.profile == "release-candidate":
+        release_failures = [
+            name for name, check in checks.items()
+            if check.get("status") != "passed"
+        ]
+        if release_failures:
+            failed_checks.extend(f"release-check-{name}" for name in release_failures)
+            success = False
     if qemu_status not in (0, None) and not success:
         failed_checks.append(f"qemu-exit-{qemu_status}")
 
@@ -496,7 +525,9 @@ def run(args: argparse.Namespace) -> int:
         "timeout_seconds": args.timeout,
         "qemu_exit_status": qemu_status,
         "qemu_args": qemu_args,
-        "checks": release_checks(passed, failed),
+        "profile": args.profile,
+        "source_sha": os.environ.get("SUDERRA_SOURCE_SHA"),
+        "checks": checks,
         "logs": log_entries,
         "guest_facts": {
             "firmware": firmware.evidence() if firmware else {"requested": str(args.ovmf), "mode": args.ovmf_mode},
@@ -547,6 +578,7 @@ def main() -> int:
     parser.add_argument("--target", default=os.environ.get("SUDERRA_TARGET", "qemu-x86_64"))
     parser.add_argument("--memory", default="256M")
     parser.add_argument("--smp", default="2")
+    parser.add_argument("--profile", choices=("smoke", "release-candidate"), default="smoke")
     args = parser.parse_args()
 
     if not args.image.is_file():

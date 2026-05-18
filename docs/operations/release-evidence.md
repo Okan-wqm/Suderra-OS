@@ -140,7 +140,7 @@ python3 scripts/evidence/validate-governance.py \
 ```
 
 `governance-policy-validation.json` must use
-`suderra.github-governance-validation.v1` and `status: passed`. Final evidence
+`suderra.github-governance-validation.v2` and `status: passed`. Final evidence
 requires that file plus branch protection, ruleset, release environment, tag
 protection, workflow permission, CODEOWNERS, and audit snapshots.
 
@@ -162,7 +162,7 @@ python3 scripts/evidence/validate-qemu-input.py \
     release-lab-input/v0.1.0-alpha.1/qemu-x86_64/qemu.json
 ```
 
-The file uses `suderra.qemu-acceptance.v2` and must contain image and firmware
+The file uses `suderra.qemu-acceptance.v3` and must contain image and firmware
 hashes, QEMU version, guest facts, logs, and required checks:
 `boot`, `systemd`, `zero-failed-units`, `no-kernel-panic`,
 `no-emergency-mode`, `os-release`, `kernel`, `rootfs`, `network`,
@@ -238,7 +238,7 @@ release-evidence/v1.0.0/rpi4/security/systemd-security.txt
 
 Hardware collection starts as lab input under
 `release-lab-input/<version>/<target>/lab.json`. The file uses
-`suderra.lab-evidence.v2`; every device must include board serial, SKU or
+`suderra.lab-evidence.v3`; every device must include board serial, SKU or
 hardware revision, storage serial, UART adapter, power supply, boot firmware,
 operator, timestamp, logs, and per-check evidence. USB installer negative tests
 must include `failure_code` so closed-fail behavior is identifiable in release

@@ -16,8 +16,10 @@ import sys
 from typing import Any
 
 
-SCHEMA_VERSION = "suderra.github-governance-validation.v1"
-POLICY_SCHEMA_VERSION = "suderra.github-governance-policy.v1"
+SCHEMA_VERSION = "suderra.github-governance-validation.v2"
+LEGACY_SCHEMA_VERSIONS = {"suderra.github-governance-validation.v1"}
+POLICY_SCHEMA_VERSION = "suderra.github-governance-policy.v2"
+LEGACY_POLICY_SCHEMA_VERSIONS = {"suderra.github-governance-policy.v1"}
 
 
 def read_json(path: Path) -> Any:
@@ -88,7 +90,7 @@ def codeowners_patterns(snapshot: Any) -> set[str]:
 def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     failures: list[str] = []
     warnings: list[str] = []
-    if policy.get("schema_version") != POLICY_SCHEMA_VERSION:
+    if policy.get("schema_version") not in {POLICY_SCHEMA_VERSION} | LEGACY_POLICY_SCHEMA_VERSIONS:
         failures.append(f"policy schema_version must be {POLICY_SCHEMA_VERSION}")
 
     branch = read_json(snapshot_root / "main-branch-protection.json")
@@ -141,10 +143,19 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
                 failures.append(f"branch ruleset missing rule: {required_rule}")
 
     tag_ruleset = ruleset_named(rulesets, str(rule_policy.get("tag_name", "")), "tag")
-    if tag_ruleset is not None and tag_ruleset.get("enforcement") != "active":
-        failures.append("tag ruleset must be active")
-    if tag_ruleset is None and not tag_protection:
-        failures.append("release tag protection must exist")
+    if tag_ruleset is None:
+        failures.append("release tag ruleset must exist")
+    else:
+        if tag_ruleset.get("enforcement") != "active":
+            failures.append("tag ruleset must be active")
+        bypass = tag_ruleset.get("bypass_actors")
+        if rule_policy.get("allow_bypass_actors") is False and bypass:
+            failures.append("tag ruleset must not have bypass actors")
+        rules = tag_ruleset.get("rules") if isinstance(tag_ruleset.get("rules"), list) else []
+        if not has_rule(rules, "non_fast_forward"):
+            failures.append("tag ruleset missing rule: non_fast_forward")
+    if tag_protection:
+        warnings.append("legacy tag protection snapshot is ignored; release tags must be governed by rulesets")
 
     env_policy = policy.get("release_environment", {})
     if not isinstance(environment, dict):
@@ -154,6 +165,8 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
             failures.append("release environment name mismatch")
         if environment_reviewers(environment) < int(env_policy.get("minimum_reviewers", 1)):
             failures.append("release environment must require reviewers")
+        if env_policy.get("prevent_self_review") is True and environment.get("prevent_self_review") is not True:
+            failures.append("release environment must prevent self review")
         deployment_policy = environment.get("deployment_branch_policy")
         if isinstance(deployment_policy, dict):
             if deployment_policy.get("protected_branches") is True and deployment_policy.get("custom_branch_policies") is not True:
@@ -172,10 +185,15 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     if missing_codeowners:
         failures.append(f"missing CODEOWNERS patterns: {', '.join(missing_codeowners)}")
 
-    if isinstance(audit_log, dict) and audit_log.get("unapproved_governance_changes"):
-        failures.append("audit log contains unapproved governance changes")
-    elif audit_log is None:
-        warnings.append("audit-log.json not collected")
+    if not isinstance(audit_log, dict):
+        failures.append("audit-log.json must be collected")
+    else:
+        if audit_log.get("status") != "collected":
+            failures.append("audit log must be collected")
+        if audit_log.get("unapproved_governance_changes"):
+            failures.append("audit log contains unapproved governance changes")
+        if not isinstance(audit_log.get("events_sha256"), str):
+            failures.append("audit log must include events_sha256")
 
     return {
         "schema_version": SCHEMA_VERSION,

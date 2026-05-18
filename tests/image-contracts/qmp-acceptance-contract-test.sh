@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert bios.mode == "bios"
     assert module.firmware_qemu_args(bios) == ["-bios", str(monolithic)]
 
-    assert module.SCHEMA_VERSION == "suderra.qemu-acceptance.v2"
+    assert module.SCHEMA_VERSION == "suderra.qemu-acceptance.v3"
     checks = module.release_checks(
         {"banner": True, "systemd": True, "provisioning-ready": True},
         {"kernel-panic": False, "oom-or-systemd-failure": False},
@@ -84,24 +84,32 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert checks["no-kernel-panic"]["status"] == "passed"
 PY
 
-if grep -q 'suderra.qemu-acceptance.v1' "${HARNESS}"; then
-    echo "ERROR: QMP acceptance harness must emit qemu acceptance schema v2" >&2
+if grep -q 'suderra.qemu-acceptance.v2' "${HARNESS}"; then
+    echo "ERROR: QMP acceptance harness must emit qemu acceptance schema v3" >&2
     exit 1
 fi
 
 QEMU_INPUT="${TMPDIR}/release-lab-input/v9.9.9-alpha.1/qemu-x86_64/qemu.json"
 mkdir -p "$(dirname "${QEMU_INPUT}")"
 python3 - "${QEMU_INPUT}" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 qemu_input = Path(sys.argv[1])
 root = qemu_input.parent
-for name in ("serial.log", "qmp.json"):
-    (root / name).write_text(f"synthetic {name}\n", encoding="utf-8")
+log_entries = []
+for role, name in (("serial", "serial.log"), ("qmp-events", "qmp.json"), ("qemu-stderr", "qemu-stderr.log")):
+    payload = f"synthetic {name}\n".encode("utf-8")
+    (root / name).write_bytes(payload)
+    log_entries.append({"role": role, "path": name, "sha256": hashlib.sha256(payload).hexdigest()})
 checks = {
-    name: {"status": "passed"}
+    name: {
+        "status": "passed",
+        "evidence": f"{name} collected by contract fixture",
+        "source": "contract-fixture",
+    }
     for name in (
         "boot",
         "systemd",
@@ -119,9 +127,10 @@ checks = {
     )
 }
 payload = {
-    "schema_version": "suderra.qemu-acceptance.v2",
+    "schema_version": "suderra.qemu-acceptance.v3",
     "version": "v9.9.9-alpha.1",
     "target": "qemu-x86_64",
+    "source_sha": "0123456789abcdef0123456789abcdef01234567",
     "generated_at": "2026-05-13T00:00:00Z",
     "image": "suderra-qemu-x86_64.img",
     "qemu_version": "QEMU emulator version contract-test",
@@ -129,12 +138,18 @@ payload = {
     "image_sha256": "a" * 64,
     "firmware_sha256": "b" * 64,
     "status": "passed",
-    "logs": [
-        {"role": "serial", "path": "serial.log", "sha256": "c" * 64},
-        {"role": "qmp-events", "path": "qmp.json", "sha256": "d" * 64},
-    ],
+    "logs": log_entries,
     "checks": checks,
-    "guest_facts": {"kernel": "contract-test"},
+    "guest_facts": {
+        "os_release": {"ID": "suderra"},
+        "kernel": "contract-test",
+        "rootfs": {"partlabel": "rootfs"},
+        "network": {"state": "up"},
+        "listeners": [],
+        "firewall": {"nft": "loaded"},
+        "firstboot": {"idempotent": True},
+        "lockdown": {"status": "locked"},
+    },
 }
 qemu_input.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY

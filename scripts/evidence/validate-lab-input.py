@@ -11,6 +11,7 @@ actual staged, signed, and attested release bytes.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -20,8 +21,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.lab-evidence.v2"
+SCHEMA_VERSION = "suderra.lab-evidence.v3"
+LEGACY_SCHEMA_VERSIONS = {"suderra.lab-evidence.v2"}
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 STATUS_VALUES = {"passed", "failed", "not_run", "not_applicable", "not_collected"}
 REQUIRED_DEVICE_FIELDS = (
     "board",
@@ -33,6 +37,26 @@ REQUIRED_DEVICE_FIELDS = (
     "boot_firmware",
     "operator",
     "tested_at",
+)
+REQUIRED_STATION_FIELDS = (
+    "station_id",
+    "fixture_id",
+    "operator_id",
+    "trusted_key_fingerprint",
+    "clock",
+)
+REQUIRED_ARTIFACT_BINDING_FIELDS = (
+    "version",
+    "source_sha",
+    "source_run_id",
+    "release_assets_sha256",
+)
+REQUIRED_DEVICE_IDENTITY_FIELDS = (
+    "model",
+    "compatible",
+    "storage_by_id",
+    "storage_serial",
+    "root_partuuid",
 )
 REQUIRED_LAB_CHECKS = (
     "board-identity",
@@ -90,12 +114,26 @@ def check_status(errors: list[str], path: str, value: Any) -> None:
         error(errors, path, f"must be one of: {', '.join(sorted(STATUS_VALUES))}")
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_sha256(errors: list[str], path: str, value: Any) -> None:
+    if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
+        error(errors, path, "must be a lowercase sha256 hex digest")
+
+
 def check_relative_file(
     errors: list[str],
     root: Path,
     path: str,
     value: Any,
     check_files: bool,
+    expected_sha256: str | None = None,
 ) -> None:
     if not is_string(value):
         error(errors, path, "must be a relative file path")
@@ -107,6 +145,11 @@ def check_relative_file(
     actual = root / rel
     if check_files and (not actual.is_file() or actual.stat().st_size <= 0):
         error(errors, path, f"referenced file is missing or empty: {value}")
+        return
+    if check_files and expected_sha256 is not None and actual.is_file():
+        actual_sha256 = sha256_file(actual)
+        if actual_sha256 != expected_sha256:
+            error(errors, path, f"referenced file sha256 mismatch: expected {expected_sha256}, got {actual_sha256}")
 
 
 def strip_comment(line: str) -> str:
@@ -225,6 +268,8 @@ def validate_lab(
     require_pass: bool,
     expected_version: str | None = None,
     expected_target: str | None = None,
+    profile: str = "release-candidate",
+    expected_source_sha: str | None = None,
 ) -> list[str]:
     root = path.parent
     errors: list[str] = []
@@ -239,8 +284,10 @@ def validate_lab(
         return [f"{path}: invalid JSON: {exc}"]
     if not isinstance(payload, dict):
         return [f"{path}: top-level JSON value must be an object"]
-    if payload.get("schema_version") != SCHEMA_VERSION:
-        error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
+    schema_version = payload.get("schema_version")
+    if schema_version != SCHEMA_VERSION:
+        if profile == "release-candidate" or schema_version not in LEGACY_SCHEMA_VERSIONS:
+            error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
     for field in ("version", "target", "generated_at", "lab_id", "operator"):
         check_string(errors, f"$.{field}", payload.get(field))
     for field in ("version", "target"):
@@ -251,6 +298,30 @@ def validate_lab(
         error(errors, "$.version", f"must match lab evidence path version {expected_version}")
     if expected_target is not None and payload.get("target") != expected_target:
         error(errors, "$.target", f"must match lab evidence path target {expected_target}")
+    is_v3 = schema_version == SCHEMA_VERSION
+    if is_v3:
+        station = payload.get("station")
+        if not isinstance(station, dict):
+            error(errors, "$.station", "must be an object")
+        else:
+            for field in REQUIRED_STATION_FIELDS:
+                check_string(errors, f"$.station.{field}", station.get(field))
+            if not isinstance(station.get("tool_versions"), dict) or not station["tool_versions"]:
+                error(errors, "$.station.tool_versions", "must be a non-empty object")
+        binding = payload.get("artifact_binding")
+        if not isinstance(binding, dict):
+            error(errors, "$.artifact_binding", "must be an object")
+        else:
+            for field in REQUIRED_ARTIFACT_BINDING_FIELDS:
+                check_string(errors, f"$.artifact_binding.{field}", binding.get(field))
+            if binding.get("version") != payload.get("version"):
+                error(errors, "$.artifact_binding.version", "must match top-level version")
+            source_sha = binding.get("source_sha")
+            if not isinstance(source_sha, str) or not SOURCE_SHA_RE.fullmatch(source_sha):
+                error(errors, "$.artifact_binding.source_sha", "must be a lowercase git commit sha")
+            elif expected_source_sha is not None and source_sha != expected_source_sha:
+                error(errors, "$.artifact_binding.source_sha", f"must match bound source sha {expected_source_sha}")
+            check_sha256(errors, "$.artifact_binding.release_assets_sha256", binding.get("release_assets_sha256"))
     devices = payload.get("devices")
     if not isinstance(devices, list) or not devices:
         error(errors, "$.devices", "must be a non-empty list")
@@ -262,6 +333,27 @@ def validate_lab(
             continue
         for field in REQUIRED_DEVICE_FIELDS:
             check_string(errors, f"{device_path}.{field}", device.get(field))
+        if is_v3:
+            identity = device.get("device_identity")
+            if not isinstance(identity, dict):
+                error(errors, f"{device_path}.device_identity", "must be an object")
+            else:
+                for field in REQUIRED_DEVICE_IDENTITY_FIELDS:
+                    check_string(errors, f"{device_path}.device_identity.{field}", identity.get(field))
+            readback = device.get("readback")
+            if not isinstance(readback, dict):
+                error(errors, f"{device_path}.readback", "must be an object")
+            else:
+                if readback.get("scope") != "full":
+                    error(errors, f"{device_path}.readback.scope", "must be full for release lab input")
+                expected_sha = readback.get("expected_sha256")
+                actual_sha = readback.get("actual_sha256")
+                check_sha256(errors, f"{device_path}.readback.expected_sha256", expected_sha)
+                check_sha256(errors, f"{device_path}.readback.actual_sha256", actual_sha)
+                if isinstance(expected_sha, str) and isinstance(actual_sha, str) and expected_sha != actual_sha:
+                    error(errors, f"{device_path}.readback.actual_sha256", "must match expected_sha256")
+                if not isinstance(readback.get("bytes_read"), int) or readback.get("bytes_read", 0) <= 0:
+                    error(errors, f"{device_path}.readback.bytes_read", "must be a positive integer")
         check_status(errors, f"{device_path}.status", device.get("status"))
         if require_pass and device.get("status") != "passed":
             error(errors, f"{device_path}.status", "must be passed for release lab input")
@@ -270,7 +362,18 @@ def validate_lab(
             error(errors, f"{device_path}.logs", "must be a non-empty list")
         else:
             for log_idx, log in enumerate(logs):
-                check_relative_file(errors, root, f"{device_path}.logs[{log_idx}]", log, check_files)
+                if isinstance(log, dict):
+                    check_relative_file(
+                        errors,
+                        root,
+                        f"{device_path}.logs[{log_idx}].path",
+                        log.get("path"),
+                        check_files,
+                        log.get("sha256") if isinstance(log.get("sha256"), str) else None,
+                    )
+                    check_sha256(errors, f"{device_path}.logs[{log_idx}].sha256", log.get("sha256"))
+                else:
+                    check_relative_file(errors, root, f"{device_path}.logs[{log_idx}]", log, check_files)
         checks = device.get("checks")
         if not isinstance(checks, dict):
             error(errors, f"{device_path}.checks", "must be an object")
@@ -286,7 +389,19 @@ def validate_lab(
                 error(errors, check_path, "must be an object")
                 continue
             check_status(errors, f"{check_path}.status", check.get("status"))
-            check_relative_file(errors, root, f"{check_path}.evidence", check.get("evidence"), check_files)
+            check_relative_file(
+                errors,
+                root,
+                f"{check_path}.evidence",
+                check.get("evidence"),
+                check_files,
+                check.get("evidence_sha256") if isinstance(check.get("evidence_sha256"), str) else None,
+            )
+            if is_v3:
+                for field in ("command", "expected", "observed", "parsed_result"):
+                    check_string(errors, f"{check_path}.{field}", check.get(field))
+                if "evidence_sha256" in check:
+                    check_sha256(errors, f"{check_path}.evidence_sha256", check.get("evidence_sha256"))
             if require_pass and check.get("status") != "passed":
                 error(errors, f"{check_path}.status", "must be passed for release lab input")
     target = str(payload.get("target", ""))
@@ -321,7 +436,20 @@ def validate_lab(
         check_string(errors, f"{item_path}.name", item.get("name"))
         check_string(errors, f"{item_path}.failure_code", item.get("failure_code"))
         check_status(errors, f"{item_path}.status", item.get("status"))
-        check_relative_file(errors, root, f"{item_path}.evidence", item.get("evidence"), check_files)
+        check_relative_file(
+            errors,
+            root,
+            f"{item_path}.evidence",
+            item.get("evidence"),
+            check_files,
+            item.get("evidence_sha256") if isinstance(item.get("evidence_sha256"), str) else None,
+        )
+        if is_v3:
+            write_prevention = item.get("write_prevention")
+            if not isinstance(write_prevention, dict):
+                error(errors, f"{item_path}.write_prevention", "must be an object")
+            elif write_prevention.get("target_hash_unchanged") is not True:
+                error(errors, f"{item_path}.write_prevention.target_hash_unchanged", "must be true")
         if require_pass and item.get("status") != "passed":
             error(errors, f"{item_path}.status", "must be passed for release lab input")
     return errors
@@ -334,6 +462,8 @@ def validate_command(args: argparse.Namespace) -> int:
         args.require_pass,
         args.expected_version,
         args.expected_target,
+        args.profile,
+        args.expected_source_sha,
     )
     if errors:
         for item in errors:
@@ -355,6 +485,8 @@ def validate_matrix_command(args: argparse.Namespace) -> int:
                 args.require_pass,
                 args.version,
                 target,
+                args.profile,
+                args.expected_source_sha,
             )
         )
     if failures:
@@ -374,6 +506,8 @@ def main() -> int:
     validate.add_argument("--check-files", action="store_true")
     validate.add_argument("--expected-version")
     validate.add_argument("--expected-target")
+    validate.add_argument("--expected-source-sha")
+    validate.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
     validate.set_defaults(func=validate_command)
     validate_matrix = subparsers.add_parser("validate-matrix")
     validate_matrix.add_argument("--version", required=True)
@@ -381,6 +515,8 @@ def main() -> int:
     validate_matrix.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     validate_matrix.add_argument("--require-pass", action="store_true")
     validate_matrix.add_argument("--check-files", action="store_true")
+    validate_matrix.add_argument("--expected-source-sha")
+    validate_matrix.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
     validate_matrix.set_defaults(func=validate_matrix_command)
     args = parser.parse_args()
     return args.func(args)

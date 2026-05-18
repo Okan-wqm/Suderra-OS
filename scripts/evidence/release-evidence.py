@@ -1119,10 +1119,13 @@ def validate_governance(validation: Validation, evidence: dict[str, Any], requir
             if not isinstance(payload, dict):
                 validation.error(f"{path}.evidence", "must be a governance validation JSON object")
                 continue
-            if payload.get("schema_version") != "suderra.github-governance-validation.v1":
+            if payload.get("schema_version") not in {
+                "suderra.github-governance-validation.v1",
+                "suderra.github-governance-validation.v2",
+            }:
                 validation.error(
                     f"{path}.evidence",
-                    "schema_version must be suderra.github-governance-validation.v1",
+                    "schema_version must be suderra.github-governance-validation.v1 or v2",
                 )
             if payload.get("status") != "passed":
                 validation.error(f"{path}.evidence", "governance policy validation must be passed")

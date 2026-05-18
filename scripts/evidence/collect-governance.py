@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -68,6 +69,43 @@ def collect_codeowners(repo_root: Path, output: Path) -> None:
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def collect_ruleset_details(repo: str, output: Path) -> None:
+    summaries = gh_api(f"repos/{repo}/rulesets")
+    items = summaries.get("rulesets") if isinstance(summaries, dict) else summaries
+    if not isinstance(items, list):
+        output.write_text(json.dumps(summaries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return
+    detailed = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ruleset_id = item.get("id")
+        if ruleset_id is None:
+            detailed.append(item)
+            continue
+        try:
+            detail = gh_api(f"repos/{repo}/rulesets/{ruleset_id}")
+        except Exception:
+            detail = item
+        detailed.append(detail)
+    output.write_text(json.dumps(detailed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def collect_audit(output: Path) -> None:
+    audit_path = os.environ.get("SUDERRA_GOVERNANCE_AUDIT_LOG")
+    if audit_path:
+        source = Path(audit_path)
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return
+    audit = {
+        "schema_version": "suderra.audit-log-snapshot.v1",
+        "status": "not_collected",
+        "unapproved_governance_changes": False,
+    }
+    output.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="owner/repository")
@@ -83,6 +121,10 @@ def main() -> int:
     for filename, endpoint in SNAPSHOTS.items():
         path = output_root / filename
         try:
+            if filename == "rulesets.json":
+                collect_ruleset_details(args.repo, path)
+                files.append({"name": filename, "sha256": sha256_file(path)})
+                continue
             payload = gh_api(endpoint.format(repo=args.repo))
         except Exception as exc:  # pragma: no cover - network/API guard
             failures.append(f"{filename}: {exc}")
@@ -92,12 +134,7 @@ def main() -> int:
 
     collect_codeowners(args.repo_root, output_root / "codeowners.json")
     files.append({"name": "codeowners.json", "sha256": sha256_file(output_root / "codeowners.json")})
-    audit = {
-        "schema_version": "suderra.audit-log-snapshot.v1",
-        "status": "not_collected",
-        "unapproved_governance_changes": False,
-    }
-    (output_root / "audit-log.json").write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    collect_audit(output_root / "audit-log.json")
     files.append({"name": "audit-log.json", "sha256": sha256_file(output_root / "audit-log.json")})
     manifest = {
         "schema_version": "suderra.github-governance-snapshot-manifest.v1",

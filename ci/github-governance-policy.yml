@@ -1,5 +1,5 @@
 {
-  "schema_version": "suderra.github-governance-policy.v1",
+  "schema_version": "suderra.github-governance-policy.v2",
   "repository": "Okan-wqm/Suderra-OS",
   "protected_branch": "main",
   "required_checks": [
@@ -10,6 +10,7 @@
     "Lint / Markdown Lint",
     "Lint / Secret Scan (gitleaks)",
     "Lint / YAML Lint",
+    "Lint / DCO (Signed-off-by) Check",
     "Build / Build matrix contract",
     "Build / Build qemu-x86_64",
     "Build / Build rpi4",
@@ -31,15 +32,19 @@
   "release_environment": {
     "name": "release-publish",
     "allowed_ref": "refs/tags/v*",
-    "minimum_reviewers": 1
+    "minimum_reviewers": 2,
+    "prevent_self_review": true
   },
   "required_codeowners_patterns": [
     ".github/workflows/*.yml",
     ".github/CODEOWNERS",
     "ci/build-matrix.yml",
     "ci/github-governance-policy.yml",
+    "docs/operations/**",
+    "docs/security/**",
     "scripts/evidence/**",
     "scripts/ci/validate-build-matrix.py",
+    "tests/qemu/**",
     "board/keys/**",
     "board/suderra/common/post-image.sh",
     "tests/image-contracts/**"

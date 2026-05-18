@@ -57,6 +57,7 @@ rulesets = [
 ]
 environment = {
     "name": "release-publish",
+    "prevent_self_review": True,
     "deployment_branch_policy": {
         "protected_branches": False,
         "custom_branch_policies": True,
@@ -64,7 +65,10 @@ environment = {
     "protection_rules": [
         {
             "type": "required_reviewers",
-            "reviewers": [{"type": "User", "reviewer": {"login": "release-owner"}}],
+            "reviewers": [
+                {"type": "User", "reviewer": {"login": "release-owner"}},
+                {"type": "User", "reviewer": {"login": "security-owner"}},
+            ],
         }
     ],
 }
@@ -84,7 +88,9 @@ files = {
     "codeowners.json": codeowners,
     "audit-log.json": {
         "schema_version": "suderra.audit-log-snapshot.v1",
+        "status": "collected",
         "unapproved_governance_changes": False,
+        "events_sha256": "a" * 64,
     },
 }
 for name, payload in files.items():

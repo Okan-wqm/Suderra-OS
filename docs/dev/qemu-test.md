@@ -131,7 +131,7 @@ Faz 2'de inline shell yerine `/usr/bin/suderra-firstboot` Rust binary çağrıl�
 ## CI Headless Test
 
 `tests/qemu/boot-test.sh` QMP acceptance harness kullanır ve
-`suderra.qemu-acceptance.v2` JSON çıktısı üretir:
+`suderra.qemu-acceptance.v3` JSON çıktısı üretir:
 
 - 90s timeout
 - Banner doğrulama: "Suderra OS"
@@ -157,8 +157,9 @@ Faz 2'de inline shell yerine `/usr/bin/suderra-firstboot` Rust binary çağrıl�
 - `SUDERRA_RELEASE_VERSION=v0.1.0-alpha.1` ve `SUDERRA_TARGET=qemu-x86_64`
   (release input için metadata)
 
-Release input preflight için `qemu.json` şu path'te olmalı ve ayrı validator'dan
-geçmelidir:
+CI smoke profili yalnızca boot kanıtı üretir; release-candidate için semantik
+guest facts ve per-check evidence gereklidir. Release input preflight için
+`qemu.json` şu path'te olmalı ve ayrı validator'dan geçmelidir:
 
 ```bash
 python3 tests/qemu/qmp-acceptance.py \

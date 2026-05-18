@@ -5,6 +5,7 @@ IFS=$'\n\t'
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 RELEASE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release.yml"
+PREFLIGHT_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release-preflight.yml"
 BUILD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
 
 grep -q '^concurrency:' "${RELEASE_WORKFLOW}" || {
@@ -16,6 +17,35 @@ if grep -q 'workflow_dispatch:' "${RELEASE_WORKFLOW}"; then
     echo "ERROR: release workflow must not support branch-ref workflow_dispatch releases" >&2
     exit 1
 fi
+
+grep -q '^name: Release Preflight$' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight workflow must exist" >&2
+    exit 1
+}
+grep -q 'workflow_dispatch:' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight workflow must be manually dispatchable" >&2
+    exit 1
+}
+grep -q 'source_sha:' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must bind an exact source_sha input" >&2
+    exit 1
+}
+grep -q 'source_run_id:' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must bind an exact source_run_id input" >&2
+    exit 1
+}
+if grep -q 'contents: write' "${PREFLIGHT_WORKFLOW}" || grep -q 'id-token: write' "${PREFLIGHT_WORKFLOW}"; then
+    echo "ERROR: release preflight must not have publish/signing permissions" >&2
+    exit 1
+fi
+grep -q 'release-preflight-' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight artifact name must include version and source_sha" >&2
+    exit 1
+}
+grep -q 'preflight-binding:' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must require a successful release preflight binding" >&2
+    exit 1
+}
 
 if grep -q "tags: \\['v\\*'\\]" "${BUILD_WORKFLOW}" || grep -q "tags:" "${BUILD_WORKFLOW}"; then
     echo "ERROR: build workflow must not independently build v* release tags" >&2

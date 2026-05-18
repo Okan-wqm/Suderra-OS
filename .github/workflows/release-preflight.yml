@@ -1,0 +1,175 @@
+name: Release Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer release version, for example v0.1.0-alpha.1"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact commit SHA to bind"
+        required: true
+        type: string
+      source_run_id:
+        description: "Successful Build workflow run ID for source_sha"
+        required: true
+        type: string
+      profile:
+        description: "Preflight profile"
+        required: true
+        default: technical-dry-run
+        type: choice
+        options:
+          - technical-dry-run
+          - release-candidate
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: release-preflight-${{ inputs.version }}-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: ${{ inputs.profile }} (${{ inputs.version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      PROFILE: ${{ inputs.profile }}
+    steps:
+      - name: Validate source Build run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" > source-run.json
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          source_sha = os.environ["SOURCE_SHA"]
+          profile = os.environ["PROFILE"]
+          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?", version):
+              raise SystemExit(f"invalid SemVer version: {version}")
+          if profile == "release-candidate" and "-" not in version:
+              raise SystemExit("release-candidate profile requires a prerelease version")
+          if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+              raise SystemExit("source_sha must be a lowercase git commit sha")
+          run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
+          if run.get("name") != "Build":
+              raise SystemExit(f"source_run_id must point to Build workflow, got {run.get('name')!r}")
+          if run.get("head_sha") != source_sha:
+              raise SystemExit(f"source_run_id head_sha {run.get('head_sha')} does not match {source_sha}")
+          if run.get("status") != "completed" or run.get("conclusion") != "success":
+              raise SystemExit(f"source Build run is not successful: {run.get('status')} {run.get('conclusion')}")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"run_attempt={run.get('run_attempt', 1)}\n")
+          PY
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Validate build matrix
+        run: python3 scripts/ci/validate-build-matrix.py validate
+
+      - name: Download source Build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-artifacts
+          gh run download "${SOURCE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --dir build-artifacts
+
+      - name: Bind Build artifacts to release inputs
+        run: |
+          set -euo pipefail
+          mkdir -p "release-inputs/${VERSION}"
+          python3 scripts/evidence/prepare-release-inputs.py plan \
+            --version "${VERSION}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --source-run-attempt "${{ steps.source.outputs.run_attempt }}" \
+            --source-sha "${SOURCE_SHA}" \
+            --profile "${PROFILE}" \
+            --artifact-root build-artifacts \
+            --require-artifacts \
+            --output "release-inputs/${VERSION}/release-candidate.json"
+
+      - name: Collect governance evidence
+        if: ${{ inputs.profile == 'release-candidate' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/collect-governance.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --version "${VERSION}" \
+            --output-root release-governance \
+            --repo-root .
+          python3 scripts/evidence/validate-governance.py \
+            --policy ci/github-governance-policy.yml \
+            --snapshot-root "release-governance/${VERSION}" \
+            --output "release-governance/${VERSION}/governance-policy-validation.json"
+
+      - name: Initialize technical dry-run skeletons
+        if: ${{ inputs.profile == 'technical-dry-run' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/prepare-release-inputs.py init \
+            --version "${VERSION}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --source-run-attempt "${{ steps.source.outputs.run_attempt }}" \
+            --source-sha "${SOURCE_SHA}" \
+            --profile "${PROFILE}" \
+            --artifact-root build-artifacts \
+            --output-root .
+
+      - name: Validate release input contract
+        run: |
+          set -euo pipefail
+          tier="production"
+          case "${VERSION}" in
+            *-*) tier="alpha" ;;
+          esac
+          args=(
+            --version "${VERSION}"
+            --release-tier "${tier}"
+            --profile "${PROFILE}"
+            --root .
+            --binding-manifest "release-inputs/${VERSION}/release-candidate.json"
+            --source-sha "${SOURCE_SHA}"
+            --source-run-id "${SOURCE_RUN_ID}"
+            --artifact-root build-artifacts
+          )
+          if [ "${PROFILE}" = "release-candidate" ]; then
+            args+=(--check-files)
+          fi
+          python3 scripts/evidence/validate-release-inputs.py "${args[@]}"
+
+      - name: Upload preflight evidence bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-preflight-${{ inputs.version }}-${{ inputs.source_sha }}
+          path: |
+            source-run.json
+            release-inputs/
+            release-lab-input/
+            release-governance/
+            release-approvals/
+            release-security/
+            release-reproducibility/
+          retention-days: 30
+          if-no-files-found: ignore
