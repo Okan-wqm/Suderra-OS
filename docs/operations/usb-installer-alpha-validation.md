@@ -141,4 +141,6 @@ python3 scripts/evidence/validate-lab-input.py validate-matrix \
 ```
 
 The release workflow consumes this lab input and binds it to the final staged,
-signed, and attested release assets. Lab input alone is not release evidence.
+signed, and attested release assets. The validator rejects a `lab.json` whose
+`version` or `target` does not match its `release-lab-input/<version>/<target>/`
+path. Lab input alone is not release evidence.

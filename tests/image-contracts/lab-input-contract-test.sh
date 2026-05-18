@@ -113,6 +113,30 @@ PY
 
 python3 "${TOOL}" validate "${ROOT}/lab.json" --require-pass --check-files >/dev/null
 
+MISMATCH_ROOT="${TMPDIR}/release-lab-input/v9.9.9-alpha.1/rpi4"
+mkdir -p "${MISMATCH_ROOT}"
+cp -a "${ROOT}/." "${MISMATCH_ROOT}/"
+python3 - "${MISMATCH_ROOT}/lab.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["target"] = "pi-cm4-revpi-usb-installer"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+if python3 "${TOOL}" validate "${MISMATCH_ROOT}/lab.json" --require-pass --check-files 2>"${TMPDIR}/target.err"; then
+    echo "ERROR: lab input accepted a target that does not match its evidence path" >&2
+    exit 1
+fi
+if ! grep -q "path target" "${TMPDIR}/target.err"; then
+    echo "ERROR: target path mismatch failure did not identify the path contract" >&2
+    cat "${TMPDIR}/target.err" >&2
+    exit 1
+fi
+
 python3 - "${ROOT}/lab.json" <<'PY'
 import json
 import sys

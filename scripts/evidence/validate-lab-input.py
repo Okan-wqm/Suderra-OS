@@ -209,9 +209,28 @@ def release_targets_requiring_hardware(matrix: dict[str, Any]) -> list[str]:
     return targets
 
 
-def validate_lab(path: Path, check_files: bool, require_pass: bool) -> list[str]:
+def expected_from_lab_path(path: Path) -> tuple[str | None, str | None]:
+    parts = path.as_posix().split("/")
+    if path.name != "lab.json" or "release-lab-input" not in parts:
+        return None, None
+    index = len(parts) - 1 - parts[::-1].index("release-lab-input")
+    if len(parts) <= index + 3:
+        return None, None
+    return parts[index + 1], parts[index + 2]
+
+
+def validate_lab(
+    path: Path,
+    check_files: bool,
+    require_pass: bool,
+    expected_version: str | None = None,
+    expected_target: str | None = None,
+) -> list[str]:
     root = path.parent
     errors: list[str] = []
+    inferred_version, inferred_target = expected_from_lab_path(path)
+    expected_version = expected_version or inferred_version
+    expected_target = expected_target or inferred_target
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -228,6 +247,10 @@ def validate_lab(path: Path, check_files: bool, require_pass: bool) -> list[str]
         value = payload.get(field)
         if isinstance(value, str) and not SAFE_ID_RE.fullmatch(value):
             error(errors, f"$.{field}", "must be a safe path identifier")
+    if expected_version is not None and payload.get("version") != expected_version:
+        error(errors, "$.version", f"must match lab evidence path version {expected_version}")
+    if expected_target is not None and payload.get("target") != expected_target:
+        error(errors, "$.target", f"must match lab evidence path target {expected_target}")
     devices = payload.get("devices")
     if not isinstance(devices, list) or not devices:
         error(errors, "$.devices", "must be a non-empty list")
@@ -304,7 +327,13 @@ def validate_lab(path: Path, check_files: bool, require_pass: bool) -> list[str]
 
 
 def validate_command(args: argparse.Namespace) -> int:
-    errors = validate_lab(args.input, args.check_files, args.require_pass)
+    errors = validate_lab(
+        args.input,
+        args.check_files,
+        args.require_pass,
+        args.expected_version,
+        args.expected_target,
+    )
     if errors:
         for item in errors:
             print(f"ERROR: {item}", file=sys.stderr)
@@ -318,7 +347,15 @@ def validate_matrix_command(args: argparse.Namespace) -> int:
     failures: list[str] = []
     for target in release_targets_requiring_hardware(matrix):
         evidence = args.root / args.version / target / "lab.json"
-        failures.extend(validate_lab(evidence, args.check_files, args.require_pass))
+        failures.extend(
+            validate_lab(
+                evidence,
+                args.check_files,
+                args.require_pass,
+                args.version,
+                target,
+            )
+        )
     if failures:
         for item in failures:
             print(f"ERROR: {item}", file=sys.stderr)
@@ -334,6 +371,8 @@ def main() -> int:
     validate.add_argument("input", type=Path)
     validate.add_argument("--require-pass", action="store_true")
     validate.add_argument("--check-files", action="store_true")
+    validate.add_argument("--expected-version")
+    validate.add_argument("--expected-target")
     validate.set_defaults(func=validate_command)
     validate_matrix = subparsers.add_parser("validate-matrix")
     validate_matrix.add_argument("--version", required=True)
