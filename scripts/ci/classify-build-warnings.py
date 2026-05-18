@@ -45,7 +45,10 @@ KNOWN_UPSTREAM_PATTERNS = (
     re.compile(r"^libtool: link: warning:"),
     re.compile(r"\bWARNING: 'makeinfo' is missing"),
 )
-LOCATION_RE = re.compile(r"^(?P<location>.*?):\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?P<body>warning: .*)$")
+LOCATION_RE = re.compile(
+    r"^(?P<location>.*?):\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?P<body>(?:warning|WARNING):.*)$"
+)
+BUILD_OUTPUT_PATH_RE = re.compile(r"(?:/workspace/|\.\./)?output/[^/\s'`]+/")
 STABLE_WARNING_MARKERS = (
     "configure: WARNING:",
     "config.status: WARNING:",
@@ -53,6 +56,7 @@ STABLE_WARNING_MARKERS = (
     "libtool: link: warning:",
     "WARNING: 'makeinfo' is missing",
 )
+AWK_SCRIPT_WARNING_RE = re.compile(r"^awk: (?P<script>\./[^:]+)(?::\d+(?:[.-]\d+)*)?: warning:(?P<body>.*)$")
 
 
 @dataclass(frozen=True)
@@ -88,12 +92,20 @@ def classify(text: str, package: str | None) -> str:
 
 
 def stable_warning_text(text: str) -> str:
-    stripped = text.strip()
+    stripped = normalize_warning_text(text.strip())
     for marker in STABLE_WARNING_MARKERS:
         marker_index = stripped.find(marker)
         if marker_index >= 0:
-            return stripped[marker_index:]
+            return normalize_warning_text(stripped[marker_index:])
     return stripped
+
+
+def normalize_warning_text(text: str) -> str:
+    text = BUILD_OUTPUT_PATH_RE.sub("$OUTPUT_DIR/", text)
+    awk_match = AWK_SCRIPT_WARNING_RE.match(text)
+    if awk_match:
+        text = f"{awk_match.group('script')}: warning:{awk_match.group('body')}"
+    return text
 
 
 def fingerprint(text: str) -> str:
@@ -101,7 +113,7 @@ def fingerprint(text: str) -> str:
     match = LOCATION_RE.match(stable_text)
     if not match:
         return stable_text
-    location = re.sub(r"(?:\.\./)+", "", match.group("location"))
+    location = normalize_warning_text(re.sub(r"(?:\.\./)+", "", match.group("location")))
     body = match.group("body")
     if body.startswith("warning: POSIX Yacc does not support"):
         return body
