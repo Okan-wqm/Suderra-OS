@@ -26,6 +26,11 @@ fi
 
 PRE_PATCH_STATUS="$(git -C "${BUILDROOT_DIR}" status --porcelain --untracked-files=all)"
 if [ -n "${PRE_PATCH_STATUS}" ]; then
+    if python3 "${PROJECT_ROOT}/scripts/ci/buildroot-patch-identity.py" validate-applied \
+        --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" >/dev/null 2>&1; then
+        echo "==> Buildroot patchset already applied and validated"
+        exit 0
+    fi
     echo "ERROR: Buildroot tree is dirty before Suderra patches are applied" >&2
     echo "${PRE_PATCH_STATUS}" >&2
     exit 1

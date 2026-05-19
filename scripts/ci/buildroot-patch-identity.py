@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILDROOT_DIR = ROOT / "buildroot"
 PATCH_DIR = ROOT / "patches" / "buildroot"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+APPLIED_DIFF_DOMAIN = b"suderra-buildroot-applied-diff-from-patchset-v1\n"
 
 
 def run(
@@ -91,6 +92,12 @@ def patchset_sha256(entries: list[dict[str, Any]]) -> str:
     return sha256_bytes(canonical_patchset_payload(entries))
 
 
+def canonical_applied_diff_sha256(entries: list[dict[str, Any]]) -> str | None:
+    if not entries:
+        return None
+    return sha256_bytes(APPLIED_DIFF_DOMAIN + canonical_patchset_payload(entries))
+
+
 def buildroot_index_sha(source_sha: str) -> str:
     if not SOURCE_SHA_RE.fullmatch(source_sha):
         raise RuntimeError(f"source_sha must be a lowercase git commit sha: {source_sha}")
@@ -120,16 +127,19 @@ def metadata(source_sha: str) -> dict[str, Any]:
     entries = patch_entries()
     base_sha = buildroot_index_sha(source_sha)
     patchset_digest = patchset_sha256(entries)
-    diff_sha = current_buildroot_diff_sha256()
+    applied_diff_sha = canonical_applied_diff_sha256(entries)
+    worktree_diff_sha = current_buildroot_diff_sha256()
     payload: dict[str, Any] = {
         "buildroot_index_sha": base_sha,
         "buildroot_patchset_sha256": patchset_digest,
         "buildroot_patch_files": entries,
-        "buildroot_effective_source_id": effective_source_id(base_sha, patchset_digest, diff_sha),
+        "buildroot_effective_source_id": effective_source_id(base_sha, patchset_digest, applied_diff_sha),
         "buildroot_expected_patched": bool(entries),
     }
-    if diff_sha is not None:
-        payload["buildroot_applied_diff_sha256"] = diff_sha
+    if applied_diff_sha is not None:
+        payload["buildroot_applied_diff_sha256"] = applied_diff_sha
+    if worktree_diff_sha is not None:
+        payload["buildroot_worktree_diff_sha256"] = worktree_diff_sha
     return payload
 
 
@@ -240,6 +250,13 @@ def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
         and applied_diff != "0" * 64
     ):
         failures.append("buildroot_applied_diff_sha256 must be a non-zero lowercase sha256 when present")
+    worktree_diff = payload.get("buildroot_worktree_diff_sha256")
+    if worktree_diff is not None and not (
+        isinstance(worktree_diff, str)
+        and re.fullmatch(r"[0-9a-f]{64}", worktree_diff)
+        and worktree_diff != "0" * 64
+    ):
+        failures.append("buildroot_worktree_diff_sha256 must be a non-zero lowercase sha256 when present")
     if (
         isinstance(index_sha, str)
         and isinstance(digest, str)

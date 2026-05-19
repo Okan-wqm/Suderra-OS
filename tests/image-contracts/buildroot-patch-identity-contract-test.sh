@@ -9,6 +9,7 @@ python3 "${TOOL}" metadata --source-sha "$(git -C "${ROOT}" rev-parse HEAD)" >/t
 
 python3 - /tmp/suderra-buildroot-source.json <<'PY'
 import json
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -28,6 +29,12 @@ if not isinstance(patches, list) or not patches:
 for patch in patches:
     if not str(patch.get("path", "")).startswith("patches/buildroot/"):
         raise SystemExit(f"ERROR: unexpected Buildroot patch path: {patch!r}")
+expected_applied = hashlib.sha256(
+    b"suderra-buildroot-applied-diff-from-patchset-v1\n"
+    + json.dumps(patches, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+if payload.get("buildroot_applied_diff_sha256") != expected_applied:
+    raise SystemExit("ERROR: Buildroot applied diff fingerprint must be derived from the canonical patchset")
 PY
 
 grep -q 'buildroot-patch-identity.py" validate-applied' "${ROOT}/scripts/apply-buildroot-patches.sh" || {

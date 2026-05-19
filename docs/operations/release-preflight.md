@@ -118,9 +118,12 @@ identity JSON; extra, missing, all-zero, absolute-path, or placeholder artifact
 entries fail closed.
 
 For patched Buildroot builds, `buildroot_applied_diff_sha256` is mandatory and
-is part of `buildroot_effective_source_id`. Release builds must come from a
-clean isolated Buildroot worktree after deterministic patch application; local
-dirty submodule state is never accepted as release source identity.
+is part of `buildroot_effective_source_id`. The fingerprint is derived from the
+ordered Suderra Buildroot patch files, so it is available in clean CI checkouts
+before patch application and remains stable after deterministic application.
+Release builds must come from a clean isolated Buildroot worktree after
+deterministic patch application; unrelated local dirty submodule state is never
+accepted as release source identity.
 
 Approval files must include at least two distinct roles for enterprise alpha:
 `release-owner` and either `maintainer` or `security-compliance`. The same
