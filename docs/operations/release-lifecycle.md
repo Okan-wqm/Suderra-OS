@@ -4,6 +4,22 @@ Suderra OS has two release tiers. The tier is derived from the SemVer tag:
 pre-release tags such as `v0.1.0-alpha.1` are candidate releases; GA tags such
 as `v1.0.0` are production releases.
 
+## Current Enterprise Release Blocker
+
+The release path is fail-closed and must not be treated as enterprise-ready
+until the P0 release-operations findings in
+[2026-05-19-release-operations-plan-review.md](../assessments/2026-05-19-release-operations-plan-review.md)
+are closed. In particular, release evidence is not yet published as a complete
+signed portable bundle, release-candidate evidence ingress is not yet defined,
+governance audit evidence is not injected by the workflows, byte binding still
+conflicts with ephemeral CI trust roots, the GA preflight profile is
+inconsistent, and approval inputs are not a single final-evidence-compatible
+schema.
+
+Technical dry runs may be used to debug source/run/artifact binding. They do
+not prove release readiness, do not authorize tagging, and do not support a
+production-ready or enterprise-ready claim.
+
 ## Candidate / Alpha
 
 Candidate releases prove a build from an exact tag or exact SHA and collect lab
