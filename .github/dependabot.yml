@@ -14,6 +14,10 @@ updates:
       prefix: "ci"
       include: "scope"
     open-pull-requests-limit: 5
+    ignore:
+      # The dtolnay action ref is also the Rust toolchain selector. Dependabot
+      # can find generated refs that do not exist in rustup yet.
+      - dependency-name: "dtolnay/rust-toolchain"
 
   # Docker (CI builder)
   - package-ecosystem: "docker"
