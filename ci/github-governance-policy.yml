@@ -2,6 +2,9 @@
   "schema_version": "suderra.github-governance-policy.v2",
   "repository": "Okan-wqm/Suderra-OS",
   "protected_branch": "main",
+  "branch_protection": {
+    "minimum_approving_reviews": 2
+  },
   "required_checks": [
     "Lint / Build Matrix Contract",
     "Lint / GitHub Actions Lint",
@@ -35,7 +38,11 @@
     "name": "release-publish",
     "allowed_ref": "refs/tags/v*",
     "minimum_reviewers": 2,
-    "prevent_self_review": true
+    "prevent_self_review": true,
+    "required_reviewers": [
+      "release-owner",
+      "security-owner"
+    ]
   },
   "required_codeowners_patterns": [
     ".github/workflows/*.yml",

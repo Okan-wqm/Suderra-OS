@@ -213,7 +213,8 @@ for target, boards in boards_by_target.items():
             "version": version,
             "source_sha": source_sha,
             "source_run_id": "123456789",
-            "release_assets_sha256": "f" * 64,
+            "build_artifact_sha256": "e" * 64,
+            "build_artifact_bytes": 1048576,
         },
         "devices": devices,
         "negative_tests": [],
@@ -227,9 +228,18 @@ for target, boards in boards_by_target.items():
                     "name": name,
                     "failure_code": f"expected-{name}",
                     "status": "passed",
+                    "command": f"flash negative {name}",
+                    "expected": "closed-fail",
+                    "observed": "closed-fail",
+                    "exit_code": 1,
                     "evidence": evidence,
                     "evidence_sha256": evidence_sha,
-                    "write_prevention": {"target_hash_unchanged": True},
+                    "write_prevention": {
+                        "target_hash_unchanged": True,
+                        "before_sha256": "d" * 64,
+                        "after_sha256": "d" * 64,
+                        "bytes_checked": 1048576,
+                    },
                 }
             )
     write_json(lab_root / "lab.json", lab)
@@ -397,6 +407,25 @@ metadata = json.loads(
         text=True,
     )
 )
+source_identity_payload = json.dumps(metadata, sort_keys=True) + "\n"
+for defconfig, target in (
+    ("suderra_qemu_x86_64_defconfig", "qemu-x86_64"),
+    ("suderra_aarch64_rpi4_defconfig", "rpi4"),
+    ("suderra_aarch64_rpi4_usb_installer_defconfig", "pi-cm4-revpi-usb-installer"),
+    ("suderra_aarch64_revpi4_defconfig", "revpi4"),
+):
+    artifact = f"build-logs/{defconfig}.source-identity.json"
+    build_evidence.append(
+        {
+            "role": "buildroot-source-identity",
+            "defconfig": defconfig,
+            "target": target,
+            "artifact": artifact,
+            "path": f"{defconfig}-build-logs/{artifact}",
+            "bytes": len(source_identity_payload.encode("utf-8")),
+            "sha256": hashlib.sha256(source_identity_payload.encode("utf-8")).hexdigest(),
+        }
+    )
 binding = {
     "schema_version": "suderra.release-input-binding.v1",
     "profile": "release-candidate",
@@ -466,6 +495,7 @@ write_json(
         "buildroot_patchset_sha256": metadata["buildroot_patchset_sha256"],
         "buildroot_patch_files": metadata["buildroot_patch_files"],
         "buildroot_effective_source_id": metadata["buildroot_effective_source_id"],
+        "buildroot_applied_diff_sha256": metadata.get("buildroot_applied_diff_sha256"),
         "buildroot_expected_patched": metadata["buildroot_expected_patched"],
         "producer": {
             "provider": "github-actions",

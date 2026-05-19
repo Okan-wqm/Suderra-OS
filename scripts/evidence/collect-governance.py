@@ -21,6 +21,7 @@ SNAPSHOTS = {
     "rulesets.json": "repos/{repo}/rulesets",
     "main-branch-protection.json": "repos/{repo}/branches/main/protection",
     "release-publish-environment.json": "repos/{repo}/environments/release-publish",
+    "release-publish-deployment-branch-policies.json": "repos/{repo}/environments/release-publish/deployment-branch-policies",
     "tag-protection.json": "repos/{repo}/tags/protection",
     "workflow-permissions.json": "repos/{repo}/actions/permissions/workflow",
 }
@@ -113,6 +114,9 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     args = parser.parse_args()
+    if not os.environ.get("GH_TOKEN"):
+        print("ERROR: GH_TOKEN must be a governance read token or GitHub App installation token", file=sys.stderr)
+        return 1
 
     output_root = args.output_root / args.version
     output_root.mkdir(parents=True, exist_ok=True)
@@ -127,8 +131,11 @@ def main() -> int:
                 continue
             payload = gh_api(endpoint.format(repo=args.repo))
         except Exception as exc:  # pragma: no cover - network/API guard
-            failures.append(f"{filename}: {exc}")
             payload = {"error": str(exc)}
+            if filename == "tag-protection.json":
+                payload["status"] = "deprecated-or-unavailable"
+            else:
+                failures.append(f"{filename}: {exc}")
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         files.append({"name": filename, "sha256": sha256_file(path)})
 

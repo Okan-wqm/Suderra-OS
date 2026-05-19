@@ -84,7 +84,8 @@ Required top-level fields:
 | `reproducibility` | Independent rebuild comparison and logs. |
 | `security_scans` | Reports listed by the build matrix. |
 | `machine_verification` | SHA256SUMS, cosign, and attestation verification logs. |
-| `build_evidence` | Retained Build logs and warning-classifier JSON bound by ingress. |
+| `build_evidence` | Retained Build logs, warning-classifier JSON, and Buildroot source identity bound by ingress. |
+| `preflight_inputs` | Preserved approval, reproducibility, security, QEMU, and lab input files replayed by final validation. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
 | `hardware` | Board serial logs and hardware acceptance results. |
@@ -120,11 +121,14 @@ python3 scripts/evidence/release-evidence.py assemble-release \
 ```
 
 The command consumes staged release assets, `release-assets.json`, machine
-verification logs, preflight-bound Build logs and warning JSON, lab input,
-governance snapshots, security/reproducibility reports, QEMU logs, and approval
-records. It intentionally produces bundles that fail `--require-pass` until
-every required input is present. Legacy v2 evidence can be updated structurally
-with:
+verification logs, preflight-bound Build logs, warning JSON, Buildroot source
+identity JSON, lab input, governance snapshots, security/reproducibility
+reports, QEMU logs, and approval records. It preserves the original preflight
+input JSON/log/report files in the target bundle and `--require-pass
+--check-files` replays the same QEMU, lab, approval, security, warning, and
+reproducibility validators against those preserved files. It intentionally
+produces bundles that fail `--require-pass` until every required input is
+present. Legacy v2 evidence can be updated structurally with:
 
 ```bash
 python3 scripts/evidence/release-evidence.py migrate \
@@ -157,8 +161,11 @@ python3 scripts/evidence/validate-governance.py \
 
 `governance-policy-validation.json` must use
 `suderra.github-governance-validation.v2` and `status: passed`. Final evidence
-requires that file plus branch protection, ruleset, release environment, tag
-protection, workflow permission, CODEOWNERS, and audit snapshots.
+requires that file plus branch protection, ruleset, release environment,
+environment deployment policy, tag protection, workflow permission, CODEOWNERS,
+and audit snapshots. The release environment must have selected tag deployment
+policy for `refs/tags/v*`, prevent self-review, and include the required
+release/security reviewer identities from `ci/github-governance-policy.yml`.
 
 ## QEMU Evidence
 
@@ -198,15 +205,34 @@ release-evidence/v1.0.0/qemu-x86_64/qemu/boot.log
 release-evidence/v1.0.0/qemu-x86_64/qemu/app-startup.log
 ```
 
-The assembler converts passed QEMU input into release evidence. The generated
-release evidence shape remains:
+The assembler preserves the original QEMU input JSON, image and firmware
+digests, semantic checks, guest facts, and referenced logs inside the final
+target bundle. The generated release evidence shape includes:
 
 ```json
 "qemu": {
   "required": true,
   "status": "passed",
-  "logs": ["qemu/boot.log", "qemu/app-startup.log"],
-  "checks": ["boot", "app-startup"]
+  "input": {
+    "path": "qemu/input/qemu.json",
+    "sha256": "...",
+    "bytes": 1234
+  },
+  "image": "suderra-qemu-x86_64.img",
+  "image_sha256": "...",
+  "firmware": "OVMF_CODE.fd",
+  "firmware_sha256": "...",
+  "logs": [
+    {
+      "role": "serial",
+      "path": "qemu/0-serial.log",
+      "sha256": "...",
+      "bytes": 1234
+    }
+  ],
+  "checks": ["boot", "systemd", "zero-failed-units"],
+  "semantic_checks": {},
+  "guest_facts": {}
 }
 ```
 
@@ -228,9 +254,20 @@ from:
 
 `release-publication-manifest.json` is the authoritative public byte inventory.
 It is generated after the evidence archive exists, signed with cosign keyless,
-attested, and machine-verified before the protected publish job. Offline
-release verification should start from this manifest, not from CI workspace
-state.
+attested, and machine-verified before the protected publish job. The manifest
+lists every public file in `release/` except itself and its own signature
+sidecars; those sidecars are required and verified separately because a signed
+file cannot include the digest of its own detached signature without creating a
+recursive fixed-point problem. Offline release verification should start from
+this manifest, not from CI workspace state.
+
+```bash
+python3 scripts/evidence/release-publication-manifest.py validate \
+  release-publication-manifest.json \
+  --release-dir . \
+  --expected-version v0.1.0-alpha.1 \
+  --require-self-sidecars
+```
 
 ## Hardware Evidence
 
@@ -263,9 +300,14 @@ Hardware collection starts as lab input under
 `release-lab-input/<version>/<target>/lab.json`. The file uses
 `suderra.lab-evidence.v3`; every device must include board serial, SKU or
 hardware revision, storage serial, UART adapter, power supply, boot firmware,
-operator, timestamp, logs, and per-check evidence. USB installer negative tests
-must include `failure_code` so closed-fail behavior is identifiable in release
-review.
+operator, timestamp, station identity, artifact binding, device identity,
+full-readback hash evidence, logs, and per-check evidence. USB installer
+negative tests must include `command`, `expected`, `observed`, `exit_code`,
+`failure_code`, evidence SHA-256, and write-prevention before/after hashes so
+closed-fail behavior is identifiable in release review. Lab artifact binding is
+to the preflight/build artifact (`build_artifact_sha256` and
+`build_artifact_bytes`); final release assembly adds the public release asset
+set separately.
 
 The release workflow validates lab input, then binds it into the final generated
 release evidence. `--require-pass` requires the aggregate hardware status to be

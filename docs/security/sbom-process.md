@@ -82,6 +82,15 @@ Hedef zenginleştirmeler:
 - **Buildroot legal-info** — local fallback SBOM ve lisans kanıtı girdisi
 - **cargo-sbom** — ileride Rust dependency zenginleştirme girdisi
 
+Release readiness source scans and release OS scans are separate evidence
+classes. Source scans cover the repository and workflow/config surface. Release
+security reports must cover produced image/rootfs/SBOM bytes and record scanner
+binary version, binary digest when available, vulnerability DB version/digest or
+timestamp/source, exact command line, raw SARIF/log/SBOM evidence path, and
+evidence SHA-256. Scanner DB state must be snapshot or otherwise retained for
+release-candidate review; a live DB update without recorded DB identity is not
+enough for enterprise evidence.
+
 ## Operasyonel Kontroller
 
 - SBOM dosyası release asset listesinde bulunmalı
@@ -90,12 +99,16 @@ Hedef zenginleştirmeler:
 - Release image adları `ci/build-matrix.yml` `release_artifact` değerleriyle
   uyumlu olmalı
 - `gh attestation verify` release image, installer binary ve `manifest.json` için geçmeli
+- Release security report JSON'ları `source_sha`, source Build run ID,
+  `status: passed`, severity counts, retained evidence digest, and scanner/DB
+  identity içermeli
 
 ## Yapılacaklar
 
 - [ ] Rust userspace dependency SBOM'unu image SBOM'una bağla
 - [ ] SBOM diff tool (release-to-release değişiklik)
 - [ ] Müşteri sunum şablonu (PDF render)
+- [ ] Release image/rootfs tarama job'larını source scan job'larından ayır
 
 ## Referanslar
 

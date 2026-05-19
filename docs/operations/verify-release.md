@@ -42,14 +42,14 @@ yazar.
 Release workflow `actions/attest-build-provenance` ile GitHub Artifact
 Attestations üretir. Workflow ayrı bir `attestations.intoto.jsonl` release
 asset'i yayınlamaz; provenance GitHub attestation servisi üzerinden
-doğrulanır. Aşağıdaki komut için `--signer-workflow` ve `--source-ref`
-destekleyen güncel GitHub CLI gerekir.
+doğrulanır. Aşağıdaki komut, attestation sertifika kimliğini release tag
+workflow'una pinler.
 
 ```bash
 gh attestation verify "${ARTIFACT}" \
     -R "${REPO}" \
-    --signer-workflow "${REPO}/.github/workflows/release.yml" \
-    --source-ref "refs/tags/${VERSION}"
+    --cert-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
+    --cert-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 Offline doğrulama gerekiyorsa online bir makinede bundle ve trusted root alın:
@@ -133,6 +133,22 @@ done
 ```
 
 Manifest doğrulaması:
+
+```bash
+python3 scripts/evidence/release-publication-manifest.py validate \
+    release-publication-manifest.json \
+    --release-dir . \
+    --expected-version "${VERSION}" \
+    --require-self-sidecars
+```
+
+Release workflow bu doğrulamayı CI workspace kopyası üzerinde bırakmaz; draft
+GitHub Release oluşturulduktan sonra asset'leri temiz bir dizine tekrar indirir
+ve aynı manifest validator'ını indirilen byte setine karşı çalıştırır. Harici
+doğrulamada da güven kaynağı CI çalışma dizini değil, yalnız GitHub Release
+asset'leri olmalıdır.
+
+Minimal bağımsız doğrulama:
 
 ```bash
 python3 - <<'PY'

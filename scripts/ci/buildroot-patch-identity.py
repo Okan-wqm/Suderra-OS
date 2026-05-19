@@ -100,8 +100,11 @@ def buildroot_index_sha(source_sha: str) -> str:
     return parts[2]
 
 
-def effective_source_id(base_sha: str, patchset_digest: str) -> str:
-    return sha256_bytes(f"buildroot:{base_sha}\npatchset:{patchset_digest}\n".encode("utf-8"))
+def effective_source_id(base_sha: str, patchset_digest: str, applied_diff_sha256: str | None = None) -> str:
+    applied = applied_diff_sha256 or "none"
+    return sha256_bytes(
+        f"buildroot:{base_sha}\npatchset:{patchset_digest}\napplied-diff:{applied}\n".encode("utf-8")
+    )
 
 
 def current_buildroot_diff_sha256() -> str | None:
@@ -117,14 +120,14 @@ def metadata(source_sha: str) -> dict[str, Any]:
     entries = patch_entries()
     base_sha = buildroot_index_sha(source_sha)
     patchset_digest = patchset_sha256(entries)
+    diff_sha = current_buildroot_diff_sha256()
     payload: dict[str, Any] = {
         "buildroot_index_sha": base_sha,
         "buildroot_patchset_sha256": patchset_digest,
         "buildroot_patch_files": entries,
-        "buildroot_effective_source_id": effective_source_id(base_sha, patchset_digest),
+        "buildroot_effective_source_id": effective_source_id(base_sha, patchset_digest, diff_sha),
         "buildroot_expected_patched": bool(entries),
     }
-    diff_sha = current_buildroot_diff_sha256()
     if diff_sha is not None:
         payload["buildroot_applied_diff_sha256"] = diff_sha
     return payload
@@ -226,6 +229,28 @@ def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
             sha = item.get("sha256")
             if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
                 failures.append(f"buildroot_patch_files[{index}].sha256 must be a lowercase sha256")
+    if not isinstance(payload.get("buildroot_expected_patched"), bool):
+        failures.append("buildroot_expected_patched must be true or false")
+    applied_diff = payload.get("buildroot_applied_diff_sha256")
+    if payload.get("buildroot_expected_patched") is True and not applied_diff:
+        failures.append("buildroot_applied_diff_sha256 is required when Buildroot patches are expected")
+    if applied_diff is not None and not (
+        isinstance(applied_diff, str)
+        and re.fullmatch(r"[0-9a-f]{64}", applied_diff)
+        and applied_diff != "0" * 64
+    ):
+        failures.append("buildroot_applied_diff_sha256 must be a non-zero lowercase sha256 when present")
+    if (
+        isinstance(index_sha, str)
+        and isinstance(digest, str)
+        and isinstance(effective, str)
+        and re.fullmatch(r"[0-9a-f]{40}", index_sha)
+        and re.fullmatch(r"[0-9a-f]{64}", digest)
+        and (applied_diff is None or isinstance(applied_diff, str))
+    ):
+        expected_effective = effective_source_id(index_sha, digest, applied_diff if isinstance(applied_diff, str) else None)
+        if effective != expected_effective:
+            failures.append("buildroot_effective_source_id must bind index, patchset, and applied diff")
     return failures
 
 

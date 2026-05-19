@@ -66,7 +66,13 @@ Aynı kurallar + ek:
 - Required reviewers: release manager ve maintainer/security-compliance rolünden
   iki farklı GitHub kullanıcısı
 - Deployment branches/tags: selected refs `refs/tags/v*`
-- Secrets: bu workflow için secret gerekmez; cosign ve provenance GitHub OIDC ile çalışır
+- Governance read token: `GOVERNANCE_READ_TOKEN` branch protection, rulesets,
+  environments, deployment branch policies, workflow permissions ve audit
+  snapshot okumalıdır
+- Release tag trust controls: secret `SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY` ve
+  variable `SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS` tag signer trust-root'u sağlar
+- Cosign ve provenance için long-lived signing secret gerekmez; GitHub OIDC ile
+  keyless çalışır
 
 Release workflow iki yetki alanına ayrılmıştır:
 
@@ -101,7 +107,7 @@ gh api repos/Okan-wqm/Suderra-OS/rulesets \
         "ref_name": {"include": ["refs/heads/main"], "exclude": []}
     },
     "rules": [
-        {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 2}},
         {"type": "required_signatures"},
         {"type": "non_fast_forward"},
         {"type": "required_linear_history"},
@@ -151,7 +157,7 @@ python3 scripts/evidence/validate-governance.py \
 ## Yapılacaklar
 
 - [x] Faz 0: Governance policy, collector ve validator release evidence'a bağlandı
-- [ ] Faz 4: Required reviewers 1→2 (security/kernel için)
-- [ ] Faz 4: `release-publish` protected environment reviewers aktif
+- [x] Faz 0: Policy 2 reviewer ve role-aware release/security approver gerektirir
+- [ ] Admin bootstrap: canlı repo ruleset/branch protection/environment ayarlarını policy ile eşitle
 - [ ] Faz 6: Required deployments (production verify)
 - [ ] Yıllık: ruleset audit

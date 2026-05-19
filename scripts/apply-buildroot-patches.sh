@@ -24,6 +24,13 @@ if [ ! -d "${PATCH_DIR}" ]; then
     exit 0
 fi
 
+PRE_PATCH_STATUS="$(git -C "${BUILDROOT_DIR}" status --porcelain --untracked-files=all)"
+if [ -n "${PRE_PATCH_STATUS}" ]; then
+    echo "ERROR: Buildroot tree is dirty before Suderra patches are applied" >&2
+    echo "${PRE_PATCH_STATUS}" >&2
+    exit 1
+fi
+
 for patch in "${PATCH_DIR}"/*.patch; do
     [ -e "${patch}" ] || continue
 

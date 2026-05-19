@@ -12,6 +12,8 @@ that the tag workflow later consumes.
 - `release-candidate`: fail-closed alpha gate. It requires complete QEMU,
   hardware lab, security scan, reproducibility, approval, and governance input
   evidence bound to the same `source_sha`.
+- `production-candidate`: GA gate shape. It is reserved for future production
+  release evidence and remains blocked until production readiness passes.
 
 ## Run
 
@@ -35,9 +37,9 @@ gh workflow run "Release Preflight" \
 ```
 
 `release-candidate` accepts only a successful `Build` run whose `head_branch` is
-`main`; the workflow also verifies that `source_sha` is an ancestor of
-`origin/main`. Technical dry runs may be used against other branches for binding
-debugging, but they cannot feed the tag release workflow.
+`main`; the workflow also verifies that `source_sha` is exactly `origin/main` at
+preflight time. Technical dry runs may be used against other branches for
+binding debugging, but they cannot feed the tag release workflow.
 
 The workflow artifact name includes the profile so a later technical dry run
 cannot shadow an approved release-candidate bundle:
@@ -47,33 +49,56 @@ release-preflight-<profile>-<version>-<source_sha>
 ```
 
 The release tag workflow does not scan recent workflow runs. The annotated
-release tag must name the approved preflight run explicitly:
+release tag must name the approved preflight run, run attempt, artifact ID, and
+ingress manifest digest explicitly:
 
 ```text
+Suderra-Release-Binding: v1
+Suderra-Version: <version>
+Suderra-Source-SHA: <source-sha>
+Suderra-Source-Build-Run-ID: <build-run-id>
+Suderra-Source-Build-Run-Attempt: <build-run-attempt>
 Suderra-Preflight-Run-ID: <successful-release-preflight-run-id>
+Suderra-Preflight-Run-Attempt: <preflight-run-attempt>
+Suderra-Preflight-Artifact-ID: <preflight-artifact-id>
+Suderra-Ingress-Manifest-SHA256: <ingress-manifest-sha256>
 ```
 
-The workflow downloads only
-`release-preflight-release-candidate-<version>-<source_sha>` from that run. If
-the annotation is missing, the run is not successful, the run is not from
-`main`, or the artifact is expired, publication stops before staging or signing
-release bytes. The tag workflow does not rebuild images or installer binaries;
-it promotes the Build artifact bytes carried by the approved preflight artifact.
+The workflow downloads only the tag-derived preflight artifact name from that
+run: `release-preflight-release-candidate-<version>-<source_sha>` for
+pre-release tags or `release-preflight-production-candidate-<version>-<source_sha>`
+for GA tags. If the annotation is missing, the tag object is unsigned, the run
+is not successful, the run is not from the correct workflow path on `main`, the
+artifact ID does not match, the artifact is expired, or the downloaded ingress
+manifest hash differs from the tag binding, publication stops before staging or
+signing release bytes. The tag workflow does not rebuild images or installer
+binaries; it promotes the Build artifact bytes carried by the approved
+preflight artifact.
 
-`release-candidate` preflight also validates live GitHub governance. The token
-must be able to read branch protection, repository rulesets, environments,
-workflow permissions, and the audit snapshot. If the repository cannot provide a
-collected audit log, governance validation fails closed.
+Release tags must be signed by a trusted release key. The release workflow
+imports `SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY` from secrets, runs
+`git verify-tag --raw`, and requires the VALIDSIG fingerprint to appear in
+`SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS`. Unsigned tags, lightweight tags,
+untrusted signers, wrong Build run IDs, wrong run attempts, or mismatched
+tag/preflight/ingress metadata fail before any release bytes are staged.
+
+`release-candidate` preflight also validates live GitHub governance.
+`GOVERNANCE_READ_TOKEN` must be a GitHub App installation token or equivalent
+read token that can read branch protection, repository rulesets, environments,
+environment deployment branch policies, workflow permissions, and the audit
+snapshot. If the repository cannot provide a collected audit log, governance
+validation fails closed.
 
 ## Required Inputs
 
-The candidate bundle must include:
+The candidate bundle must include and the signed ingress manifest must digest:
 
 - `release-inputs/<version>/release-candidate.json`
 - `release-ingress/<version>/ingress-manifest.json` plus `.sig` and `.cert`
 - `build-artifacts/<defconfig>-image/*`
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.log`
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.warnings.json`
+- `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.source-identity.json`
 - `build-artifacts/installer-x86_64/suderra-installer-x86_64`
 - `build-artifacts/installer-aarch64/suderra-installer-aarch64`
 - `release-lab-input/<version>/qemu-x86_64/qemu.json`
@@ -88,8 +113,14 @@ All evidence must reference the same source commit, Build run ID, Buildroot
 submodule SHA, Buildroot patchset digest, effective Buildroot source ID, matrix
 hash, Rust toolchain/Cargo.lock digests, and artifact digests. The binding
 manifest must cover the exact `ci/build-matrix.yml` release artifact set,
-installer binaries, build logs, and warning classifier JSON; extra, missing,
-all-zero, absolute-path, or placeholder artifact entries fail closed.
+installer binaries, build logs, warning classifier JSON, and Buildroot source
+identity JSON; extra, missing, all-zero, absolute-path, or placeholder artifact
+entries fail closed.
+
+For patched Buildroot builds, `buildroot_applied_diff_sha256` is mandatory and
+is part of `buildroot_effective_source_id`. Release builds must come from a
+clean isolated Buildroot worktree after deterministic patch application; local
+dirty submodule state is never accepted as release source identity.
 
 Approval files must include at least two distinct roles for enterprise alpha:
 `release-owner` and either `maintainer` or `security-compliance`. The same
@@ -98,10 +129,12 @@ approval schema is consumed by preflight and by final release evidence assembly.
 ## Release Byte Binding
 
 Release-candidate preflight downloads only the expected image, installer, and
-build-log artifacts from one successful `Build` run and records them in signed
-`suderra.release-ingress.v1`. The tag workflow downloads the approved preflight
-artifact, verifies the ingress cosign identity, stages release-named files from
-`build-artifacts/`, signs, attests, and publishes those bytes. Before signing,
+build-log artifacts from one successful `Build` run, verifies their GitHub
+Artifact Attestations against `.github/workflows/build.yml` on `refs/heads/main`,
+and records them in signed `suderra.release-ingress.v1`. The tag workflow
+downloads the approved preflight artifact, verifies the ingress cosign identity,
+stages release-named files from `build-artifacts/`, signs, attests, and
+publishes those bytes. Before signing,
 `validate-release-artifact-binding.py` maps staged release files back to their
 preflight-bound source artifacts and compares SHA-256 digests:
 

@@ -134,9 +134,18 @@ for name in [
             "name": name,
             "failure_code": f"expected-{name}",
             "status": "passed",
+            "command": f"flash negative {name}",
+            "expected": "closed-fail",
+            "observed": "closed-fail",
+            "exit_code": 1,
             "evidence": evidence[0],
             "evidence_sha256": evidence[1],
-            "write_prevention": {"target_hash_unchanged": True},
+            "write_prevention": {
+                "target_hash_unchanged": True,
+                "before_sha256": "d" * 64,
+                "after_sha256": "d" * 64,
+                "bytes_checked": 1048576,
+            },
         }
     )
 
@@ -159,7 +168,8 @@ lab = {
         "version": "v9.9.9-alpha.1",
         "source_sha": source_sha,
         "source_run_id": "123456789",
-        "release_assets_sha256": "f" * 64,
+        "build_artifact_sha256": "e" * 64,
+        "build_artifact_bytes": 1048576,
     },
     "devices": devices,
     "negative_tests": negative_tests,

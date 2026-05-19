@@ -10,6 +10,8 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -94,7 +96,6 @@ jobs:
           fi
           echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
           echo "Buildroot pinned at ${expected_sha}"
-          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}"
           python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}"
 
       - name: Compute installer payload metadata
@@ -251,6 +252,8 @@ jobs:
             echo "::error::Defconfig ${{ matrix.defconfig }} missing or empty"
             exit 1
           fi
+          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}" \
+            > "build-logs/${{ matrix.defconfig }}.source-identity.json"
 
       - name: Upload build logs
         if: always()
@@ -276,6 +279,16 @@ jobs:
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
           retention-days: 30
           if-no-files-found: error
+
+      - name: Attest image and build evidence
+        if: success() && github.event_name == 'push'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
+            build-logs/${{ matrix.defconfig }}.log
+            build-logs/${{ matrix.defconfig }}.warnings.json
+            build-logs/${{ matrix.defconfig }}.source-identity.json
 
   build-payload:
     name: Build payload image ${{ matrix.name }}
@@ -512,6 +525,8 @@ jobs:
           prepare_payload_signing_keys
           export_payload_images
           build_and_check "${{ matrix.defconfig }}"
+          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}" \
+            > "build-logs/${{ matrix.defconfig }}.source-identity.json"
 
       - name: Upload build logs
         if: always()
@@ -537,6 +552,16 @@ jobs:
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
           retention-days: 30
           if-no-files-found: error
+
+      - name: Attest payload image and build evidence
+        if: success() && github.event_name == 'push'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
+            build-logs/${{ matrix.defconfig }}.log
+            build-logs/${{ matrix.defconfig }}.warnings.json
+            build-logs/${{ matrix.defconfig }}.source-identity.json
 
   build-installer:
     name: Build suderra-installer (${{ matrix.arch }})
@@ -595,6 +620,14 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+      - name: Attest installer artifact
+        if: success() && github.event_name == 'push'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            suderra-installer-${{ matrix.arch }}
+            suderra-installer-${{ matrix.arch }}.sha256
+
   qemu-smoke-test:
     name: QEMU boot smoke test (${{ matrix.name }})
     needs: [matrix, build]
@@ -641,11 +674,11 @@ jobs:
           fi
           ./tests/qemu/boot-test.sh "${{ matrix.defconfig }}"
 
-      - name: Upload boot logs on failure
-        if: failure()
+      - name: Upload boot logs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: boot-test-logs
+          name: ${{ matrix.defconfig }}-qemu-boot-logs
           path: output/qemu-boot-logs/
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: ignore

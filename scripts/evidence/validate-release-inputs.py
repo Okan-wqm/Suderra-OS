@@ -107,8 +107,8 @@ def validate_binding(
     matrix_path: Path,
 ) -> list[str]:
     if binding is None:
-        if args.profile == "release-candidate":
-            return ["release-candidate profile requires --binding-manifest"]
+        if args.profile in {"release-candidate", "production-candidate"}:
+            return [f"{args.profile} profile requires --binding-manifest"]
         return []
     failures: list[str] = []
     if binding.get("version") != args.version:
@@ -126,6 +126,8 @@ def validate_binding(
         valid_attempt = 0
     if valid_attempt <= 0:
         failures.append("binding source_run_attempt must be a positive run attempt")
+    if args.source_run_attempt is not None and str(source_run_attempt) != str(args.source_run_attempt):
+        failures.append("binding source_run_attempt must match --source-run-attempt")
     if binding.get("build_workflow_name") != args.build_workflow_name:
         failures.append(f"binding build_workflow_name must be {args.build_workflow_name}")
     source_sha = binding.get("source_sha")
@@ -243,6 +245,7 @@ def validate_binding(
             defconfig = str(row["name"])
             expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.log"))
             expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.warnings.json"))
+            expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.source-identity.json"))
     build_evidence = binding.get("build_evidence")
     if not isinstance(build_evidence, list) or not build_evidence:
         failures.append("binding build_evidence must be a non-empty list")
@@ -260,7 +263,7 @@ def validate_binding(
                 failures.append(f"duplicate binding build evidence: {key[0]} {key[1]}")
             seen_evidence.add(key)
             role = evidence.get("role")
-            if role not in {"build-log", "warning-classifier-evidence"}:
+            if role not in {"build-log", "warning-classifier-evidence", "buildroot-source-identity"}:
                 failures.append(f"binding build evidence {key[0]} {key[1]} has invalid role")
             digest = evidence.get("sha256")
             if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
@@ -278,6 +281,50 @@ def validate_binding(
                     failures.append(f"binding build evidence file missing: {path}")
                 elif isinstance(digest, str) and sha256_file(path) != digest:
                     failures.append(f"binding build evidence sha mismatch: {path}")
+                elif role == "warning-classifier-evidence":
+                    payload = read_json(path)
+                    if not isinstance(payload, dict):
+                        failures.append(f"warning evidence must be JSON: {path}")
+                    else:
+                        summary = payload.get("summary")
+                        if not isinstance(summary, dict):
+                            failures.append(f"warning evidence summary must be an object: {path}")
+                        else:
+                            if summary.get("owned") != 0:
+                                failures.append(f"warning evidence owned count must be 0: {path}")
+                            if summary.get("third-party") != 0:
+                                failures.append(f"warning evidence third-party count must be 0: {path}")
+                        for field in ("failing", "policy_errors"):
+                            value = payload.get(field)
+                            if value != []:
+                                failures.append(f"warning evidence {field} must be empty: {path}")
+                elif role == "buildroot-source-identity":
+                    payload = read_json(path)
+                    if not isinstance(payload, dict):
+                        failures.append(f"Buildroot source identity must be JSON: {path}")
+                    else:
+                        try:
+                            script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+                            spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+                            if spec is None or spec.loader is None:
+                                raise RuntimeError(f"cannot import {script}")
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            for failure in module.validate_metadata_payload(payload):
+                                failures.append(f"{path}: {failure}")
+                            for field in (
+                                "buildroot_index_sha",
+                                "buildroot_patchset_sha256",
+                                "buildroot_effective_source_id",
+                            ):
+                                if payload.get(field) != binding.get(field):
+                                    failures.append(f"{path}: {field} must match release input binding")
+                            if payload.get("buildroot_patch_files") and not payload.get("buildroot_applied_diff_sha256"):
+                                failures.append(
+                                    f"{path}: patched Buildroot build evidence must include buildroot_applied_diff_sha256"
+                                )
+                        except Exception as exc:
+                            failures.append(f"cannot validate Buildroot source identity {path}: {exc}")
         if expected_build_evidence:
             missing = sorted(expected_build_evidence - seen_evidence)
             if missing:
@@ -413,7 +460,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--release-tier", choices=("alpha", "production"), required=True)
-    parser.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
+    parser.add_argument(
+        "--profile",
+        choices=("technical-dry-run", "release-candidate", "production-candidate"),
+        default="release-candidate",
+    )
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--check-files", action="store_true")
@@ -421,6 +472,7 @@ def main() -> int:
     parser.add_argument("--ingress-manifest", type=Path)
     parser.add_argument("--source-sha")
     parser.add_argument("--source-run-id")
+    parser.add_argument("--source-run-attempt")
     parser.add_argument("--build-workflow-name", default="Build")
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--require-ingress-signature", action="store_true")
@@ -434,9 +486,9 @@ def main() -> int:
         failures.append(f"release tier must be {inferred_tier} for version {args.version}")
     binding = load_binding(args.binding_manifest, failures)
     failures.extend(validate_binding(binding, args, args.matrix))
-    if args.profile == "release-candidate":
+    if args.profile in {"release-candidate", "production-candidate"}:
         if args.ingress_manifest is None:
-            failures.append("release-candidate profile requires --ingress-manifest")
+            failures.append(f"{args.profile} profile requires --ingress-manifest")
         else:
             ingress_args = [
                 sys.executable,
@@ -446,6 +498,8 @@ def main() -> int:
                 "--expected-version",
                 args.version,
             ]
+            if args.binding_manifest is not None:
+                ingress_args.extend(["--binding-manifest", str(args.binding_manifest)])
             if args.artifact_root is not None:
                 ingress_args.extend(["--artifact-root", str(args.artifact_root)])
             if args.source_sha is not None:

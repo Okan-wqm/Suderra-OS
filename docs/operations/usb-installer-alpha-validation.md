@@ -44,13 +44,16 @@ Flash with the fail-closed wrapper:
 
 ```bash
 script -f release-lab-input/<version>/pi-cm4-revpi-usb-installer/flash/usb-flash-session.typescript
-sudo ./scripts/flash-sd.sh /dev/sdX \
+sudo ./scripts/flash-sd.sh --acceptance /dev/disk/by-id/<target-whole-disk> \
   release-lab-input/<version>/pi-cm4-revpi-usb-installer/artifacts/usb-installer/suderra-pi-cm4-revpi-usb-installer.img.xz
 ```
 
-Do not use `--skip-verify`. Use `--force` only for a recorded lab exception.
-Use `--lab-allow-missing-hash` only for a non-release lab image with an explicit
-residual-risk entry.
+Acceptance mode is stricter than normal flashing: it accepts only
+`/dev/disk/by-id/*` whole-disk targets, rejects partition targets, rejects stale
+decompressed `.img` files next to `.img.xz`, rejects `--skip-verify`, rejects
+`--force`, rejects `--lab-allow-missing-hash`, and performs a full-byte
+readback hash comparison. Use non-acceptance mode only for non-release lab
+experiments with an explicit residual-risk entry.
 
 ## Hardware Matrix
 
@@ -71,8 +74,9 @@ and board-specific IO checks.
 Each board record must also capture the lab station contract: board serial,
 SKU or hardware revision, storage serial, UART adapter ID, power supply,
 boot firmware/EEPROM version, operator, timestamp, and transcript hashes.
-Acceptance runs must use allowlisted `/dev/disk/by-id` paths. Broad `--force`
-and `--skip-verify` are not allowed in acceptance evidence.
+Acceptance runs must use allowlisted `/dev/disk/by-id` paths. Broad `--force`,
+`--lab-allow-missing-hash`, and `--skip-verify` are not allowed in acceptance
+evidence.
 
 If `/proc/device-tree/model` reports a generic `Raspberry Pi Compute Module 4`
 string, the installer must fail closed unless `/proc/device-tree/compatible`
@@ -115,10 +119,12 @@ network works, and no unexpected listening services are present.
   violation: payload verify must fail.
 - Target below minimum storage: installer must fail before writing.
 
-Every negative test entry in `lab.json` must include a stable `failure_code`.
-Do not record only "failed as expected"; the release reviewer must be able to
-differentiate a payload signature rejection from board mismatch, rollback floor,
-or target-selection failure.
+Every negative test entry in `lab.json` must include `command`, `expected`,
+`observed`, `exit_code`, stable `failure_code`, evidence SHA-256, and
+write-prevention before/after hashes. Do not record only "failed as expected";
+the release reviewer must be able to differentiate a payload signature
+rejection from board mismatch, rollback floor, or target-selection failure and
+must be able to prove the target bytes did not change.
 
 ## Lab Input JSON
 
@@ -146,10 +152,13 @@ python3 scripts/evidence/validate-lab-input.py validate-matrix \
   --check-files
 ```
 
-The release workflow consumes this lab input and binds it to the final staged,
-signed, and attested release assets. The validator rejects a `lab.json` whose
-`version` or `target` does not match its `release-lab-input/<version>/<target>/`
-path. Lab input alone is not release evidence.
+The lab input binds to the preflight/build artifact digest and size through
+`artifact_binding.build_artifact_sha256` and
+`artifact_binding.build_artifact_bytes`; full readback evidence must match those
+values. Final release assembly then adds the public release asset set
+separately. The validator rejects a `lab.json` whose `version` or `target` does
+not match its `release-lab-input/<version>/<target>/` path. Lab input alone is
+not release evidence.
 
 Minimal negative-test shape:
 
@@ -158,6 +167,17 @@ Minimal negative-test shape:
   "name": "tampered-payload",
   "failure_code": "payload-signature-invalid",
   "status": "passed",
-  "evidence": "negative/tampered-payload.log"
+  "command": "./scripts/flash-sd.sh --acceptance ... tampered.img.xz",
+  "expected": "signature verification fails before write",
+  "observed": "payload-signature-invalid",
+  "exit_code": 1,
+  "evidence": "negative/tampered-payload.log",
+  "evidence_sha256": "<sha256>",
+  "write_prevention": {
+    "target_hash_unchanged": true,
+    "before_sha256": "<sha256>",
+    "after_sha256": "<same-sha256>",
+    "bytes_checked": 1048576
+  }
 }
 ```

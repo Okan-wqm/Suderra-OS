@@ -26,6 +26,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.parse.outputs.version }}
+      release_tier: ${{ steps.parse.outputs.release_tier }}
+      preflight_profile: ${{ steps.parse.outputs.preflight_profile }}
     steps:
       - name: Parse SemVer tag
         id: parse
@@ -43,6 +45,13 @@ jobs:
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *-* ]]; then
+            echo "release_tier=alpha" >> "$GITHUB_OUTPUT"
+            echo "preflight_profile=release-candidate" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tier=production" >> "$GITHUB_OUTPUT"
+            echo "preflight_profile=production-candidate" >> "$GITHUB_OUTPUT"
+          fi
           echo "::notice::Release tag: $TAG"
 
   matrix:
@@ -101,7 +110,7 @@ jobs:
           ref: ${{ needs.validate.outputs.version }}
       - name: Collect GitHub governance snapshots
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
         run: |
           set -euo pipefail
           python3 scripts/evidence/collect-governance.py \
@@ -125,7 +134,7 @@ jobs:
 
   preflight-binding:
     name: Bind approved release preflight
-    needs: validate
+    needs: [validate, release-readiness]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -142,48 +151,35 @@ jobs:
           set -euo pipefail
           source_sha="$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")"
           echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
-      - name: Resolve approved release-candidate preflight
+      - name: Resolve approved release preflight
         id: preflight
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.validate.outputs.version }}
           SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
+          SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS: ${{ vars.SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS }}
+          SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY: ${{ secrets.SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          test -n "${SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY}"
+          printf '%s\n' "${SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY}" | gpg --import
           git for-each-ref "refs/tags/${VERSION}" --format='%(contents)' > tag-annotation.txt
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          text = Path("tag-annotation.txt").read_text(encoding="utf-8")
-          match = re.search(r"(?im)^Suderra-Preflight-Run-ID:\s*([0-9]+)\s*$", text)
-          if not match:
-              raise SystemExit(
-                  "annotated release tag must include 'Suderra-Preflight-Run-ID: <run_id>'"
-              )
-          run_id = match.group(1)
-          Path("preflight-run-id.txt").write_text(run_id + "\n", encoding="utf-8")
-          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
-              handle.write(f"run_id={run_id}\n")
-          PY
-          run_id="$(cat preflight-run-id.txt)"
+          python3 scripts/evidence/validate-release-tag-binding.py parse \
+            --version "${VERSION}" \
+            --source-sha "${SOURCE_SHA}" \
+            --annotation tag-annotation.txt \
+            --output-json release-tag-binding.json \
+            --trusted-fingerprints "${SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS}"
+          run_id="$(python3 -c 'import json; print(json.load(open("release-tag-binding.json"))["preflight_run_id"])')"
+          echo "preflight_run_id=${run_id}" >> "$GITHUB_OUTPUT"
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" > preflight-run.json
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          run = json.loads(Path("preflight-run.json").read_text(encoding="utf-8"))
-          if run.get("name") != "Release Preflight":
-              raise SystemExit(f"preflight run must be Release Preflight, got {run.get('name')!r}")
-          if run.get("head_sha") != os.environ["SOURCE_SHA"]:
-              raise SystemExit(f"preflight head_sha {run.get('head_sha')} does not match tag commit")
-          if run.get("head_branch") != "main":
-              raise SystemExit(f"release-candidate preflight must run from main, got {run.get('head_branch')!r}")
-          if run.get("status") != "completed" or run.get("conclusion") != "success":
-              raise SystemExit(f"preflight run is not successful: {run.get('status')} {run.get('conclusion')}")
-          PY
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" > preflight-artifacts.json
+          python3 scripts/evidence/validate-release-tag-binding.py validate-run \
+            --binding release-tag-binding.json \
+            --run-json preflight-run.json \
+            --artifacts-json preflight-artifacts.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --output-artifact-name preflight-artifact-name.txt
       - name: Download bound release preflight artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -191,12 +187,19 @@ jobs:
           SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
         run: |
           set -euo pipefail
-          artifact_name="release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}"
-          gh run download "${{ steps.preflight.outputs.run_id }}" \
+          artifact_name="$(cat preflight-artifact-name.txt)"
+          gh run download "${{ steps.preflight.outputs.preflight_run_id }}" \
             --repo "${GITHUB_REPOSITORY}" \
             --name "${artifact_name}" \
             --dir .
-          echo "Downloaded ${artifact_name} from preflight run ${{ steps.preflight.outputs.run_id }}"
+          echo "Downloaded ${artifact_name} from preflight run ${{ steps.preflight.outputs.preflight_run_id }}"
+          python3 scripts/evidence/validate-release-tag-binding.py validate-ingress \
+            --binding release-tag-binding.json \
+            --ingress-manifest "release-ingress/${VERSION}/ingress-manifest.json"
+          python3 scripts/evidence/validate-release-tag-binding.py validate-cross-binding \
+            --binding release-tag-binding.json \
+            --release-input "release-inputs/${VERSION}/${{ needs.validate.outputs.preflight_profile }}.json" \
+            --ingress-manifest "release-ingress/${VERSION}/ingress-manifest.json"
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.7.0
         with:
@@ -211,11 +214,13 @@ jobs:
           python3 scripts/evidence/validate-release-inputs.py \
             --version "${{ needs.validate.outputs.version }}" \
             --release-tier "${tier}" \
-            --profile release-candidate \
+            --profile "${{ needs.validate.outputs.preflight_profile }}" \
             --root . \
-            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --ingress-manifest "release-ingress/${{ needs.validate.outputs.version }}/ingress-manifest.json" \
             --source-sha "${{ steps.tag.outputs.source_sha }}" \
+            --source-run-id "$(python3 -c 'import json; print(json.load(open("release-tag-binding.json"))["source_build_run_id"])')" \
+            --source-run-attempt "$(python3 -c 'import json; print(json.load(open("release-tag-binding.json"))["source_build_run_attempt"])')" \
             --artifact-root build-artifacts \
             --require-ingress-signature \
             --ingress-certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
@@ -269,8 +274,8 @@ jobs:
           python3 scripts/evidence/validate-release-inputs.py \
             --version "${{ needs.validate.outputs.version }}" \
             --release-tier "${tier}" \
-            --profile release-candidate \
-            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --profile "${{ needs.validate.outputs.preflight_profile }}" \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --ingress-manifest "release-ingress/${{ needs.validate.outputs.version }}/ingress-manifest.json" \
             --source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
             --artifact-root build-artifacts \
@@ -284,7 +289,7 @@ jobs:
   # =========================================================================
   release-evidence:
     name: Stage, sign, attest, verify, assemble evidence
-    needs: [validate, matrix, governance, preflight-binding, input-preflight]
+    needs: [validate, matrix, release-readiness, governance, preflight-binding, input-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -310,7 +315,7 @@ jobs:
           python3 scripts/evidence/validate-lab-input.py validate-matrix \
             --version "${{ needs.validate.outputs.version }}" \
             --root release-lab-input \
-            --profile release-candidate \
+            --profile "${{ needs.validate.outputs.preflight_profile }}" \
             --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
             --require-pass \
             --check-files
@@ -429,7 +434,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/evidence/validate-release-artifact-binding.py \
-            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --release-dir release \
             --matrix ci/build-matrix.yml
 
@@ -558,6 +563,8 @@ jobs:
           python3 scripts/evidence/release-ingress.py validate \
             release/release-ingress-manifest.json \
             --artifact-root build-artifacts \
+            --input-root . \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --expected-version "${{ needs.validate.outputs.version }}" \
             --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
             --require-signature \
@@ -612,7 +619,10 @@ jobs:
             -printf '%f\0' | sort -z | while IFS= read -r -d '' f; do
               {
                 echo "==> gh attestation verify ${f}"
-                gh attestation verify "${f}" --repo "${GITHUB_REPOSITORY}"
+                gh attestation verify "${f}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --cert-identity "${COSIGN_IDENTITY}" \
+                  --cert-oidc-issuer "https://token.actions.githubusercontent.com"
               } 2>&1 | tee -a machine-verification/attestations.log
             done
 
@@ -653,53 +663,18 @@ jobs:
             --output-signature="${archive}.sig" \
             --output-certificate="${archive}.cert" \
             "${archive}"
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          release_dir = Path("release")
-          version = os.environ["VERSION"]
-
-          def sha256(path: Path) -> str:
-              digest = hashlib.sha256()
-              with path.open("rb") as handle:
-                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                      digest.update(chunk)
-              return digest.hexdigest()
-
-          files = []
-          for path in sorted(release_dir.iterdir(), key=lambda item: item.name):
-              if not path.is_file() or path.name == "release-publication-manifest.json":
-                  continue
-              files.append(
-                  {
-                      "name": path.name,
-                      "bytes": path.stat().st_size,
-                      "sha256": sha256(path),
-                  }
-              )
-          manifest = {
-              "schema_version": "suderra.release-publication-manifest.v1",
-              "version": version,
-              "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-              "source": {
-                  "repository": os.environ["GITHUB_REPOSITORY"],
-                  "workflow": os.environ["GITHUB_WORKFLOW"],
-                  "run_id": os.environ["GITHUB_RUN_ID"],
-                  "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              },
-              "self_included": False,
-              "self_sidecars_included": False,
-              "files": files,
-          }
-          (release_dir / "release-publication-manifest.json").write_text(
-              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          PY
+          python3 scripts/evidence/release-publication-manifest.py create \
+            --version "${VERSION}" \
+            --release-dir release \
+            --output release/release-publication-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --workflow "${GITHUB_WORKFLOW}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}"
+          python3 scripts/evidence/release-publication-manifest.py validate \
+            release/release-publication-manifest.json \
+            --release-dir release \
+            --expected-version "${VERSION}"
 
       - name: Sign publication manifest
         working-directory: release
@@ -710,6 +685,11 @@ jobs:
             --output-signature="release-publication-manifest.json.sig" \
             --output-certificate="release-publication-manifest.json.cert" \
             "release-publication-manifest.json"
+          python3 ../scripts/evidence/release-publication-manifest.py validate \
+            release-publication-manifest.json \
+            --release-dir . \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --require-self-sidecars
 
       - name: Final publication provenance attestation
         uses: actions/attest-build-provenance@v3
@@ -740,33 +720,17 @@ jobs:
                 --signature "${f}.sig" \
                 "${f}"
               echo "==> gh attestation verify ${f}"
-              gh attestation verify "${f}" --repo "${GITHUB_REPOSITORY}"
+              gh attestation verify "${f}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --cert-identity "${COSIGN_IDENTITY}" \
+                --cert-oidc-issuer "https://token.actions.githubusercontent.com"
             } 2>&1 | tee -a machine-verification/final-publication.log
           done
-          python3 - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-
-          release_dir = Path(".")
-          manifest = json.loads((release_dir / "release-publication-manifest.json").read_text(encoding="utf-8"))
-          names = {item["name"] for item in manifest["files"]}
-          required = {
-              f"release-evidence-${manifest['version']}.tar.zst",
-              f"release-evidence-${manifest['version']}.tar.zst.sig",
-              f"release-evidence-${manifest['version']}.tar.zst.cert",
-          }
-          missing = sorted(required - names)
-          if missing:
-              raise SystemExit(f"publication manifest missing final evidence bytes: {', '.join(missing)}")
-          for item in manifest["files"]:
-              path = release_dir / item["name"]
-              if not path.is_file():
-                  raise SystemExit(f"publication manifest references missing file: {item['name']}")
-              digest = hashlib.sha256(path.read_bytes()).hexdigest()
-              if digest != item["sha256"]:
-                  raise SystemExit(f"publication manifest sha mismatch: {item['name']}")
-          PY
+          python3 ../scripts/evidence/release-publication-manifest.py validate \
+            release-publication-manifest.json \
+            --release-dir . \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --require-self-sidecars
 
       - name: Upload signed release evidence inputs
         uses: actions/upload-artifact@v7
@@ -779,7 +743,7 @@ jobs:
 
   publish:
     name: Publish draft GitHub Release
-    needs: [validate, release-evidence]
+    needs: [validate, release-readiness, release-evidence]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
@@ -885,7 +849,22 @@ jobs:
             signed-release/release/manifest.json
             signed-release/release/*.sig
             signed-release/release/*.cert
-            signed-release/release-evidence-generated/**/*.json
+
+      - name: Verify published draft asset byte set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf downloaded-release
+          mkdir -p downloaded-release
+          gh release download "${{ needs.validate.outputs.version }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir downloaded-release
+          python3 scripts/evidence/release-publication-manifest.py validate \
+            downloaded-release/release-publication-manifest.json \
+            --release-dir downloaded-release \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --require-self-sidecars
 
       - name: Release summary
         run: |

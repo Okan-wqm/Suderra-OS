@@ -50,12 +50,28 @@ grep -Fq 'release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inpu
     echo "ERROR: release preflight artifact name must include profile, version, and source_sha" >&2
     exit 1
 }
-grep -Fq 'release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}' "${RELEASE_WORKFLOW}" || {
-    echo "ERROR: release workflow must bind only release-candidate preflight artifacts" >&2
+grep -q 'validate-release-tag-binding.py validate-run' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate the tag-bound preflight run and artifact" >&2
     exit 1
 }
-grep -q 'Suderra-Preflight-Run-ID' "${RELEASE_WORKFLOW}" || {
-    echo "ERROR: release workflow must use an explicit annotated-tag preflight run ID" >&2
+grep -q 'validate-release-tag-binding.py validate-cross-binding' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must cross-bind tag, preflight input, and ingress metadata" >&2
+    exit 1
+}
+grep -q 'SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must require trusted tag signer fingerprints" >&2
+    exit 1
+}
+grep -q 'preflight_run_id=.*GITHUB_OUTPUT' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must expose the tag-bound preflight run id as a step output" >&2
+    exit 1
+}
+grep -q 'production-candidate' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must distinguish alpha and production preflight profiles" >&2
+    exit 1
+}
+grep -q 'release-tag-binding.json' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must use explicit annotated-tag preflight binding metadata" >&2
     exit 1
 }
 if grep -q -- '--limit 50' "${RELEASE_WORKFLOW}"; then
@@ -122,6 +138,18 @@ grep -q 'release-publication-manifest.json.sig' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must sign the final publication manifest" >&2
     exit 1
 }
+grep -q 'release-publication-manifest.py validate' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must machine-validate the final publication manifest" >&2
+    exit 1
+}
+grep -q 'Verify published draft asset byte set' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate the draft GitHub Release asset set after publish" >&2
+    exit 1
+}
+if grep -q 'signed-release/release-evidence-generated' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: GitHub Release assets must not publish generated evidence internals outside the archive" >&2
+    exit 1
+fi
 grep -q 'Final publication provenance attestation' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must attest final publication bytes" >&2
     exit 1

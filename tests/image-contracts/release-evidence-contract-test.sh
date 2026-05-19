@@ -148,6 +148,13 @@ data["build_evidence"] = {
             "bytes": None,
         }
     ],
+    "source_identity": [
+        {
+            "path": "build/suderra_qemu_x86_64_defconfig.source-identity.json",
+            "sha256": None,
+            "bytes": None,
+        }
+    ],
     "warnings": [
         {
             "path": "build/suderra_qemu_x86_64_defconfig.warnings.json",
@@ -156,9 +163,26 @@ data["build_evidence"] = {
         }
     ],
 }
+source_identity = {
+    "buildroot_expected_patched": False,
+    "buildroot_index_sha": "1" * 40,
+    "buildroot_patch_files": [],
+    "buildroot_patchset_sha256": "2" * 64,
+}
+source_identity["buildroot_effective_source_id"] = hashlib.sha256(
+    (
+        "buildroot:" + source_identity["buildroot_index_sha"] + "\n"
+        "patchset:" + source_identity["buildroot_patchset_sha256"] + "\n"
+        "applied-diff:none\n"
+    ).encode("utf-8")
+).hexdigest()
 for item, text in (
     (data["build_evidence"]["logs"][0], "synthetic build log\n"),
-    (data["build_evidence"]["warnings"][0], '{"summary":{"policy_errors":0}}\n'),
+    (
+        data["build_evidence"]["warnings"][0],
+        '{"summary":{"owned":0,"third-party":0},"failing":[],"policy_errors":[]}\n',
+    ),
+    (data["build_evidence"]["source_identity"][0], json.dumps(source_identity, sort_keys=True) + "\n"),
 ):
     digest, size = write_text(item["path"], text)
     item["sha256"] = digest
@@ -176,10 +200,60 @@ data["qemu"]["checks"] = [
     "boot",
     "systemd",
     "zero-failed-units",
+    "no-kernel-panic",
+    "no-emergency-mode",
+    "os-release",
+    "kernel",
+    "rootfs",
     "firstboot-idempotence",
     "network",
     "lockdown-transition",
+    "listeners",
+    "firewall",
 ]
+data["qemu"]["image"] = "suderra-qemu_x86_64.img"
+data["qemu"]["image_sha256"] = "4" * 64
+data["qemu"]["firmware"] = "OVMF_CODE.fd"
+data["qemu"]["firmware_sha256"] = "5" * 64
+data["qemu"]["semantic_checks"] = {
+    name: {"status": "passed", "evidence": "contract evidence", "source": "contract"}
+    for name in data["qemu"]["checks"]
+}
+data["qemu"]["guest_facts"] = {
+    "os_release": {"ID": "suderra"},
+    "kernel": "contract",
+    "rootfs": {"partlabel": "rootfs"},
+    "network": {"state": "up"},
+    "listeners": [],
+    "firewall": {"nft": "loaded"},
+    "firstboot": {"idempotent": True},
+    "lockdown": {"status": "locked"},
+}
+qemu_input = {
+    "schema_version": "suderra.qemu-acceptance.v3",
+    "version": data["version"],
+    "target": data["target"],
+    "source_sha": data["source"]["git_commit"],
+    "generated_at": data["generated_at"],
+    "image": data["qemu"]["image"],
+    "image_sha256": data["qemu"]["image_sha256"],
+    "qemu_version": "QEMU emulator version contract",
+    "firmware": data["qemu"]["firmware"],
+    "firmware_sha256": data["qemu"]["firmware_sha256"],
+    "status": "passed",
+    "logs": [],
+    "checks": data["qemu"]["semantic_checks"],
+    "guest_facts": data["qemu"]["guest_facts"],
+}
+for role, rel, payload in (
+    ("serial", "qemu/input/serial.log", "synthetic serial\n"),
+    ("qmp-events", "qemu/input/qmp-events.json", "[]\n"),
+    ("qemu-stderr", "qemu/input/qemu-stderr.log", ""),
+):
+    digest, _ = write_text(rel, payload)
+    qemu_input["logs"].append({"role": role, "path": Path(rel).name, "sha256": digest})
+qemu_digest, qemu_size = write_text("qemu/input/qemu.json", json.dumps(qemu_input, sort_keys=True) + "\n")
+data["qemu"]["input"] = {"path": "qemu/input/qemu.json", "sha256": qemu_digest, "bytes": qemu_size}
 
 data["approvals"] = [
     {
@@ -201,11 +275,47 @@ data["release_decision"] = {
     "decided_at": "2026-05-13T00:00:00Z",
     "rationale": "Synthetic contract fixture.",
 }
+approval_input = {
+    "schema_version": "suderra.release-approval.v2",
+    "version": data["version"],
+    "target": data["target"],
+    "source_sha": data["source"]["git_commit"],
+    "approvals": data["approvals"],
+    "residual_risk": data["residual_risk"],
+    "release_decision": data["release_decision"],
+}
+approval_digest, approval_size = write_text(
+    "preflight/approval.json",
+    json.dumps(approval_input, sort_keys=True) + "\n",
+)
+data["preflight_inputs"]["approval"] = {
+    "path": "preflight/approval.json",
+    "sha256": approval_digest,
+    "bytes": approval_size,
+}
 
 for rel in data["reproducibility"]["logs"]:
-    write_text(rel, "synthetic reproducibility transcript\n")
+    digest, size = write_text(rel, "synthetic reproducibility transcript matched\n")
+    data["preflight_inputs"]["reproducibility"] = {"path": rel, "sha256": digest, "bytes": size}
 for scan in data["security_scans"]:
-    write_text(scan["report"], json.dumps({"scan": scan["name"], "status": "passed"}) + "\n")
+    report_payload = {
+        "schema_version": "suderra.release-security-report.v1",
+        "version": data["version"],
+        "source_sha": data["source"]["git_commit"],
+        "source_run_id": data["source"]["ci"]["run_id"],
+        "scan": scan["name"],
+        "status": "passed",
+        "generated_at": data["generated_at"],
+        "tool": scan["name"],
+        "tool_version": "contract",
+        "evidence_type": "contract-log",
+        "evidence_sha256": hashlib.sha256((scan["name"] + " passed\n").encode("utf-8")).hexdigest(),
+        "severity_counts": {"critical": 0, "high": 0},
+    }
+    digest, size = write_text(scan["report"], json.dumps(report_payload, sort_keys=True) + "\n")
+    data["preflight_inputs"]["security_reports"].append(
+        {"name": scan["name"], "path": scan["report"], "sha256": digest, "bytes": size}
+    )
 for check in data["machine_verification"].values():
     for rel in check["logs"]:
         write_text(rel, "synthetic machine verification transcript\n")
@@ -352,6 +462,13 @@ data["build_evidence"] = {
             "bytes": None,
         }
     ],
+    "source_identity": [
+        {
+            "path": "build/suderra_qemu_x86_64_defconfig.source-identity.json",
+            "sha256": None,
+            "bytes": None,
+        }
+    ],
     "warnings": [
         {
             "path": "build/suderra_qemu_x86_64_defconfig.warnings.json",
@@ -360,9 +477,26 @@ data["build_evidence"] = {
         }
     ],
 }
+source_identity = {
+    "buildroot_expected_patched": False,
+    "buildroot_index_sha": "1" * 40,
+    "buildroot_patch_files": [],
+    "buildroot_patchset_sha256": "2" * 64,
+}
+source_identity["buildroot_effective_source_id"] = hashlib.sha256(
+    (
+        "buildroot:" + source_identity["buildroot_index_sha"] + "\n"
+        "patchset:" + source_identity["buildroot_patchset_sha256"] + "\n"
+        "applied-diff:none\n"
+    ).encode("utf-8")
+).hexdigest()
 for item, text in (
     (data["build_evidence"]["logs"][0], "synthetic alpha build log\n"),
-    (data["build_evidence"]["warnings"][0], '{"summary":{"policy_errors":0}}\n'),
+    (
+        data["build_evidence"]["warnings"][0],
+        '{"summary":{"owned":0,"third-party":0},"failing":[],"policy_errors":[]}\n',
+    ),
+    (data["build_evidence"]["source_identity"][0], json.dumps(source_identity, sort_keys=True) + "\n"),
 ):
     digest, size = write_text(item["path"], text)
     item["sha256"] = digest
@@ -380,10 +514,60 @@ data["qemu"]["checks"] = [
     "boot",
     "systemd",
     "zero-failed-units",
+    "no-kernel-panic",
+    "no-emergency-mode",
+    "os-release",
+    "kernel",
+    "rootfs",
     "firstboot-idempotence",
     "network",
     "lockdown-transition",
+    "listeners",
+    "firewall",
 ]
+data["qemu"]["image"] = "suderra-qemu_x86_64.img"
+data["qemu"]["image_sha256"] = "4" * 64
+data["qemu"]["firmware"] = "OVMF_CODE.fd"
+data["qemu"]["firmware_sha256"] = "5" * 64
+data["qemu"]["semantic_checks"] = {
+    name: {"status": "passed", "evidence": "contract evidence", "source": "contract"}
+    for name in data["qemu"]["checks"]
+}
+data["qemu"]["guest_facts"] = {
+    "os_release": {"ID": "suderra"},
+    "kernel": "contract",
+    "rootfs": {"partlabel": "rootfs"},
+    "network": {"state": "up"},
+    "listeners": [],
+    "firewall": {"nft": "loaded"},
+    "firstboot": {"idempotent": True},
+    "lockdown": {"status": "locked"},
+}
+qemu_input = {
+    "schema_version": "suderra.qemu-acceptance.v3",
+    "version": data["version"],
+    "target": data["target"],
+    "source_sha": data["source"]["git_commit"],
+    "generated_at": data["generated_at"],
+    "image": data["qemu"]["image"],
+    "image_sha256": data["qemu"]["image_sha256"],
+    "qemu_version": "QEMU emulator version contract",
+    "firmware": data["qemu"]["firmware"],
+    "firmware_sha256": data["qemu"]["firmware_sha256"],
+    "status": "passed",
+    "logs": [],
+    "checks": data["qemu"]["semantic_checks"],
+    "guest_facts": data["qemu"]["guest_facts"],
+}
+for role, rel, payload in (
+    ("serial", "qemu/input/serial.log", "synthetic serial\n"),
+    ("qmp-events", "qemu/input/qmp-events.json", "[]\n"),
+    ("qemu-stderr", "qemu/input/qemu-stderr.log", ""),
+):
+    digest, _ = write_text(rel, payload)
+    qemu_input["logs"].append({"role": role, "path": Path(rel).name, "sha256": digest})
+qemu_digest, qemu_size = write_text("qemu/input/qemu.json", json.dumps(qemu_input, sort_keys=True) + "\n")
+data["qemu"]["input"] = {"path": "qemu/input/qemu.json", "sha256": qemu_digest, "bytes": qemu_size}
 data["approvals"] = [
     {
         "role": "release-owner",
@@ -420,11 +604,47 @@ data["release_decision"] = {
     "decided_at": "2026-05-13T00:00:00Z",
     "rationale": "Synthetic alpha contract fixture.",
 }
+approval_input = {
+    "schema_version": "suderra.release-approval.v2",
+    "version": data["version"],
+    "target": data["target"],
+    "source_sha": data["source"]["git_commit"],
+    "approvals": data["approvals"],
+    "residual_risk": data["residual_risk"],
+    "release_decision": data["release_decision"],
+}
+approval_digest, approval_size = write_text(
+    "preflight/approval.json",
+    json.dumps(approval_input, sort_keys=True) + "\n",
+)
+data["preflight_inputs"]["approval"] = {
+    "path": "preflight/approval.json",
+    "sha256": approval_digest,
+    "bytes": approval_size,
+}
 
 for rel in data["reproducibility"]["logs"]:
-    write_text(rel, "synthetic alpha reproducibility transcript\n")
+    digest, size = write_text(rel, "synthetic alpha reproducibility transcript matched\n")
+    data["preflight_inputs"]["reproducibility"] = {"path": rel, "sha256": digest, "bytes": size}
 for scan in data["security_scans"]:
-    write_text(scan["report"], json.dumps({"scan": scan["name"], "status": "passed"}) + "\n")
+    report_payload = {
+        "schema_version": "suderra.release-security-report.v1",
+        "version": data["version"],
+        "source_sha": data["source"]["git_commit"],
+        "source_run_id": data["source"]["ci"]["run_id"],
+        "scan": scan["name"],
+        "status": "passed",
+        "generated_at": data["generated_at"],
+        "tool": scan["name"],
+        "tool_version": "contract",
+        "evidence_type": "contract-log",
+        "evidence_sha256": hashlib.sha256((scan["name"] + " passed\n").encode("utf-8")).hexdigest(),
+        "severity_counts": {"critical": 0, "high": 0},
+    }
+    digest, size = write_text(scan["report"], json.dumps(report_payload, sort_keys=True) + "\n")
+    data["preflight_inputs"]["security_reports"].append(
+        {"name": scan["name"], "path": scan["report"], "sha256": digest, "bytes": size}
+    )
 for check in data["machine_verification"].values():
     for rel in check["logs"]:
         write_text(rel, "synthetic alpha machine verification transcript\n")

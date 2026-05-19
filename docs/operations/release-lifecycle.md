@@ -28,6 +28,8 @@ Required gates:
 - GitHub rulesets, `main` branch protection, tag protection, and the
   `release-publish` environment are active, match
   `ci/github-governance-policy.yml`, and are exported as governance evidence.
+  Governance collection uses `GOVERNANCE_READ_TOKEN`; default workflow token
+  snapshots are not sufficient for enterprise closure.
 - `candidate-readiness --tag <version>` passes.
 - Release input preflight passes before any build job starts. It validates
   governance policy evidence, hardware lab input, QEMU acceptance input, release
@@ -55,6 +57,8 @@ Required gates:
 - Final generated `release-evidence-generated/<version>/<target>/evidence.json`
   validates with
   `--release-tier alpha --require-pass --check-files`.
+  This validation replays preserved preflight input files, not only flattened
+  final evidence projections.
 - GitHub Release publication is a separate protected `publish` job. The signing,
   attestation, machine verification, and evidence job has no `contents: write`
   permission.
@@ -97,10 +101,33 @@ input, QEMU input, `suderra.release-approval.v2` approvals, reproducibility
 logs, security reports, and governance snapshots into the generated evidence
 root.
 
+The tag must be a signed annotated tag with the structured binding block below.
+The release workflow imports secret `SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY`,
+requires the signer VALIDSIG fingerprint to match
+`SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS`, and rejects lightweight tags,
+unsigned tag objects, wrong preflight workflow paths, wrong run attempts, wrong
+artifact IDs, wrong source SHAs, and ingress manifests whose SHA-256 does not
+match the tag annotation.
+
 ```bash
-git tag -s v0.1.0-alpha.1 -m $'Suderra OS v0.1.0-alpha.1\n\nSuderra-Preflight-Run-ID: <run-id>'
+git tag -s v0.1.0-alpha.1 -m $'Suderra OS v0.1.0-alpha.1
+
+Suderra-Release-Binding: v1
+Suderra-Version: v0.1.0-alpha.1
+Suderra-Source-SHA: <40-char-source-sha>
+Suderra-Source-Build-Run-ID: <build-run-id>
+Suderra-Source-Build-Run-Attempt: <build-run-attempt>
+Suderra-Preflight-Run-ID: <preflight-run-id>
+Suderra-Preflight-Run-Attempt: <preflight-run-attempt>
+Suderra-Preflight-Artifact-ID: <preflight-artifact-id>
+Suderra-Ingress-Manifest-SHA256: <release-ingress-manifest-sha256>'
 git push origin v0.1.0-alpha.1
 ```
+
+For pre-release tags the release workflow expects the bound preflight artifact
+name `release-preflight-release-candidate-<version>-<source_sha>`. For GA tags
+it expects `release-preflight-production-candidate-<version>-<source_sha>`, but
+GA remains fail-closed until production readiness passes.
 
 Unsigned tags are a blocker for production. If GPG signing is unavailable, stop
 and record the blocker instead of publishing a production-like release.

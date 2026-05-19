@@ -50,6 +50,7 @@ TOP_LEVEL_FIELDS = {
     "security_scans",
     "machine_verification",
     "build_evidence",
+    "preflight_inputs",
     "governance",
     "qemu",
     "hardware",
@@ -86,6 +87,7 @@ GOVERNANCE_CHECKS = (
     "branch_protection",
     "rulesets",
     "release_environment",
+    "release_environment_deployment_policy",
     "tag_protection",
     "workflow_permissions",
     "codeowners",
@@ -385,6 +387,14 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "status": "not_collected",
             "logs": [],
             "warnings": [],
+            "source_identity": [],
+        },
+        "preflight_inputs": {
+            "approval": None,
+            "reproducibility": None,
+            "security_reports": [],
+            "qemu": None,
+            "lab": None,
         },
         "governance": {
             "retention_years": 7,
@@ -525,6 +535,16 @@ def buildroot_source_metadata(source_sha: str) -> dict[str, Any]:
         return {"buildroot_index_sha": buildroot_index_sha()}
 
 
+def load_script_module(name: str, rel_path: str) -> Any:
+    script = ROOT / rel_path
+    spec = importlib.util.spec_from_file_location(name, script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def tracked_source_dirty() -> bool:
     status = git_output(["status", "--porcelain", "--untracked-files=no"])
     return bool(status)
@@ -598,6 +618,16 @@ def copy_into_bundle(bundle_dir: Path, source: Path, rel: str) -> str:
     return rel
 
 
+def copy_input_relative(bundle_dir: Path, source_root: Path, rel: str, dest_root: str) -> str | None:
+    rel_path = Path(rel)
+    if rel_path.is_absolute() or ".." in rel_path.parts:
+        return None
+    source = source_root / rel_path
+    if not source.is_file():
+        return None
+    return copy_into_bundle(bundle_dir, source, str(Path(dest_root) / rel_path))
+
+
 def count_cyclonedx_components(path: Path) -> int | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -627,10 +657,13 @@ def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: di
 
 
 def apply_build_evidence(bundle_dir: Path, input_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
-    binding = read_json(input_root / "release-inputs" / version / "release-candidate.json")
+    profile = "release-candidate" if "-" in version else "production-candidate"
+    binding = read_json(input_root / "release-inputs" / version / f"{profile}.json")
+    if not isinstance(binding, dict):
+        binding = read_json(input_root / "release-inputs" / version / "release-candidate.json")
     if not isinstance(binding, dict):
         return
-    records = {"logs": [], "warnings": []}
+    records = {"logs": [], "warnings": [], "source_identity": []}
     for item in binding.get("build_evidence", []):
         if not isinstance(item, dict) or item.get("target") != target:
             continue
@@ -655,13 +688,16 @@ def apply_build_evidence(bundle_dir: Path, input_root: Path, version: str, targe
             record["ingress_sha256"] = item["sha256"]
         if role == "warning-classifier-evidence":
             records["warnings"].append(record)
+        elif role == "buildroot-source-identity":
+            records["source_identity"].append(record)
         else:
             records["logs"].append(record)
-    if records["logs"] or records["warnings"]:
+    if records["logs"] or records["warnings"] or records["source_identity"]:
         evidence["build_evidence"] = {
             "status": "passed",
             "logs": records["logs"],
             "warnings": records["warnings"],
+            "source_identity": records["source_identity"],
         }
 
 
@@ -671,6 +707,7 @@ def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evid
         "branch_protection": "main-branch-protection.json",
         "rulesets": "rulesets.json",
         "release_environment": "release-publish-environment.json",
+        "release_environment_deployment_policy": "release-publish-deployment-branch-policies.json",
         "tag_protection": "tag-protection.json",
         "workflow_permissions": "workflow-permissions.json",
         "codeowners": "codeowners.json",
@@ -691,17 +728,40 @@ def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str
         return
     logs = []
     qemu_dir = lab_root / version / target
+    input_copy = copy_into_bundle(bundle_dir, qemu_dir / "qemu.json", "qemu/input/qemu.json")
+    evidence["preflight_inputs"]["qemu"] = {
+        "path": input_copy,
+        "sha256": sha256_file(bundle_dir / input_copy),
+        "bytes": (bundle_dir / input_copy).stat().st_size,
+    }
     for idx, log in enumerate(qemu_input.get("logs", [])):
+        role = None
+        expected_sha = None
         if isinstance(log, str):
             log_path = log
         elif isinstance(log, dict) and isinstance(log.get("path"), str):
             log_path = log["path"]
+            role = log.get("role") if isinstance(log.get("role"), str) else None
+            expected_sha = log.get("sha256") if isinstance(log.get("sha256"), str) else None
         else:
             continue
         source = qemu_dir / log_path
+        copy_input_relative(bundle_dir, qemu_dir, log_path, "qemu/input")
         if source.is_file() and source.stat().st_size > 0:
-            logs.append(copy_into_bundle(bundle_dir, source, f"qemu/{idx}-{Path(log_path).name}"))
+            copied = copy_into_bundle(bundle_dir, source, f"qemu/{idx}-{Path(log_path).name}")
+            copied_path = bundle_dir / copied
+            record: dict[str, Any] = {
+                "path": copied,
+                "sha256": sha256_file(copied_path),
+                "bytes": copied_path.stat().st_size,
+            }
+            if role is not None:
+                record["role"] = role
+            if expected_sha is not None:
+                record["input_sha256"] = expected_sha
+            logs.append(record)
     checks = qemu_input.get("checks")
+    semantic_checks = checks if isinstance(checks, dict) else {}
     if isinstance(checks, dict):
         checks = [
             str(name)
@@ -711,8 +771,19 @@ def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str
     evidence["qemu"] = {
         "required": True,
         "status": qemu_input.get("status", "not_collected"),
+        "input": {
+            "path": input_copy,
+            "sha256": sha256_file(bundle_dir / input_copy),
+            "bytes": (bundle_dir / input_copy).stat().st_size,
+        },
+        "image": qemu_input.get("image"),
+        "image_sha256": qemu_input.get("image_sha256"),
+        "firmware": qemu_input.get("firmware"),
+        "firmware_sha256": qemu_input.get("firmware_sha256"),
         "logs": logs,
         "checks": checks if isinstance(checks, list) else [],
+        "semantic_checks": semantic_checks,
+        "guest_facts": qemu_input.get("guest_facts", {}),
     }
 
 
@@ -721,6 +792,21 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
     lab_input = read_json(lab_dir / "lab.json")
     if not isinstance(lab_input, dict):
         return
+    input_copy = copy_into_bundle(bundle_dir, lab_dir / "lab.json", "hardware/input/lab.json")
+    evidence["preflight_inputs"]["lab"] = {
+        "path": input_copy,
+        "sha256": sha256_file(bundle_dir / input_copy),
+        "bytes": (bundle_dir / input_copy).stat().st_size,
+    }
+    evidence["hardware"]["input"] = {
+        "path": input_copy,
+        "sha256": sha256_file(bundle_dir / input_copy),
+        "bytes": (bundle_dir / input_copy).stat().st_size,
+    }
+    if isinstance(lab_input.get("station"), dict):
+        evidence["hardware"]["station"] = lab_input["station"]
+    if isinstance(lab_input.get("artifact_binding"), dict):
+        evidence["hardware"]["artifact_binding"] = lab_input["artifact_binding"]
     devices = []
     for device in lab_input.get("devices", []):
         if not isinstance(device, dict):
@@ -737,6 +823,7 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
             else:
                 continue
             source = lab_dir / log_path
+            copy_input_relative(bundle_dir, lab_dir, log_path, "hardware/input")
             if source.is_file() and source.stat().st_size > 0:
                 rel_log = copy_into_bundle(bundle_dir, source, f"hardware/{board}/logs/{idx}-{Path(log_path).name}")
                 log_record = {"path": rel_log, "sha256": sha256_file(bundle_dir / rel_log)}
@@ -753,6 +840,7 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
                 evidence_path = check.get("evidence")
                 if isinstance(evidence_path, str):
                     source = lab_dir / evidence_path
+                    copy_input_relative(bundle_dir, lab_dir, evidence_path, "hardware/input")
                     if source.is_file() and source.stat().st_size > 0:
                         rel_evidence = copy_into_bundle(
                             bundle_dir,
@@ -783,6 +871,8 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
                 "status": device.get("status", "not_collected"),
                 "logs": logs,
                 "checks": checks,
+                "device_identity": device.get("device_identity") if isinstance(device.get("device_identity"), dict) else {},
+                "readback": device.get("readback") if isinstance(device.get("readback"), dict) else {},
             }
         )
     evidence["hardware"]["devices"] = devices
@@ -794,6 +884,7 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
         rel_evidence = None
         if isinstance(evidence_path, str):
             source = lab_dir / evidence_path
+            copy_input_relative(bundle_dir, lab_dir, evidence_path, "hardware/input")
             if source.is_file() and source.stat().st_size > 0:
                 rel_evidence = copy_into_bundle(
                     bundle_dir,
@@ -827,18 +918,40 @@ def apply_release_inputs(
 ) -> None:
     repro = input_root / "release-reproducibility" / version / f"{target}.log"
     if repro.is_file() and repro.stat().st_size > 0:
+        rel_repro = copy_into_bundle(bundle_dir, repro, "preflight/reproducibility/reproducibility.log")
+        evidence["preflight_inputs"]["reproducibility"] = {
+            "path": rel_repro,
+            "sha256": sha256_file(bundle_dir / rel_repro),
+            "bytes": (bundle_dir / rel_repro).stat().st_size,
+        }
         evidence["reproducibility"] = {
             "status": "passed",
             "comparison": "independent rebuild matched staged release bytes",
-            "logs": [copy_into_bundle(bundle_dir, repro, "reproducibility/reproducibility.log")],
+            "logs": [rel_repro],
         }
     for scan in evidence["security_scans"]:
         report = input_root / "release-security" / version / f"{scan['name']}.json"
         if report.is_file() and report.stat().st_size > 0:
             scan["status"] = "passed"
-            scan["report"] = copy_into_bundle(bundle_dir, report, f"security/{report.name}")
-    approvals = read_json(input_root / "release-approvals" / version / f"{target}.json")
+            rel_report = copy_into_bundle(bundle_dir, report, f"preflight/security/{report.name}")
+            scan["report"] = rel_report
+            evidence["preflight_inputs"]["security_reports"].append(
+                {
+                    "name": scan["name"],
+                    "path": rel_report,
+                    "sha256": sha256_file(bundle_dir / rel_report),
+                    "bytes": (bundle_dir / rel_report).stat().st_size,
+                }
+            )
+    approval_path = input_root / "release-approvals" / version / f"{target}.json"
+    approvals = read_json(approval_path)
     if isinstance(approvals, dict):
+        rel_approval = copy_into_bundle(bundle_dir, approval_path, "preflight/approval.json")
+        evidence["preflight_inputs"]["approval"] = {
+            "path": rel_approval,
+            "sha256": sha256_file(bundle_dir / rel_approval),
+            "bytes": (bundle_dir / rel_approval).stat().st_size,
+        }
         if isinstance(approvals.get("approvals"), list):
             evidence["approvals"] = approvals["approvals"]
         if isinstance(approvals.get("residual_risk"), dict):
@@ -1173,7 +1286,7 @@ def validate_build_evidence(validation: Validation, evidence: dict[str, Any], re
         validation.error("$.build_evidence", "must be an object")
         return
     check_status(validation, "$.build_evidence.status", build_evidence.get("status"), STATUS_VALUES)
-    for collection in ("logs", "warnings"):
+    for collection in ("logs", "warnings", "source_identity"):
         items = build_evidence.get(collection)
         if not isinstance(items, list):
             validation.error(f"$.build_evidence.{collection}", "must be a list")
@@ -1187,10 +1300,136 @@ def validate_build_evidence(validation: Validation, evidence: dict[str, Any], re
             check_sha256(validation, f"{path}.sha256", item.get("sha256"), require_pass)
             check_positive_int(validation, f"{path}.bytes", item.get("bytes"), require_pass)
             check_file_sha256(validation, f"{path}.sha256", item.get("path"), item.get("sha256"))
+            check_file_size(validation, f"{path}.bytes", item.get("path"), item.get("bytes"))
+            if collection == "warnings" and validation.check_files:
+                warning_path = file_for_relative_path(validation, item.get("path"))
+                if warning_path is not None:
+                    payload = read_json(warning_path)
+                    if not isinstance(payload, dict):
+                        validation.error(f"{path}.path", "must be warning classifier JSON")
+                    else:
+                        summary = payload.get("summary")
+                        if not isinstance(summary, dict):
+                            validation.error(f"{path}.path", "warning summary must be an object")
+                        else:
+                            if summary.get("owned") != 0:
+                                validation.error(f"{path}.path", "warning owned count must be 0")
+                            if summary.get("third-party") != 0:
+                                validation.error(f"{path}.path", "warning third-party count must be 0")
+                        for field in ("failing", "policy_errors"):
+                            if payload.get(field) != []:
+                                validation.error(f"{path}.path", f"warning {field} must be empty")
+            if collection == "source_identity" and validation.check_files:
+                source_identity_path = file_for_relative_path(validation, item.get("path"))
+                if source_identity_path is not None:
+                    payload = read_json(source_identity_path)
+                    if not isinstance(payload, dict):
+                        validation.error(f"{path}.path", "must be Buildroot source identity JSON")
+                    else:
+                        script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+                        spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+                        if spec is None or spec.loader is None:
+                            validation.error(f"{path}.path", f"cannot import {script}")
+                        else:
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            for failure in module.validate_metadata_payload(payload):
+                                validation.error(f"{path}.path", failure)
+                            if payload.get("buildroot_patch_files") and not payload.get("buildroot_applied_diff_sha256"):
+                                validation.error(
+                                    f"{path}.path",
+                                    "patched Buildroot source identity must include buildroot_applied_diff_sha256",
+                                )
     if require_pass and build_evidence.get("status") != "passed":
         validation.error("$.build_evidence.status", "must be passed for release-ready evidence")
-    if require_pass and (not build_evidence.get("logs") or not build_evidence.get("warnings")):
-        validation.error("$.build_evidence", "must include build logs and warning classifier evidence")
+    if require_pass and (
+        not build_evidence.get("logs")
+        or not build_evidence.get("warnings")
+        or not build_evidence.get("source_identity")
+    ):
+        validation.error(
+            "$.build_evidence",
+            "must include build logs, warning classifier evidence, and Buildroot source identity",
+                )
+
+
+def validate_preserved_ref(validation: Validation, path: str, value: Any, require_pass: bool) -> Path | None:
+    if value is None and not require_pass:
+        return None
+    if not isinstance(value, dict):
+        validation.error(path, "must be an object preserving a preflight input")
+        return None
+    check_relative_path(validation, f"{path}.path", value.get("path"), require_pass)
+    check_sha256(validation, f"{path}.sha256", value.get("sha256"), require_pass)
+    check_positive_int(validation, f"{path}.bytes", value.get("bytes"), require_pass)
+    check_file_sha256(validation, f"{path}.sha256", value.get("path"), value.get("sha256"))
+    check_file_size(validation, f"{path}.bytes", value.get("path"), value.get("bytes"))
+    return file_for_relative_path(validation, value.get("path"))
+
+
+def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+    inputs = evidence.get("preflight_inputs")
+    if not isinstance(inputs, dict):
+        validation.error("$.preflight_inputs", "must be an object")
+        return
+    approval_path = validate_preserved_ref(validation, "$.preflight_inputs.approval", inputs.get("approval"), require_pass)
+    if require_pass and approval_path is not None:
+        try:
+            module = load_script_module("release_approval", "scripts/evidence/release_approval.py")
+            payload = read_json(approval_path)
+            if not isinstance(payload, dict):
+                validation.error("$.preflight_inputs.approval.path", "must be approval JSON")
+            else:
+                for failure in module.validate_approval_payload(
+                    payload,
+                    str(evidence.get("version")),
+                    str(evidence.get("target")),
+                    evidence.get("source", {}).get("git_commit") if isinstance(evidence.get("source"), dict) else None,
+                    require_pass=True,
+                ):
+                    validation.error("$.preflight_inputs.approval.path", failure)
+        except Exception as exc:
+            validation.error("$.preflight_inputs.approval.path", f"cannot validate approval JSON: {exc}")
+    repro_path = validate_preserved_ref(
+        validation,
+        "$.preflight_inputs.reproducibility",
+        inputs.get("reproducibility"),
+        require_pass,
+    )
+    if require_pass and repro_path is not None:
+        try:
+            module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+            for failure in module.validate_repro(repro_path):
+                validation.error("$.preflight_inputs.reproducibility.path", failure)
+        except Exception as exc:
+            validation.error("$.preflight_inputs.reproducibility.path", f"cannot validate reproducibility input: {exc}")
+    reports = inputs.get("security_reports")
+    if not isinstance(reports, list):
+        validation.error("$.preflight_inputs.security_reports", "must be a list")
+        reports = []
+    for idx, item in enumerate(reports):
+        report_path = validate_preserved_ref(
+            validation,
+            f"$.preflight_inputs.security_reports[{idx}]",
+            item,
+            require_pass,
+        )
+        if require_pass and report_path is not None:
+            try:
+                module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+                scan = item.get("name") if isinstance(item, dict) else None
+                source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+                ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+                for failure in module.validate_security_report(
+                    report_path,
+                    str(scan),
+                    str(evidence.get("version")),
+                    source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                    str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                ):
+                    validation.error(f"$.preflight_inputs.security_reports[{idx}].path", failure)
+            except Exception as exc:
+                validation.error(f"$.preflight_inputs.security_reports[{idx}].path", f"cannot validate security report: {exc}")
 
 
 def validate_governance(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
@@ -1259,7 +1498,19 @@ def validate_qemu(
         validation.error("$.qemu.logs", "must be a list")
     else:
         for idx, log in enumerate(logs):
-            check_relative_path(validation, f"$.qemu.logs[{idx}]", log, True)
+            path = f"$.qemu.logs[{idx}]"
+            if isinstance(log, dict):
+                if "role" in log:
+                    check_string(validation, f"{path}.role", log.get("role"))
+                check_relative_path(validation, f"{path}.path", log.get("path"), True)
+                check_sha256(validation, f"{path}.sha256", log.get("sha256"), True)
+                check_positive_int(validation, f"{path}.bytes", log.get("bytes"), True)
+                check_file_sha256(validation, f"{path}.sha256", log.get("path"), log.get("sha256"))
+                check_file_size(validation, f"{path}.bytes", log.get("path"), log.get("bytes"))
+                if "input_sha256" in log:
+                    check_sha256(validation, f"{path}.input_sha256", log.get("input_sha256"), True)
+            else:
+                check_relative_path(validation, path, log, True)
     checks = qemu.get("checks")
     if not isinstance(checks, list):
         validation.error("$.qemu.checks", "must be a list")
@@ -1269,6 +1520,49 @@ def validate_qemu(
                 validation.error(f"$.qemu.checks[{idx}]", "must be a non-empty string")
 
     if require_pass and expected_required:
+        qemu_input = qemu.get("input")
+        if not isinstance(qemu_input, dict):
+            validation.error("$.qemu.input", "must preserve the validated QEMU input JSON")
+        else:
+            check_relative_path(validation, "$.qemu.input.path", qemu_input.get("path"), True)
+            check_sha256(validation, "$.qemu.input.sha256", qemu_input.get("sha256"), True)
+            check_positive_int(validation, "$.qemu.input.bytes", qemu_input.get("bytes"), True)
+            check_file_sha256(validation, "$.qemu.input.sha256", qemu_input.get("path"), qemu_input.get("sha256"))
+            check_file_size(validation, "$.qemu.input.bytes", qemu_input.get("path"), qemu_input.get("bytes"))
+            if validation.check_files:
+                qemu_input_path = file_for_relative_path(validation, qemu_input.get("path"))
+                if qemu_input_path is not None:
+                    try:
+                        module = load_script_module("validate_qemu_input", "scripts/evidence/validate-qemu-input.py")
+                        source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+                        profile = "release-candidate" if "-" in str(evidence.get("version", "")) else "production-candidate"
+                        for failure in module.validate(
+                            qemu_input_path,
+                            True,
+                            True,
+                            profile,
+                            str(evidence.get("version")),
+                            str(evidence.get("target")),
+                            source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                            qemu.get("image_sha256") if isinstance(qemu.get("image_sha256"), str) else None,
+                        ):
+                            validation.error("$.qemu.input.path", failure)
+                    except Exception as exc:
+                        validation.error("$.qemu.input.path", f"cannot replay QEMU input validation: {exc}")
+        for field in ("image", "firmware"):
+            check_string(validation, f"$.qemu.{field}", qemu.get(field))
+        for field in ("image_sha256", "firmware_sha256"):
+            check_sha256(validation, f"$.qemu.{field}", qemu.get(field), True)
+        facts = qemu.get("guest_facts")
+        if not isinstance(facts, dict) or not facts:
+            validation.error("$.qemu.guest_facts", "must include semantic guest facts")
+        else:
+            for field in ("os_release", "kernel", "rootfs", "network", "listeners", "firewall", "firstboot", "lockdown"):
+                if field not in facts:
+                    validation.error("$.qemu.guest_facts", f"missing semantic fact: {field}")
+        semantic_checks = qemu.get("semantic_checks")
+        if not isinstance(semantic_checks, dict) or not semantic_checks:
+            validation.error("$.qemu.semantic_checks", "must preserve semantic QEMU check details")
         if qemu.get("status") != "passed":
             validation.error("$.qemu.status", "must be passed when QEMU evidence is required")
         if not logs:
@@ -1292,6 +1586,41 @@ def validate_hardware(
     if isinstance(hardware.get("required"), bool) and hardware.get("required") != expected_required:
         validation.error("$.hardware.required", f"must match matrix-derived requirement {expected_required}")
     check_status(validation, "$.hardware.status", hardware.get("status"), STATUS_VALUES)
+    if require_pass and expected_required:
+        lab_input = hardware.get("input")
+        if not isinstance(lab_input, dict):
+            validation.error("$.hardware.input", "must preserve the validated lab input JSON")
+        else:
+            check_relative_path(validation, "$.hardware.input.path", lab_input.get("path"), True)
+            check_sha256(validation, "$.hardware.input.sha256", lab_input.get("sha256"), True)
+            check_positive_int(validation, "$.hardware.input.bytes", lab_input.get("bytes"), True)
+            check_file_sha256(validation, "$.hardware.input.sha256", lab_input.get("path"), lab_input.get("sha256"))
+            check_file_size(validation, "$.hardware.input.bytes", lab_input.get("path"), lab_input.get("bytes"))
+            if validation.check_files:
+                lab_input_path = file_for_relative_path(validation, lab_input.get("path"))
+                if lab_input_path is not None:
+                    try:
+                        module = load_script_module("validate_lab_input", "scripts/evidence/validate-lab-input.py")
+                        source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+                        ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+                        profile = "release-candidate" if "-" in str(evidence.get("version", "")) else "production-candidate"
+                        for failure in module.validate_lab(
+                            lab_input_path,
+                            True,
+                            True,
+                            str(evidence.get("version")),
+                            str(evidence.get("target")),
+                            profile,
+                            source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                            str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                        ):
+                            validation.error("$.hardware.input.path", failure)
+                    except Exception as exc:
+                        validation.error("$.hardware.input.path", f"cannot replay lab input validation: {exc}")
+        if not isinstance(hardware.get("station"), dict) or not hardware["station"]:
+            validation.error("$.hardware.station", "must preserve station identity")
+        if not isinstance(hardware.get("artifact_binding"), dict) or not hardware["artifact_binding"]:
+            validation.error("$.hardware.artifact_binding", "must preserve artifact binding")
     devices = hardware.get("devices")
     if not isinstance(devices, list):
         validation.error("$.hardware.devices", "must be a list")
@@ -1364,6 +1693,23 @@ def validate_hardware(
                         f"{path}.checks",
                         f"missing required checks: {', '.join(missing_checks)}",
                     )
+            identity = device.get("device_identity")
+            if not isinstance(identity, dict) or not identity:
+                validation.error(f"{path}.device_identity", "must preserve board/storage identity")
+            else:
+                for field in ("model", "compatible", "storage_by_id", "storage_serial", "root_partuuid"):
+                    check_string(validation, f"{path}.device_identity.{field}", identity.get(field))
+            readback = device.get("readback")
+            if not isinstance(readback, dict) or not readback:
+                validation.error(f"{path}.readback", "must preserve full readback evidence")
+            else:
+                if readback.get("scope") != "full":
+                    validation.error(f"{path}.readback.scope", "must be full")
+                check_sha256(validation, f"{path}.readback.expected_sha256", readback.get("expected_sha256"), True)
+                check_sha256(validation, f"{path}.readback.actual_sha256", readback.get("actual_sha256"), True)
+                if readback.get("expected_sha256") != readback.get("actual_sha256"):
+                    validation.error(f"{path}.readback.actual_sha256", "must match expected_sha256")
+                check_positive_int(validation, f"{path}.readback.bytes_read", readback.get("bytes_read"), True)
 
     if require_pass and expected_required:
         if hardware.get("status") != "passed":
@@ -1718,6 +2064,7 @@ def validate_evidence(
     )
     validate_machine_verification(validation, evidence, require_pass)
     validate_build_evidence(validation, evidence, require_pass)
+    validate_preflight_inputs(validation, evidence, require_pass)
     validate_governance(validation, evidence, require_pass)
     validate_qemu(validation, evidence, require_pass, qemu_required)
     validate_hardware(validation, evidence, require_pass, hardware_required)
@@ -1753,7 +2100,7 @@ def schema_contract() -> dict[str, Any]:
         "release_ready_invariants": [
             "source.dirty is false and source.git_commit is a full commit sha",
             "asset_manifest is generated from staged release bytes and verified",
-            "build logs and warning classifier evidence are retained in the bundle",
+            "build logs, warning classifier evidence, and Buildroot source identity are retained in the bundle",
             "artifact hashes, sizes, signatures, and provenance are present, verified, and match referenced files",
             "SBOM is CycloneDX JSON with a non-empty matching component count and verified signature",
             "signed VEX is present",

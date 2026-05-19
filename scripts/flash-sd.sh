@@ -134,8 +134,10 @@ done
 
 if [[ "${ACCEPTANCE}" -eq 1 ]]; then
     [[ "${DEVICE}" == /dev/disk/by-id/* ]] || die "Acceptance modunda hedef yalnız /dev/disk/by-id/* olmalı: ${DEVICE}"
+    [[ "${LAB_ALLOW_MISSING_HASH}" -eq 0 ]] || die "Acceptance modunda --lab-allow-missing-hash yasak"
     [[ "${SKIP_VERIFY}" -eq 0 ]] || die "Acceptance modunda --skip-verify yasak"
     [[ "${FORCE}" -eq 0 ]] || die "Acceptance modunda geniş --force yasak; operatör hedefi interaktif onaylamalı"
+    VERIFY_SIGNATURE=1
 fi
 
 # ----------------------------------------------------------------------------
@@ -292,16 +294,19 @@ if [[ -n "${ROOT_DISK}" && "${TARGET_DISK}" == "${ROOT_DISK}" ]]; then
 fi
 
 # Removable mı? (USB / SD card / eMMC card reader)
-DEVICE_NAME=$(basename "${DEVICE}")
+DEVICE_NAME="${TARGET_DISK}"
 REMOVABLE_FILE="/sys/block/${DEVICE_NAME}/removable"
 if [[ -f "${REMOVABLE_FILE}" ]]; then
     REMOVABLE=$(cat "${REMOVABLE_FILE}")
     if [[ "${REMOVABLE}" != "1" ]]; then
         log_warn "${DEVICE} removable olarak işaretlenmemiş (sabit disk olabilir!)"
+        [[ "${ACCEPTANCE}" -ne 1 ]] || die "Acceptance modunda hedef removable olarak işaretlenmiş olmalı"
         if [[ "${FORCE}" -ne 1 ]]; then
             die "İçsel disklere yazmak için --force gerekli. ÇOK DİKKATLİ OL."
         fi
     fi
+elif [[ "${ACCEPTANCE}" -eq 1 ]]; then
+    die "Acceptance modunda removable bilgisi okunmalı: ${REMOVABLE_FILE}"
 fi
 
 # Cihaz boyutu makul mi?
@@ -379,10 +384,15 @@ log_ok "Yazma tamamlandı (${DURATION}s, ortalama $((IMAGE_SIZE_MB / (DURATION +
 # 9. Geri okuma doğrulaması (ilk 64 MiB)
 # ----------------------------------------------------------------------------
 if [[ "${SKIP_VERIFY}" -ne 1 ]]; then
-    log_info "Doğrulama: ilk 64 MiB geri okunup hash karşılaştırılıyor..."
-
-    EXPECTED_HASH=$(dd if="${DECOMPRESSED_IMAGE}" bs=1M count=64 2>/dev/null | sha256sum | awk '{print $1}')
-    ACTUAL_HASH=$(dd if="${DEVICE}" bs=1M count=64 2>/dev/null | sha256sum | awk '{print $1}')
+    if [[ "${ACCEPTANCE}" -eq 1 ]]; then
+        log_info "Acceptance doğrulama: tüm image byte'ları geri okunup hash karşılaştırılıyor..."
+        EXPECTED_HASH=$(sha256sum "${DECOMPRESSED_IMAGE}" | awk '{print $1}')
+        ACTUAL_HASH=$(head -c "${IMAGE_SIZE_BYTES}" "${DEVICE}" | sha256sum | awk '{print $1}')
+    else
+        log_info "Doğrulama: ilk 64 MiB geri okunup hash karşılaştırılıyor..."
+        EXPECTED_HASH=$(dd if="${DECOMPRESSED_IMAGE}" bs=1M count=64 2>/dev/null | sha256sum | awk '{print $1}')
+        ACTUAL_HASH=$(dd if="${DEVICE}" bs=1M count=64 2>/dev/null | sha256sum | awk '{print $1}')
+    fi
 
     if [[ "${EXPECTED_HASH}" == "${ACTUAL_HASH}" ]]; then
         log_ok "Doğrulama başarılı: ${EXPECTED_HASH:0:16}..."

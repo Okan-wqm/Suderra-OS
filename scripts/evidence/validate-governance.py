@@ -95,6 +95,47 @@ def environment_reviewers(environment: dict[str, Any]) -> int:
     return reviewers
 
 
+def environment_reviewer_identities(environment: dict[str, Any]) -> set[str]:
+    identities: set[str] = set()
+    protection_rules = environment.get("protection_rules")
+    if not isinstance(protection_rules, list):
+        return identities
+    for rule in protection_rules:
+        if not isinstance(rule, dict) or rule.get("type") != "required_reviewers":
+            continue
+        raw = rule.get("reviewers")
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            reviewer = item.get("reviewer")
+            reviewer_type = str(item.get("type", "")).lower()
+            if isinstance(reviewer, dict):
+                for key in ("slug", "login", "name"):
+                    value = reviewer.get(key)
+                    if isinstance(value, str) and value:
+                        identities.add(value)
+                        identities.add(f"{reviewer_type}:{value}")
+    return identities
+
+
+def deployment_policy_patterns(snapshot: Any) -> set[str]:
+    items = snapshot.get("branch_policies") if isinstance(snapshot, dict) else snapshot
+    if not isinstance(items, list):
+        return set()
+    patterns: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if isinstance(name, str):
+            patterns.add(name)
+            if item.get("type") == "tag" and not name.startswith("refs/tags/"):
+                patterns.add(f"refs/tags/{name}")
+    return patterns
+
+
 def codeowners_patterns(snapshot: Any) -> set[str]:
     if isinstance(snapshot, dict) and isinstance(snapshot.get("patterns"), list):
         return {str(item) for item in snapshot["patterns"]}
@@ -110,6 +151,7 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     branch = read_json(snapshot_root / "main-branch-protection.json")
     rulesets = read_json(snapshot_root / "rulesets.json")
     environment = read_json(snapshot_root / "release-publish-environment.json")
+    deployment_policies = read_json(snapshot_root / "release-publish-deployment-branch-policies.json")
     tag_protection = read_json(snapshot_root / "tag-protection.json")
     workflow_permissions = read_json(snapshot_root / "workflow-permissions.json")
     codeowners = read_json(snapshot_root / "codeowners.json")
@@ -118,6 +160,10 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     if not isinstance(branch, dict):
         failures.append("missing main-branch-protection.json")
     else:
+        branch_policy = policy.get("branch_protection", {})
+        if not isinstance(branch_policy, dict):
+            branch_policy = {}
+        minimum_approvals = int(branch_policy.get("minimum_approving_reviews", 1))
         if not branch.get("required_pull_request_reviews"):
             failures.append("main branch must require pull request reviews")
         reviews = branch.get("required_pull_request_reviews") or {}
@@ -127,8 +173,8 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
             if not reviews.get("dismiss_stale_reviews"):
                 failures.append("main branch must dismiss stale reviews")
             approvals = reviews.get("required_approving_review_count")
-            if not isinstance(approvals, int) or approvals < 1:
-                failures.append("main branch must require at least one approval")
+            if not isinstance(approvals, int) or approvals < minimum_approvals:
+                failures.append(f"main branch must require at least {minimum_approvals} approvals")
         if branch.get("allow_force_pushes", {}).get("enabled") is True:
             failures.append("main branch must not allow force pushes")
         if branch.get("allow_deletions", {}).get("enabled") is True:
@@ -189,6 +235,15 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
             failures.append("release environment name mismatch")
         if environment_reviewers(environment) < int(env_policy.get("minimum_reviewers", 1)):
             failures.append("release environment must require reviewers")
+        required_reviewers = env_policy.get("required_reviewers", [])
+        if isinstance(required_reviewers, list) and required_reviewers:
+            identities = environment_reviewer_identities(environment)
+            missing_reviewers = sorted(str(item) for item in required_reviewers if str(item) not in identities)
+            if missing_reviewers:
+                failures.append(
+                    "release environment missing required reviewer identities: "
+                    + ", ".join(missing_reviewers)
+                )
         if env_policy.get("prevent_self_review") is True and environment.get("prevent_self_review") is not True:
             failures.append("release environment must prevent self review")
         deployment_policy = environment.get("deployment_branch_policy")
@@ -199,6 +254,12 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
                 failures.append("release environment must use custom selected tag refs")
         elif env_policy.get("allowed_ref"):
             failures.append("release environment deployment branch policy must be collected")
+        allowed_ref = env_policy.get("allowed_ref")
+        if allowed_ref:
+            patterns = deployment_policy_patterns(deployment_policies)
+            allowed_alias = str(allowed_ref).removeprefix("refs/tags/")
+            if str(allowed_ref) not in patterns and allowed_alias not in patterns:
+                failures.append(f"release environment deployment policy must include {allowed_ref}")
 
     if isinstance(workflow_permissions, dict):
         default_workflow_permissions = workflow_permissions.get("default_workflow_permissions")

@@ -33,6 +33,14 @@ SCHEMA_ROLES = {
     "lab_input": "suderra.lab-evidence.v3",
     "release_evidence": "suderra.release-evidence.v3",
 }
+PREFLIGHT_INPUT_DIRS = (
+    "release-inputs",
+    "release-lab-input",
+    "release-governance",
+    "release-approvals",
+    "release-security",
+    "release-reproducibility",
+)
 
 
 def now_utc() -> datetime:
@@ -105,6 +113,52 @@ def role_for_artifact(artifact: str) -> str:
     return "build-artifact"
 
 
+def append_file_record(
+    files: list[dict[str, Any]],
+    *,
+    source: str,
+    role: str,
+    path: Path,
+    rel_path: Path,
+    defconfig: str = "release-input",
+    target: str = "release-input",
+    artifact: str | None = None,
+) -> None:
+    files.append(
+        {
+            "source": source,
+            "role": role,
+            "defconfig": defconfig,
+            "target": target,
+            "artifact": artifact or rel_path.name,
+            "path": rel_path.as_posix(),
+            "bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+    )
+
+
+def input_role_for_path(rel_path: Path) -> str:
+    parts = rel_path.parts
+    if not parts:
+        return "preflight-input"
+    if parts[0] == "release-inputs":
+        return "binding-manifest"
+    if parts[0] == "release-lab-input" and rel_path.name == "qemu.json":
+        return "qemu-input"
+    if parts[0] == "release-lab-input" and rel_path.name == "lab.json":
+        return "lab-input"
+    if parts[0] == "release-governance":
+        return "governance-snapshot"
+    if parts[0] == "release-approvals":
+        return "approval"
+    if parts[0] == "release-security":
+        return "security-report"
+    if parts[0] == "release-reproducibility":
+        return "reproducibility-report"
+    return "preflight-input"
+
+
 def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]]:
     failures: list[str] = []
     binding = read_json(args.binding_manifest)
@@ -148,18 +202,35 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
             bound_digest = artifact.get("sha256")
             if digest != bound_digest:
                 failures.append(f"ingress artifact sha mismatch for {rel}: binding {bound_digest}, got {digest}")
-            files.append(
-                {
-                    "source": default_source,
-                    "role": artifact.get("role") or role_for_artifact(str(artifact.get("artifact", ""))),
-                    "defconfig": artifact.get("defconfig") or f"installer-{artifact.get('arch')}",
-                    "target": artifact.get("target") or artifact.get("arch"),
-                    "artifact": artifact.get("artifact"),
-                    "path": rel_path.as_posix(),
-                    "bytes": path.stat().st_size,
-                    "sha256": digest,
-                }
+            append_file_record(
+                files,
+                source=default_source,
+                role=artifact.get("role") or role_for_artifact(str(artifact.get("artifact", ""))),
+                defconfig=artifact.get("defconfig") or f"installer-{artifact.get('arch')}",
+                target=artifact.get("target") or artifact.get("arch"),
+                artifact=artifact.get("artifact"),
+                path=path,
+                rel_path=rel_path,
             )
+    if args.input_root is not None:
+        input_root = args.input_root
+        for dirname in PREFLIGHT_INPUT_DIRS:
+            root = input_root / dirname
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or path.stat().st_size <= 0:
+                    continue
+                rel_path = path.relative_to(input_root)
+                append_file_record(
+                    files,
+                    source="preflight-input",
+                    role=input_role_for_path(rel_path),
+                    path=path,
+                    rel_path=rel_path,
+                    defconfig=rel_path.parts[2] if len(rel_path.parts) > 3 and rel_path.parts[0] == "release-lab-input" else "release-input",
+                    target=rel_path.parts[2] if len(rel_path.parts) > 3 and rel_path.parts[0] == "release-lab-input" else "release-input",
+                )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "version": binding.get("version"),
@@ -227,6 +298,8 @@ def verify_manifest_signature(
 def validate_manifest(
     manifest_path: Path,
     artifact_root: Path | None,
+    input_root: Path | None = None,
+    binding_manifest: Path | None = None,
     expected_version: str | None = None,
     expected_source_sha: str | None = None,
     require_signature: bool = False,
@@ -257,6 +330,31 @@ def validate_manifest(
         check_string(failures, f"$.{field}", manifest.get(field))
     if expected_version is not None and manifest.get("version") != expected_version:
         failures.append(f"$.version: must match {expected_version}")
+    binding = None
+    if binding_manifest is not None:
+        try:
+            binding = read_json(binding_manifest)
+        except (OSError, json.JSONDecodeError) as exc:
+            failures.append(f"{binding_manifest}: cannot read binding manifest: {exc}")
+            binding = None
+        if isinstance(binding, dict):
+            for field in (
+                "version",
+                "profile",
+                "source_sha",
+                "source_run_id",
+                "source_run_attempt",
+                "build_workflow_name",
+                "matrix_sha256",
+                "buildroot_index_sha",
+                "buildroot_patchset_sha256",
+                "buildroot_effective_source_id",
+                "buildroot_applied_diff_sha256",
+                "buildroot_expected_patched",
+            ):
+                if field in binding or field in manifest:
+                    if str(manifest.get(field)) != str(binding.get(field)):
+                        failures.append(f"$.{field}: must match binding manifest")
     source_sha = manifest.get("source_sha")
     if not isinstance(source_sha, str) or not SOURCE_SHA_RE.fullmatch(source_sha):
         failures.append("$.source_sha: must be a lowercase git commit sha")
@@ -321,8 +419,8 @@ def validate_manifest(
         for field in ("role", "defconfig", "target", "artifact"):
             check_string(failures, f"{path}.{field}", item.get(field))
         source = item.get("source")
-        if source not in {"build-artifact", "build-evidence", "installer-artifact"}:
-            failures.append(f"{path}.source: must be build-artifact, build-evidence, or installer-artifact")
+        if source not in {"build-artifact", "build-evidence", "installer-artifact", "preflight-input"}:
+            failures.append(f"{path}.source: must be build-artifact, build-evidence, installer-artifact, or preflight-input")
         rel_path = check_relative_path(failures, f"{path}.path", item.get("path"))
         check_sha256(failures, f"{path}.sha256", item.get("sha256"))
         if not isinstance(item.get("bytes"), int) or item.get("bytes", 0) <= 0:
@@ -332,15 +430,16 @@ def validate_manifest(
             if rel in seen_paths:
                 failures.append(f"{path}.path: must be unique")
             seen_paths.add(rel)
-            if artifact_root is not None:
-                actual = artifact_root / rel_path
+            root = input_root if source == "preflight-input" else artifact_root
+            if root is not None:
+                actual = root / rel_path
                 if not actual.is_file() or actual.stat().st_size <= 0:
-                    failures.append(f"{path}.path: referenced artifact is missing or empty: {rel}")
+                    failures.append(f"{path}.path: referenced file is missing or empty: {rel}")
                 else:
                     if actual.stat().st_size != item.get("bytes"):
-                        failures.append(f"{path}.bytes: does not match artifact file size")
+                        failures.append(f"{path}.bytes: does not match referenced file size")
                     if sha256_file(actual) != item.get("sha256"):
-                        failures.append(f"{path}.sha256: does not match artifact file sha256")
+                        failures.append(f"{path}.sha256: does not match referenced file sha256")
     if require_signature:
         failures.extend(verify_manifest_signature(manifest_path, certificate_identity, certificate_oidc_issuer))
     return failures
@@ -362,6 +461,8 @@ def validate_command(args: argparse.Namespace) -> int:
     failures = validate_manifest(
         args.manifest,
         args.artifact_root,
+        args.input_root,
+        args.binding_manifest,
         args.expected_version,
         args.expected_source_sha,
         args.require_signature,
@@ -383,6 +484,7 @@ def main() -> int:
     create = subparsers.add_parser("create", help="create an ingress manifest from a binding and artifacts")
     create.add_argument("--binding-manifest", type=Path, required=True)
     create.add_argument("--artifact-root", type=Path, required=True)
+    create.add_argument("--input-root", type=Path)
     create.add_argument("--output", type=Path, required=True)
     create.add_argument("--repository", required=True)
     create.add_argument("--workflow", required=True)
@@ -395,6 +497,8 @@ def main() -> int:
     validate = subparsers.add_parser("validate", help="validate an ingress manifest")
     validate.add_argument("manifest", type=Path)
     validate.add_argument("--artifact-root", type=Path)
+    validate.add_argument("--input-root", type=Path)
+    validate.add_argument("--binding-manifest", type=Path)
     validate.add_argument("--expected-version")
     validate.add_argument("--expected-source-sha")
     validate.add_argument("--require-signature", action="store_true")

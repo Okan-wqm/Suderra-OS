@@ -23,7 +23,7 @@ branch = {
     "required_pull_request_reviews": {
         "require_code_owner_reviews": True,
         "dismiss_stale_reviews": True,
-        "required_approving_review_count": 1,
+        "required_approving_review_count": 2,
     },
     "required_status_checks": {
         "strict": True,
@@ -82,6 +82,11 @@ files = {
     "main-branch-protection.json": branch,
     "rulesets.json": rulesets,
     "release-publish-environment.json": environment,
+    "release-publish-deployment-branch-policies.json": {
+        "branch_policies": [
+            {"name": "v*", "type": "tag"}
+        ]
+    },
     "tag-protection.json": [{"pattern": "v*"}],
     "workflow-permissions.json": {
         "default_workflow_permissions": "read",

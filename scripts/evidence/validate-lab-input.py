@@ -49,7 +49,8 @@ REQUIRED_ARTIFACT_BINDING_FIELDS = (
     "version",
     "source_sha",
     "source_run_id",
-    "release_assets_sha256",
+    "build_artifact_sha256",
+    "build_artifact_bytes",
 )
 REQUIRED_DEVICE_IDENTITY_FIELDS = (
     "model",
@@ -94,6 +95,7 @@ REQUIRED_BOARDS_BY_TARGET = {
     ),
     "revpi4": ("revpi-connect-4",),
 }
+STRICT_PROFILES = {"release-candidate", "production-candidate"}
 
 
 def error(errors: list[str], path: str, message: str) -> None:
@@ -287,7 +289,7 @@ def validate_lab(
         return [f"{path}: top-level JSON value must be an object"]
     schema_version = payload.get("schema_version")
     if schema_version != SCHEMA_VERSION:
-        if profile == "release-candidate" or schema_version not in LEGACY_SCHEMA_VERSIONS:
+        if profile in STRICT_PROFILES or schema_version not in LEGACY_SCHEMA_VERSIONS:
             error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
     for field in ("version", "target", "generated_at", "lab_id", "operator"):
         check_string(errors, f"$.{field}", payload.get(field))
@@ -314,7 +316,8 @@ def validate_lab(
             error(errors, "$.artifact_binding", "must be an object")
         else:
             for field in REQUIRED_ARTIFACT_BINDING_FIELDS:
-                check_string(errors, f"$.artifact_binding.{field}", binding.get(field))
+                if field != "build_artifact_bytes":
+                    check_string(errors, f"$.artifact_binding.{field}", binding.get(field))
             if binding.get("version") != payload.get("version"):
                 error(errors, "$.artifact_binding.version", "must match top-level version")
             source_sha = binding.get("source_sha")
@@ -328,7 +331,9 @@ def validate_lab(
                     "$.artifact_binding.source_run_id",
                     f"must match bound source Build run {expected_source_run_id}",
                 )
-            check_sha256(errors, "$.artifact_binding.release_assets_sha256", binding.get("release_assets_sha256"))
+            check_sha256(errors, "$.artifact_binding.build_artifact_sha256", binding.get("build_artifact_sha256"))
+            if not isinstance(binding.get("build_artifact_bytes"), int) or binding.get("build_artifact_bytes", 0) <= 0:
+                error(errors, "$.artifact_binding.build_artifact_bytes", "must be a positive integer")
     devices = payload.get("devices")
     if not isinstance(devices, list) or not devices:
         error(errors, "$.devices", "must be a non-empty list")
@@ -361,6 +366,13 @@ def validate_lab(
                     error(errors, f"{device_path}.readback.actual_sha256", "must match expected_sha256")
                 if not isinstance(readback.get("bytes_read"), int) or readback.get("bytes_read", 0) <= 0:
                     error(errors, f"{device_path}.readback.bytes_read", "must be a positive integer")
+                if profile in STRICT_PROFILES and isinstance(binding, dict):
+                    bound_sha = binding.get("build_artifact_sha256")
+                    bound_bytes = binding.get("build_artifact_bytes")
+                    if isinstance(bound_sha, str) and expected_sha != bound_sha:
+                        error(errors, f"{device_path}.readback.expected_sha256", "must match bound build artifact sha256")
+                    if isinstance(bound_bytes, int) and readback.get("bytes_read") != bound_bytes:
+                        error(errors, f"{device_path}.readback.bytes_read", "must match bound build artifact bytes")
         check_status(errors, f"{device_path}.status", device.get("status"))
         if require_pass and device.get("status") != "passed":
             error(errors, f"{device_path}.status", "must be passed for release lab input")
@@ -435,14 +447,28 @@ def validate_lab(
         missing = sorted(set(REQUIRED_USB_NEGATIVE_TESTS) - names)
         if missing:
             error(errors, "$.negative_tests", f"missing required negative tests: {', '.join(missing)}")
+    seen_negative_tests: set[str] = set()
+    allowed_negative_tests = set(REQUIRED_USB_NEGATIVE_TESTS) if target == "pi-cm4-revpi-usb-installer" else None
     for idx, item in enumerate(negative_tests):
         item_path = f"$.negative_tests[{idx}]"
         if not isinstance(item, dict):
             error(errors, item_path, "must be an object")
             continue
         check_string(errors, f"{item_path}.name", item.get("name"))
+        name = item.get("name")
+        if isinstance(name, str):
+            if name in seen_negative_tests:
+                error(errors, f"{item_path}.name", "must be unique")
+            seen_negative_tests.add(name)
+            if allowed_negative_tests is not None and name not in allowed_negative_tests:
+                error(errors, f"{item_path}.name", "must be a known required USB negative test")
         check_string(errors, f"{item_path}.failure_code", item.get("failure_code"))
         check_status(errors, f"{item_path}.status", item.get("status"))
+        if is_v3:
+            for field in ("command", "expected", "observed"):
+                check_string(errors, f"{item_path}.{field}", item.get(field))
+            if not isinstance(item.get("exit_code"), int):
+                error(errors, f"{item_path}.exit_code", "must be an integer")
         check_relative_file(
             errors,
             root,
@@ -457,6 +483,13 @@ def validate_lab(
                 error(errors, f"{item_path}.write_prevention", "must be an object")
             elif write_prevention.get("target_hash_unchanged") is not True:
                 error(errors, f"{item_path}.write_prevention.target_hash_unchanged", "must be true")
+            else:
+                check_sha256(errors, f"{item_path}.write_prevention.before_sha256", write_prevention.get("before_sha256"))
+                check_sha256(errors, f"{item_path}.write_prevention.after_sha256", write_prevention.get("after_sha256"))
+                if write_prevention.get("before_sha256") != write_prevention.get("after_sha256"):
+                    error(errors, f"{item_path}.write_prevention.after_sha256", "must match before_sha256")
+                if not isinstance(write_prevention.get("bytes_checked"), int) or write_prevention.get("bytes_checked", 0) <= 0:
+                    error(errors, f"{item_path}.write_prevention.bytes_checked", "must be a positive integer")
         if require_pass and item.get("status") != "passed":
             error(errors, f"{item_path}.status", "must be passed for release lab input")
     return errors
@@ -517,7 +550,11 @@ def main() -> int:
     validate.add_argument("--expected-target")
     validate.add_argument("--expected-source-sha")
     validate.add_argument("--expected-source-run-id")
-    validate.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
+    validate.add_argument(
+        "--profile",
+        choices=("technical-dry-run", "release-candidate", "production-candidate"),
+        default="release-candidate",
+    )
     validate.set_defaults(func=validate_command)
     validate_matrix = subparsers.add_parser("validate-matrix")
     validate_matrix.add_argument("--version", required=True)
@@ -527,7 +564,11 @@ def main() -> int:
     validate_matrix.add_argument("--check-files", action="store_true")
     validate_matrix.add_argument("--expected-source-sha")
     validate_matrix.add_argument("--expected-source-run-id")
-    validate_matrix.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
+    validate_matrix.add_argument(
+        "--profile",
+        choices=("technical-dry-run", "release-candidate", "production-candidate"),
+        default="release-candidate",
+    )
     validate_matrix.set_defaults(func=validate_matrix_command)
     args = parser.parse_args()
     return args.func(args)

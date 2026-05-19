@@ -136,6 +136,7 @@ def build_evidence_entries(
         for role, artifact in (
             ("build-log", f"build-logs/{defconfig}.log"),
             ("warning-classifier-evidence", f"build-logs/{defconfig}.warnings.json"),
+            ("buildroot-source-identity", f"build-logs/{defconfig}.source-identity.json"),
         ):
             path = artifact_dir / artifact if artifact_dir is not None else None
             if path is None or not path.is_file():
@@ -192,6 +193,8 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         errors.append(f"version is not SemVer tag format: {args.version}")
     if args.profile == "release-candidate" and "-" not in args.version:
         errors.append("release-candidate profile requires a prerelease SemVer tag")
+    if args.profile == "production-candidate" and "-" in args.version:
+        errors.append("production-candidate profile requires a GA SemVer tag")
     if not SOURCE_SHA_RE.fullmatch(args.source_sha):
         errors.append("source_sha must be a lowercase git commit sha")
     matrix_path = args.matrix if args.matrix.is_absolute() else ROOT / args.matrix
@@ -316,7 +319,8 @@ def skeleton_lab(version: str, target: str, source_sha: str) -> dict[str, Any]:
             "version": version,
             "source_sha": source_sha,
             "source_run_id": "TO_BE_COLLECTED",
-            "release_assets_sha256": "0" * 64,
+            "build_artifact_sha256": "0" * 64,
+            "build_artifact_bytes": 0,
         },
         "devices": [],
         "negative_tests": [],
@@ -326,7 +330,7 @@ def skeleton_lab(version: str, target: str, source_sha: str) -> dict[str, Any]:
 def init_command(args: argparse.Namespace) -> int:
     matrix_path = args.matrix if args.matrix.is_absolute() else ROOT / args.matrix
     matrix, _matrix_module = load_matrix(matrix_path)
-    binding_output = args.output_root / "release-inputs" / args.version / "release-candidate.json"
+    binding_output = args.output_root / "release-inputs" / args.version / f"{args.profile}.json"
     plan_args = argparse.Namespace(**vars(args))
     plan_args.output = binding_output
     plan_args.require_artifacts = args.artifact_root is not None
@@ -399,7 +403,11 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--source-run-attempt", default="1")
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--build-workflow-name", default="Build")
-    parser.add_argument("--profile", choices=("technical-dry-run", "release-candidate"), default="release-candidate")
+    parser.add_argument(
+        "--profile",
+        choices=("technical-dry-run", "release-candidate", "production-candidate"),
+        default="release-candidate",
+    )
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     parser.add_argument("--artifact-root", type=Path)
 

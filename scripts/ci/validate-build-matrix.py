@@ -476,6 +476,9 @@ def validate(strict_production_variant: bool = False) -> int:
         if target["ci_build"] and "BR2_PACKAGE_HOST_GENIMAGE=y" not in config:
             errors.append(f"{name}: ci_build target must select BR2_PACKAGE_HOST_GENIMAGE=y")
 
+        if target["release"] and not target["ci_build"]:
+            errors.append(f"{name}: release target must also be reachable by CI build")
+
         if target["production_required"] and not target["production_ready"] and not target["blocker"]:
             errors.append(f"{name}: production blocker must be documented while production_ready=false")
 
@@ -486,6 +489,11 @@ def validate(strict_production_variant: bool = False) -> int:
             )
 
         if target["production_ready"]:
+            if target["arch"] == "aarch64" and target["boot_mode"] in {
+                "rpi-firmware-installer",
+                "u-boot-signed-fit-required",
+            }:
+                errors.append(f"{name}: ARM/RPi direct firmware boot cannot be production_ready")
             if not has_prod_variant:
                 errors.append(f"{name}: production_ready target must select BR2_PACKAGE_SUDERRA_VARIANT_PROD")
             signing = str(target["signing"])

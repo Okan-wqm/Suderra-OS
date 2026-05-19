@@ -46,6 +46,7 @@ SEMANTIC_CHECKS = {
     "listeners",
     "firewall",
 }
+STRICT_PROFILES = {"release-candidate", "production-candidate"}
 
 
 def error(errors: list[str], path: str, message: str) -> None:
@@ -164,11 +165,11 @@ def validate(
         return [f"{path}: top-level JSON value must be an object"]
     schema_version = payload.get("schema_version")
     if schema_version != SCHEMA_VERSION:
-        if profile == "release-candidate" or schema_version not in LEGACY_SCHEMA_VERSIONS:
+        if profile in STRICT_PROFILES or schema_version not in LEGACY_SCHEMA_VERSIONS:
             error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
     for field in ("version", "target", "generated_at", "image", "qemu_version", "firmware"):
         check_string(errors, f"$.{field}", payload.get(field))
-        if profile == "release-candidate" and payload.get("status") == "passed":
+        if profile in STRICT_PROFILES and payload.get("status") == "passed":
             check_non_placeholder(errors, f"$.{field}", payload.get(field))
     check_sha256(errors, "$.image_sha256", payload.get("image_sha256"))
     check_sha256(errors, "$.firmware_sha256", payload.get("firmware_sha256"))
@@ -202,7 +203,7 @@ def validate(
                 expected_sha,
                 allow_empty,
             )
-    if profile == "release-candidate":
+    if profile in STRICT_PROFILES:
         missing_roles = sorted(REQUIRED_LOG_ROLES - log_roles)
         if missing_roles:
             error(errors, "$.logs", f"missing required log roles: {', '.join(missing_roles)}")
@@ -221,7 +222,7 @@ def validate(
             error(errors, f"$.checks.{name}.status", "must be passed, failed, or not_applicable")
         if require_pass and result.get("status") != "passed":
             error(errors, f"$.checks.{name}.status", "must be passed for release QEMU input")
-        if profile == "release-candidate" and name in SEMANTIC_CHECKS:
+        if profile in STRICT_PROFILES and name in SEMANTIC_CHECKS:
             if not isinstance(result.get("evidence"), str) or not result.get("evidence", "").strip():
                 error(errors, f"$.checks.{name}.evidence", "must describe machine-collected evidence")
             else:
@@ -233,7 +234,7 @@ def validate(
     facts = payload.get("guest_facts")
     if not isinstance(facts, dict):
         error(errors, "$.guest_facts", "must be an object")
-    elif profile == "release-candidate":
+    elif profile in STRICT_PROFILES:
         for field in ("os_release", "kernel", "rootfs", "network", "listeners", "firewall", "firstboot", "lockdown"):
             if field not in facts:
                 error(errors, f"$.guest_facts.{field}", "must be collected for release-candidate QEMU input")
@@ -258,7 +259,11 @@ def main() -> int:
     parser.add_argument("input", type=Path)
     parser.add_argument("--check-files", action="store_true")
     parser.add_argument("--require-pass", action="store_true")
-    parser.add_argument("--profile", choices=("smoke", "technical-dry-run", "release-candidate"), default="release-candidate")
+    parser.add_argument(
+        "--profile",
+        choices=("smoke", "technical-dry-run", "release-candidate", "production-candidate"),
+        default="release-candidate",
+    )
     parser.add_argument("--expected-version")
     parser.add_argument("--expected-target")
     parser.add_argument("--expected-source-sha")

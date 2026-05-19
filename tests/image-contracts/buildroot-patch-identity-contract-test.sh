@@ -38,6 +38,10 @@ grep -q 'apply --check "${patch}"' "${ROOT}/scripts/apply-buildroot-patches.sh" 
     echo "ERROR: Buildroot patch application must try normal git apply before any fallback" >&2
     exit 1
 }
+grep -q 'dirty before Suderra patches' "${ROOT}/scripts/apply-buildroot-patches.sh" || {
+    echo "ERROR: Buildroot patch application must reject pre-existing dirty submodule state" >&2
+    exit 1
+}
 grep -q 'Falling back to --unidiff-zero' "${ROOT}/scripts/apply-buildroot-patches.sh" || {
     echo "ERROR: zero-context Buildroot patch fallback must be explicit and auditable" >&2
     exit 1

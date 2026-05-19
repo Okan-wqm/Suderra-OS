@@ -17,6 +17,15 @@ Release as enterprise release evidence until the P0 findings below are closed.
 Residual risk may not waive these gaps because the problem is missing proof, not
 accepted product risk.
 
+## Implementation Update
+
+This review records the gaps at the reviewed HEAD above. Subsequent
+implementation changed the release path to publish a signed
+`release-evidence-<version>.tar.zst` archive, removed loose
+`release-evidence-generated/**/*.json` files from GitHub Release publication,
+added a validated `release-publication-manifest.json`, and bound the tag
+workflow to structured signed-tag preflight metadata.
+
 ## Severity Findings
 
 ### P0-1: Published release evidence is not a portable signed evidence bundle
@@ -630,3 +639,34 @@ Acceptance:
 4. Only then run the RC preflight path end to end on a disposable alpha tag.
 5. Do not start production-track work until the alpha RC path produces a
    portable signed evidence bundle from a clean checkout.
+
+## 2026-05-19 Implementation Update
+
+Closed locally:
+
+- Release tag binding now requires trusted tag signer fingerprints, emits the
+  bound preflight run ID as workflow output, and cross-binds tag metadata,
+  release input binding, and ingress manifest metadata before staging bytes.
+- Ingress validation can compare against the release input binding and can
+  digest the preflight input tree in addition to Build artifact bytes.
+- Final release evidence now preserves preflight approval, reproducibility,
+  security, QEMU, and lab inputs; `--require-pass --check-files` replays the
+  corresponding input validators instead of trusting flattened projections.
+- Buildroot effective source ID now binds the applied diff when patches are
+  expected; patched release identity without `buildroot_applied_diff_sha256`
+  fails.
+- Governance collection now requires an explicit governance read token and
+  validates release environment deployment policies and required reviewer
+  identities.
+- Flash acceptance now implies signature verification and validates removable
+  status using the resolved top-level by-id disk.
+
+Still blocking enterprise closure:
+
+- Live GitHub admin bootstrap must create the actual branch/ruleset/tag and
+  `release-publish` environment controls before release-candidate preflight can
+  pass.
+- QEMU semantic and hardware lab collector CLIs are still required so operators
+  do not hand-author evidence.
+- Release OS/rootfs security scanner producer remains separate from source
+  scanner CI and must retain scanner DB identity for release-candidate evidence.
