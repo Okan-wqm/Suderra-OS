@@ -48,6 +48,9 @@ KNOWN_UPSTREAM_PATTERNS = (
 LOCATION_RE = re.compile(
     r"^(?P<location>.*?):\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?P<body>(?:warning|WARNING):.*)$"
 )
+FRAGMENTED_POSIX_YACC_RE = re.compile(
+    r"^(?:\.?\d+(?:[.-]\d+)+): (?P<body>warning: POSIX Yacc does not support\b.*)$"
+)
 BUILD_OUTPUT_PATH_RE = re.compile(r"(?:/workspace/|\.\./)?output/[^/\s'`]+/")
 AUTOCONF_PREFIXED_LOCATION_RE = re.compile(
     r"^checking .*?\.\.\. (?P<diagnostic>.*?:\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?:warning|WARNING):.*)$"
@@ -72,6 +75,7 @@ class WarningLine:
     text: str
     category: str
     fingerprint: str
+    raw_fingerprint: str
     package: str | None
 
 
@@ -114,7 +118,7 @@ def normalize_warning_text(text: str) -> str:
     return text
 
 
-def fingerprint(text: str) -> str:
+def raw_fingerprint(text: str) -> str:
     stable_text = stable_warning_text(text)
     probe_match = AUTOCONF_PREFIXED_LOCATION_RE.match(stable_text)
     if probe_match:
@@ -129,6 +133,14 @@ def fingerprint(text: str) -> str:
     if not location:
         return body
     return f"{location}: {body}"
+
+
+def fingerprint(text: str) -> str:
+    stable_text = stable_warning_text(text)
+    fragmented_yacc = FRAGMENTED_POSIX_YACC_RE.match(stable_text)
+    if fragmented_yacc:
+        return fragmented_yacc.group("body")
+    return raw_fingerprint(text)
 
 
 def canonical_package_fingerprint(package: str | None, raw_fingerprint: str) -> str:
@@ -152,16 +164,19 @@ def collect(path: Path) -> list[WarningLine]:
             current_package = "buildroot-kconfig"
         if not (WARNING_RE.search(raw) or BUILD_ENV_FAILURE_RE.search(raw)):
             continue
-        raw_fingerprint = canonical_package_fingerprint(current_package, fingerprint(raw.strip()))
+        raw_key = raw_fingerprint(raw.strip())
+        canonical_key = canonical_package_fingerprint(current_package, fingerprint(raw.strip()))
         if current_package and not OWNED_PATH_RE.search(raw):
-            raw_fingerprint = f"{current_package}: {raw_fingerprint}"
+            raw_key = f"{current_package}: {raw_key}"
+            canonical_key = f"{current_package}: {canonical_key}"
         warnings.append(
             WarningLine(
                 path=str(path),
                 line_number=line_number,
                 text=raw.strip(),
                 category=classify(raw, current_package),
-                fingerprint=raw_fingerprint,
+                fingerprint=canonical_key,
+                raw_fingerprint=raw_key,
                 package=current_package,
             )
         )

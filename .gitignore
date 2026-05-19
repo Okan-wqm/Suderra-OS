@@ -73,3 +73,14 @@ Cargo.lock
 # Test outputs
 test-results/
 *.log
+/build-logs/
+
+# Release evidence/operator inputs generated outside source control
+/release-lab-input/
+/release-security/
+/release-reproducibility/
+/release-approvals/
+/release-governance/
+/release-ingress/
+/release-evidence-generated/
+/signed-release/

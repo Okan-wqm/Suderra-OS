@@ -76,7 +76,7 @@ Buildroot her crate'i kendi paketi olarak build eder:
 
 `rust-toolchain.toml` ile pinned:
 
-- **Rust 1.85.0** (2024 edition, MSRV)
+- **Rust 1.86.0** (current pinned toolchain; MSRV proof is tracked separately)
 - `cargo`, `rustfmt`, `clippy`, `rust-src`
 - Target: `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`
 

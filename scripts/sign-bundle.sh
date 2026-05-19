@@ -14,6 +14,18 @@ IFS=$'\n\t'
 
 BUNDLE="${1:?Kullanım: $0 <bundle.raucb>}"
 KEYS_DIR="${SUDERRA_TRUST_ROOTS_DIR:-${SUDERRA_KEYS_DIR:-${HOME}/.suderra-keys/dev}}"
+PROD_MODE=0
+if [ "${SUDERRA_SIGNING_MODE:-}" = "prod" ] || [ "${SUDERRA_RELEASE_TIER:-}" = "production" ]; then
+    PROD_MODE=1
+fi
+
+warn_or_fail() {
+    if [ "${PROD_MODE}" -eq 1 ]; then
+        echo "ERROR: $*" >&2
+        exit 1
+    fi
+    echo "WARNING: $*" >&2
+}
 
 if [ ! -f "${BUNDLE}" ]; then
     echo "ERROR: Bundle yok: ${BUNDLE}"
@@ -22,16 +34,27 @@ fi
 
 # 1. RAUC re-sign (eğer bundle henüz imzasız ise)
 if [ -f "${KEYS_DIR}/rauc-signing.key" ]; then
-    echo "==> RAUC bundle imzalama: ${BUNDLE}"
-    # rauc bundle resign zaten imzalı bundle'ı yeniden imzalar
-    rauc resign \
-        --cert="${KEYS_DIR}/rauc-signing.crt" \
-        --key="${KEYS_DIR}/rauc-signing.key" \
-        "${BUNDLE}" \
-        "${BUNDLE}.signed"
-    mv "${BUNDLE}.signed" "${BUNDLE}"
+    RAUC_READY=1
+    if [ ! -f "${KEYS_DIR}/rauc-signing.crt" ]; then
+        warn_or_fail "RAUC signing cert yok: ${KEYS_DIR}/rauc-signing.crt"
+        RAUC_READY=0
+    fi
+    if ! command -v rauc >/dev/null 2>&1; then
+        warn_or_fail "rauc yüklü değil"
+        RAUC_READY=0
+    fi
+    if [ "${RAUC_READY}" -eq 1 ]; then
+        echo "==> RAUC bundle imzalama: ${BUNDLE}"
+        # rauc bundle resign zaten imzalı bundle'ı yeniden imzalar
+        rauc resign \
+            --cert="${KEYS_DIR}/rauc-signing.crt" \
+            --key="${KEYS_DIR}/rauc-signing.key" \
+            "${BUNDLE}" \
+            "${BUNDLE}.signed"
+        mv "${BUNDLE}.signed" "${BUNDLE}"
+    fi
 else
-    echo "WARNING: RAUC signing key yok: ${KEYS_DIR}/rauc-signing.key"
+    warn_or_fail "RAUC signing key yok: ${KEYS_DIR}/rauc-signing.key"
 fi
 
 # 2. Cosign signing (SLSA Level 2+)
@@ -54,11 +77,11 @@ if command -v cosign >/dev/null 2>&1; then
                 --output-signature="${BUNDLE}.sig" \
                 "${BUNDLE}"
         else
-            echo "WARNING: cosign.key yok, atlıyor"
+            warn_or_fail "cosign.key yok, atlıyor"
         fi
     fi
 else
-    echo "WARNING: cosign yüklü değil (https://docs.sigstore.dev/cosign/installation/)"
+    warn_or_fail "cosign yüklü değil (https://docs.sigstore.dev/cosign/installation/)"
 fi
 
 echo "==> İmzalama tamamlandı: ${BUNDLE}"

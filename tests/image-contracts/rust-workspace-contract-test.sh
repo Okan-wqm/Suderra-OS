@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 EXTERNAL_MK="${ROOT}/external.mk"
 LOCKFILE="${ROOT}/userspace/Cargo.lock"
+TOOLCHAIN="${ROOT}/userspace/rust-toolchain.toml"
+WORKSPACE="${ROOT}/userspace/Cargo.toml"
 
 grep -q 'SUDERRA_RUST_WORKSPACE_BUILD' "${EXTERNAL_MK}" ||
     {
@@ -40,6 +42,25 @@ test -f "${LOCKFILE}" ||
         echo "ERROR: userspace/Cargo.lock must be present for fail-closed Rust builds" >&2
         exit 1
     }
+grep -q 'channel = "1.86.0"' "${TOOLCHAIN}" ||
+    {
+        echo "ERROR: userspace/rust-toolchain.toml must pin Rust 1.86.0" >&2
+        exit 1
+    }
+grep -q 'rust-version = "1.86"' "${WORKSPACE}" ||
+    {
+        echo "ERROR: userspace/Cargo.toml must declare rust-version 1.86" >&2
+        exit 1
+    }
+grep -q 'RUST_VERSION = 1.86.0' "${ROOT}/patches/buildroot/0001-buildroot-rust-1.86.0.patch" ||
+    {
+        echo "ERROR: Buildroot Rust patch must carry the Rust 1.86.0 package version" >&2
+        exit 1
+    }
+if grep -R 'Rust 1\.85' "${ROOT}/docs/dev/rust-workspace.md" "${ROOT}/userspace/README.md" "${ROOT}/docs/architecture/ARCHITECTURE.md"; then
+    echo "ERROR: active Rust docs must not describe Rust 1.85 as the current pin" >&2
+    exit 1
+fi
 git -C "${ROOT}" ls-files --error-unmatch userspace/Cargo.lock >/dev/null ||
     {
         echo "ERROR: userspace/Cargo.lock must be tracked in git" >&2

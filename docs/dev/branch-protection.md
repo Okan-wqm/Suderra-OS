@@ -10,7 +10,7 @@ içinde saklanır.
 | Ayar | Değer | Neden |
 |---|---|---|
 | Require PR before merging | ✓ | Code review zorunlu |
-| Require approvals | 1 (Faz 4+: 2 for security/kernel) | Quality gate |
+| Require approvals | 2 | Enterprise release governance |
 | Dismiss stale reviews when new commits pushed | ✓ | Review güncel kalsın |
 | Require review from CODEOWNERS | ✓ | Alan uzmanı onayı |
 | Require status checks before merging | ✓ | CI yeşil zorunlu |
@@ -28,6 +28,8 @@ içinde saklanır.
 | - `Build / Build rpi4` | ✓ | RPi4 image contract |
 | - `Build / Build revpi4` | ✓ | RevPi4 image contract |
 | - `Build / Build payload image pi-cm4-revpi-usb-installer` | ✓ | USB installer image contract |
+| - `Build / Build suderra-installer (x86_64)` | ✓ | Preflight-bound installer binary |
+| - `Build / Build suderra-installer (aarch64)` | ✓ | Preflight-bound installer binary |
 | - `Build / QEMU boot smoke test (qemu-x86_64)` | ✓ | Boot smoke |
 | - `Security Scan / Trivy (filesystem)` | ✓ | CVE scan |
 | - `Security Scan / Trivy (config / Dockerfile)` | ✓ | Config security |
@@ -61,7 +63,8 @@ Aynı kurallar + ek:
 
 `release-publish` environment'ı GitHub Environments altında tanımlanır:
 
-- Required reviewers: release manager veya maintainer
+- Required reviewers: release manager ve maintainer/security-compliance rolünden
+  iki farklı GitHub kullanıcısı
 - Deployment branches/tags: selected refs `refs/tags/v*`
 - Secrets: bu workflow için secret gerekmez; cosign ve provenance GitHub OIDC ile çalışır
 
@@ -76,9 +79,10 @@ Release workflow iki yetki alanına ayrılmıştır:
 
 Manual `workflow_dispatch` release yoktur. Release workflow yalnızca
 `refs/tags/v*` push ile çalışır; branch ref'inden tag artifact'i imzalanmaz.
-Alpha `release-publish` için tek release owner onayı kabul edilir. Pilot,
-public pre-release ve production yayınlarında release owner ile
-security/compliance approver farklı GitHub kullanıcıları olmalıdır.
+Enterprise alpha dahil tüm `release-publish` onaylarında iki farklı rol gerekir:
+release owner ve maintainer/security-compliance approver. Tek release owner
+onayı yalnız local technical dry-run için kabul edilir; GitHub Release yayınına
+yetmez.
 
 ## Rule sets API (GitHub UI dışında)
 

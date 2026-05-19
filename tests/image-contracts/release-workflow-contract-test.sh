@@ -34,10 +34,14 @@ grep -q 'source_run_id:' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must bind an exact source_run_id input" >&2
     exit 1
 }
-if grep -q 'contents: write' "${PREFLIGHT_WORKFLOW}" || grep -q 'id-token: write' "${PREFLIGHT_WORKFLOW}"; then
-    echo "ERROR: release preflight must not have publish/signing permissions" >&2
+if grep -q 'contents: write' "${PREFLIGHT_WORKFLOW}"; then
+    echo "ERROR: release preflight must not have publish permissions" >&2
     exit 1
 fi
+grep -q 'id-token: write' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must have OIDC permission to sign ingress" >&2
+    exit 1
+}
 grep -q 'release-preflight-' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight artifact name must include version and source_sha" >&2
     exit 1
@@ -50,8 +54,76 @@ grep -Fq 'release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}' "${RELEA
     echo "ERROR: release workflow must bind only release-candidate preflight artifacts" >&2
     exit 1
 }
+grep -q 'Suderra-Preflight-Run-ID' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must use an explicit annotated-tag preflight run ID" >&2
+    exit 1
+}
+if grep -q -- '--limit 50' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not discover preflight runs by scanning recent runs" >&2
+    exit 1
+fi
 grep -q 'validate-release-artifact-binding.py' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must compare staged release bytes to the preflight binding" >&2
+    exit 1
+}
+grep -q 'release-ingress.py create' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must create a release ingress manifest" >&2
+    exit 1
+}
+grep -q 'cosign sign-blob' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must sign the ingress manifest" >&2
+    exit 1
+}
+grep -q 'release-ingress.py validate' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate the signed release ingress manifest" >&2
+    exit 1
+}
+grep -q -- '--require-ingress-signature' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must require ingress signature verification" >&2
+    exit 1
+}
+grep -q 'build-artifacts/' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight artifact must carry preflight-bound Build bytes" >&2
+    exit 1
+}
+if grep -q -- 'gh run download.*--dir build-artifacts$' "${PREFLIGHT_WORKFLOW}"; then
+    echo "ERROR: release preflight must download explicit Build artifact names, not the whole run" >&2
+    exit 1
+fi
+grep -q 'build-artifacts/' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must stage from preflight-bound Build bytes" >&2
+    exit 1
+}
+if grep -q 'build-in-docker.sh' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must promote preflight-bound image bytes, not rebuild images" >&2
+    exit 1
+fi
+if grep -q 'Download all artifacts' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not download unbound workflow artifacts" >&2
+    exit 1
+fi
+if grep -q 'cargo install cross' "${RELEASE_WORKFLOW}" || grep -q 'cross build -p suderra-installer' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not rebuild installer binaries after preflight" >&2
+    exit 1
+fi
+grep -Fq 'name: installer-${{ matrix.arch }}' "${BUILD_WORKFLOW}" || {
+    echo "ERROR: Build workflow must produce preflight-bound installer artifacts" >&2
+    exit 1
+}
+grep -q 'release-evidence-.*\.tar\.zst' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must publish a compressed release evidence archive" >&2
+    exit 1
+}
+grep -q 'release-publication-manifest.json' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must publish a final publication manifest" >&2
+    exit 1
+}
+grep -q 'release-publication-manifest.json.sig' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must sign the final publication manifest" >&2
+    exit 1
+}
+grep -q 'Final publication provenance attestation' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must attest final publication bytes" >&2
     exit 1
 }
 grep -q 'preflight-binding:' "${RELEASE_WORKFLOW}" || {

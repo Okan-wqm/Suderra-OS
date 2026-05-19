@@ -6,6 +6,7 @@ SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 POST_IMAGE="${PROJECT_ROOT}/board/suderra/common/post-image.sh"
 POST_BUILD="${PROJECT_ROOT}/board/suderra/common/post-build.sh"
+SIGN_BUNDLE="${PROJECT_ROOT}/scripts/sign-bundle.sh"
 
 grep -q 'BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${POST_IMAGE}"
 grep -q 'BR2 Suderra variant.*conflicts with SUDERRA_VARIANT' "${POST_IMAGE}"
@@ -19,3 +20,8 @@ grep -q 'BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${POST_BUILD}"
 grep -q 'BR2 Suderra variant.*conflicts with SUDERRA_VARIANT' "${POST_BUILD}"
 grep -q 'requires BR2_CONFIG or SUDERRA_VARIANT' "${POST_BUILD}"
 grep -q 'SUDERRA_VARIANT must be dev or prod' "${POST_BUILD}"
+
+grep -q 'SUDERRA_SIGNING_MODE' "${SIGN_BUNDLE}"
+grep -q 'SUDERRA_RELEASE_TIER' "${SIGN_BUNDLE}"
+grep -q 'PROD_MODE' "${SIGN_BUNDLE}"
+grep -q 'warn_or_fail' "${SIGN_BUNDLE}"

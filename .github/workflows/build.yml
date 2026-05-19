@@ -94,6 +94,8 @@ jobs:
           fi
           echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
           echo "Buildroot pinned at ${expected_sha}"
+          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}"
+          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}"
 
       - name: Compute installer payload metadata
         id: payload_meta
@@ -170,6 +172,7 @@ jobs:
         run: |
           set -euo pipefail
           set -x
+          ./scripts/apply-buildroot-patches.sh buildroot
           # Önce sadece defconfig parse edebiliyor muyuz?
           make -C buildroot \
             BR2_EXTERNAL="$(pwd)" \
@@ -407,6 +410,7 @@ jobs:
         run: |
           set -euo pipefail
           set -x
+          ./scripts/apply-buildroot-patches.sh buildroot
           make -C buildroot \
             BR2_EXTERNAL="$(pwd)" \
             O="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}" \
@@ -531,6 +535,63 @@ jobs:
         with:
           name: ${{ matrix.defconfig }}-image
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
+          retention-days: 30
+          if-no-files-found: error
+
+  build-installer:
+    name: Build suderra-installer (${{ matrix.arch }})
+    needs: matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-musl
+      - name: Install musl build tooling
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends musl-tools
+          else
+            cargo install cross --version 0.2.5 --locked
+          fi
+      - name: Build installer binary
+        working-directory: userspace
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            cargo build -p suderra-installer \
+              --locked \
+              --target x86_64-unknown-linux-musl \
+              --release
+          else
+            cross build -p suderra-installer \
+              --locked \
+              --target aarch64-unknown-linux-musl \
+              --release
+          fi
+      - name: Package installer artifact
+        run: |
+          set -euo pipefail
+          bin="userspace/target/${{ matrix.arch }}-unknown-linux-musl/release/suderra-installer"
+          out="suderra-installer-${{ matrix.arch }}"
+          cp "${bin}" "${out}"
+          sha256sum "${out}" > "${out}.sha256"
+          ls -lh "${out}" "${out}.sha256"
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-${{ matrix.arch }}
+          path: |
+            suderra-installer-${{ matrix.arch }}
+            suderra-installer-${{ matrix.arch }}.sha256
           retention-days: 30
           if-no-files-found: error
 

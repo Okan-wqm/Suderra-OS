@@ -18,6 +18,7 @@ cat > "${TMP_DIR}/upstream.log" <<'LOG'
 gengtype-lex.cc:356:15: warning: this statement may fall through [-Wimplicit-fallthrough=]
 plural.y:51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 :51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
+.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 libtool: install: warning: remember to run `libtool --finish /tmp/example'
 libtool: install: warning: remember to run `libtool --finish /workspace/output/foo_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'
 libtool: install: warning: remember to run `libtool --finish ../output/bar_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'
@@ -75,9 +76,11 @@ import json
 import sys
 
 evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
-assert evidence["summary"] == {"known-upstream": 26, "owned": 0, "third-party": 0}
+assert evidence["summary"] == {"known-upstream": 27, "owned": 0, "third-party": 0}
 assert evidence["unique_fingerprints"] == 17
-assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 2
+assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 3
+raw = {warning["raw_fingerprint"] for warning in evidence["warnings"]}
+assert ".1-7: warning: POSIX Yacc does not support %define [-Wyacc]" in raw
 assert evidence["fingerprints"]["libtool: install: warning: remember to run `libtool --finish $OUTPUT_DIR/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'"] == 2
 assert evidence["fingerprints"]["libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries"] == 2
 assert evidence["fingerprints"]["configure: WARNING: Continuing even with errors mentioned immediately above this line."] == 2
@@ -124,6 +127,42 @@ if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
     --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
     "${TMP_DIR}/third-party.log" >/dev/null 2>&1; then
     echo "ERROR: warning policy did not reject unclassified third-party warning" >&2
+    exit 1
+fi
+
+cat > "${TMP_DIR}/revpi-posix-yacc-fragment.log" <<'LOG'
+>>> glibc 2.40 Building
+.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
+LOG
+
+python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
+    --json-output "${TMP_DIR}/revpi-posix-yacc-fragment.json" \
+    "${TMP_DIR}/revpi-posix-yacc-fragment.log" >/dev/null
+
+python3 - "${TMP_DIR}/revpi-posix-yacc-fragment.json" <<'PY'
+import json
+import sys
+
+evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
+warning = evidence["warnings"][0]
+assert warning["fingerprint"] == "glibc: warning: POSIX Yacc does not support %define [-Wyacc]"
+assert warning["raw_fingerprint"] == "glibc: .1-7: warning: POSIX Yacc does not support %define [-Wyacc]"
+assert evidence["fingerprints"] == {
+    "glibc: warning: POSIX Yacc does not support %define [-Wyacc]": 1,
+}
+assert not evidence["policy_errors"]
+PY
+
+cat > "${TMP_DIR}/fragment-negative.log" <<'LOG'
+>>> glibc 2.40 Building
+.1-7: warning: unrelated parser warning requiring triage [-Wother]
+LOG
+
+if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
+    "${TMP_DIR}/fragment-negative.log" >/dev/null 2>&1; then
+    echo "ERROR: unrelated fragmented warning was incorrectly canonicalized into policy" >&2
     exit 1
 fi
 

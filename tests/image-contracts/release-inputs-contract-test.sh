@@ -14,6 +14,7 @@ BUILDROOT_INDEX_SHA="$(git -C "${PROJECT_ROOT}" ls-tree HEAD buildroot | awk '{p
 python3 - "${TMPDIR}" "${VERSION}" "${SOURCE_SHA}" "${BUILDROOT_INDEX_SHA}" "${PROJECT_ROOT}" <<'PY'
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -237,13 +238,46 @@ for target in ("qemu-x86_64", "rpi4", "pi-cm4-revpi-usb-installer", "revpi4"):
     write_json(
         root / "release-approvals" / version / f"{target}.json",
         {
-            "schema_version": "suderra.release-approval.v1",
+            "schema_version": "suderra.release-approval.v2",
             "version": version,
             "target": target,
-            "status": "approved",
-            "approver": "contract",
-            "approved_at": "2026-05-13T00:00:00Z",
-            "decision": "approve alpha residual risk",
+            "source_sha": source_sha,
+            "approvals": [
+                {
+                    "role": "release-owner",
+                    "name": "contract",
+                    "approved_at": "2026-05-13T00:00:00Z",
+                    "ticket": "TEST-APPROVAL",
+                },
+                {
+                    "role": "security-compliance",
+                    "name": "contract-security",
+                    "approved_at": "2026-05-13T00:00:00Z",
+                    "ticket": "TEST-APPROVAL",
+                }
+            ],
+            "residual_risk": {
+                "status": "accepted",
+                "items": [
+                    {
+                        "id": "RR-ALPHA-001",
+                        "severity": "high",
+                        "description": "Alpha release intentionally lacks production gates.",
+                        "mitigation": "Keep release prerelease-only.",
+                        "owner": "release-owner@example.com",
+                        "ticket": "TEST-APPROVAL",
+                    }
+                ],
+                "accepted_by": "release-owner@example.com",
+                "accepted_at": "2026-05-13T00:00:00Z",
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+            "release_decision": {
+                "status": "approved_with_residual_risk",
+                "decided_by": "contract",
+                "decided_at": "2026-05-13T00:00:00Z",
+                "rationale": "approve alpha residual risk",
+            },
         },
     )
     write(root / "release-reproducibility" / version / f"{target}.log", "reproducibility matched\n")
@@ -281,6 +315,7 @@ for scan in (
     )
 
 binding_artifacts = []
+build_evidence = []
 for defconfig, target, artifacts in (
     ("suderra_qemu_x86_64_defconfig", "qemu-x86_64", ("disk.img", "disk.img.xz", "MANIFEST.txt")),
     (
@@ -319,22 +354,137 @@ for defconfig, target, artifacts in (
                 "sha256": digest,
             }
         )
+    for artifact, role in (
+        (f"build-logs/{defconfig}.log", "build-log"),
+        (f"build-logs/{defconfig}.warnings.json", "warning-classifier-evidence"),
+    ):
+        build_evidence.append(
+            {
+                "role": role,
+                "defconfig": defconfig,
+                "target": target,
+                "artifact": artifact,
+                "path": f"{defconfig}-build-logs/{artifact}",
+                "bytes": 128,
+                "sha256": hashlib.sha256(f"{defconfig}:{artifact}".encode("utf-8")).hexdigest(),
+            }
+        )
+installers = []
+for arch in ("x86_64", "aarch64"):
+    for artifact, role in (
+        (f"suderra-installer-{arch}", "installer"),
+        (f"suderra-installer-{arch}.sha256", "checksum"),
+    ):
+        installers.append(
+            {
+                "role": role,
+                "arch": arch,
+                "artifact": artifact,
+                "path": f"installer-{arch}/{artifact}",
+                "bytes": 256,
+                "sha256": hashlib.sha256(f"{arch}:{artifact}".encode("utf-8")).hexdigest(),
+            }
+        )
+metadata = json.loads(
+    subprocess.check_output(
+        [
+            sys.executable,
+            str(project_root / "scripts" / "ci" / "buildroot-patch-identity.py"),
+            "metadata",
+            "--source-sha",
+            source_sha,
+        ],
+        text=True,
+    )
+)
+binding = {
+    "schema_version": "suderra.release-input-binding.v1",
+    "profile": "release-candidate",
+    "version": version,
+    "source_sha": source_sha,
+    "source_run_id": "123456789",
+    "source_run_attempt": "1",
+    "build_workflow_name": "Build",
+    "matrix_path": "ci/build-matrix.yml",
+    "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
+    "artifacts": binding_artifacts,
+    "build_evidence": build_evidence,
+    "installers": installers,
+    "userspace_cargo_lock_sha256": hashlib.sha256((project_root / "userspace" / "Cargo.lock").read_bytes()).hexdigest(),
+    "userspace_rust_toolchain_sha256": hashlib.sha256((project_root / "userspace" / "rust-toolchain.toml").read_bytes()).hexdigest(),
+    "release_targets": [],
+    "generated_at": "2026-05-13T00:00:00Z",
+}
+binding.update(metadata)
 write_json(
     root / "release-inputs" / version / "release-candidate.json",
+    binding,
+)
+ingress_files = []
+for source, items in (
+    ("build-artifact", binding_artifacts),
+    ("build-evidence", build_evidence),
+):
+    for item in items:
+        ingress_files.append(
+            {
+                "source": source,
+                "role": item.get("role", "release-image" if item["artifact"].endswith((".img", ".img.xz")) else "build-artifact"),
+                "defconfig": item["defconfig"],
+                "target": item["target"],
+                "artifact": item["artifact"],
+                "path": item["path"],
+                "bytes": item["bytes"],
+                "sha256": item["sha256"],
+            }
+        )
+for item in installers:
+    ingress_files.append(
+        {
+            "source": "installer-artifact",
+            "role": item["role"],
+            "defconfig": f"installer-{item['arch']}",
+            "target": item["arch"],
+            "artifact": item["artifact"],
+            "path": item["path"],
+            "bytes": item["bytes"],
+            "sha256": item["sha256"],
+        }
+    )
+write_json(
+    root / "release-ingress" / version / "ingress-manifest.json",
     {
-        "schema_version": "suderra.release-input-binding.v1",
-        "profile": "release-candidate",
+        "schema_version": "suderra.release-ingress.v1",
         "version": version,
+        "profile": "release-candidate",
         "source_sha": source_sha,
         "source_run_id": "123456789",
         "source_run_attempt": "1",
         "build_workflow_name": "Build",
-        "matrix_path": "ci/build-matrix.yml",
         "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
-        "buildroot_index_sha": buildroot_index_sha,
-        "artifacts": binding_artifacts,
-        "release_targets": [],
+        "buildroot_index_sha": metadata["buildroot_index_sha"],
+        "buildroot_patchset_sha256": metadata["buildroot_patchset_sha256"],
+        "buildroot_patch_files": metadata["buildroot_patch_files"],
+        "buildroot_effective_source_id": metadata["buildroot_effective_source_id"],
+        "buildroot_expected_patched": metadata["buildroot_expected_patched"],
+        "producer": {
+            "provider": "github-actions",
+            "repository": "Okan-wqm/Suderra-OS",
+            "workflow": "Release Preflight",
+            "run_id": "987654321",
+            "run_attempt": "1",
+            "actor": "contract",
+        },
         "generated_at": "2026-05-13T00:00:00Z",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "schema_roles": {
+            "approval": "suderra.release-approval.v2",
+            "binding_manifest": "suderra.release-input-binding.v1",
+            "lab_input": "suderra.lab-evidence.v3",
+            "qemu_input": "suderra.qemu-acceptance.v3",
+            "release_evidence": "suderra.release-evidence.v3",
+        },
+        "files": ingress_files,
     },
 )
 PY
@@ -345,6 +495,7 @@ python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
     --root "${TMPDIR}" \
     --profile release-candidate \
     --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     --source-sha "${SOURCE_SHA}" \
     --check-files \
     >/dev/null
@@ -366,6 +517,7 @@ if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
     --root "${TMPDIR}" \
     --profile release-candidate \
     --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     --source-sha "${SOURCE_SHA}" \
     --check-files \
     2>"${TMPDIR}/release-inputs.err"; then

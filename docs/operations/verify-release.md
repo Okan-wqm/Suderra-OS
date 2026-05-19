@@ -109,6 +109,64 @@ for f in manifest.json SHA256SUMS; do
 done
 ```
 
+## Publication Manifest ve Evidence Archive
+
+`release-publication-manifest.json` yayınlanan byte setinin authoritative
+envanteridir. Manifest kendisini kapsamaz; kendi `.sig` ve `.cert` sidecar'ları
+ile doğrulanır. Manifest içindeki her dosya adı, byte sayısı ve SHA-256 digest'i
+GitHub Release asset'lerinden indirilen dosyalarla eşleşmelidir.
+
+```bash
+for f in \
+    release-publication-manifest.json \
+    release-evidence-${VERSION}.tar.zst; do
+    curl -fsSLO "${BASE_URL}/${f}"
+    curl -fsSLO "${BASE_URL}/${f}.sig"
+    curl -fsSLO "${BASE_URL}/${f}.cert"
+    cosign verify-blob \
+        --certificate "${f}.cert" \
+        --signature "${f}.sig" \
+        --certificate-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        "${f}"
+done
+```
+
+Manifest doğrulaması:
+
+```bash
+python3 - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+
+manifest = json.loads(Path("release-publication-manifest.json").read_text(encoding="utf-8"))
+for item in manifest["files"]:
+    path = Path(item["name"])
+    if not path.is_file():
+        raise SystemExit(f"missing release asset: {path}")
+    if path.stat().st_size != item["bytes"]:
+        raise SystemExit(f"size mismatch: {path}")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+        raise SystemExit(f"sha256 mismatch: {path}")
+print("publication manifest verified")
+PY
+```
+
+Evidence archive doğrulaması:
+
+```bash
+mkdir -p evidence
+tar --zstd -xf "release-evidence-${VERSION}.tar.zst" -C evidence
+find "evidence/${VERSION}" -name evidence.json -print0 | \
+  while IFS= read -r -d '' evidence_json; do
+    python3 scripts/evidence/release-evidence.py validate \
+      --require-pass \
+      --check-files \
+      "${evidence_json}"
+  done
+```
+
 ## VEX Doğrulama
 
 OpenVEX dosyaları yayınlandığında aynı cosign pattern'i ile doğrulanır ve

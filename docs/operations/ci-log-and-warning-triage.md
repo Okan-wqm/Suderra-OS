@@ -41,6 +41,26 @@ upstream diagnostics from different host tools into the same reviewed
 fingerprint; it must have a contract test that preserves fail-closed behavior
 for unrelated warnings.
 
+Each warning record includes both `fingerprint` and `raw_fingerprint`.
+`fingerprint` is the canonical policy key. `raw_fingerprint` preserves the log
+artifact shape for audit. For example, fragmented POSIX Yacc locations such as
+`.1-7: warning: POSIX Yacc...`, `:51.1-7: warning: POSIX Yacc...`, and
+`plural.y:51.1-7: warning: POSIX Yacc...` canonicalize to the same reviewed
+policy key without adding the fragmented `.1-7` artifact to the allowlist.
+
+## Release Retention
+
+`build-logs/` is local generated output and is ignored by git. For a release
+candidate, the successful `Build` workflow uploads `<defconfig>-build-logs`
+artifacts containing the raw `.log` and `.warnings.json` files. Release
+preflight downloads only the expected build-log artifacts, records their sizes
+and SHA-256 digests in `suderra.release-ingress.v1`, and final release evidence
+copies them under each target bundle as `build_evidence`.
+
+Do not commit local `build-logs/` into the repository. If a warning triage
+decision is needed for release audit, use the signed release evidence archive
+or the preflight artifact, not a workstation copy.
+
 ## SARIF Uploads
 
 Security scanners must validate SARIF before upload:

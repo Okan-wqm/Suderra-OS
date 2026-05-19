@@ -20,6 +20,7 @@ güvenlik kontrolleri yapar.
 | cosign signature | `--verify-signature` ile `.sig` + `.cert` keyless verify |
 | xz auto-decompress | `.img.xz` doğrudan çalışır |
 | Readback verify | İlk 64 MiB geri okunup hash kontrol |
+| Acceptance mode | `--acceptance` yalnız `/dev/disk/by-id/*` whole-disk hedeflerini kabul eder |
 | Progress indicator | dd `status=progress` + süre raporu |
 
 ### Kullanım
@@ -34,12 +35,22 @@ sudo ./scripts/flash-sd.sh --verify-signature /dev/sdX <image>
 # LAB ONLY: hash dosyası olmayan geçici imajlar
 sudo ./scripts/flash-sd.sh --lab-allow-missing-hash /dev/sdX <image>
 
+# Acceptance/lab evidence: stable by-id whole-disk target, full verification
+sudo ./scripts/flash-sd.sh --acceptance \
+  /dev/disk/by-id/<stable-whole-disk-id> <image.img.xz>
+
 # CI / scripting (onay sormaz)
 sudo ./scripts/flash-sd.sh --force /dev/sdX <image>
 
 # Hızlı (readback verify atla — önerilmez)
 sudo ./scripts/flash-sd.sh --skip-verify /dev/sdX <image>
 ```
+
+`--acceptance` is intentionally stricter than operator convenience mode. It
+rejects partition targets, non-`/dev/disk/by-id/*` paths, stale decompressed
+images beside an `.xz`, `--skip-verify`, and broad `--force`. The operator must
+confirm the stable whole-disk by-id target interactively so lab evidence records
+the exact device identity and readback verification path.
 
 ## 2. Platform-Spesifik Flashing
 

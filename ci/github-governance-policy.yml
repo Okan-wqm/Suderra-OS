@@ -16,6 +16,8 @@
     "Build / Build rpi4",
     "Build / Build revpi4",
     "Build / Build payload image pi-cm4-revpi-usb-installer",
+    "Build / Build suderra-installer (x86_64)",
+    "Build / Build suderra-installer (aarch64)",
     "Build / QEMU boot smoke test (qemu-x86_64)",
     "Security Scan / Trivy (filesystem)",
     "Security Scan / Trivy (config / Dockerfile)",

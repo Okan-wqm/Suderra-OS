@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -32,6 +33,7 @@ DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 SCHEMA_VERSION = "suderra.release-evidence.v3"
 LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2"}
 ASSET_MANIFEST_SCHEMA_VERSION = "suderra.release-assets.v1"
+APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
 
 TOP_LEVEL_FIELDS = {
     "schema_version",
@@ -47,6 +49,7 @@ TOP_LEVEL_FIELDS = {
     "reproducibility",
     "security_scans",
     "machine_verification",
+    "build_evidence",
     "governance",
     "qemu",
     "hardware",
@@ -99,16 +102,18 @@ REQUIRED_QEMU_CHECKS = (
 )
 REQUIRED_HARDWARE_CHECKS = (
     "board-identity",
+    "artifact-hash",
+    "flash-transcript",
+    "full-readback-hash",
+    "serial-boot-log",
+    "post-install-boot",
     "partitions",
     "root-data-mounts",
     "network",
-    "gpio",
-    "i2c",
-    "spi",
-    "rtc-time",
-    "watchdog",
+    "listeners",
+    "failed-units",
     "thermal",
-    "lockdown",
+    "watchdog",
 )
 REQUIRED_HARDWARE_BOARDS_BY_TARGET = {
     "rpi4": ("raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"),
@@ -376,9 +381,14 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
         "machine_verification": {
             name: {"status": "not_run", "logs": []} for name in MACHINE_VERIFICATION_CHECKS
         },
+        "build_evidence": {
+            "status": "not_collected",
+            "logs": [],
+            "warnings": [],
+        },
         "governance": {
             "retention_years": 7,
-            "approval_model": "single-alpha-owner",
+            "approval_model": "enterprise-two-role",
             "checks": {
                 name: {"status": "not_collected", "evidence": None}
                 for name in GOVERNANCE_CHECKS
@@ -502,6 +512,19 @@ def buildroot_index_sha() -> str:
     return git_output(["ls-tree", "HEAD", "buildroot"]) or "unknown"
 
 
+def buildroot_source_metadata(source_sha: str) -> dict[str, Any]:
+    script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+    spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+    if spec is None or spec.loader is None:
+        return {"buildroot_index_sha": buildroot_index_sha()}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.metadata(source_sha)
+    except Exception:
+        return {"buildroot_index_sha": buildroot_index_sha()}
+
+
 def tracked_source_dirty() -> bool:
     status = git_output(["status", "--porcelain", "--untracked-files=no"])
     return bool(status)
@@ -544,13 +567,15 @@ def release_asset_manifest(version: str, release_dir: Path, matrix_path: Path) -
                 "bytes": path.stat().st_size,
             }
         )
+    git_commit = git_output(["rev-parse", "HEAD"]) or "unknown"
+    buildroot_metadata = buildroot_source_metadata(git_commit) if re.fullmatch(r"[0-9a-f]{40}", git_commit) else {}
     return {
         "schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
         "version": version,
         "generated_at": now_utc(),
         "source": {
             "repository": git_output(["config", "--get", "remote.origin.url"]) or "unknown",
-            "git_commit": git_output(["rev-parse", "HEAD"]) or "unknown",
+            "git_commit": git_commit,
             "git_tag": version,
             "dirty": tracked_source_dirty(),
             "ci": {
@@ -561,7 +586,7 @@ def release_asset_manifest(version: str, release_dir: Path, matrix_path: Path) -
             },
         },
         "matrix_sha256": matrix_digest(matrix_path),
-        "buildroot_index_sha": buildroot_index_sha(),
+        **buildroot_metadata,
         "files": files,
     }
 
@@ -599,6 +624,45 @@ def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: di
                 "status": "passed",
                 "logs": [copy_into_bundle(bundle_dir, source, f"machine-verification/{name}.log")],
             }
+
+
+def apply_build_evidence(bundle_dir: Path, input_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
+    binding = read_json(input_root / "release-inputs" / version / "release-candidate.json")
+    if not isinstance(binding, dict):
+        return
+    records = {"logs": [], "warnings": []}
+    for item in binding.get("build_evidence", []):
+        if not isinstance(item, dict) or item.get("target") != target:
+            continue
+        rel = item.get("path")
+        if not isinstance(rel, str):
+            continue
+        rel_path = Path(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            continue
+        source = input_root / "build-artifacts" / rel_path
+        if not source.is_file() or source.stat().st_size <= 0:
+            continue
+        role = item.get("role")
+        destination = f"build/{Path(rel).name}"
+        copied = copy_into_bundle(bundle_dir, source, destination)
+        record = {
+            "path": copied,
+            "sha256": sha256_file(bundle_dir / copied),
+            "bytes": (bundle_dir / copied).stat().st_size,
+        }
+        if isinstance(item.get("sha256"), str):
+            record["ingress_sha256"] = item["sha256"]
+        if role == "warning-classifier-evidence":
+            records["warnings"].append(record)
+        else:
+            records["logs"].append(record)
+    if records["logs"] or records["warnings"]:
+        evidence["build_evidence"] = {
+            "status": "passed",
+            "logs": records["logs"],
+            "warnings": records["warnings"],
+        }
 
 
 def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evidence: dict[str, Any]) -> None:
@@ -664,11 +728,21 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
         board = str(device.get("board", "unknown"))
         logs = []
         for idx, log in enumerate(device.get("logs", [])):
-            if not isinstance(log, str):
+            if isinstance(log, str):
+                log_path = log
+                expected_sha = None
+            elif isinstance(log, dict) and isinstance(log.get("path"), str):
+                log_path = log["path"]
+                expected_sha = log.get("sha256") if isinstance(log.get("sha256"), str) else None
+            else:
                 continue
-            source = lab_dir / log
+            source = lab_dir / log_path
             if source.is_file() and source.stat().st_size > 0:
-                logs.append(copy_into_bundle(bundle_dir, source, f"hardware/{board}/logs/{idx}-{Path(log).name}"))
+                rel_log = copy_into_bundle(bundle_dir, source, f"hardware/{board}/logs/{idx}-{Path(log_path).name}")
+                log_record = {"path": rel_log, "sha256": sha256_file(bundle_dir / rel_log)}
+                if expected_sha is not None:
+                    log_record["input_sha256"] = expected_sha
+                logs.append(log_record)
         checks: dict[str, dict[str, Any]] = {}
         raw_checks = device.get("checks", {})
         if isinstance(raw_checks, dict):
@@ -685,10 +759,16 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
                             source,
                             f"hardware/{board}/checks/{check_name}-{Path(evidence_path).name}",
                         )
-                checks[str(check_name)] = {
+                check_record = {
                     "status": check.get("status", "not_collected"),
                     "evidence": rel_evidence,
                 }
+                if rel_evidence is not None:
+                    check_record["evidence_sha256"] = sha256_file(bundle_dir / rel_evidence)
+                for field in ("command", "expected", "observed", "parsed_result"):
+                    if isinstance(check.get(field), str):
+                        check_record[field] = check[field]
+                checks[str(check_name)] = check_record
         devices.append(
             {
                 "board": board,
@@ -720,14 +800,17 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
                     source,
                     f"hardware/negative-tests/{Path(evidence_path).name}",
                 )
-        negative_tests.append(
-            {
-                "name": item.get("name", "unknown"),
-                "failure_code": item.get("failure_code", "not_collected"),
-                "status": item.get("status", "not_collected"),
-                "evidence": rel_evidence,
-            }
-        )
+        negative_test = {
+            "name": item.get("name", "unknown"),
+            "failure_code": item.get("failure_code", "not_collected"),
+            "status": item.get("status", "not_collected"),
+            "evidence": rel_evidence,
+        }
+        if rel_evidence is not None:
+            negative_test["evidence_sha256"] = sha256_file(bundle_dir / rel_evidence)
+        if isinstance(item.get("write_prevention"), dict):
+            negative_test["write_prevention"] = item["write_prevention"]
+        negative_tests.append(negative_test)
     if negative_tests:
         evidence["hardware"]["negative_tests"] = negative_tests
     if devices and all(device.get("status") == "passed" for device in devices):
@@ -1084,6 +1167,32 @@ def validate_machine_verification(validation: Validation, evidence: dict[str, An
             validation.error(f"{path}.logs", "must include machine-verification logs")
 
 
+def validate_build_evidence(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
+    build_evidence = evidence.get("build_evidence")
+    if not isinstance(build_evidence, dict):
+        validation.error("$.build_evidence", "must be an object")
+        return
+    check_status(validation, "$.build_evidence.status", build_evidence.get("status"), STATUS_VALUES)
+    for collection in ("logs", "warnings"):
+        items = build_evidence.get(collection)
+        if not isinstance(items, list):
+            validation.error(f"$.build_evidence.{collection}", "must be a list")
+            continue
+        for idx, item in enumerate(items):
+            path = f"$.build_evidence.{collection}[{idx}]"
+            if not isinstance(item, dict):
+                validation.error(path, "must be an object")
+                continue
+            check_relative_path(validation, f"{path}.path", item.get("path"), require_pass)
+            check_sha256(validation, f"{path}.sha256", item.get("sha256"), require_pass)
+            check_positive_int(validation, f"{path}.bytes", item.get("bytes"), require_pass)
+            check_file_sha256(validation, f"{path}.sha256", item.get("path"), item.get("sha256"))
+    if require_pass and build_evidence.get("status") != "passed":
+        validation.error("$.build_evidence.status", "must be passed for release-ready evidence")
+    if require_pass and (not build_evidence.get("logs") or not build_evidence.get("warnings")):
+        validation.error("$.build_evidence", "must include build logs and warning classifier evidence")
+
+
 def validate_governance(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
     governance = evidence.get("governance")
     if not isinstance(governance, dict):
@@ -1204,7 +1313,16 @@ def validate_hardware(
             validation.error(f"{path}.logs", "must be a list")
         else:
             for log_idx, log in enumerate(logs):
-                check_relative_path(validation, f"{path}.logs[{log_idx}]", log, True)
+                log_path = f"{path}.logs[{log_idx}]"
+                if isinstance(log, dict):
+                    check_relative_path(validation, f"{log_path}.path", log.get("path"), True)
+                    if "sha256" in log:
+                        check_sha256(validation, f"{log_path}.sha256", log.get("sha256"), True)
+                        check_file_sha256(validation, f"{log_path}.sha256", log.get("path"), log.get("sha256"))
+                    if "input_sha256" in log:
+                        check_sha256(validation, f"{log_path}.input_sha256", log.get("input_sha256"), True)
+                else:
+                    check_relative_path(validation, log_path, log, True)
         checks = device.get("checks")
         if not isinstance(checks, dict):
             validation.error(f"{path}.checks", "must be an object")
@@ -1223,6 +1341,14 @@ def validate_hardware(
                     and expected_required
                     and check_name in REQUIRED_HARDWARE_CHECKS,
                 )
+                if "evidence_sha256" in check:
+                    check_sha256(validation, f"{check_path}.evidence_sha256", check.get("evidence_sha256"), True)
+                    check_file_sha256(
+                        validation,
+                        f"{check_path}.evidence_sha256",
+                        check.get("evidence"),
+                        check.get("evidence_sha256"),
+                    )
                 if require_pass and check.get("status") != "passed":
                     validation.error(f"{check_path}.status", "must be passed for release-ready evidence")
 
@@ -1271,6 +1397,14 @@ def validate_hardware(
                         check_string(validation, f"{item_path}.{field}", item.get(field))
                     check_status(validation, f"{item_path}.status", item.get("status"), STATUS_VALUES)
                     check_relative_path(validation, f"{item_path}.evidence", item.get("evidence"), True)
+                    if "evidence_sha256" in item:
+                        check_sha256(validation, f"{item_path}.evidence_sha256", item.get("evidence_sha256"), True)
+                        check_file_sha256(
+                            validation,
+                            f"{item_path}.evidence_sha256",
+                            item.get("evidence"),
+                            item.get("evidence_sha256"),
+                        )
                     if item.get("status") != "passed":
                         validation.error(f"{item_path}.status", "must be passed for release-ready evidence")
 
@@ -1325,6 +1459,18 @@ def validate_approvals(validation: Validation, evidence: dict[str, Any], require
             check_string(validation, f"{path}.ticket", approval.get("ticket"))
     if require_pass and not approvals:
         validation.error("$.approvals", "must include at least one approval")
+    if require_pass:
+        roles = {
+            approval.get("role")
+            for approval in approvals
+            if isinstance(approval, dict) and isinstance(approval.get("role"), str)
+        }
+        if "release-owner" not in roles:
+            validation.error("$.approvals", "must include release-owner approval")
+        if not ({"maintainer", "security-compliance"} & roles):
+            validation.error("$.approvals", "must include maintainer or security-compliance approval")
+        if len(roles) < 2:
+            validation.error("$.approvals", "must include at least two distinct approval roles")
 
 
 def validate_residual_risk(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
@@ -1571,6 +1717,7 @@ def validate_evidence(
         expected_security_scans if require_pass else None,
     )
     validate_machine_verification(validation, evidence, require_pass)
+    validate_build_evidence(validation, evidence, require_pass)
     validate_governance(validation, evidence, require_pass)
     validate_qemu(validation, evidence, require_pass, qemu_required)
     validate_hardware(validation, evidence, require_pass, hardware_required)
@@ -1593,6 +1740,7 @@ def schema_contract() -> dict[str, Any]:
         "release_decision_status_values": sorted(DECISION_STATUS_VALUES),
         "release_tiers": ["alpha", "production"],
         "asset_manifest_schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
+        "approval_schema_version": APPROVAL_SCHEMA_VERSION,
         "machine_verification_checks": list(MACHINE_VERIFICATION_CHECKS),
         "governance_checks": list(GOVERNANCE_CHECKS),
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
@@ -1605,6 +1753,7 @@ def schema_contract() -> dict[str, Any]:
         "release_ready_invariants": [
             "source.dirty is false and source.git_commit is a full commit sha",
             "asset_manifest is generated from staged release bytes and verified",
+            "build logs and warning classifier evidence are retained in the bundle",
             "artifact hashes, sizes, signatures, and provenance are present, verified, and match referenced files",
             "SBOM is CycloneDX JSON with a non-empty matching component count and verified signature",
             "signed VEX is present",
@@ -1785,6 +1934,7 @@ def assemble_release_command(args: argparse.Namespace) -> int:
                 evidence["sbom"]["signature_verified"] = True
 
         apply_machine_verification(bundle_dir, args.release_dir, evidence)
+        apply_build_evidence(bundle_dir, args.input_root, args.version, target, evidence)
         apply_governance(bundle_dir, args.governance_root, args.version, evidence)
         apply_qemu_input(bundle_dir, args.lab_root, args.version, target, evidence)
         apply_hardware_input(bundle_dir, args.lab_root, args.version, target, evidence)

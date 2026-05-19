@@ -27,12 +27,23 @@ fi
 for patch in "${PATCH_DIR}"/*.patch; do
     [ -e "${patch}" ] || continue
 
-    if git -C "${BUILDROOT_DIR}" apply --unidiff-zero --reverse --check "${patch}" >/dev/null 2>&1; then
+    if git -C "${BUILDROOT_DIR}" apply --reverse --check "${patch}" >/dev/null 2>&1; then
         echo "==> Buildroot patch already applied: $(basename "${patch}")"
+        continue
+    elif git -C "${BUILDROOT_DIR}" apply --unidiff-zero --reverse --check "${patch}" >/dev/null 2>&1; then
+        echo "==> Buildroot zero-context patch already applied: $(basename "${patch}")"
         continue
     fi
 
     echo "==> Applying Buildroot patch: $(basename "${patch}")"
-    git -C "${BUILDROOT_DIR}" apply --unidiff-zero --check "${patch}"
-    git -C "${BUILDROOT_DIR}" apply --unidiff-zero "${patch}"
+    if git -C "${BUILDROOT_DIR}" apply --check "${patch}"; then
+        git -C "${BUILDROOT_DIR}" apply "${patch}"
+    else
+        echo "==> Falling back to --unidiff-zero for $(basename "${patch}")"
+        git -C "${BUILDROOT_DIR}" apply --unidiff-zero --check "${patch}"
+        git -C "${BUILDROOT_DIR}" apply --unidiff-zero "${patch}"
+    fi
 done
+
+python3 "${PROJECT_ROOT}/scripts/ci/buildroot-patch-identity.py" validate-applied \
+    --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)"

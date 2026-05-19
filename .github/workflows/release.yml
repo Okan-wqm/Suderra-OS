@@ -142,7 +142,7 @@ jobs:
           set -euo pipefail
           source_sha="$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")"
           echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
-      - name: Find successful release-candidate preflight
+      - name: Resolve approved release-candidate preflight
         id: preflight
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,28 +150,39 @@ jobs:
           SOURCE_SHA: ${{ steps.tag.outputs.source_sha }}
         run: |
           set -euo pipefail
-          gh run list \
-            --repo "${GITHUB_REPOSITORY}" \
-            --workflow "Release Preflight" \
-            --json databaseId,conclusion,status,headSha,createdAt \
-            --status success \
-            --limit 50 > preflight-runs.json
+          git for-each-ref "refs/tags/${VERSION}" --format='%(contents)' > tag-annotation.txt
           python3 - <<'PY'
-          import json
+          import os
+          import re
           from pathlib import Path
 
-          runs = json.loads(Path("preflight-runs.json").read_text(encoding="utf-8"))
-          candidates = [
-              run for run in runs
-              if run.get("status") == "completed"
-              and run.get("conclusion") == "success"
-          ]
-          if not candidates:
-              raise SystemExit("no successful Release Preflight runs found")
-          Path("preflight-run-ids.txt").write_text(
-              "\n".join(str(run["databaseId"]) for run in candidates) + "\n",
-              encoding="utf-8",
-          )
+          text = Path("tag-annotation.txt").read_text(encoding="utf-8")
+          match = re.search(r"(?im)^Suderra-Preflight-Run-ID:\s*([0-9]+)\s*$", text)
+          if not match:
+              raise SystemExit(
+                  "annotated release tag must include 'Suderra-Preflight-Run-ID: <run_id>'"
+              )
+          run_id = match.group(1)
+          Path("preflight-run-id.txt").write_text(run_id + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"run_id={run_id}\n")
+          PY
+          run_id="$(cat preflight-run-id.txt)"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" > preflight-run.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          run = json.loads(Path("preflight-run.json").read_text(encoding="utf-8"))
+          if run.get("name") != "Release Preflight":
+              raise SystemExit(f"preflight run must be Release Preflight, got {run.get('name')!r}")
+          if run.get("head_sha") != os.environ["SOURCE_SHA"]:
+              raise SystemExit(f"preflight head_sha {run.get('head_sha')} does not match tag commit")
+          if run.get("head_branch") != "main":
+              raise SystemExit(f"release-candidate preflight must run from main, got {run.get('head_branch')!r}")
+          if run.get("status") != "completed" or run.get("conclusion") != "success":
+              raise SystemExit(f"preflight run is not successful: {run.get('status')} {run.get('conclusion')}")
           PY
       - name: Download bound release preflight artifact
         env:
@@ -181,18 +192,15 @@ jobs:
         run: |
           set -euo pipefail
           artifact_name="release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}"
-          while read -r run_id; do
-            [ -n "${run_id}" ] || continue
-            if gh run download "${run_id}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --name "${artifact_name}" \
-              --dir .; then
-              echo "Downloaded ${artifact_name} from preflight run ${run_id}"
-              exit 0
-            fi
-          done < preflight-run-ids.txt
-          echo "::error::No successful Release Preflight artifact named ${artifact_name} was found"
-          exit 1
+          gh run download "${{ steps.preflight.outputs.run_id }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "${artifact_name}" \
+            --dir .
+          echo "Downloaded ${artifact_name} from preflight run ${{ steps.preflight.outputs.run_id }}"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
       - name: Validate downloaded preflight binding
         run: |
           set -euo pipefail
@@ -206,7 +214,12 @@ jobs:
             --profile release-candidate \
             --root . \
             --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --ingress-manifest "release-ingress/${{ needs.validate.outputs.version }}/ingress-manifest.json" \
             --source-sha "${{ steps.tag.outputs.source_sha }}" \
+            --artifact-root build-artifacts \
+            --require-ingress-signature \
+            --ingress-certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
+            --ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
       - name: Upload release input bundle for tag workflow
         uses: actions/upload-artifact@v7
@@ -214,6 +227,8 @@ jobs:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: |
             release-inputs/
+            release-ingress/
+            build-artifacts/
             release-lab-input/
             release-governance/
             release-approvals/
@@ -240,6 +255,10 @@ jobs:
         with:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: .
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
       - name: Validate release inputs
         run: |
           set -euo pipefail
@@ -252,605 +271,20 @@ jobs:
             --release-tier "${tier}" \
             --profile release-candidate \
             --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/release-candidate.json" \
+            --ingress-manifest "release-ingress/${{ needs.validate.outputs.version }}/ingress-manifest.json" \
             --source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
+            --artifact-root build-artifacts \
+            --require-ingress-signature \
+            --ingress-certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
+            --ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
-
-  # =========================================================================
-  # Build — Her defconfig için paralel matrix
-  # =========================================================================
-  build:
-    name: Build ${{ matrix.name }}
-    needs: [validate, matrix, release-readiness, input-preflight]
-    runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    env:
-      SUDERRA_CI_STORAGE: /mnt/suderra-os-release/${{ matrix.defconfig }}
-      SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/output
-      SUDERRA_HOST_DL_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/dl
-      SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/ccache
-      SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/keys
-      SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
-      SUDERRA_EXPECTED_KEYS_PROFILE: ci
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.matrix.outputs.release_base_matrix) }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.validate.outputs.version }}
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Prepare CI build storage
-        run: |
-          set -euo pipefail
-          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}" "${SUDERRA_HOST_KEYS_DIR}"
-          sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
-          df -h "${SUDERRA_CI_STORAGE}"
-
-      - name: Prepare CI trust roots
-        run: |
-          set -euo pipefail
-          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
-          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
-
-      - name: Verify submodule pin matches index SHA
-        id: br
-        run: |
-          set -euo pipefail
-          expected_sha="$(git ls-tree HEAD buildroot | awk '{print $3}')"
-          actual_sha="$(git -C buildroot rev-parse HEAD)"
-          if [ "${expected_sha}" != "${actual_sha}" ]; then
-            echo "::error::Buildroot submodule SHA drift detected"
-            echo "  expected (index): ${expected_sha}"
-            echo "  actual (checkout): ${actual_sha}"
-            exit 1
-          fi
-          echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Compute installer payload metadata
-        id: payload_meta
-        run: |
-          set -euo pipefail
-          commit_epoch="$(git log -1 --format=%ct)"
-          expires_epoch=$((commit_epoch + 18 * 30 * 86400))
-          expires_at="$(date -u -d "@${expires_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
-          echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
-          echo "commit_epoch=${commit_epoch}" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Buildroot downloads
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.SUDERRA_HOST_DL_DIR }}
-          key: br-dl-release-${{ steps.br.outputs.sha }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
-
-      - name: Build container image
-        env:
-          SUDERRA_RESOURCE_PATH: ${{ env.SUDERRA_CI_STORAGE }}
-          SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
-          SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
-          SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
-        run: |
-          set -euo pipefail
-          ./scripts/ci/check-runner-resources.sh
-          docker_log=$(mktemp)
-          if ! docker build -t suderra-builder ci/ >"${docker_log}" 2>&1; then
-            echo "::error::docker build failed; full log follows"
-            cat "${docker_log}"
-            exit 1
-          fi
-          tail -20 "${docker_log}"
-
-      - name: Verify container trust-root visibility
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            --mount "type=bind,source=${SUDERRA_HOST_KEYS_DIR},target=${SUDERRA_CONTAINER_KEYS_DIR},readonly" \
-            --mount "type=bind,source=${PWD},target=/workspace,readonly" \
-            -e SUDERRA_TRUST_ROOTS_DIR="${SUDERRA_CONTAINER_KEYS_DIR}" \
-            suderra-builder:latest \
-            bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_CONTAINER_KEYS_DIR}" \
-              --expected-profile ci \
-              --require-installer-signing
-
-      - name: Build OS image
-        env:
-          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
-          MATRIX_PAYLOAD_IMAGE_EXPORTS: ${{ matrix.payload_image_exports }}
-          MATRIX_SIGNING: ${{ matrix.signing }}
-          MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
-          SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT: ${{ steps.payload_meta.outputs.expires_at }}
-          SUDERRA_INSTALLER_KEY_EPOCH: "1"
-          # Pin reproducible-build timestamp from the release tag commit
-          # so multiple re-runs of the same tag produce byte-identical
-          # artifacts even if the workspace is shallow-cloned.
-          SOURCE_DATE_EPOCH: ${{ steps.payload_meta.outputs.commit_epoch }}
-        run: |
-          set -euo pipefail
-          mkdir -p build-logs
-          build_deadline=$((SECONDS + MATRIX_BUILD_STEP_TIMEOUT_MINUTES * 60))
-          build_and_check() {
-            local defconfig="$1"
-            local log_path="build-logs/${defconfig}.log"
-            local remaining=$((build_deadline - SECONDS))
-            if [ "${remaining}" -le 0 ]; then
-              echo "::error::Build step timeout budget exhausted before ${defconfig}"
-              exit 124
-            fi
-            timeout --kill-after=60s "${remaining}s" \
-              ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
-            python3 scripts/ci/classify-build-warnings.py \
-              --policy ci/build-warning-policy.json \
-              --json-output "build-logs/${defconfig}.warnings.json" \
-              "${log_path}"
-          }
-          prepare_payload_signing_keys() {
-            if [ "${MATRIX_SIGNING}" != "payload-ed25519-required" ]; then
-              return 0
-            fi
-            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.key"
-            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.ed25519.pub"
-            export SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE=ci
-          }
-          export_payload_images() {
-            local payload_exports=()
-            local entry env_name source_spec source_defconfig artifact host_image_path container_image_path
-            read -r -a payload_exports <<< "${MATRIX_PAYLOAD_IMAGE_EXPORTS}"
-            for entry in "${payload_exports[@]}"; do
-              [ -n "${entry}" ] || continue
-              env_name="${entry%%=*}"
-              source_spec="${entry#*=}"
-              source_defconfig="${source_spec%%:*}"
-              artifact="${source_spec#*:}"
-              host_image_path="${SUDERRA_HOST_OUTPUT_DIR}/${source_defconfig}/images/${artifact}"
-              container_image_path="/workspace/output/${source_defconfig}/images/${artifact}"
-              if [ ! -f "${host_image_path}" ]; then
-                echo "::error::Payload image contract missing ${host_image_path}"
-                exit 1
-              fi
-              export "${env_name}=${container_image_path}"
-            done
-          }
-          prepare_payload_signing_keys
-          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
-          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
-            [ -n "${prebuild_defconfig}" ] || continue
-            build_and_check "${prebuild_defconfig}"
-          done
-          export_payload_images
-          build_and_check "${{ matrix.defconfig }}"
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-${{ matrix.defconfig }}-build-logs
-          path: build-logs/
-          retention-days: 30
-          if-no-files-found: ignore
-
-      - name: Verify build artifacts
-        run: |
-          set -euo pipefail
-          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
-          ls -lh "$OUT_DIR/"
-          python3 scripts/ci/validate-build-matrix.py verify-artifacts \
-            --defconfig "${{ matrix.defconfig }}" \
-            --images-dir "$OUT_DIR"
-
-      - name: Upload image contract artifact for payload builds
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.defconfig }}-image
-          path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Rename for release
-        run: |
-          set -euo pipefail
-          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
-          BASE="${{ matrix.release }}"
-          src_xz="$OUT_DIR/${{ matrix.artifact }}.xz"
-          dst_xz="$OUT_DIR/${BASE}.xz"
-          src_raw="$OUT_DIR/${{ matrix.artifact }}"
-          dst_raw="$OUT_DIR/${BASE}"
-          if [ "$src_xz" != "$dst_xz" ]; then
-            mv "$src_xz" "$dst_xz"
-          fi
-          if [ -f "$src_raw" ] && [ "$src_raw" != "$dst_raw" ]; then
-            mv "$src_raw" "$dst_raw"
-          fi
-          if [ -f "$OUT_DIR/MANIFEST.txt" ]; then
-            mv "$OUT_DIR/MANIFEST.txt" "$OUT_DIR/${BASE}.manifest.txt"
-          fi
-          CONTROL_BASE="${BASE%.img}"
-          if [ -f "$OUT_DIR/manifest.json" ]; then
-            mv "$OUT_DIR/manifest.json" "$OUT_DIR/${CONTROL_BASE}.payload-manifest.json"
-          fi
-          if [ -f "$OUT_DIR/manifest.sig" ]; then
-            mv "$OUT_DIR/manifest.sig" "$OUT_DIR/${CONTROL_BASE}.payload-manifest.sig"
-          fi
-          # Standalone .sha256 dosyası (curl ile kolay indirilebilir)
-          ( cd "$OUT_DIR" && sha256sum "${BASE}.xz" > "${BASE}.xz.sha256" )
-          ls -lh "$OUT_DIR/"
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-${{ matrix.name }}
-          path: |
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.img.xz
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.sha256
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.manifest.txt
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.json
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.sig
-          retention-days: 7
-
-  build-payload:
-    name: Build payload image ${{ matrix.name }}
-    needs: [validate, matrix, release-readiness, build]
-    runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    env:
-      SUDERRA_CI_STORAGE: /mnt/suderra-os-release/${{ matrix.defconfig }}
-      SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/output
-      SUDERRA_HOST_DL_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/dl
-      SUDERRA_HOST_CCACHE_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/ccache
-      SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os-release/${{ matrix.defconfig }}/keys
-      SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
-      SUDERRA_EXPECTED_KEYS_PROFILE: ci
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.matrix.outputs.release_payload_matrix) }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.validate.outputs.version }}
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Prepare CI build storage
-        run: |
-          set -euo pipefail
-          sudo mkdir -p "${SUDERRA_HOST_OUTPUT_DIR}" "${SUDERRA_HOST_DL_DIR}" "${SUDERRA_HOST_CCACHE_DIR}" "${SUDERRA_HOST_KEYS_DIR}"
-          sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
-          df -h "${SUDERRA_CI_STORAGE}"
-
-      - name: Prepare CI trust roots
-        run: |
-          set -euo pipefail
-          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
-          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
-
-      - name: Compute installer payload metadata
-        id: payload_meta
-        run: |
-          set -euo pipefail
-          commit_epoch="$(git log -1 --format=%ct)"
-          expires_epoch=$((commit_epoch + 18 * 30 * 86400))
-          expires_at="$(date -u -d "@${expires_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
-          echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
-          echo "commit_epoch=${commit_epoch}" >> "$GITHUB_OUTPUT"
-
-      - name: Build container image
-        env:
-          SUDERRA_RESOURCE_PATH: ${{ env.SUDERRA_CI_STORAGE }}
-          SUDERRA_MIN_DISK_GIB: ${{ matrix.min_disk_gib }}
-          SUDERRA_MIN_MEM_GIB: ${{ matrix.min_mem_gib }}
-          SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
-        run: |
-          set -euo pipefail
-          ./scripts/ci/check-runner-resources.sh
-          docker_log=$(mktemp)
-          if ! docker build -t suderra-builder ci/ >"${docker_log}" 2>&1; then
-            echo "::error::docker build failed; full log follows"
-            cat "${docker_log}"
-            exit 1
-          fi
-          tail -20 "${docker_log}"
-
-      - name: Verify container trust-root visibility
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            --mount "type=bind,source=${SUDERRA_HOST_KEYS_DIR},target=${SUDERRA_CONTAINER_KEYS_DIR},readonly" \
-            --mount "type=bind,source=${PWD},target=/workspace,readonly" \
-            -e SUDERRA_TRUST_ROOTS_DIR="${SUDERRA_CONTAINER_KEYS_DIR}" \
-            suderra-builder:latest \
-            bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_CONTAINER_KEYS_DIR}" \
-              --expected-profile ci \
-              --require-installer-signing
-
-      - name: Download payload image artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
-        run: |
-          set -euo pipefail
-          mkdir -p payload-artifacts
-          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
-          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
-            [ -n "${prebuild_defconfig}" ] || continue
-            gh run download "${GITHUB_RUN_ID}" \
-              --name "${prebuild_defconfig}-image" \
-              --dir "payload-artifacts/${prebuild_defconfig}-image"
-          done
-
-      - name: Materialize payload image contracts
-        env:
-          MATRIX_PREBUILD_DEFCONFIGS: ${{ matrix.prebuild_defconfigs }}
-        run: |
-          set -euo pipefail
-          read -r -a prebuild_defconfigs <<< "${MATRIX_PREBUILD_DEFCONFIGS}"
-          for prebuild_defconfig in "${prebuild_defconfigs[@]}"; do
-            [ -n "${prebuild_defconfig}" ] || continue
-            artifact_dir="payload-artifacts/${prebuild_defconfig}-image"
-            images_dir="${SUDERRA_HOST_OUTPUT_DIR}/${prebuild_defconfig}/images"
-            if [ ! -d "${artifact_dir}" ]; then
-              echo "::error::Missing upstream payload artifact ${artifact_dir}"
-              exit 1
-            fi
-            mkdir -p "${images_dir}"
-            cp -a "${artifact_dir}/." "${images_dir}/"
-            python3 scripts/ci/validate-build-matrix.py verify-artifacts \
-              --defconfig "${prebuild_defconfig}" \
-              --images-dir "${images_dir}"
-          done
-
-      - name: Build image (payload packaging run)
-        env:
-          MATRIX_PAYLOAD_IMAGE_EXPORTS: ${{ matrix.payload_image_exports }}
-          MATRIX_SIGNING: ${{ matrix.signing }}
-          MATRIX_BUILD_STEP_TIMEOUT_MINUTES: ${{ matrix.build_step_timeout_minutes }}
-          SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT: ${{ steps.payload_meta.outputs.expires_at }}
-          SUDERRA_INSTALLER_KEY_EPOCH: "1"
-          SOURCE_DATE_EPOCH: ${{ steps.payload_meta.outputs.commit_epoch }}
-        run: |
-          set -euo pipefail
-          mkdir -p build-logs
-          build_deadline=$((SECONDS + MATRIX_BUILD_STEP_TIMEOUT_MINUTES * 60))
-          build_and_check() {
-            local defconfig="$1"
-            local log_path="build-logs/${defconfig}.log"
-            local remaining=$((build_deadline - SECONDS))
-            if [ "${remaining}" -le 0 ]; then
-              echo "::error::Build step timeout budget exhausted before ${defconfig}"
-              exit 124
-            fi
-            timeout --kill-after=60s "${remaining}s" \
-              ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
-            python3 scripts/ci/classify-build-warnings.py \
-              --policy ci/build-warning-policy.json \
-              --json-output "build-logs/${defconfig}.warnings.json" \
-              "${log_path}"
-          }
-          prepare_payload_signing_keys() {
-            if [ "${MATRIX_SIGNING}" != "payload-ed25519-required" ]; then
-              return 0
-            fi
-            export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.key"
-            export SUDERRA_INSTALLER_PAYLOAD_PUBKEY="${SUDERRA_CONTAINER_KEYS_DIR}/installer-payload.ed25519.pub"
-            export SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE=ci
-          }
-          export_payload_images() {
-            local payload_exports=()
-            local entry env_name source_spec source_defconfig artifact host_image_path container_image_path
-            read -r -a payload_exports <<< "${MATRIX_PAYLOAD_IMAGE_EXPORTS}"
-            for entry in "${payload_exports[@]}"; do
-              [ -n "${entry}" ] || continue
-              env_name="${entry%%=*}"
-              source_spec="${entry#*=}"
-              source_defconfig="${source_spec%%:*}"
-              artifact="${source_spec#*:}"
-              host_image_path="${SUDERRA_HOST_OUTPUT_DIR}/${source_defconfig}/images/${artifact}"
-              container_image_path="/workspace/output/${source_defconfig}/images/${artifact}"
-              if [ ! -f "${host_image_path}" ]; then
-                echo "::error::Payload image contract missing ${host_image_path}"
-                exit 1
-              fi
-              export "${env_name}=${container_image_path}"
-            done
-          }
-          prepare_payload_signing_keys
-          export_payload_images
-          build_and_check "${{ matrix.defconfig }}"
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-${{ matrix.defconfig }}-build-logs
-          path: build-logs/
-          retention-days: 30
-          if-no-files-found: ignore
-
-      - name: Verify build artifacts
-        run: |
-          set -euo pipefail
-          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
-          ls -lh "$OUT_DIR/"
-          python3 scripts/ci/validate-build-matrix.py verify-artifacts \
-            --defconfig "${{ matrix.defconfig }}" \
-            --images-dir "$OUT_DIR"
-
-      - name: Rename for release
-        run: |
-          set -euo pipefail
-          OUT_DIR="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}/images"
-          BASE="${{ matrix.release }}"
-          src_xz="$OUT_DIR/${{ matrix.artifact }}.xz"
-          dst_xz="$OUT_DIR/${BASE}.xz"
-          src_raw="$OUT_DIR/${{ matrix.artifact }}"
-          dst_raw="$OUT_DIR/${BASE}"
-          if [ "$src_xz" != "$dst_xz" ]; then
-            mv "$src_xz" "$dst_xz"
-          fi
-          if [ -f "$src_raw" ] && [ "$src_raw" != "$dst_raw" ]; then
-            mv "$src_raw" "$dst_raw"
-          fi
-          if [ -f "$OUT_DIR/MANIFEST.txt" ]; then
-            mv "$OUT_DIR/MANIFEST.txt" "$OUT_DIR/${BASE}.manifest.txt"
-          fi
-          CONTROL_BASE="${BASE%.img}"
-          if [ -f "$OUT_DIR/manifest.json" ]; then
-            mv "$OUT_DIR/manifest.json" "$OUT_DIR/${CONTROL_BASE}.payload-manifest.json"
-          fi
-          if [ -f "$OUT_DIR/manifest.sig" ]; then
-            mv "$OUT_DIR/manifest.sig" "$OUT_DIR/${CONTROL_BASE}.payload-manifest.sig"
-          fi
-          ( cd "$OUT_DIR" && sha256sum "${BASE}.xz" > "${BASE}.xz.sha256" )
-          ls -lh "$OUT_DIR/"
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-${{ matrix.name }}
-          path: |
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.img.xz
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.sha256
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.manifest.txt
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.json
-            ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/suderra-*.payload-manifest.sig
-          retention-days: 7
-
-  # =========================================================================
-  # Build suderra-installer binary (multi-arch)
-  # =========================================================================
-  build-installer:
-    name: Build suderra-installer (${{ matrix.arch }})
-    needs: [validate, release-readiness, input-preflight]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, aarch64]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.validate.outputs.version }}
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.86.0
-        with:
-          targets: ${{ matrix.arch }}-unknown-linux-musl
-
-      - name: Install musl toolchain
-        run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends musl-tools
-          else
-            # cross-rs ile aarch64 musl build
-            cargo install cross --locked
-          fi
-
-      - name: Build (x86_64 native)
-        if: matrix.arch == 'x86_64'
-        working-directory: userspace
-        run: |
-          cargo build -p suderra-installer \
-            --locked \
-            --target x86_64-unknown-linux-musl \
-            --release
-
-      - name: Build (aarch64 via cross)
-        if: matrix.arch == 'aarch64'
-        working-directory: userspace
-        run: |
-          cross build -p suderra-installer \
-            --locked \
-            --target aarch64-unknown-linux-musl \
-            --release
-
-      - name: Rename + manifest
-        run: |
-          BIN="userspace/target/${{ matrix.arch }}-unknown-linux-musl/release/suderra-installer"
-          OUT="suderra-installer-${{ needs.validate.outputs.version }}-${{ matrix.arch }}"
-          cp "$BIN" "$OUT"
-          sha256sum "$OUT" > "$OUT.sha256"
-          ls -lh "$OUT"
-
-      - name: Upload installer binary
-        uses: actions/upload-artifact@v7
-        with:
-          name: installer-${{ matrix.arch }}
-          path: |
-            suderra-installer-*
-          retention-days: 7
-
-  # =========================================================================
-  # SBOM Generation
-  # =========================================================================
-  sbom:
-    name: SBOM generation
-    needs: [validate, build, build-payload]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.validate.outputs.version }}
-
-      - name: Install syft
-        uses: anchore/sbom-action/download-syft@v0.17.7
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts/
-
-      - name: Generate SBOM (CycloneDX)
-        run: |
-          mkdir -p sbom/
-          for f in artifacts/build-*/suderra-*.img.xz; do
-            [ -f "$f" ] || continue
-            base="$(basename "$f" .img.xz)"
-            syft "$f" -o cyclonedx-json="sbom/${base}.cyclonedx.json"
-          done
-          ls -lh sbom/
-
-      - name: Validate SBOM component count
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import glob
-          import json
-          import sys
-
-          files = glob.glob("sbom/*.cyclonedx.json")
-          if not files:
-              print("no SBOM files generated", file=sys.stderr)
-              sys.exit(1)
-          failed = False
-          for path in files:
-              with open(path, "r", encoding="utf-8") as handle:
-                  payload = json.load(handle)
-              components = payload.get("components") or []
-              if not components:
-                  print(f"{path}: empty CycloneDX components list", file=sys.stderr)
-                  failed = True
-          sys.exit(1 if failed else 0)
-          PY
-
-      - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: sbom
-          path: sbom/
-          retention-days: 30
 
   # =========================================================================
   # Cosign Sign + GitHub Release
   # =========================================================================
   release-evidence:
     name: Stage, sign, attest, verify, assemble evidence
-    needs: [validate, matrix, governance, build, build-payload, build-installer, sbom]
+    needs: [validate, matrix, governance, preflight-binding, input-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -886,13 +320,17 @@ jobs:
         with:
           cosign-release: 'v2.4.1'
 
+      - name: Install release tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0.17.7
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.86.0
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts/
 
       - name: Download governance evidence
         uses: actions/download-artifact@v8
@@ -903,45 +341,82 @@ jobs:
       - name: Stage release files
         run: |
           set -euo pipefail
-          shopt -s nullglob
           mkdir -p release/
+          python3 - <<'PY'
+          import importlib.util
+          import shutil
+          from pathlib import Path
 
-          image_files=(artifacts/build-*/suderra-*.img.xz)
-          image_hashes=(artifacts/build-*/suderra-*.sha256)
-          image_manifests=(artifacts/build-*/suderra-*.manifest.txt)
-          payload_manifests=(artifacts/build-*/suderra-*.payload-manifest.json)
-          payload_manifest_sigs=(artifacts/build-*/suderra-*.payload-manifest.sig)
-          installer_files=(artifacts/installer-*/suderra-installer-*)
-          installer_binaries=(
-            artifacts/installer-*/suderra-installer-v*-x86_64
-            artifacts/installer-*/suderra-installer-v*-aarch64
+          spec = importlib.util.spec_from_file_location(
+              "validate_build_matrix",
+              Path("scripts/ci/validate-build-matrix.py"),
           )
-          sbom_files=(artifacts/sbom/*.cyclonedx.json)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
 
-          if [ "${#image_files[@]}" -eq 0 ]; then
-            echo "::error::No release images staged"
-            exit 1
-          fi
-          if [ "${#installer_binaries[@]}" -eq 0 ]; then
-            echo "::error::No installer binaries staged"
-            exit 1
-          fi
-          if [ "${#sbom_files[@]}" -eq 0 ]; then
-            echo "::error::No SBOM files staged"
-            exit 1
-          fi
-
-          for f in \
-            "${image_files[@]}" \
-            "${image_hashes[@]}" \
-            "${image_manifests[@]}" \
-            "${payload_manifests[@]}" \
-            "${payload_manifest_sigs[@]}" \
-            "${installer_files[@]}" \
-            "${sbom_files[@]}"; do
-            cp "$f" release/
+          matrix = module.load_matrix(Path("ci/build-matrix.yml"))
+          release_dir = Path("release")
+          artifact_root = Path("build-artifacts")
+          copied = []
+          for row in matrix.get("defconfigs", []):
+              if not row.get("release"):
+                  continue
+              defconfig = str(row["name"])
+              release_artifact = str(row["release_artifact"])
+              source_artifact = str(row["artifact"])
+              for artifact in module.expected_artifacts(row):
+                  if artifact == f"{source_artifact}.xz":
+                      target = release_artifact
+                  elif artifact == "MANIFEST.txt":
+                      target = f"{module.release_rename_base(release_artifact)}.manifest.txt"
+                  elif artifact == "manifest.json":
+                      target = f"{module.payload_manifest_base(release_artifact)}.payload-manifest.json"
+                  elif artifact == "manifest.sig":
+                      target = f"{module.payload_manifest_base(release_artifact)}.payload-manifest.sig"
+                  else:
+                      continue
+                  source = artifact_root / f"{defconfig}-image" / artifact
+                  if not source.is_file():
+                      raise SystemExit(f"missing promoted Build artifact: {source}")
+                  shutil.copy2(source, release_dir / target)
+                  copied.append(target)
+          if not copied:
+              raise SystemExit("no promoted Build artifacts staged")
+          PY
+          cp "release-ingress/${{ needs.validate.outputs.version }}/ingress-manifest.json" \
+            release/release-ingress-manifest.json
+          find release -maxdepth 1 -name 'suderra-*.img.xz' -print0 | \
+            sort -z | while IFS= read -r -d '' image; do
+              ( cd release && sha256sum "$(basename "${image}")" >"$(basename "${image}").sha256" )
+            done
+          shopt -s nullglob
+          for arch in x86_64 aarch64; do
+            source="build-artifacts/installer-${arch}/suderra-installer-${arch}"
+            if [ ! -f "${source}" ]; then
+              echo "::error::Missing preflight-bound installer artifact: ${source}"
+              exit 1
+            fi
+            target="release/suderra-installer-${{ needs.validate.outputs.version }}-${arch}"
+            cp "${source}" "${target}"
+            ( cd release && sha256sum "$(basename "${target}")" >"$(basename "${target}").sha256" )
           done
           ls -lh release/
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          images=(release/suderra-*.img.xz)
+          if [ "${#images[@]}" -eq 0 ]; then
+            echo "::error::No release images available for SBOM generation"
+            exit 1
+          fi
+          for image in "${images[@]}"; do
+            base="$(basename "${image}" .img.xz)"
+            syft "${image}" -o cyclonedx-json="release/${base}.cyclonedx.json"
+          done
+          ls -lh release/*.cyclonedx.json
 
       - name: Validate staged release completeness
         run: |
@@ -1080,6 +555,14 @@ jobs:
             --version "${{ needs.validate.outputs.version }}" \
             --release-dir release \
             --signed
+          python3 scripts/evidence/release-ingress.py validate \
+            release/release-ingress-manifest.json \
+            --artifact-root build-artifacts \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
+            --require-signature \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: SLSA build provenance attestation
         uses: actions/attest-build-provenance@v3
@@ -1094,6 +577,7 @@ jobs:
             release/suderra-installer-v*-aarch64
             release/*.cyclonedx.json
             release/release-assets.json
+            release/release-ingress-manifest.json
             release/SHA256SUMS
             release/manifest.json
 
@@ -1156,6 +640,133 @@ jobs:
                 --require-pass \
                 --check-files
             done
+
+      - name: Package final release evidence archive
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="release/release-evidence-${VERSION}.tar.zst"
+          tar --zstd -cf "${archive}" -C release-evidence-generated "${VERSION}"
+          cosign sign-blob \
+            --yes \
+            --output-signature="${archive}.sig" \
+            --output-certificate="${archive}.cert" \
+            "${archive}"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          release_dir = Path("release")
+          version = os.environ["VERSION"]
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          files = []
+          for path in sorted(release_dir.iterdir(), key=lambda item: item.name):
+              if not path.is_file() or path.name == "release-publication-manifest.json":
+                  continue
+              files.append(
+                  {
+                      "name": path.name,
+                      "bytes": path.stat().st_size,
+                      "sha256": sha256(path),
+                  }
+              )
+          manifest = {
+              "schema_version": "suderra.release-publication-manifest.v1",
+              "version": version,
+              "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "source": {
+                  "repository": os.environ["GITHUB_REPOSITORY"],
+                  "workflow": os.environ["GITHUB_WORKFLOW"],
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              },
+              "self_included": False,
+              "self_sidecars_included": False,
+              "files": files,
+          }
+          (release_dir / "release-publication-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Sign publication manifest
+        working-directory: release
+        run: |
+          set -euo pipefail
+          cosign sign-blob \
+            --yes \
+            --output-signature="release-publication-manifest.json.sig" \
+            --output-certificate="release-publication-manifest.json.cert" \
+            "release-publication-manifest.json"
+
+      - name: Final publication provenance attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            release/release-evidence-*.tar.zst
+            release/release-evidence-*.tar.zst.sig
+            release/release-evidence-*.tar.zst.cert
+            release/release-publication-manifest.json
+            release/release-publication-manifest.json.sig
+            release/release-publication-manifest.json.cert
+
+      - name: Machine-verify final publication bytes
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COSIGN_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          : > machine-verification/final-publication.log
+          for f in release-evidence-${{ needs.validate.outputs.version }}.tar.zst release-publication-manifest.json; do
+            {
+              echo "==> cosign verify ${f}"
+              cosign verify-blob \
+                --certificate "${f}.cert" \
+                --certificate-identity "${COSIGN_IDENTITY}" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                --signature "${f}.sig" \
+                "${f}"
+              echo "==> gh attestation verify ${f}"
+              gh attestation verify "${f}" --repo "${GITHUB_REPOSITORY}"
+            } 2>&1 | tee -a machine-verification/final-publication.log
+          done
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          release_dir = Path(".")
+          manifest = json.loads((release_dir / "release-publication-manifest.json").read_text(encoding="utf-8"))
+          names = {item["name"] for item in manifest["files"]}
+          required = {
+              f"release-evidence-${manifest['version']}.tar.zst",
+              f"release-evidence-${manifest['version']}.tar.zst.sig",
+              f"release-evidence-${manifest['version']}.tar.zst.cert",
+          }
+          missing = sorted(required - names)
+          if missing:
+              raise SystemExit(f"publication manifest missing final evidence bytes: {', '.join(missing)}")
+          for item in manifest["files"]:
+              path = release_dir / item["name"]
+              if not path.is_file():
+                  raise SystemExit(f"publication manifest references missing file: {item['name']}")
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != item["sha256"]:
+                  raise SystemExit(f"publication manifest sha mismatch: {item['name']}")
+          PY
 
       - name: Upload signed release evidence inputs
         uses: actions/upload-artifact@v7
@@ -1254,6 +865,8 @@ jobs:
             - **SBOM** (`*.cyclonedx.json`) — supply chain
             - **Manifest** (`manifest.json`) — `suderra-installer` formatı
             - **SHA256SUMS** — toplu hash dosyası
+            - **release-evidence-*.tar.zst** — final evidence archive
+            - **release-publication-manifest.json** — published byte set manifest
             - Non-signature release asset'leri için `.sig` + `.cert` cosign keyless imzaları
             - OS images, installer binaries, SBOM, payload manifests ve release control dosyaları için GitHub Artifact Attestations
           files: |
@@ -1265,6 +878,9 @@ jobs:
             signed-release/release/suderra-installer-*
             signed-release/release/*.cyclonedx.json
             signed-release/release/release-assets.json
+            signed-release/release/release-ingress-manifest.json
+            signed-release/release/release-evidence-*.tar.zst
+            signed-release/release/release-publication-manifest.json
             signed-release/release/SHA256SUMS
             signed-release/release/manifest.json
             signed-release/release/*.sig

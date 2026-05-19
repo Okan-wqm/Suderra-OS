@@ -15,6 +15,7 @@ python3 - "${TMPDIR}" "${VERSION}" "${SOURCE_SHA}" "${BUILDROOT_INDEX_SHA}" "${P
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -76,6 +77,44 @@ for row in matrix["defconfigs"]:
             }
         )
 
+installers = []
+for arch in ("x86_64", "aarch64"):
+    release_name = f"suderra-installer-{version}-{arch}"
+    digest = write_release(release_name, f"installer:{arch}\n")
+    write_release(f"{release_name}.sha256", f"{digest}  {release_name}\n")
+    installers.extend(
+        [
+            {
+                "role": "installer",
+                "arch": arch,
+                "artifact": f"suderra-installer-{arch}",
+                "path": f"installer-{arch}/suderra-installer-{arch}",
+                "bytes": len(f"installer:{arch}\n".encode("utf-8")),
+                "sha256": digest,
+            },
+            {
+                "role": "checksum",
+                "arch": arch,
+                "artifact": f"suderra-installer-{arch}.sha256",
+                "path": f"installer-{arch}/suderra-installer-{arch}.sha256",
+                "bytes": len(f"{digest}  {release_name}\n".encode("utf-8")),
+                "sha256": hashlib.sha256(f"{digest}  {release_name}\n".encode("utf-8")).hexdigest(),
+            },
+        ]
+    )
+
+metadata = json.loads(
+    subprocess.check_output(
+        [
+            sys.executable,
+            str(project_root / "scripts" / "ci" / "buildroot-patch-identity.py"),
+            "metadata",
+            "--source-sha",
+            source_sha,
+        ],
+        text=True,
+    )
+)
 binding = {
     "schema_version": "suderra.release-input-binding.v1",
     "profile": "release-candidate",
@@ -86,11 +125,12 @@ binding = {
     "build_workflow_name": "Build",
     "matrix_path": "ci/build-matrix.yml",
     "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
-    "buildroot_index_sha": buildroot_index_sha,
     "artifacts": sorted(binding_artifacts, key=lambda item: (item["defconfig"], item["artifact"])),
+    "installers": sorted(installers, key=lambda item: (item["arch"], item["artifact"])),
     "release_targets": [],
     "generated_at": "2026-05-13T00:00:00Z",
 }
+binding.update(metadata)
 binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 

@@ -24,6 +24,36 @@ grep -q "LAB_ALLOW_MISSING_HASH" "${FLASH}" || {
     exit 1
 }
 
+grep -q -- "--acceptance" "${FLASH}" || {
+    echo "ERROR: flash-sd.sh must expose an explicit acceptance mode" >&2
+    exit 1
+}
+
+grep -q "/dev/disk/by-id" "${FLASH}" || {
+    echo "ERROR: acceptance mode must require stable /dev/disk/by-id targets" >&2
+    exit 1
+}
+
+grep -q "whole-disk" "${FLASH}" || {
+    echo "ERROR: acceptance mode must reject partition targets" >&2
+    exit 1
+}
+
+grep -q "stale açılmış image" "${FLASH}" || {
+    echo "ERROR: acceptance mode must reject stale decompressed images" >&2
+    exit 1
+}
+
+grep -q "Acceptance modunda --skip-verify yasak" "${FLASH}" || {
+    echo "ERROR: acceptance mode must forbid --skip-verify" >&2
+    exit 1
+}
+
+grep -q "Acceptance modunda geniş --force yasak" "${FLASH}" || {
+    echo "ERROR: acceptance mode must forbid broad --force" >&2
+    exit 1
+}
+
 if grep -q "Hash dosyası bulunamadı.*Doğrulama atlandı" "${FLASH}"; then
     echo "ERROR: flash-sd.sh must not silently skip missing hash verification" >&2
     exit 1

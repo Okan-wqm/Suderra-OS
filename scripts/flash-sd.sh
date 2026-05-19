@@ -73,6 +73,8 @@ Seçenekler:
   --verify-signature  cosign ile imza doğrulaması (releases için)
   --lab-allow-missing-hash
                       LAB ONLY: MANIFEST.txt/.sha256 yoksa hash gate'ini atla
+  --acceptance        Acceptance/lab evidence modu: yalnız /dev/disk/by-id/*
+                      whole-disk hedefleri kabul eder ve doğrulamayı zorunlu kılar
   --skip-verify       Geri okuma doğrulamasını atla (hızlı, önerilmez)
   --force             Onay sorusunu atla (CI / scripting)
   -h, --help          Bu yardımı göster
@@ -99,6 +101,7 @@ EOF
 
 VERIFY_SIGNATURE=0
 LAB_ALLOW_MISSING_HASH=0
+ACCEPTANCE=0
 SKIP_VERIFY=0
 FORCE=0
 DEVICE=""
@@ -109,6 +112,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help)          usage ;;
         --verify-signature) VERIFY_SIGNATURE=1; shift ;;
         --lab-allow-missing-hash) LAB_ALLOW_MISSING_HASH=1; shift ;;
+        --acceptance)       ACCEPTANCE=1; shift ;;
         --skip-verify)      SKIP_VERIFY=1; shift ;;
         --force)            FORCE=1; shift ;;
         -*)                 die "Bilinmeyen seçenek: $1" ;;
@@ -127,6 +131,12 @@ done
 
 [[ -n "${DEVICE}" ]] || die "device gerekli (örn: /dev/sdb). --help için: $0 --help"
 [[ -n "${IMAGE}" ]]  || die "image gerekli. --help için: $0 --help"
+
+if [[ "${ACCEPTANCE}" -eq 1 ]]; then
+    [[ "${DEVICE}" == /dev/disk/by-id/* ]] || die "Acceptance modunda hedef yalnız /dev/disk/by-id/* olmalı: ${DEVICE}"
+    [[ "${SKIP_VERIFY}" -eq 0 ]] || die "Acceptance modunda --skip-verify yasak"
+    [[ "${FORCE}" -eq 0 ]] || die "Acceptance modunda geniş --force yasak; operatör hedefi interaktif onaylamalı"
+fi
 
 # ----------------------------------------------------------------------------
 # 1. Root kontrolü
@@ -224,6 +234,9 @@ CLEANUP_DECOMPRESSED=0
 if [[ "${IMAGE_ABS}" == *.xz ]]; then
     DECOMPRESSED_IMAGE="${IMAGE_ABS%.xz}"
     if [[ -f "${DECOMPRESSED_IMAGE}" ]]; then
+        if [[ "${ACCEPTANCE}" -eq 1 ]]; then
+            die "Acceptance modunda stale açılmış image kabul edilmez: ${DECOMPRESSED_IMAGE}"
+        fi
         log_info "Açılmış image mevcut: ${DECOMPRESSED_IMAGE}"
     else
         log_info "xz açılıyor (~30s)..."
@@ -241,6 +254,10 @@ log_info "Açılmış image: ${IMAGE_SIZE_MB} MiB"
 # 6. Hedef cihaz kontrolleri
 # ----------------------------------------------------------------------------
 [[ -b "${DEVICE}" ]] || die "${DEVICE} bir blok cihazı değil"
+if [[ "${ACCEPTANCE}" -eq 1 ]]; then
+    DEVICE_TYPE="$(lsblk -no TYPE "$(readlink -f "${DEVICE}")" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
+    [[ "${DEVICE_TYPE}" == "disk" ]] || die "Acceptance modunda partition/alt cihaz hedefi yasak; whole-disk gerekli (${DEVICE_TYPE:-unknown})"
+fi
 
 disk_parent_name() {
     local source="$1"

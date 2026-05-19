@@ -139,8 +139,33 @@ for name, check in data["machine_verification"].items():
     check["status"] = "passed"
     check["logs"] = [f"machine/{name}.log"]
 
+data["build_evidence"] = {
+    "status": "passed",
+    "logs": [
+        {
+            "path": "build/suderra_qemu_x86_64_defconfig.log",
+            "sha256": None,
+            "bytes": None,
+        }
+    ],
+    "warnings": [
+        {
+            "path": "build/suderra_qemu_x86_64_defconfig.warnings.json",
+            "sha256": None,
+            "bytes": None,
+        }
+    ],
+}
+for item, text in (
+    (data["build_evidence"]["logs"][0], "synthetic build log\n"),
+    (data["build_evidence"]["warnings"][0], '{"summary":{"policy_errors":0}}\n'),
+):
+    digest, size = write_text(item["path"], text)
+    item["sha256"] = digest
+    item["bytes"] = size
+
 data["governance"]["retention_years"] = 7
-data["governance"]["approval_model"] = "single-alpha-owner"
+data["governance"]["approval_model"] = "enterprise-two-role"
 for name, check in data["governance"]["checks"].items():
     check["status"] = "passed"
     check["evidence"] = f"governance/{name}.json"
@@ -160,6 +185,12 @@ data["approvals"] = [
     {
         "role": "release-owner",
         "name": "Contract Test",
+        "approved_at": "2026-05-13T00:00:00Z",
+        "ticket": "TEST-1",
+    },
+    {
+        "role": "security-compliance",
+        "name": "Contract Security",
         "approved_at": "2026-05-13T00:00:00Z",
         "ticket": "TEST-1",
     }
@@ -312,8 +343,33 @@ for name, check in data["machine_verification"].items():
     check["status"] = "passed"
     check["logs"] = [f"machine/{name}.log"]
 
+data["build_evidence"] = {
+    "status": "passed",
+    "logs": [
+        {
+            "path": "build/suderra_qemu_x86_64_defconfig.log",
+            "sha256": None,
+            "bytes": None,
+        }
+    ],
+    "warnings": [
+        {
+            "path": "build/suderra_qemu_x86_64_defconfig.warnings.json",
+            "sha256": None,
+            "bytes": None,
+        }
+    ],
+}
+for item, text in (
+    (data["build_evidence"]["logs"][0], "synthetic alpha build log\n"),
+    (data["build_evidence"]["warnings"][0], '{"summary":{"policy_errors":0}}\n'),
+):
+    digest, size = write_text(item["path"], text)
+    item["sha256"] = digest
+    item["bytes"] = size
+
 data["governance"]["retention_years"] = 7
-data["governance"]["approval_model"] = "single-alpha-owner"
+data["governance"]["approval_model"] = "enterprise-two-role"
 for name, check in data["governance"]["checks"].items():
     check["status"] = "passed"
     check["evidence"] = f"governance/{name}.json"
@@ -332,6 +388,12 @@ data["approvals"] = [
     {
         "role": "release-owner",
         "name": "Contract Test",
+        "approved_at": "2026-05-13T00:00:00Z",
+        "ticket": "TEST-ALPHA",
+    },
+    {
+        "role": "security-compliance",
+        "name": "Contract Security",
         "approved_at": "2026-05-13T00:00:00Z",
         "ticket": "TEST-ALPHA",
     }

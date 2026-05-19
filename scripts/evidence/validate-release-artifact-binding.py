@@ -58,6 +58,21 @@ def binding_index(binding: dict[str, Any]) -> dict[tuple[str, str], dict[str, An
     return index
 
 
+def installer_index(binding: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    installers = binding.get("installers")
+    if not isinstance(installers, list):
+        return {}
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in installers:
+        if not isinstance(item, dict):
+            continue
+        arch = item.get("arch")
+        artifact = item.get("artifact")
+        if isinstance(arch, str) and isinstance(artifact, str):
+            index[(arch, artifact)] = item
+    return index
+
+
 def staged_name_for_artifact(row: dict[str, Any], artifact: str, matrix_module: Any) -> str | None:
     release_artifact = str(row["release_artifact"])
     source_artifact = str(row["artifact"])
@@ -80,6 +95,7 @@ def validate(binding_path: Path, release_dir: Path, matrix_path: Path) -> list[s
     if binding.get("schema_version") != BINDING_SCHEMA_VERSION:
         failures.append(f"binding schema_version must be {BINDING_SCHEMA_VERSION}")
     artifacts = binding_index(binding)
+    installers = installer_index(binding)
     matrix_module = load_matrix_module()
     matrix = matrix_module.load_matrix(matrix_path)
     tracked_names: set[str] = set()
@@ -117,6 +133,29 @@ def validate(binding_path: Path, release_dir: Path, matrix_path: Path) -> list[s
         if name.endswith((".img.xz", ".manifest.txt", ".payload-manifest.json", ".payload-manifest.sig")):
             if name.startswith("suderra-") and name not in tracked_names:
                 failures.append(f"unexpected staged release image contract file: {name}")
+    version = binding.get("version")
+    if isinstance(version, str):
+        for arch in ("x86_64", "aarch64"):
+            source_name = f"suderra-installer-{arch}"
+            release_name = f"suderra-installer-{version}-{arch}"
+            bound = installers.get((arch, source_name))
+            if bound is None:
+                failures.append(f"binding missing installer artifact: {arch}:{source_name}")
+                continue
+            expected_sha = bound.get("sha256")
+            if not isinstance(expected_sha, str) or not SHA256_RE.fullmatch(expected_sha) or expected_sha == "0" * 64:
+                failures.append(f"binding installer has invalid sha256: {arch}:{source_name}")
+                continue
+            staged = release_dir / release_name
+            if not staged.is_file() or staged.stat().st_size <= 0:
+                failures.append(f"staged installer file missing or empty: {release_name}")
+                continue
+            actual_sha = sha256_file(staged)
+            if actual_sha != expected_sha:
+                failures.append(
+                    f"staged installer sha mismatch for {release_name}: "
+                    f"expected bound {expected_sha}, got {actual_sha}"
+                )
     return failures
 
 

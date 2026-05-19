@@ -73,6 +73,20 @@ def load_matrix(path: Path) -> tuple[dict[str, Any], Any]:
     return module.load_matrix(path), module
 
 
+def buildroot_source_metadata(source_sha: str) -> dict[str, Any]:
+    script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+    spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = module.metadata(source_sha)
+    failures = module.validate_metadata_payload(payload)
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    return payload
+
+
 def release_rows(matrix: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in matrix.get("defconfigs", []) if row.get("release")]
 
@@ -108,6 +122,70 @@ def artifact_entries(
     return entries, errors
 
 
+def build_evidence_entries(
+    matrix: dict[str, Any],
+    artifact_root: Path | None,
+    require_artifacts: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    entries: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for row in release_rows(matrix):
+        defconfig = str(row["name"])
+        target = str(row["target"])
+        artifact_dir = artifact_root / f"{defconfig}-build-logs" if artifact_root is not None else None
+        for role, artifact in (
+            ("build-log", f"build-logs/{defconfig}.log"),
+            ("warning-classifier-evidence", f"build-logs/{defconfig}.warnings.json"),
+        ):
+            path = artifact_dir / artifact if artifact_dir is not None else None
+            if path is None or not path.is_file():
+                if require_artifacts:
+                    errors.append(f"missing Build evidence for {defconfig}: {artifact}")
+                continue
+            entries.append(
+                {
+                    "role": role,
+                    "defconfig": defconfig,
+                    "target": target,
+                    "artifact": artifact,
+                    "path": path.relative_to(artifact_root).as_posix() if artifact_root else str(path),
+                    "bytes": path.stat().st_size,
+                    "sha256": sha256_file(path),
+                }
+            )
+    return entries, errors
+
+
+def installer_entries(
+    artifact_root: Path | None,
+    require_artifacts: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    entries: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for arch in ("x86_64", "aarch64"):
+        artifact_dir = artifact_root / f"installer-{arch}" if artifact_root is not None else None
+        for role, artifact in (
+            ("installer", f"suderra-installer-{arch}"),
+            ("checksum", f"suderra-installer-{arch}.sha256"),
+        ):
+            path = artifact_dir / artifact if artifact_dir is not None else None
+            if path is None or not path.is_file():
+                if require_artifacts:
+                    errors.append(f"missing installer artifact for {arch}: {artifact}")
+                continue
+            entries.append(
+                {
+                    "role": role,
+                    "arch": arch,
+                    "artifact": artifact,
+                    "path": path.relative_to(artifact_root).as_posix() if artifact_root else str(path),
+                    "bytes": path.stat().st_size,
+                    "sha256": sha256_file(path),
+                }
+            )
+    return entries, errors
+
+
 def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]]:
     errors: list[str] = []
     if not SEMVER_RE.fullmatch(args.version):
@@ -127,10 +205,24 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
     )
     errors.extend(artifact_errors)
     try:
-        buildroot_index_sha = run_git(["ls-tree", args.source_sha, "buildroot"]).split()[2]
+        buildroot_metadata = buildroot_source_metadata(args.source_sha)
     except Exception as exc:
-        errors.append(f"cannot resolve buildroot index sha for {args.source_sha}: {exc}")
-        buildroot_index_sha = ""
+        errors.append(f"cannot resolve Buildroot source identity for {args.source_sha}: {exc}")
+        buildroot_metadata = {
+            "buildroot_index_sha": "",
+            "buildroot_patchset_sha256": "",
+            "buildroot_patch_files": [],
+            "buildroot_effective_source_id": "",
+            "buildroot_expected_patched": False,
+        }
+    build_evidence, build_evidence_errors = build_evidence_entries(
+        matrix,
+        artifact_root,
+        args.require_artifacts,
+    )
+    errors.extend(build_evidence_errors)
+    installers, installer_errors = installer_entries(artifact_root, args.require_artifacts)
+    errors.extend(installer_errors)
     matrix_sha256 = read_text_sha256(matrix_path)
     try:
         matrix_display = str(matrix_path.relative_to(ROOT))
@@ -146,9 +238,13 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "build_workflow_name": args.build_workflow_name,
         "matrix_path": matrix_display,
         "matrix_sha256": matrix_sha256,
-        "buildroot_index_sha": buildroot_index_sha,
+        **buildroot_metadata,
         "artifact_root": str(artifact_root) if artifact_root else None,
         "artifacts": sorted(artifacts, key=lambda item: (item["defconfig"], item["artifact"])),
+        "build_evidence": sorted(build_evidence, key=lambda item: (item["defconfig"], item["artifact"])),
+        "installers": sorted(installers, key=lambda item: (item["arch"], item["artifact"])),
+        "userspace_cargo_lock_sha256": read_text_sha256(ROOT / "userspace" / "Cargo.lock"),
+        "userspace_rust_toolchain_sha256": read_text_sha256(ROOT / "userspace" / "rust-toolchain.toml"),
         "release_targets": [
             {
                 "defconfig": str(row["name"]),
@@ -252,14 +348,21 @@ def init_command(args: argparse.Namespace) -> int:
         write_json(
             args.output_root / "release-approvals" / args.version / f"{target}.json",
             {
-                "schema_version": "suderra.release-approval.v1",
+                "schema_version": "suderra.release-approval.v2",
                 "version": args.version,
                 "target": target,
                 "source_sha": args.source_sha,
-                "status": "pending",
-                "approver": "TO_BE_COLLECTED",
-                "approved_at": "TO_BE_COLLECTED",
-                "decision": "TO_BE_COLLECTED",
+                "approvals": [],
+                "residual_risk": {
+                    "status": "none",
+                    "items": [],
+                },
+                "release_decision": {
+                    "status": "blocked",
+                    "decided_by": "TO_BE_COLLECTED",
+                    "decided_at": "TO_BE_COLLECTED",
+                    "rationale": "TO_BE_COLLECTED",
+                },
             },
         )
         repro = args.output_root / "release-reproducibility" / args.version / f"{target}.log"

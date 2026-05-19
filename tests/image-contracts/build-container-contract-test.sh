@@ -152,16 +152,18 @@ grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workfl
         echo "ERROR: build workflow must validate trust-root visibility inside the build container" >&2
         exit 1
     }
-grep -q 'SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current' "${PROJECT_ROOT}/.github/workflows/release.yml" ||
-    {
-        echo "ERROR: release workflow must use a container keyring path outside /home/builder" >&2
-        exit 1
-    }
-grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workflows/release.yml" ||
-    {
-        echo "ERROR: release workflow must validate trust-root visibility inside the build container" >&2
-        exit 1
-    }
+if grep -q 'build-in-docker.sh' "${PROJECT_ROOT}/.github/workflows/release.yml"; then
+    grep -q 'SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current' "${PROJECT_ROOT}/.github/workflows/release.yml" ||
+        {
+            echo "ERROR: release workflow build jobs must use a container keyring path outside /home/builder" >&2
+            exit 1
+        }
+    grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workflows/release.yml" ||
+        {
+            echo "ERROR: release workflow build jobs must validate trust-root visibility inside the build container" >&2
+            exit 1
+        }
+fi
 if grep -R '/home/builder/.suderra-keys/current' \
     "${PROJECT_ROOT}/scripts/build-in-docker.sh" \
     "${PROJECT_ROOT}/.github/workflows/build.yml" \

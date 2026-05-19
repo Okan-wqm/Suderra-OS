@@ -18,6 +18,13 @@ provenance, SBOM/VEX, reproducibility, security scans, machine verification,
 governance snapshots, QEMU or hardware acceptance, runtime checks, approvals,
 residual risk, and the final release decision.
 
+Published releases also include `release-evidence-<version>.tar.zst` with
+`.sig` and `.cert` sidecars plus `release-publication-manifest.json` with its
+own `.sig` and `.cert`. The publication manifest records the final public byte
+set after signing and after the evidence archive is created. The manifest does
+not include itself or its own sidecars; its cosign signature is the trust
+anchor for the manifest file.
+
 Use the stdlib-only harness:
 
 ```bash
@@ -77,6 +84,7 @@ Required top-level fields:
 | `reproducibility` | Independent rebuild comparison and logs. |
 | `security_scans` | Reports listed by the build matrix. |
 | `machine_verification` | SHA256SUMS, cosign, and attestation verification logs. |
+| `build_evidence` | Retained Build logs and warning-classifier JSON bound by ingress. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
 | `hardware` | Board serial logs and hardware acceptance results. |
@@ -90,6 +98,13 @@ The script is the authority for strict field validation:
 ```bash
 python3 scripts/evidence/release-evidence.py schema
 ```
+
+Approval input files consumed by preflight and final assembly use
+`suderra.release-approval.v2`. They must contain `approvals[]`,
+`release_decision`, and `residual_risk` in the same shape final evidence
+validates; top-level `status: approved` files are rejected. Release-ready
+enterprise alpha evidence requires two distinct approval roles: `release-owner`
+and either `maintainer` or `security-compliance`.
 
 The release workflow assembles final bundles with:
 
@@ -105,10 +120,11 @@ python3 scripts/evidence/release-evidence.py assemble-release \
 ```
 
 The command consumes staged release assets, `release-assets.json`, machine
-verification logs, lab input, governance snapshots, security/reproducibility
-reports, QEMU logs, and approval records. It intentionally produces bundles
-that fail `--require-pass` until every required input is present. Legacy v2
-evidence can be updated structurally with:
+verification logs, preflight-bound Build logs and warning JSON, lab input,
+governance snapshots, security/reproducibility reports, QEMU logs, and approval
+records. It intentionally produces bundles that fail `--require-pass` until
+every required input is present. Legacy v2 evidence can be updated structurally
+with:
 
 ```bash
 python3 scripts/evidence/release-evidence.py migrate \
@@ -198,9 +214,10 @@ release evidence shape remains:
 
 The release workflow writes `release-assets.json` before signing release assets.
 The manifest records final asset names, byte counts, SHA256 digests, the matrix
-digest, Buildroot submodule SHA, commit, tag, run ID, and run attempt. The
-evidence validator requires `asset_manifest.verified=true` and checks the
-manifest file hash.
+digest, Buildroot submodule SHA, ordered Buildroot patchset SHA, effective
+Buildroot source ID, commit, tag, run ID, and run attempt. The evidence
+validator requires `asset_manifest.verified=true` and checks the manifest file
+hash.
 
 Machine verification is not a boolean assertion. The bundle must include logs
 from:
@@ -208,6 +225,12 @@ from:
 - `sha256sum -c SHA256SUMS`
 - `cosign verify-blob` for every non-signature release asset
 - `gh attestation verify` for every attested release asset
+
+`release-publication-manifest.json` is the authoritative public byte inventory.
+It is generated after the evidence archive exists, signed with cosign keyless,
+attested, and machine-verified before the protected publish job. Offline
+release verification should start from this manifest, not from CI workspace
+state.
 
 ## Hardware Evidence
 

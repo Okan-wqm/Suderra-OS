@@ -115,7 +115,7 @@ Katman 7: Audit               → journald → upstream syslog (lokal dolmasın)
 | BusyBox | TBD | - |
 | nftables | TBD | - |
 | chrony | TBD | - |
-| Rust toolchain | 1.85.x | - |
+| Rust toolchain | 1.86.x current pin | MSRV proof tracked separately |
 
 ## Açık Konular (Faz 1'de doldurulacak)
 

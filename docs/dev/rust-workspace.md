@@ -22,7 +22,7 @@ userspace/
 ├── Cargo.toml              # workspace root, ortak metadata + deps
 ├── Cargo.lock              # dependency tree pin (commit'lenir)
 ├── README.md               # workspace genel bakış
-├── rust-toolchain.toml     # Rust 1.85 pinning
+├── rust-toolchain.toml     # Rust 1.86.0 pinning
 ├── deny.toml               # cargo-deny config (lisans + advisory)
 ├── .cargo/config.toml      # musl target, linker, alias'lar
 │
@@ -43,7 +43,7 @@ userspace/
 
 ```bash
 cd userspace/
-cargo --version   # rustup otomatik 1.85.0 indirir
+cargo --version   # rustup otomatik 1.86.0 indirir
 ```
 
 ### 2. Musl toolchain (production build için)
@@ -148,7 +148,7 @@ sudo apt install musl-tools
 | `check` (fmt + clippy + test host) | ~3dk | Hızlı geri bildirim |
 | `build-musl` (x86_64 + aarch64) | ~15-20dk | Production build |
 | `security` (audit + deny) | ~3dk | Supply chain |
-| `msrv` (Rust 1.85) | ~5dk | Toolchain pinning doğrula |
+| `msrv` (Rust 1.86) | ~5dk | Toolchain pinning doğrula |
 
 PR'da hepsi koşar, başarısız olursa merge bloklu.
 

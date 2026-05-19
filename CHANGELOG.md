@@ -117,7 +117,7 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 - `userspace/` Cargo workspace (resolver=2, 7 member crate)
 - `userspace/Cargo.toml` — workspace metadata + paylaşılan dependency'ler (tokio, rustls, serde, tracing)
 - `userspace/.cargo/config.toml` — musl cross-compile (x86_64 + aarch64), linker config, alias'lar
-- `userspace/rust-toolchain.toml` — Rust 1.85.0 pinned (reproducible build için)
+- `userspace/rust-toolchain.toml` — Rust 1.86.0 pinned (reproducible build için)
 - `userspace/deny.toml` — cargo-deny config: lisans whitelist (Apache/MIT/BSD), GPL/OpenSSL ban, CVE check
 - `userspace/README.md` — workspace açıklama + cross-compile rehberi
 

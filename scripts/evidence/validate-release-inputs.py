@@ -16,6 +16,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_approval import validate_approval_payload  # noqa: E402
+
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v1"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -142,6 +145,44 @@ def validate_binding(
             expected_buildroot = None
         if expected_buildroot is not None and buildroot_index_sha != expected_buildroot:
             failures.append("binding buildroot_index_sha does not match source_sha tree")
+    for field in ("buildroot_patchset_sha256", "buildroot_effective_source_id"):
+        value = binding.get(field)
+        if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
+            failures.append(f"binding {field} must be a lowercase sha256")
+        elif value == "0" * 64:
+            failures.append(f"binding {field} must not use all-zero sha256")
+    applied_diff = binding.get("buildroot_applied_diff_sha256")
+    if applied_diff is not None and (
+        not isinstance(applied_diff, str) or not SHA256_RE.fullmatch(applied_diff) or applied_diff == "0" * 64
+    ):
+        failures.append("binding buildroot_applied_diff_sha256 must be a non-zero sha256 when present")
+    if not isinstance(binding.get("buildroot_expected_patched"), bool):
+        failures.append("binding buildroot_expected_patched must be a boolean")
+    patch_files = binding.get("buildroot_patch_files")
+    if not isinstance(patch_files, list):
+        failures.append("binding buildroot_patch_files must be a list")
+    else:
+        seen_patch_paths: set[str] = set()
+        for index, patch in enumerate(patch_files):
+            if not isinstance(patch, dict):
+                failures.append(f"binding buildroot_patch_files[{index}] must be an object")
+                continue
+            rel = patch.get("path")
+            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
+                failures.append(f"binding buildroot_patch_files[{index}].path must be a relative non-placeholder path")
+            elif rel in seen_patch_paths:
+                failures.append(f"duplicate Buildroot patch file: {rel}")
+            else:
+                seen_patch_paths.add(rel)
+            digest = patch.get("sha256")
+            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) or digest == "0" * 64:
+                failures.append(f"binding buildroot_patch_files[{index}].sha256 must be a non-zero sha256")
+            if not isinstance(patch.get("bytes"), int) or patch.get("bytes", 0) <= 0:
+                failures.append(f"binding buildroot_patch_files[{index}].bytes must be positive")
+    for field in ("userspace_cargo_lock_sha256", "userspace_rust_toolchain_sha256"):
+        value = binding.get(field)
+        if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
+            failures.append(f"binding {field} must be a non-zero sha256")
     try:
         matrix, matrix_module = load_matrix_with_module(matrix_path)
         expected_rows = [row for row in matrix.get("defconfigs", []) if row.get("release")]
@@ -196,6 +237,98 @@ def validate_binding(
                     "binding artifacts missing matrix-required files: "
                     + ", ".join(f"{defconfig}:{artifact}" for defconfig, artifact in missing)
                 )
+    expected_build_evidence: set[tuple[str, str]] = set()
+    if "expected_rows" in locals():
+        for row in expected_rows:
+            defconfig = str(row["name"])
+            expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.log"))
+            expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.warnings.json"))
+    build_evidence = binding.get("build_evidence")
+    if not isinstance(build_evidence, list) or not build_evidence:
+        failures.append("binding build_evidence must be a non-empty list")
+    else:
+        seen_evidence: set[tuple[str, str]] = set()
+        artifact_root = args.artifact_root
+        for index, evidence in enumerate(build_evidence):
+            if not isinstance(evidence, dict):
+                failures.append(f"binding build_evidence[{index}] must be an object")
+                continue
+            key = (str(evidence.get("defconfig")), str(evidence.get("artifact")))
+            if expected_build_evidence and key not in expected_build_evidence:
+                failures.append(f"unexpected binding build evidence: {key[0]} {key[1]}")
+            if key in seen_evidence:
+                failures.append(f"duplicate binding build evidence: {key[0]} {key[1]}")
+            seen_evidence.add(key)
+            role = evidence.get("role")
+            if role not in {"build-log", "warning-classifier-evidence"}:
+                failures.append(f"binding build evidence {key[0]} {key[1]} has invalid role")
+            digest = evidence.get("sha256")
+            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+                failures.append(f"binding build evidence {key[0]} {key[1]} has invalid sha256")
+            elif digest == "0" * 64:
+                failures.append(f"binding build evidence {key[0]} {key[1]} must not use all-zero sha256")
+            if not isinstance(evidence.get("bytes"), int) or evidence.get("bytes", 0) <= 0:
+                failures.append(f"binding build evidence {key[0]} {key[1]} must have positive byte size")
+            rel = evidence.get("path")
+            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
+                failures.append(f"binding build evidence {key[0]} {key[1]} path must be a relative non-placeholder path")
+            if artifact_root is not None and isinstance(rel, str):
+                path = artifact_root / rel
+                if not path.is_file():
+                    failures.append(f"binding build evidence file missing: {path}")
+                elif isinstance(digest, str) and sha256_file(path) != digest:
+                    failures.append(f"binding build evidence sha mismatch: {path}")
+        if expected_build_evidence:
+            missing = sorted(expected_build_evidence - seen_evidence)
+            if missing:
+                failures.append(
+                    "binding build_evidence missing matrix-required files: "
+                    + ", ".join(f"{defconfig}:{artifact}" for defconfig, artifact in missing)
+                )
+    expected_installers = {
+        ("x86_64", "suderra-installer-x86_64"),
+        ("x86_64", "suderra-installer-x86_64.sha256"),
+        ("aarch64", "suderra-installer-aarch64"),
+        ("aarch64", "suderra-installer-aarch64.sha256"),
+    }
+    installers = binding.get("installers")
+    if not isinstance(installers, list) or not installers:
+        failures.append("binding installers must be a non-empty list")
+    else:
+        seen_installers: set[tuple[str, str]] = set()
+        artifact_root = args.artifact_root
+        for index, installer in enumerate(installers):
+            if not isinstance(installer, dict):
+                failures.append(f"binding installers[{index}] must be an object")
+                continue
+            key = (str(installer.get("arch")), str(installer.get("artifact")))
+            if key not in expected_installers:
+                failures.append(f"unexpected binding installer artifact: {key[0]} {key[1]}")
+            if key in seen_installers:
+                failures.append(f"duplicate binding installer artifact: {key[0]} {key[1]}")
+            seen_installers.add(key)
+            if installer.get("role") not in {"installer", "checksum"}:
+                failures.append(f"binding installer {key[0]} {key[1]} has invalid role")
+            digest = installer.get("sha256")
+            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) or digest == "0" * 64:
+                failures.append(f"binding installer {key[0]} {key[1]} must have a non-zero sha256")
+            if not isinstance(installer.get("bytes"), int) or installer.get("bytes", 0) <= 0:
+                failures.append(f"binding installer {key[0]} {key[1]} must have positive byte size")
+            rel = installer.get("path")
+            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
+                failures.append(f"binding installer {key[0]} {key[1]} path must be a relative non-placeholder path")
+            if artifact_root is not None and isinstance(rel, str):
+                path = artifact_root / rel
+                if not path.is_file():
+                    failures.append(f"binding installer file missing: {path}")
+                elif isinstance(digest, str) and sha256_file(path) != digest:
+                    failures.append(f"binding installer sha mismatch: {path}")
+        missing = sorted(expected_installers - seen_installers)
+        if missing:
+            failures.append(
+                "binding installers missing required files: "
+                + ", ".join(f"{arch}:{artifact}" for arch, artifact in missing)
+            )
     return failures
 
 
@@ -216,21 +349,14 @@ def binding_artifact_sha256(binding: dict[str, Any] | None, target: str, artifac
     return matches[0] if len(matches) == 1 else None
 
 
-def validate_approval(path: Path, version: str, target: str) -> list[str]:
+def validate_approval(path: Path, version: str, target: str, source_sha: str | None) -> list[str]:
     payload = read_json(path)
     if not isinstance(payload, dict):
         return [f"missing or invalid approval input: {path}"]
-    failures = []
-    if payload.get("version", version) != version:
-        failures.append(f"approval version mismatch: {path}")
-    if payload.get("target", target) != target:
-        failures.append(f"approval target mismatch: {path}")
-    if payload.get("status") != "approved":
-        failures.append(f"approval status must be approved: {path}")
-    for field in ("approver", "approved_at"):
-        if not isinstance(payload.get(field), str) or not payload[field].strip():
-            failures.append(f"approval missing {field}: {path}")
-    return failures
+    return [
+        f"{path}: {failure}"
+        for failure in validate_approval_payload(payload, version, target, source_sha, require_pass=True)
+    ]
 
 
 def validate_repro(path: Path) -> list[str]:
@@ -292,10 +418,14 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--check-files", action="store_true")
     parser.add_argument("--binding-manifest", type=Path)
+    parser.add_argument("--ingress-manifest", type=Path)
     parser.add_argument("--source-sha")
     parser.add_argument("--source-run-id")
     parser.add_argument("--build-workflow-name", default="Build")
     parser.add_argument("--artifact-root", type=Path)
+    parser.add_argument("--require-ingress-signature", action="store_true")
+    parser.add_argument("--ingress-certificate-identity")
+    parser.add_argument("--ingress-certificate-oidc-issuer")
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -304,6 +434,29 @@ def main() -> int:
         failures.append(f"release tier must be {inferred_tier} for version {args.version}")
     binding = load_binding(args.binding_manifest, failures)
     failures.extend(validate_binding(binding, args, args.matrix))
+    if args.profile == "release-candidate":
+        if args.ingress_manifest is None:
+            failures.append("release-candidate profile requires --ingress-manifest")
+        else:
+            ingress_args = [
+                sys.executable,
+                "scripts/evidence/release-ingress.py",
+                "validate",
+                str(args.ingress_manifest),
+                "--expected-version",
+                args.version,
+            ]
+            if args.artifact_root is not None:
+                ingress_args.extend(["--artifact-root", str(args.artifact_root)])
+            if args.source_sha is not None:
+                ingress_args.extend(["--expected-source-sha", args.source_sha])
+            if args.require_ingress_signature:
+                ingress_args.append("--require-signature")
+                if args.ingress_certificate_identity:
+                    ingress_args.extend(["--certificate-identity", args.ingress_certificate_identity])
+                if args.ingress_certificate_oidc_issuer:
+                    ingress_args.extend(["--certificate-oidc-issuer", args.ingress_certificate_oidc_issuer])
+            failures.extend(run(ingress_args))
     bound_source_sha = args.source_sha
     if bound_source_sha is None and isinstance(binding, dict) and isinstance(binding.get("source_sha"), str):
         bound_source_sha = binding["source_sha"]
@@ -366,7 +519,7 @@ def main() -> int:
             target = str(row["target"])
             approval = args.root / "release-approvals" / args.version / f"{target}.json"
             repro = args.root / "release-reproducibility" / args.version / f"{target}.log"
-            failures.extend(validate_approval(approval, args.version, target))
+            failures.extend(validate_approval(approval, args.version, target, bound_source_sha))
             failures.extend(validate_repro(repro))
     for scan in matrix.get("security_scans", []):
         report = args.root / "release-security" / args.version / f"{scan}.json"

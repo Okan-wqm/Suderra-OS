@@ -619,6 +619,8 @@ def candidate_readiness(tag: str | None, require_inputs: bool = False) -> int:
                 "release-candidate",
                 "--binding-manifest",
                 f"release-inputs/{tag}/release-candidate.json",
+                "--ingress-manifest",
+                f"release-ingress/{tag}/ingress-manifest.json",
                 "--check-files",
             ],
             cwd=ROOT,

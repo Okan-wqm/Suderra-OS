@@ -27,6 +27,7 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 concurrency:
   group: release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inputs.source_sha }}
@@ -75,6 +76,8 @@ jobs:
               raise SystemExit(f"source Build run is not successful: {run.get('status')} {run.get('conclusion')}")
           if profile == "release-candidate" and run.get("head_branch") != "main":
               raise SystemExit(f"release-candidate source Build run must come from main, got {run.get('head_branch')!r}")
+          if profile == "release-candidate" and os.environ.get("GITHUB_REF") != "refs/heads/main":
+              raise SystemExit("release-candidate preflight must be dispatched from refs/heads/main")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"run_attempt={run.get('run_attempt', 1)}\n")
           PY
@@ -87,6 +90,11 @@ jobs:
 
       - name: Validate build matrix
         run: python3 scripts/ci/validate-build-matrix.py validate
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
 
       - name: Verify source commit is protected-main derived
         if: ${{ inputs.profile == 'release-candidate' }}
@@ -101,7 +109,35 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build-artifacts
-          gh run download "${SOURCE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --dir build-artifacts
+          python3 - <<'PY' > expected-build-artifacts.txt
+          import importlib.util
+          from pathlib import Path
+
+          spec = importlib.util.spec_from_file_location(
+              "validate_build_matrix",
+              Path("scripts/ci/validate-build-matrix.py"),
+          )
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+          matrix = module.load_matrix(Path("ci/build-matrix.yml"))
+          names = []
+          for row in matrix.get("defconfigs", []):
+              if row.get("release"):
+                  names.append(f"{row['name']}-image")
+                  names.append(f"{row['name']}-build-logs")
+          names.extend(["installer-x86_64", "installer-aarch64"])
+          for name in sorted(set(names)):
+              print(name)
+          PY
+          while read -r artifact_name; do
+            [ -n "${artifact_name}" ] || continue
+            mkdir -p "build-artifacts/${artifact_name}"
+            gh run download "${SOURCE_RUN_ID}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name "${artifact_name}" \
+              --dir "build-artifacts/${artifact_name}"
+          done < expected-build-artifacts.txt
 
       - name: Bind Build artifacts to release inputs
         run: |
@@ -116,6 +152,25 @@ jobs:
             --artifact-root build-artifacts \
             --require-artifacts \
             --output "release-inputs/${VERSION}/release-candidate.json"
+
+      - name: Create release ingress manifest
+        run: |
+          set -euo pipefail
+          mkdir -p "release-ingress/${VERSION}"
+          python3 scripts/evidence/release-ingress.py create \
+            --binding-manifest "release-inputs/${VERSION}/release-candidate.json" \
+            --artifact-root build-artifacts \
+            --output "release-ingress/${VERSION}/ingress-manifest.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --workflow "Release Preflight" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --actor "${GITHUB_ACTOR}"
+          cosign sign-blob \
+            --yes \
+            --output-signature="release-ingress/${VERSION}/ingress-manifest.json.sig" \
+            --output-certificate="release-ingress/${VERSION}/ingress-manifest.json.cert" \
+            "release-ingress/${VERSION}/ingress-manifest.json"
 
       - name: Collect governance evidence
         if: ${{ inputs.profile == 'release-candidate' }}
@@ -159,12 +214,16 @@ jobs:
             --profile "${PROFILE}"
             --root .
             --binding-manifest "release-inputs/${VERSION}/release-candidate.json"
+            --ingress-manifest "release-ingress/${VERSION}/ingress-manifest.json"
             --source-sha "${SOURCE_SHA}"
             --source-run-id "${SOURCE_RUN_ID}"
             --artifact-root build-artifacts
           )
           if [ "${PROFILE}" = "release-candidate" ]; then
             args+=(--check-files)
+            args+=(--require-ingress-signature)
+            args+=(--ingress-certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-preflight.yml@refs/heads/main")
+            args+=(--ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com")
           fi
           python3 scripts/evidence/validate-release-inputs.py "${args[@]}"
 
@@ -174,7 +233,9 @@ jobs:
           name: release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inputs.source_sha }}
           path: |
             source-run.json
+            build-artifacts/
             release-inputs/
+            release-ingress/
             release-lab-input/
             release-governance/
             release-approvals/
