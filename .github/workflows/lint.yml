@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+        uses: dtolnay/rust-toolchain@1.100.0
       - name: Run matrix contract tests
         env:
           SUDERRA_FAIL_ON_SKIP: "1"

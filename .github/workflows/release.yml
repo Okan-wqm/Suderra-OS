@@ -330,7 +330,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0.17.7
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Download governance evidence
         uses: actions/download-artifact@v8
