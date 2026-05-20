@@ -63,13 +63,63 @@ legacy_text = subprocess.check_output(
 legacy_symbols = set(re.findall(r"^config (BR2_[A-Za-z0-9_]+)$", legacy_text, flags=re.MULTILINE))
 selected_legacy: list[str] = []
 selected_re = re.compile(r"^(BR2_[A-Za-z0-9_]+)=(y|m|\".+\"|[1-9].*)$")
+hash_dir = root / "board" / "suderra" / "buildroot-hashes"
+linux_hash = hash_dir / "linux" / "linux.hash"
+kernel_hash_dir_config = (
+    'BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/buildroot-hashes"'
+)
+kernel_tarball_re = re.compile(r'^BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION=".*?([^/"]+\.tar\.gz)"$')
+custom_kernel_errors: list[str] = []
 for config in sorted((root / "configs").glob("*_defconfig")):
-    for line_no, line in enumerate(config.read_text(encoding="utf-8").splitlines(), start=1):
+    config_lines = config.read_text(encoding="utf-8").splitlines()
+    stripped_lines = [line.strip() for line in config_lines]
+    for line_no, line in enumerate(config_lines, start=1):
         match = selected_re.match(line.strip())
         if match and match.group(1) in legacy_symbols:
             selected_legacy.append(f"{config.relative_to(root)}:{line_no}:{line.strip()}")
+
+    if "BR2_LINUX_KERNEL_CUSTOM_TARBALL=y" not in stripped_lines:
+        continue
+    location_lines = [
+        line for line in stripped_lines if line.startswith("BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION=")
+    ]
+    if len(location_lines) != 1:
+        custom_kernel_errors.append(
+            f"{config.relative_to(root)} must define exactly one custom kernel tarball location"
+        )
+        continue
+    if "BR2_DOWNLOAD_FORCE_CHECK_HASHES=y" not in stripped_lines:
+        custom_kernel_errors.append(
+            f"{config.relative_to(root)} must enable BR2_DOWNLOAD_FORCE_CHECK_HASHES"
+        )
+    if kernel_hash_dir_config not in stripped_lines:
+        custom_kernel_errors.append(
+            f"{config.relative_to(root)} must set BR2_GLOBAL_PATCH_DIR to board/suderra/buildroot-hashes"
+        )
+    tarball_match = kernel_tarball_re.match(location_lines[0])
+    if not tarball_match:
+        custom_kernel_errors.append(
+            f"{config.relative_to(root)} custom kernel tarball location must end in a .tar.gz basename"
+        )
+        continue
+    tarball = tarball_match.group(1)
+    if not linux_hash.is_file():
+        custom_kernel_errors.append(f"{linux_hash.relative_to(root)} is required")
+        continue
+    hash_pattern = re.compile(rf"^sha256\s+([0-9a-f]{{64}})\s+{re.escape(tarball)}$", re.MULTILINE)
+    hash_match = hash_pattern.search(linux_hash.read_text(encoding="utf-8"))
+    if not hash_match:
+        custom_kernel_errors.append(
+            f"{linux_hash.relative_to(root)} must contain a sha256 entry for {tarball}"
+        )
+    elif hash_match.group(1) == "0" * 64:
+        custom_kernel_errors.append(
+            f"{linux_hash.relative_to(root)} contains a placeholder digest for {tarball}"
+        )
 if selected_legacy:
     raise SystemExit("legacy Buildroot Kconfig symbols selected:\n" + "\n".join(selected_legacy))
+if custom_kernel_errors:
+    raise SystemExit("custom kernel tarballs must be hash-checked:\n" + "\n".join(custom_kernel_errors))
 PY
 
 python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" \

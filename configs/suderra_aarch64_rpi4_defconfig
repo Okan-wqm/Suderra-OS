@@ -35,6 +35,8 @@ BR2_ARM_FPU_VFPV4=y
 BR2_JLEVEL=4
 BR2_CCACHE=y
 BR2_PACKAGE_SUDERRA_VARIANT_DEV=y
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/buildroot-hashes"
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
 
 # ============================================================================
 # Toolchain — glibc dynamic, required by Buildroot systemd

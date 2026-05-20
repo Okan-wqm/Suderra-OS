@@ -259,6 +259,23 @@ release input artifact:
   `station-bundle.json`, `station-bundle.json.sig`, and `station-public.pem`
   explicitly when preflight inputs are archived and signed.
 
+## Implemented Seventh Batch
+
+The seventh implementation batch closed the fail-open custom kernel download
+surface for the Raspberry Pi and RevPi targets:
+
+- RPi4, RevPi4, and the RPi4 USB installer defconfigs now enable
+  `BR2_DOWNLOAD_FORCE_CHECK_HASHES`.
+- Those defconfigs now point `BR2_GLOBAL_PATCH_DIR` at
+  `board/suderra/buildroot-hashes`, which is the external-tree location
+  Buildroot uses for local hash files.
+- The Raspberry Pi downstream kernel tarball for commit
+  `576cc10e1ed50a9eacffc7a05c796051d7343ea4` is pinned in
+  `board/suderra/buildroot-hashes/linux/linux.hash`.
+- The build matrix contract now rejects any custom kernel tarball defconfig
+  that lacks forced hash checking, the expected hash directory, a real
+  SHA-256 entry, or uses a placeholder digest.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -291,7 +308,8 @@ release input artifact:
 - Refactor local Rust packages toward Buildroot cargo source isolation and
   offline cargo4 vendor archives.
 - Revalidate edge-agent cargo4 hash before enabling the package.
-- Enable forced hash checks for custom RPi/RevPi kernel downloads.
+- Move custom RPi/RevPi kernel downloads behind an immutable enterprise mirror
+  while preserving the forced hash checks.
 
 ### Hardware and Lab Batch
 
