@@ -238,16 +238,19 @@ data["qemu"]["semantic_checks"] = {
     name: {"status": "passed", "evidence": "contract evidence", "source": "contract"}
     for name in data["qemu"]["checks"]
 }
-data["qemu"]["guest_facts"] = {
+qemu_semantic = {
+    "schema_version": "suderra.qemu-semantic.v1",
     "os_release": {"ID": "suderra"},
-    "kernel": "contract",
+    "kernel": {"release": "contract"},
     "rootfs": {"partlabel": "rootfs"},
+    "failed_units": {"count": 0, "lines": []},
     "network": {"state": "up"},
     "listeners": [],
-    "firewall": {"nft": "loaded"},
-    "firstboot": {"idempotent": True},
+    "firewall": {"loaded": True},
+    "firstboot": {"done_marker": True},
     "lockdown": {"status": "locked"},
 }
+data["qemu"]["guest_facts"] = qemu_semantic
 qemu_input = {
     "schema_version": "suderra.qemu-acceptance.v3",
     "version": data["version"],
@@ -268,6 +271,7 @@ for role, rel, payload in (
     ("serial", "qemu/input/serial.log", "synthetic serial\n"),
     ("qmp-events", "qemu/input/qmp-events.json", "[]\n"),
     ("qemu-stderr", "qemu/input/qemu-stderr.log", ""),
+    ("qemu-semantic", "qemu/input/qemu-semantic.json", json.dumps(qemu_semantic, sort_keys=True) + "\n"),
 ):
     digest, _ = write_text(rel, payload)
     qemu_input["logs"].append({"role": role, "path": Path(rel).name, "sha256": digest})
@@ -571,16 +575,19 @@ data["qemu"]["semantic_checks"] = {
     name: {"status": "passed", "evidence": "contract evidence", "source": "contract"}
     for name in data["qemu"]["checks"]
 }
-data["qemu"]["guest_facts"] = {
+qemu_semantic = {
+    "schema_version": "suderra.qemu-semantic.v1",
     "os_release": {"ID": "suderra"},
-    "kernel": "contract",
+    "kernel": {"release": "contract"},
     "rootfs": {"partlabel": "rootfs"},
+    "failed_units": {"count": 0, "lines": []},
     "network": {"state": "up"},
     "listeners": [],
-    "firewall": {"nft": "loaded"},
-    "firstboot": {"idempotent": True},
+    "firewall": {"loaded": True},
+    "firstboot": {"done_marker": True},
     "lockdown": {"status": "locked"},
 }
+data["qemu"]["guest_facts"] = qemu_semantic
 qemu_input = {
     "schema_version": "suderra.qemu-acceptance.v3",
     "version": data["version"],
@@ -601,6 +608,7 @@ for role, rel, payload in (
     ("serial", "qemu/input/serial.log", "synthetic serial\n"),
     ("qmp-events", "qemu/input/qmp-events.json", "[]\n"),
     ("qemu-stderr", "qemu/input/qemu-stderr.log", ""),
+    ("qemu-semantic", "qemu/input/qemu-semantic.json", json.dumps(qemu_semantic, sort_keys=True) + "\n"),
 ):
     digest, _ = write_text(rel, payload)
     qemu_input["logs"].append({"role": role, "path": Path(rel).name, "sha256": digest})

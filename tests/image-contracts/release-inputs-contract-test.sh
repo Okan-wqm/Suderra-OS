@@ -143,6 +143,22 @@ qemu_root = root / "release-lab-input" / version / "qemu-x86_64"
 serial_sha = write_evidence(qemu_root / "serial.log", "serial boot evidence\n")
 qmp_sha = write_evidence(qemu_root / "qmp.json", "qmp events\n")
 stderr_sha = write_evidence(qemu_root / "qemu-stderr.log", "qemu stderr evidence\n")
+qemu_semantic = {
+    "schema_version": "suderra.qemu-semantic.v1",
+    "os_release": {"ID": "suderra"},
+    "kernel": {"release": "contract-test"},
+    "rootfs": {"partlabel": "rootfs"},
+    "failed_units": {"count": 0, "lines": []},
+    "network": {"state": "up"},
+    "listeners": [],
+    "firewall": {"loaded": True},
+    "firstboot": {"done_marker": True},
+    "lockdown": {"status": "locked"},
+}
+semantic_sha = write_evidence(
+    qemu_root / "qemu-semantic.json",
+    json.dumps(qemu_semantic, sort_keys=True) + "\n",
+)
 qemu_checks = {
     name: {
         "status": "passed",
@@ -183,18 +199,10 @@ write_json(
             {"role": "serial", "path": "serial.log", "sha256": serial_sha},
             {"role": "qmp-events", "path": "qmp.json", "sha256": qmp_sha},
             {"role": "qemu-stderr", "path": "qemu-stderr.log", "sha256": stderr_sha},
+            {"role": "qemu-semantic", "path": "qemu-semantic.json", "sha256": semantic_sha},
         ],
         "checks": qemu_checks,
-        "guest_facts": {
-            "os_release": {"ID": "suderra"},
-            "kernel": "contract-test",
-            "rootfs": {"partlabel": "rootfs"},
-            "network": {"state": "up"},
-            "listeners": [],
-            "firewall": {"nft": "loaded"},
-            "firstboot": {"idempotent": True},
-            "lockdown": {"status": "locked"},
-        },
+        "guest_facts": qemu_semantic,
     },
 )
 

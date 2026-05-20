@@ -198,8 +198,16 @@ def input_role_for_path(rel_path: Path) -> str:
         return "binding-manifest"
     if parts[0] == "release-lab-input" and rel_path.name == "qemu.json":
         return "qemu-input"
+    if parts[0] == "release-lab-input" and rel_path.name == "qemu-semantic.json":
+        return "qemu-semantic"
     if parts[0] == "release-lab-input" and rel_path.name == "lab.json":
         return "lab-input"
+    if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json":
+        return "lab-station-bundle"
+    if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json.sig":
+        return "lab-station-signature"
+    if parts[0] == "release-lab-input" and rel_path.name == "station-public.pem":
+        return "lab-station-public-key"
     if parts[0] == "release-governance":
         return "governance-snapshot"
     if parts[0] == "release-approvals":

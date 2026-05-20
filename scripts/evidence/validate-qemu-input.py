@@ -34,7 +34,19 @@ REQUIRED_CHECKS = {
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_LOG_ROLES = {"serial", "qmp-events", "qemu-stderr"}
+REQUIRED_STRICT_LOG_ROLES = REQUIRED_LOG_ROLES | {"qemu-semantic"}
 PLACEHOLDER_VALUES = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
+SEMANTIC_FACT_FIELDS = (
+    "os_release",
+    "kernel",
+    "rootfs",
+    "failed_units",
+    "network",
+    "listeners",
+    "firewall",
+    "firstboot",
+    "lockdown",
+)
 SEMANTIC_CHECKS = {
     "zero-failed-units",
     "os-release",
@@ -105,6 +117,33 @@ def check_relative_file(
         if actual_sha256 != expected_sha256:
             error(errors, path, f"referenced file sha256 mismatch: expected {expected_sha256}, got {actual_sha256}")
     return actual
+
+
+def check_semantic_log(
+    errors: list[str],
+    path: Path | None,
+    facts: dict[str, Any],
+    check_files: bool,
+) -> None:
+    if not check_files or path is None:
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        error(errors, "$.logs[qemu-semantic].path", f"cannot read semantic QEMU JSON: {exc}")
+        return
+    if not isinstance(payload, dict):
+        error(errors, "$.logs[qemu-semantic].path", "semantic QEMU JSON must be an object")
+        return
+    if payload.get("schema_version") != "suderra.qemu-semantic.v1":
+        error(errors, "$.logs[qemu-semantic].schema_version", "must be suderra.qemu-semantic.v1")
+    for field in SEMANTIC_FACT_FIELDS:
+        if field not in payload:
+            error(errors, f"$.logs[qemu-semantic].{field}", "must be present in semantic QEMU JSON")
+        if field not in facts:
+            continue
+        if payload.get(field) != facts.get(field):
+            error(errors, f"$.guest_facts.{field}", "must match qemu-semantic log payload")
 
 
 def expected_from_qemu_path(path: Path) -> tuple[str | None, str | None]:
@@ -181,6 +220,7 @@ def validate(
         error(errors, "$.status", "must be passed for release QEMU input")
     logs = payload.get("logs")
     log_roles: set[str] = set()
+    semantic_log_path: Path | None = None
     if not isinstance(logs, list) or not logs:
         error(errors, "$.logs", "must be a non-empty list")
     else:
@@ -194,7 +234,7 @@ def validate(
             check_sha256(errors, f"$.logs[{idx}].sha256", item.get("sha256"))
             expected_sha = item.get("sha256") if isinstance(item.get("sha256"), str) else None
             allow_empty = item.get("role") == "qemu-stderr"
-            check_relative_file(
+            actual_log = check_relative_file(
                 errors,
                 root,
                 f"$.logs[{idx}].path",
@@ -203,8 +243,10 @@ def validate(
                 expected_sha,
                 allow_empty,
             )
+            if item.get("role") == "qemu-semantic":
+                semantic_log_path = actual_log
     if profile in STRICT_PROFILES:
-        missing_roles = sorted(REQUIRED_LOG_ROLES - log_roles)
+        missing_roles = sorted(REQUIRED_STRICT_LOG_ROLES - log_roles)
         if missing_roles:
             error(errors, "$.logs", f"missing required log roles: {', '.join(missing_roles)}")
     checks = payload.get("checks")
@@ -235,7 +277,7 @@ def validate(
     if not isinstance(facts, dict):
         error(errors, "$.guest_facts", "must be an object")
     elif profile in STRICT_PROFILES:
-        for field in ("os_release", "kernel", "rootfs", "network", "listeners", "firewall", "firstboot", "lockdown"):
+        for field in SEMANTIC_FACT_FIELDS:
             if field not in facts:
                 error(errors, f"$.guest_facts.{field}", "must be collected for release-candidate QEMU input")
             elif field != "listeners":
@@ -251,6 +293,7 @@ def validate(
         listeners = facts.get("listeners")
         if "listeners" in facts and not isinstance(listeners, list):
             error(errors, "$.guest_facts.listeners", "must be a list")
+        check_semantic_log(errors, semantic_log_path, facts, check_files)
     return errors
 
 

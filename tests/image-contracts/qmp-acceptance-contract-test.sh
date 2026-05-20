@@ -184,10 +184,27 @@ from pathlib import Path
 qemu_input = Path(sys.argv[1])
 root = qemu_input.parent
 log_entries = []
-for role, name in (("serial", "serial.log"), ("qmp-events", "qmp.json"), ("qemu-stderr", "qemu-stderr.log")):
-    payload = f"synthetic {name}\n".encode("utf-8")
-    (root / name).write_bytes(payload)
-    log_entries.append({"role": role, "path": name, "sha256": hashlib.sha256(payload).hexdigest()})
+semantic = {
+    "schema_version": "suderra.qemu-semantic.v1",
+    "os_release": {"ID": "suderra"},
+    "kernel": {"release": "contract-test"},
+    "rootfs": {"partlabel": "rootfs"},
+    "failed_units": {"count": 0, "lines": []},
+    "network": {"state": "up"},
+    "listeners": [],
+    "firewall": {"loaded": True},
+    "firstboot": {"done_marker": True},
+    "lockdown": {"status": "locked"},
+}
+for role, name, payload in (
+    ("serial", "serial.log", "synthetic serial.log\n"),
+    ("qmp-events", "qmp.json", "synthetic qmp.json\n"),
+    ("qemu-stderr", "qemu-stderr.log", "synthetic qemu-stderr.log\n"),
+    ("qemu-semantic", "qemu-semantic.json", json.dumps(semantic, sort_keys=True) + "\n"),
+):
+    payload_bytes = payload.encode("utf-8")
+    (root / name).write_bytes(payload_bytes)
+    log_entries.append({"role": role, "path": name, "sha256": hashlib.sha256(payload_bytes).hexdigest()})
 checks = {
     name: {
         "status": "passed",
@@ -224,16 +241,7 @@ payload = {
     "status": "passed",
     "logs": log_entries,
     "checks": checks,
-    "guest_facts": {
-        "os_release": {"ID": "suderra"},
-        "kernel": "contract-test",
-        "rootfs": {"partlabel": "rootfs"},
-        "network": {"state": "up"},
-        "listeners": [],
-        "firewall": {"nft": "loaded"},
-        "firstboot": {"idempotent": True},
-        "lockdown": {"status": "locked"},
-    },
+    "guest_facts": semantic,
 }
 qemu_input.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY

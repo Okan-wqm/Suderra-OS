@@ -241,6 +241,24 @@ gap:
 - Release-input contract fixtures now exercise the same signed lab evidence
   chain instead of relying on unsigned synthetic lab JSON.
 
+## Implemented Sixth Batch
+
+The sixth implementation batch made QEMU semantic evidence a first-class
+release input artifact:
+
+- `qmp-acceptance.py` now writes the parsed guest semantic collector payload to
+  `qemu-semantic.json` and records it as a `qemu-semantic` log role.
+- `validate-qemu-input.py` requires the `qemu-semantic` role for strict
+  release-candidate and production-candidate profiles.
+- Strict QEMU input validation now checks that `qemu-semantic.json` uses
+  `suderra.qemu-semantic.v1` and that its semantic fields match
+  `guest_facts`.
+- QEMU strict validation now requires `failed_units` in semantic guest facts so
+  the zero-failed-units check is backed by machine data.
+- Release ingress role classification now labels `qemu-semantic.json`,
+  `station-bundle.json`, `station-bundle.json.sig`, and `station-public.pem`
+  explicitly when preflight inputs are archived and signed.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -277,8 +295,6 @@ gap:
 
 ### Hardware and Lab Batch
 
-- Sign the QEMU semantic evidence JSON or wrap it in the signed release input
-  archive after collection.
 - Replace the station spec ingestion path with direct station adapters for
   UART, power control, flash invocation, readback, RevPi IO, and negative-test
   execution.

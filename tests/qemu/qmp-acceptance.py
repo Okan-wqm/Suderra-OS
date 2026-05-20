@@ -542,6 +542,7 @@ def run(args: argparse.Namespace) -> int:
     stdout_log = prefix.with_suffix(".qemu-stdout.log")
     stderr_log = prefix.with_suffix(".qemu-stderr.log")
     qmp_log = prefix.with_suffix(".qmp.json")
+    qemu_semantic_log = prefix.with_suffix(".qemu-semantic.json")
     evidence_log = args.evidence_output or prefix.with_suffix(".acceptance.json")
     evidence_log.parent.mkdir(parents=True, exist_ok=True)
     qmp_socket = Path(
@@ -632,11 +633,17 @@ def run(args: argparse.Namespace) -> int:
         failed_checks.append(f"qemu-exit-{qemu_status}")
 
     qmp_log.write_text(json.dumps(qmp_events, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if semantic_guest_facts:
+        qemu_semantic_log.write_text(
+            json.dumps(semantic_guest_facts, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     log_entries = [
         entry
         for entry in (
             relative_log_entry(evidence_log.parent, "serial", serial_log),
             relative_log_entry(evidence_log.parent, "qmp-events", qmp_log),
+            relative_log_entry(evidence_log.parent, "qemu-semantic", qemu_semantic_log),
             relative_log_entry(evidence_log.parent, "qemu-stdout", stdout_log),
             relative_log_entry(evidence_log.parent, "qemu-stderr", stderr_log, allow_empty=True),
         )

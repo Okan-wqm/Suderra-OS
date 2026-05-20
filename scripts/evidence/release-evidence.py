@@ -1642,7 +1642,17 @@ def validate_qemu(
         if not isinstance(facts, dict) or not facts:
             validation.error("$.qemu.guest_facts", "must include semantic guest facts")
         else:
-            for field in ("os_release", "kernel", "rootfs", "network", "listeners", "firewall", "firstboot", "lockdown"):
+            for field in (
+                "os_release",
+                "kernel",
+                "rootfs",
+                "failed_units",
+                "network",
+                "listeners",
+                "firewall",
+                "firstboot",
+                "lockdown",
+            ):
                 if field not in facts:
                     validation.error("$.qemu.guest_facts", f"missing semantic fact: {field}")
         semantic_checks = qemu.get("semantic_checks")
