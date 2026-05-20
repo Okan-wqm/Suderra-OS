@@ -63,7 +63,7 @@ jobs:
       release_base_matrix: ${{ steps.matrix.outputs.release_base_matrix }}
       release_payload_matrix: ${{ steps.matrix.outputs.release_payload_matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
           submodules: recursive
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
       - name: Enforce release readiness
@@ -105,7 +105,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
       - name: Collect GitHub governance snapshots
@@ -126,7 +126,7 @@ jobs:
             --snapshot-root "release-governance/${{ needs.validate.outputs.version }}" \
             --output "release-governance/${{ needs.validate.outputs.version }}/governance-policy-validation.json"
       - name: Upload governance evidence
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-governance-${{ needs.validate.outputs.version }}
           path: release-governance/
@@ -141,7 +141,7 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
           fetch-depth: 0
@@ -201,7 +201,7 @@ jobs:
             --release-input "release-inputs/${VERSION}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --ingress-manifest "release-ingress/${VERSION}/ingress-manifest.json"
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
         with:
           cosign-release: 'v2.4.1'
       - name: Validate downloaded preflight binding
@@ -227,7 +227,7 @@ jobs:
             --ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
       - name: Upload release input bundle for tag workflow
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: |
@@ -247,21 +247,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
       - name: Download governance evidence
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-governance-${{ needs.validate.outputs.version }}
           path: .
       - name: Download preflight-bound release inputs
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: .
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
         with:
           cosign-release: 'v2.4.1'
       - name: Validate release inputs
@@ -285,26 +285,24 @@ jobs:
             --check-files
 
   # =========================================================================
-  # Cosign Sign + GitHub Release
+  # Release stage + protected signing + protected publication
   # =========================================================================
-  release-evidence:
-    name: Stage, sign, attest, verify, assemble evidence
+  release-stage:
+    name: Stage release bytes
     needs: [validate, matrix, release-readiness, governance, preflight-binding, input-preflight]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
-      id-token: write       # Sigstore keyless
-      attestations: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
           fetch-depth: 0
 
       - name: Download preflight-bound release inputs
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: .
@@ -317,28 +315,18 @@ jobs:
             --root release-lab-input \
             --profile "${{ needs.validate.outputs.preflight_profile }}" \
             --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
+            --station-registry release-lab-input/station-registry.json \
             --require-pass \
             --check-files
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
-        with:
-          cosign-release: 'v2.4.1'
-
-      - name: Install release tooling
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-
       - name: Install syft
-        uses: anchore/sbom-action/download-syft@v0.17.7
+        uses: anchore/sbom-action/download-syft@fc46e51fd3cb168ffb36c6d1915723c47db58abb
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+        uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
 
       - name: Download governance evidence
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-governance-${{ needs.validate.outputs.version }}
           path: .
@@ -536,6 +524,51 @@ jobs:
           test -s SHA256SUMS
           cat SHA256SUMS
 
+      - name: Upload staged release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: staged-release-${{ needs.validate.outputs.version }}
+          path: |
+            release/
+            release-inputs/
+            release-ingress/
+            build-artifacts/
+            release-lab-input/
+            release-governance/
+            release-approvals/
+            release-security/
+            release-reproducibility/
+          retention-days: 30
+
+  release-sign:
+    name: Protected sign, attest, verify, assemble evidence
+    needs: [validate, release-readiness, governance, release-stage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: release-sign
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+          fetch-depth: 0
+
+      - name: Download staged release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: staged-release-${{ needs.validate.outputs.version }}
+          path: .
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
+        with:
+          cosign-release: 'v2.4.1'
+
       - name: Cosign keyless sign release assets
         working-directory: release
         run: |
@@ -573,7 +606,7 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: SLSA build provenance attestation
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: |
             release/suderra-*.img.xz
@@ -598,6 +631,13 @@ jobs:
           set -euo pipefail
           mkdir -p machine-verification
           sha256sum -c SHA256SUMS | tee machine-verification/sha256sums.log
+          python3 ../scripts/evidence/machine-verification-record.py create \
+            --name sha256sums \
+            --release-dir . \
+            --log machine-verification/sha256sums.log \
+            --output machine-verification/sha256sums.json \
+            --identity "${COSIGN_IDENTITY}" \
+            --issuer "https://token.actions.githubusercontent.com"
           : > machine-verification/cosign.log
           find . -maxdepth 1 -type f \
             ! -name '*.sig' \
@@ -613,7 +653,15 @@ jobs:
                   "${f}"
               } 2>&1 | tee -a machine-verification/cosign.log
             done
+          python3 ../scripts/evidence/machine-verification-record.py create \
+            --name cosign \
+            --release-dir . \
+            --log machine-verification/cosign.log \
+            --output machine-verification/cosign.json \
+            --identity "${COSIGN_IDENTITY}" \
+            --issuer "https://token.actions.githubusercontent.com"
           : > machine-verification/attestations.log
+          mkdir -p machine-verification/attestations
           find . -maxdepth 1 -type f \
             ! -name '*.sig' \
             ! -name '*.cert' \
@@ -623,9 +671,20 @@ jobs:
                 gh attestation verify "${f}" \
                   --repo "${GITHUB_REPOSITORY}" \
                   --cert-identity "${COSIGN_IDENTITY}" \
-                  --cert-oidc-issuer "https://token.actions.githubusercontent.com"
+                  --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+                  --format json \
+                  > "machine-verification/attestations/${f}.json"
+                cat "machine-verification/attestations/${f}.json"
               } 2>&1 | tee -a machine-verification/attestations.log
             done
+          python3 ../scripts/evidence/machine-verification-record.py create \
+            --name attestations \
+            --release-dir . \
+            --log machine-verification/attestations.log \
+            --output machine-verification/attestations.json \
+            --identity "${COSIGN_IDENTITY}" \
+            --issuer "https://token.actions.githubusercontent.com" \
+            --attestation-json-dir machine-verification/attestations
 
       - name: Assemble and validate final release evidence
         run: |
@@ -675,7 +734,8 @@ jobs:
           python3 scripts/evidence/release-publication-manifest.py validate \
             release/release-publication-manifest.json \
             --release-dir release \
-            --expected-version "${VERSION}"
+            --expected-version "${VERSION}" \
+            --require-asset-sidecars
 
       - name: Sign publication manifest
         working-directory: release
@@ -690,10 +750,11 @@ jobs:
             release-publication-manifest.json \
             --release-dir . \
             --expected-version "${{ needs.validate.outputs.version }}" \
-            --require-self-sidecars
+            --require-self-sidecars \
+            --require-asset-sidecars
 
       - name: Final publication provenance attestation
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: |
             release/release-evidence-*.tar.zst
@@ -711,6 +772,7 @@ jobs:
         run: |
           set -euo pipefail
           : > machine-verification/final-publication.log
+          mkdir -p machine-verification/final-publication-attestations
           for f in release-evidence-${{ needs.validate.outputs.version }}.tar.zst release-publication-manifest.json; do
             {
               echo "==> cosign verify ${f}"
@@ -724,17 +786,21 @@ jobs:
               gh attestation verify "${f}" \
                 --repo "${GITHUB_REPOSITORY}" \
                 --cert-identity "${COSIGN_IDENTITY}" \
-                --cert-oidc-issuer "https://token.actions.githubusercontent.com"
+                --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+                --format json \
+                > "machine-verification/final-publication-attestations/${f}.json"
+              cat "machine-verification/final-publication-attestations/${f}.json"
             } 2>&1 | tee -a machine-verification/final-publication.log
           done
           python3 ../scripts/evidence/release-publication-manifest.py validate \
             release-publication-manifest.json \
             --release-dir . \
             --expected-version "${{ needs.validate.outputs.version }}" \
-            --require-self-sidecars
+            --require-self-sidecars \
+            --require-asset-sidecars
 
       - name: Upload signed release evidence inputs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: signed-release-${{ needs.validate.outputs.version }}
           path: |
@@ -743,8 +809,8 @@ jobs:
           retention-days: 30
 
   publish:
-    name: Publish draft GitHub Release
-    needs: [validate, release-readiness, release-evidence]
+    name: Publish GitHub Release
+    needs: [validate, release-readiness, release-sign]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
@@ -752,24 +818,25 @@ jobs:
     permissions:
       actions: read
       contents: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
 
       - name: Download signed release bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: signed-release-${{ needs.validate.outputs.version }}
           path: signed-release/
 
-      - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ needs.validate.outputs.version }}
           name: "Suderra OS ${{ needs.validate.outputs.version }}"
           generate_release_notes: true
-          draft: true
+          draft: false
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           body: |
             # Suderra OS ${{ needs.validate.outputs.version }}
@@ -851,9 +918,15 @@ jobs:
             signed-release/release/*.sig
             signed-release/release/*.cert
 
-      - name: Verify published draft asset byte set
+      - name: Install cosign
+        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Verify published release asset byte set and cryptography
         env:
           GH_TOKEN: ${{ github.token }}
+          COSIGN_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           rm -rf downloaded-release
@@ -865,9 +938,58 @@ jobs:
             downloaded-release/release-publication-manifest.json \
             --release-dir downloaded-release \
             --expected-version "${{ needs.validate.outputs.version }}" \
-            --require-self-sidecars
+            --require-self-sidecars \
+            --require-asset-sidecars
+          (
+            cd downloaded-release
+            find . -maxdepth 1 -type f \
+              ! -name '*.sig' \
+              ! -name '*.cert' \
+              -printf '%f\0' | sort -z | while IFS= read -r -d '' f; do
+                test -s "${f}.sig"
+                test -s "${f}.cert"
+                cosign verify-blob \
+                  --certificate "${f}.cert" \
+                  --certificate-identity "${COSIGN_IDENTITY}" \
+                  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                  --signature "${f}.sig" \
+                  "${f}"
+                mkdir -p ../downloaded-release-attestations
+                gh attestation verify "${f}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --cert-identity "${COSIGN_IDENTITY}" \
+                  --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+                  --format json \
+                  > "../downloaded-release-attestations/${f}.json"
+              done
+          )
+          mkdir -p post-publication-verification
+          python3 scripts/evidence/post-publication-verification.py create \
+            --version "${{ needs.validate.outputs.version }}" \
+            --release-dir downloaded-release \
+            --attestation-json-dir downloaded-release-attestations \
+            --output post-publication-verification/release-post-publication-verification.json \
+            --identity "${COSIGN_IDENTITY}" \
+            --issuer "https://token.actions.githubusercontent.com"
+          cosign sign-blob \
+            --yes \
+            --output-signature post-publication-verification/release-post-publication-verification.json.sig \
+            --output-certificate post-publication-verification/release-post-publication-verification.json.cert \
+            post-publication-verification/release-post-publication-verification.json
+          python3 scripts/evidence/post-publication-verification.py validate \
+            post-publication-verification/release-post-publication-verification.json \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --release-dir downloaded-release \
+            --attestation-json-dir downloaded-release-attestations
+
+      - name: Upload post-publication verification evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: post-publication-verification-${{ needs.validate.outputs.version }}
+          path: post-publication-verification/
+          retention-days: 30
 
       - name: Release summary
         run: |
-          echo "::notice::Draft release created: ${{ needs.validate.outputs.version }}"
-          echo "::notice::Release publish is controlled by a protected environment"
+          echo "::notice::Release published: ${{ needs.validate.outputs.version }}"
+          echo "::notice::Release signing and publication are controlled by protected environments"

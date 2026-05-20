@@ -142,6 +142,56 @@ def codeowners_patterns(snapshot: Any) -> set[str]:
     return set()
 
 
+def validate_environment_policy(
+    failures: list[str],
+    snapshot_root: Path,
+    env_policy: Any,
+    *,
+    policy_name: str,
+) -> None:
+    if not isinstance(env_policy, dict):
+        failures.append(f"{policy_name} policy must be an object")
+        return
+    env_name = env_policy.get("name")
+    if not isinstance(env_name, str) or not env_name:
+        failures.append(f"{policy_name} policy must name a GitHub environment")
+        return
+    environment = read_json(snapshot_root / f"{env_name}-environment.json")
+    deployment_policies = read_json(snapshot_root / f"{env_name}-deployment-branch-policies.json")
+    if not isinstance(environment, dict):
+        failures.append(f"missing {env_name}-environment.json")
+        return
+    if environment.get("name") != env_name:
+        failures.append(f"{env_name} environment name mismatch")
+    if environment_reviewers(environment) < int(env_policy.get("minimum_reviewers", 1)):
+        failures.append(f"{env_name} environment must require reviewers")
+    required_reviewers = env_policy.get("required_reviewers", [])
+    if isinstance(required_reviewers, list) and required_reviewers:
+        identities = environment_reviewer_identities(environment)
+        missing_reviewers = sorted(str(item) for item in required_reviewers if str(item) not in identities)
+        if missing_reviewers:
+            failures.append(
+                f"{env_name} environment missing required reviewer identities: "
+                + ", ".join(missing_reviewers)
+            )
+    if env_policy.get("prevent_self_review") is True and environment.get("prevent_self_review") is not True:
+        failures.append(f"{env_name} environment must prevent self review")
+    deployment_policy = environment.get("deployment_branch_policy")
+    if isinstance(deployment_policy, dict):
+        if deployment_policy.get("protected_branches") is True and deployment_policy.get("custom_branch_policies") is not True:
+            failures.append(f"{env_name} environment must use selected tag refs, not only protected branches")
+        if env_policy.get("allowed_ref") and deployment_policy.get("custom_branch_policies") is not True:
+            failures.append(f"{env_name} environment must use custom selected tag refs")
+    elif env_policy.get("allowed_ref"):
+        failures.append(f"{env_name} environment deployment branch policy must be collected")
+    allowed_ref = env_policy.get("allowed_ref")
+    if allowed_ref:
+        patterns = deployment_policy_patterns(deployment_policies)
+        allowed_alias = str(allowed_ref).removeprefix("refs/tags/")
+        if str(allowed_ref) not in patterns and allowed_alias not in patterns:
+            failures.append(f"{env_name} environment deployment policy must include {allowed_ref}")
+
+
 def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     failures: list[str] = []
     warnings: list[str] = []
@@ -150,8 +200,6 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
 
     branch = read_json(snapshot_root / "main-branch-protection.json")
     rulesets = read_json(snapshot_root / "rulesets.json")
-    environment = read_json(snapshot_root / "release-publish-environment.json")
-    deployment_policies = read_json(snapshot_root / "release-publish-deployment-branch-policies.json")
     tag_protection = read_json(snapshot_root / "tag-protection.json")
     workflow_permissions = read_json(snapshot_root / "workflow-permissions.json")
     codeowners = read_json(snapshot_root / "codeowners.json")
@@ -227,39 +275,18 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     if tag_protection:
         warnings.append("legacy tag protection snapshot is ignored; release tags must be governed by rulesets")
 
-    env_policy = policy.get("release_environment", {})
-    if not isinstance(environment, dict):
-        failures.append("missing release-publish-environment.json")
-    else:
-        if environment.get("name") != env_policy.get("name"):
-            failures.append("release environment name mismatch")
-        if environment_reviewers(environment) < int(env_policy.get("minimum_reviewers", 1)):
-            failures.append("release environment must require reviewers")
-        required_reviewers = env_policy.get("required_reviewers", [])
-        if isinstance(required_reviewers, list) and required_reviewers:
-            identities = environment_reviewer_identities(environment)
-            missing_reviewers = sorted(str(item) for item in required_reviewers if str(item) not in identities)
-            if missing_reviewers:
-                failures.append(
-                    "release environment missing required reviewer identities: "
-                    + ", ".join(missing_reviewers)
-                )
-        if env_policy.get("prevent_self_review") is True and environment.get("prevent_self_review") is not True:
-            failures.append("release environment must prevent self review")
-        deployment_policy = environment.get("deployment_branch_policy")
-        if isinstance(deployment_policy, dict):
-            if deployment_policy.get("protected_branches") is True and deployment_policy.get("custom_branch_policies") is not True:
-                failures.append("release environment must use selected tag refs, not only protected branches")
-            if env_policy.get("allowed_ref") and deployment_policy.get("custom_branch_policies") is not True:
-                failures.append("release environment must use custom selected tag refs")
-        elif env_policy.get("allowed_ref"):
-            failures.append("release environment deployment branch policy must be collected")
-        allowed_ref = env_policy.get("allowed_ref")
-        if allowed_ref:
-            patterns = deployment_policy_patterns(deployment_policies)
-            allowed_alias = str(allowed_ref).removeprefix("refs/tags/")
-            if str(allowed_ref) not in patterns and allowed_alias not in patterns:
-                failures.append(f"release environment deployment policy must include {allowed_ref}")
+    validate_environment_policy(
+        failures,
+        snapshot_root,
+        policy.get("signing_environment"),
+        policy_name="signing_environment",
+    )
+    validate_environment_policy(
+        failures,
+        snapshot_root,
+        policy.get("release_environment"),
+        policy_name="release_environment",
+    )
 
     if isinstance(workflow_permissions, dict):
         default_workflow_permissions = workflow_permissions.get("default_workflow_permissions")

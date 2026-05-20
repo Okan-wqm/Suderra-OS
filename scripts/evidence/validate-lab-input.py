@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 SCHEMA_VERSION = "suderra.lab-evidence.v3"
 STATION_BUNDLE_SCHEMA_VERSION = "suderra.lab-station-bundle.v1"
+STATION_REGISTRY_SCHEMA_VERSION = "suderra.lab-station-registry.v1"
 LEGACY_SCHEMA_VERSIONS = {"suderra.lab-evidence.v2"}
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -204,12 +205,79 @@ def canonical_lab_payload(payload: dict[str, Any]) -> bytes:
     return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def read_json(path: Path) -> Any | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def station_registry_entry(registry: dict[str, Any] | None, station_id: str | None) -> dict[str, Any] | None:
+    if not isinstance(registry, dict) or not isinstance(station_id, str):
+        return None
+    stations = registry.get("stations")
+    if not isinstance(stations, list):
+        return None
+    for item in stations:
+        if isinstance(item, dict) and item.get("station_id") == station_id:
+            return item
+    return None
+
+
+def check_station_registry(
+    errors: list[str],
+    payload: dict[str, Any],
+    registry: dict[str, Any] | None,
+    public_key_sha256: Any,
+) -> None:
+    if not isinstance(registry, dict):
+        error(errors, "$.station_registry", "strict lab input requires an external station registry")
+        return
+    if registry.get("schema_version") != STATION_REGISTRY_SCHEMA_VERSION:
+        error(errors, "$.station_registry.schema_version", f"must be {STATION_REGISTRY_SCHEMA_VERSION}")
+    station = payload.get("station") if isinstance(payload.get("station"), dict) else {}
+    station_id = station.get("station_id")
+    entry = station_registry_entry(registry, station_id if isinstance(station_id, str) else None)
+    if entry is None:
+        error(errors, "$.station.station_id", "must exist in external station registry")
+        return
+    if entry.get("fixture_id") != station.get("fixture_id"):
+        error(errors, "$.station.fixture_id", "must match external station registry")
+    if entry.get("public_key_sha256") != public_key_sha256:
+        error(errors, "$.station_signature.public_key_sha256", "must match external station registry")
+    allowed_targets = entry.get("allowed_targets")
+    if isinstance(allowed_targets, list) and "*" not in allowed_targets and payload.get("target") not in allowed_targets:
+        error(errors, "$.target", "must be allowed by external station registry")
+    elif not isinstance(allowed_targets, list) or not allowed_targets:
+        error(errors, "$.station_registry.allowed_targets", "must be a non-empty list")
+    if not is_string(entry.get("calibration_expires_at")):
+        error(errors, "$.station_registry.calibration_expires_at", "must be recorded")
+    if not isinstance(entry.get("adapter_inventory"), dict) or not entry["adapter_inventory"]:
+        error(errors, "$.station_registry.adapter_inventory", "must be a non-empty object")
+    allowed_storage = entry.get("allowed_storage_by_id")
+    if not isinstance(allowed_storage, list) or not allowed_storage:
+        error(errors, "$.station_registry.allowed_storage_by_id", "must be a non-empty list")
+        allowed_storage = []
+    devices = payload.get("devices")
+    if isinstance(devices, list):
+        for idx, device in enumerate(devices):
+            if not isinstance(device, dict):
+                continue
+            identity = device.get("device_identity")
+            storage_by_id = identity.get("storage_by_id") if isinstance(identity, dict) else None
+            if isinstance(storage_by_id, str) and storage_by_id not in allowed_storage:
+                error(errors, f"$.devices[{idx}].device_identity.storage_by_id", "must be allowed by station registry")
+
+
 def check_station_bundle(
     errors: list[str],
     root: Path,
     payload: dict[str, Any],
     check_files: bool,
     profile: str,
+    station_registry: dict[str, Any] | None,
 ) -> None:
     if profile not in STRICT_PROFILES:
         return
@@ -274,6 +342,7 @@ def check_station_bundle(
 
     station = payload.get("station") if isinstance(payload.get("station"), dict) else {}
     public_key_sha256 = station_signature.get("public_key_sha256")
+    check_station_registry(errors, payload, station_registry, public_key_sha256)
     trusted_key_fingerprint = station.get("trusted_key_fingerprint")
     if isinstance(public_key_sha256, str) and isinstance(trusted_key_fingerprint, str):
         if trusted_key_fingerprint not in {public_key_sha256, f"sha256:{public_key_sha256}"}:
@@ -460,6 +529,7 @@ def validate_lab(
     profile: str = "release-candidate",
     expected_source_sha: str | None = None,
     expected_source_run_id: str | None = None,
+    station_registry_path: Path | None = None,
 ) -> list[str]:
     root = path.parent
     errors: list[str] = []
@@ -474,6 +544,7 @@ def validate_lab(
         return [f"{path}: invalid JSON: {exc}"]
     if not isinstance(payload, dict):
         return [f"{path}: top-level JSON value must be an object"]
+    station_registry = read_json(station_registry_path) if station_registry_path is not None else None
     schema_version = payload.get("schema_version")
     if schema_version != SCHEMA_VERSION:
         if profile in STRICT_PROFILES or schema_version not in LEGACY_SCHEMA_VERSIONS:
@@ -691,7 +762,7 @@ def validate_lab(
         if require_pass and item.get("status") != "passed":
             error(errors, f"{item_path}.status", "must be passed for release lab input")
     if is_v3:
-        check_station_bundle(errors, root, payload, check_files, profile)
+        check_station_bundle(errors, root, payload, check_files, profile, station_registry)
     return errors
 
 
@@ -705,6 +776,7 @@ def validate_command(args: argparse.Namespace) -> int:
         args.profile,
         args.expected_source_sha,
         args.expected_source_run_id,
+        args.station_registry,
     )
     if errors:
         for item in errors:
@@ -729,6 +801,7 @@ def validate_matrix_command(args: argparse.Namespace) -> int:
                 args.profile,
                 args.expected_source_sha,
                 args.expected_source_run_id,
+                args.station_registry,
             )
         )
     if failures:
@@ -750,6 +823,7 @@ def main() -> int:
     validate.add_argument("--expected-target")
     validate.add_argument("--expected-source-sha")
     validate.add_argument("--expected-source-run-id")
+    validate.add_argument("--station-registry", type=Path)
     validate.add_argument(
         "--profile",
         choices=("technical-dry-run", "release-candidate", "production-candidate"),
@@ -764,6 +838,7 @@ def main() -> int:
     validate_matrix.add_argument("--check-files", action="store_true")
     validate_matrix.add_argument("--expected-source-sha")
     validate_matrix.add_argument("--expected-source-run-id")
+    validate_matrix.add_argument("--station-registry", type=Path)
     validate_matrix.add_argument(
         "--profile",
         choices=("technical-dry-run", "release-candidate", "production-candidate"),

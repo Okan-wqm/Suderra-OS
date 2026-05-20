@@ -140,6 +140,7 @@ Validate it before tagging:
 python3 scripts/evidence/validate-lab-input.py validate \
   --require-pass \
   --check-files \
+  --station-registry release-lab-input/station-registry.json \
   release-lab-input/<version>/pi-cm4-revpi-usb-installer/lab.json
 ```
 
@@ -149,7 +150,8 @@ For a full alpha release, validate every hardware target:
 python3 scripts/evidence/validate-lab-input.py validate-matrix \
   --version <version> \
   --require-pass \
-  --check-files
+  --check-files \
+  --station-registry release-lab-input/station-registry.json
 ```
 
 The lab input binds to the preflight/build artifact digest and size through

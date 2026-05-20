@@ -82,10 +82,13 @@ VEX_STATUS_VALUES = {"present", "not_applicable", "not_collected"}
 RISK_STATUS_VALUES = {"none", "accepted", "blocked"}
 DECISION_STATUS_VALUES = {"approved", "approved_with_residual_risk", "blocked"}
 MACHINE_VERIFICATION_CHECKS = ("sha256sums", "cosign", "attestations")
+MACHINE_VERIFICATION_SCHEMA_VERSION = "suderra.machine-verification.v2"
 GOVERNANCE_CHECKS = (
     "policy_validation",
     "branch_protection",
     "rulesets",
+    "release_sign_environment",
+    "release_sign_environment_deployment_policy",
     "release_environment",
     "release_environment_deployment_policy",
     "tag_protection",
@@ -381,7 +384,7 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             {"name": str(name), "status": "not_run", "report": None} for name in security_scans
         ],
         "machine_verification": {
-            name: {"status": "not_run", "logs": []} for name in MACHINE_VERIFICATION_CHECKS
+            name: {"status": "not_run", "logs": [], "record": None} for name in MACHINE_VERIFICATION_CHECKS
         },
         "build_evidence": {
             "status": "not_collected",
@@ -714,13 +717,50 @@ def read_json(path: Path) -> Any | None:
         return None
 
 
+def machine_record_covers_subject(record_path: Path, *, name: str, sha256: str) -> bool:
+    payload = read_json(record_path)
+    if not isinstance(payload, dict):
+        return False
+    subjects = payload.get("verified_subjects") if payload.get("name") == "attestations" else payload.get("subjects")
+    if not isinstance(subjects, list):
+        return False
+    for subject in subjects:
+        if not isinstance(subject, dict):
+            continue
+        if subject.get("name") == name and subject.get("sha256") == sha256:
+            return True
+    return False
+
+
 def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: dict[str, Any]) -> None:
+    try:
+        verifier = load_script_module(
+            "machine_verification_record",
+            "scripts/evidence/machine-verification-record.py",
+        )
+    except Exception:
+        verifier = None
     for name in MACHINE_VERIFICATION_CHECKS:
         source = release_dir / "machine-verification" / f"{name}.log"
-        if source.is_file() and source.stat().st_size > 0:
+        record_source = release_dir / "machine-verification" / f"{name}.json"
+        record_payload = read_json(record_source)
+        record_valid = False
+        if verifier is not None and isinstance(record_payload, dict):
+            record_valid = verifier.validate_record(record_payload, expected_name=name) == []
+        if source.is_file() and source.stat().st_size > 0 and record_source.is_file() and record_valid:
+            record_rel = copy_into_bundle(
+                bundle_dir,
+                record_source,
+                f"machine-verification/{name}.json",
+            )
             evidence["machine_verification"][name] = {
                 "status": "passed",
                 "logs": [copy_into_bundle(bundle_dir, source, f"machine-verification/{name}.log")],
+                "record": {
+                    "path": record_rel,
+                    "sha256": sha256_file(bundle_dir / record_rel),
+                    "bytes": (bundle_dir / record_rel).stat().st_size,
+                },
             }
 
 
@@ -774,6 +814,8 @@ def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evid
         "policy_validation": "governance-policy-validation.json",
         "branch_protection": "main-branch-protection.json",
         "rulesets": "rulesets.json",
+        "release_sign_environment": "release-sign-environment.json",
+        "release_sign_environment_deployment_policy": "release-sign-deployment-branch-policies.json",
         "release_environment": "release-publish-environment.json",
         "release_environment_deployment_policy": "release-publish-deployment-branch-policies.json",
         "tag_protection": "tag-protection.json",
@@ -875,6 +917,14 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
         evidence["hardware"]["station"] = lab_input["station"]
     if isinstance(lab_input.get("artifact_binding"), dict):
         evidence["hardware"]["artifact_binding"] = lab_input["artifact_binding"]
+    registry_source = lab_root / "station-registry.json"
+    if registry_source.is_file():
+        registry_rel = copy_into_bundle(bundle_dir, registry_source, "hardware/input/station-registry.json")
+        evidence["hardware"]["station_registry"] = {
+            "path": registry_rel,
+            "sha256": sha256_file(bundle_dir / registry_rel),
+            "bytes": (bundle_dir / registry_rel).stat().st_size,
+        }
     if isinstance(lab_input.get("station_bundle"), dict):
         station_bundle = dict(lab_input["station_bundle"])
         bundle_path = station_bundle.get("path")
@@ -1345,6 +1395,7 @@ def validate_machine_verification(validation: Validation, evidence: dict[str, An
     if not isinstance(machine_verification, dict):
         validation.error("$.machine_verification", "must be an object")
         return
+    covered_subjects: dict[str, set[tuple[str, str]]] = {}
     for name in MACHINE_VERIFICATION_CHECKS:
         if name not in machine_verification:
             validation.error("$.machine_verification", f"missing required check: {name}")
@@ -1360,10 +1411,67 @@ def validate_machine_verification(validation: Validation, evidence: dict[str, An
         else:
             for idx, log in enumerate(logs):
                 check_relative_path(validation, f"{path}.logs[{idx}]", log, require_pass)
+        record_file = validate_preserved_ref(validation, f"{path}.record", check.get("record"), require_pass)
+        if record_file is not None:
+            payload = read_json(record_file)
+            if not isinstance(payload, dict):
+                validation.error(f"{path}.record.path", "must be machine verification JSON")
+            else:
+                if payload.get("schema_version") != MACHINE_VERIFICATION_SCHEMA_VERSION:
+                    validation.error(
+                        f"{path}.record.path",
+                        f"schema_version must be {MACHINE_VERIFICATION_SCHEMA_VERSION}",
+                    )
+                try:
+                    verifier = load_script_module(
+                        "machine_verification_record",
+                        "scripts/evidence/machine-verification-record.py",
+                    )
+                    for failure in verifier.validate_record(payload, expected_name=name):
+                        validation.error(f"{path}.record.path", failure)
+                    subject_source = payload.get("verified_subjects") if name == "attestations" else payload.get("subjects")
+                    if isinstance(subject_source, list):
+                        covered_subjects[name] = {
+                            (str(subject.get("name")), str(subject.get("sha256")))
+                            for subject in subject_source
+                            if isinstance(subject, dict)
+                            and isinstance(subject.get("name"), str)
+                            and isinstance(subject.get("sha256"), str)
+                        }
+                except Exception as exc:
+                    validation.error(f"{path}.record.path", f"cannot validate machine verification JSON: {exc}")
+                log = payload.get("log")
+                if isinstance(log, dict) and isinstance(log.get("path"), str) and isinstance(log.get("sha256"), str):
+                    matching_logs = [
+                        log_path
+                        for log_path in logs
+                        if isinstance(log_path, str) and Path(log_path).name == log["path"]
+                    ]
+                    if not matching_logs:
+                        validation.error(f"{path}.record.path", "record log path must match preserved logs")
+                    elif validation.check_files:
+                        actual_log = file_for_relative_path(validation, matching_logs[0])
+                        if actual_log is not None and sha256_file(actual_log) != log["sha256"]:
+                            validation.error(f"{path}.record.path", "record log sha256 must match preserved log")
         if require_pass and check.get("status") != "passed":
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
         if require_pass and not logs:
             validation.error(f"{path}.logs", "must include machine-verification logs")
+    if require_pass:
+        artifacts = evidence.get("artifacts")
+        if isinstance(artifacts, list):
+            for idx, artifact in enumerate(artifacts):
+                if not isinstance(artifact, dict):
+                    continue
+                subject = (artifact.get("name"), artifact.get("sha256"))
+                if not all(isinstance(value, str) for value in subject):
+                    continue
+                for check_name in ("cosign", "attestations"):
+                    if subject not in covered_subjects.get(check_name, set()):
+                        validation.error(
+                            f"$.machine_verification.{check_name}.record",
+                            f"must cover artifact subject {subject[0]}",
+                        )
 
 
 def validate_build_evidence(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
@@ -1692,6 +1800,28 @@ def validate_hardware(
         validation.error("$.hardware.required", f"must match matrix-derived requirement {expected_required}")
     check_status(validation, "$.hardware.status", hardware.get("status"), STATUS_VALUES)
     if require_pass and expected_required:
+        station_registry_path: Path | None = None
+        station_registry = hardware.get("station_registry")
+        if not isinstance(station_registry, dict):
+            validation.error("$.hardware.station_registry", "must preserve external station registry")
+        else:
+            check_relative_path(validation, "$.hardware.station_registry.path", station_registry.get("path"), True)
+            check_sha256(validation, "$.hardware.station_registry.sha256", station_registry.get("sha256"), True)
+            check_positive_int(validation, "$.hardware.station_registry.bytes", station_registry.get("bytes"), True)
+            check_file_sha256(
+                validation,
+                "$.hardware.station_registry.sha256",
+                station_registry.get("path"),
+                station_registry.get("sha256"),
+            )
+            check_file_size(
+                validation,
+                "$.hardware.station_registry.bytes",
+                station_registry.get("path"),
+                station_registry.get("bytes"),
+            )
+            if validation.check_files:
+                station_registry_path = file_for_relative_path(validation, station_registry.get("path"))
         lab_input = hardware.get("input")
         if not isinstance(lab_input, dict):
             validation.error("$.hardware.input", "must preserve the validated lab input JSON")
@@ -1718,6 +1848,7 @@ def validate_hardware(
                             profile,
                             source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
                             str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                            station_registry_path,
                         ):
                             validation.error("$.hardware.input.path", failure)
                     except Exception as exc:
@@ -2244,6 +2375,7 @@ def schema_contract() -> dict[str, Any]:
         "release_tiers": ["alpha", "production"],
         "asset_manifest_schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
         "approval_schema_version": APPROVAL_SCHEMA_VERSION,
+        "machine_verification_schema_version": MACHINE_VERIFICATION_SCHEMA_VERSION,
         "machine_verification_checks": list(MACHINE_VERIFICATION_CHECKS),
         "governance_checks": list(GOVERNANCE_CHECKS),
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
@@ -2261,8 +2393,8 @@ def schema_contract() -> dict[str, Any]:
             "SBOM is CycloneDX JSON with a non-empty matching component count and verified signature",
             "signed VEX is present",
             "reproducibility and every matrix security scan are passed with reports",
-            "machine verification logs show SHA256SUMS, cosign, and attestation checks passed",
-            "governance snapshots show branch, ruleset, tag, and release environment protections",
+            "machine verification records bind SHA256SUMS, cosign, and attestation checks to structured subjects",
+            "governance snapshots show branch, ruleset, tag, release-sign, and release-publish environment protections",
             "required QEMU and hardware evidence sections are passed",
             "required runtime checks have passed evidence files",
             "release_decision is approved or approved_with_residual_risk",
@@ -2421,7 +2553,11 @@ def assemble_release_command(args: argparse.Namespace) -> int:
                     cert_path,
                     f"artifacts/{release_artifact}.cert",
                 )
-                artifact["signature"]["verified"] = True
+                artifact["signature"]["verified"] = machine_record_covers_subject(
+                    args.release_dir / "machine-verification" / "cosign.json",
+                    name=release_artifact,
+                    sha256=artifact["sha256"],
+                )
             attestation_log = args.release_dir / "machine-verification" / "attestations.log"
             if attestation_log.is_file() and attestation_log.stat().st_size > 0:
                 artifact["provenance"]["path"] = copy_into_bundle(
@@ -2429,7 +2565,11 @@ def assemble_release_command(args: argparse.Namespace) -> int:
                     attestation_log,
                     f"provenance/{release_artifact}.attestation.log",
                 )
-                artifact["provenance"]["verified"] = True
+                artifact["provenance"]["verified"] = machine_record_covers_subject(
+                    args.release_dir / "machine-verification" / "attestations.json",
+                    name=release_artifact,
+                    sha256=artifact["sha256"],
+                )
 
         sbom_name = f"{release_base(release_artifact)}.cyclonedx.json"
         sbom_path = args.release_dir / sbom_name

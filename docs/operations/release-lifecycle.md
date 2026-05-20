@@ -46,11 +46,10 @@ Required gates:
 - QEMU targets provide `release-lab-input/<version>/<target>/qemu.json` and
   validate as `suderra.qemu-acceptance.v3`.
 - The release workflow promotes the exact Build artifact bytes approved by
-  preflight, stages release-named files, writes `release-assets.json`, signs
-  assets, verifies cosign signatures, verifies GitHub artifact attestations,
-  then generates final release evidence from the staged bytes. Installer
-  binaries are Build workflow artifacts and must not be rebuilt by the tag
-  workflow.
+  preflight, stages release-named files without signing privileges, writes
+  `release-assets.json`, then signs, attests, verifies, and assembles evidence
+  only inside the protected `release-sign` environment. Installer binaries are
+  Build workflow artifacts and must not be rebuilt by the tag workflow.
 - The public asset set includes `release-evidence-<version>.tar.zst`, its
   `.sig` and `.cert`, `release-publication-manifest.json`, and the publication
   manifest `.sig` and `.cert`.
@@ -59,9 +58,11 @@ Required gates:
   `--release-tier alpha --require-pass --check-files`.
   This validation replays preserved preflight input files, not only flattened
   final evidence projections.
-- GitHub Release publication is a separate protected `publish` job. The signing,
-  attestation, machine verification, and evidence job has no `contents: write`
-  permission.
+- GitHub Release publication is a separate protected `publish` job under
+  `release-publish`. It creates the final release, downloads the public asset
+  set, validates the publication manifest, and re-runs cosign plus GitHub
+  attestation verification. The signing job has no `contents: write`
+  permission; the publish job has no OIDC signing or attestation permission.
 - Production blockers remain explicit residual risk; no production-ready claim
   is made.
 

@@ -15,6 +15,8 @@ define SUDERRA_RAUC_CONFIG_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/etc/rauc/system.conf
 	$(INSTALL) -D -m 0755 $(@D)/suderra-rauc-mark-good \
 		$(TARGET_DIR)/usr/sbin/suderra-rauc-mark-good
+	$(INSTALL) -D -m 0755 $(@D)/suderra-rauc-health-gate \
+		$(TARGET_DIR)/usr/sbin/suderra-rauc-health-gate
 	$(INSTALL) -D -m 0755 $(@D)/suderra-rauc-boot-state \
 		$(TARGET_DIR)/usr/sbin/suderra-rauc-boot-state
 	mkdir -p $(TARGET_DIR)/boot

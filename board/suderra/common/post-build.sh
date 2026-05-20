@@ -137,6 +137,39 @@ ln -sfn ../../../../usr/lib/systemd/system/systemd-networkd.service \
 ln -sfn ../../../../usr/lib/systemd/system/chrony.service \
     "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/chrony.service"
 
+enable_unit_if_present() {
+    local unit="$1"
+    local target_wants="$2"
+    local unit_source=""
+
+    for candidate in \
+        "${TARGET_DIR}/usr/lib/systemd/system/${unit}" \
+        "${TARGET_DIR}/etc/systemd/system/${unit}"
+    do
+        if [ -e "${candidate}" ]; then
+            unit_source="${candidate}"
+            break
+        fi
+    done
+
+    if [ -z "${unit_source}" ]; then
+        echo "==> ${unit} rootfs içinde yok; enable edilmiyor"
+        return 0
+    fi
+
+    mkdir -p "${TARGET_DIR}/etc/systemd/system/${target_wants}.wants"
+    case "${unit_source}" in
+        "${TARGET_DIR}/usr/lib/systemd/system/"*)
+            ln -sfn "../../../../usr/lib/systemd/system/${unit}" \
+                "${TARGET_DIR}/etc/systemd/system/${target_wants}.wants/${unit}"
+            ;;
+        *)
+            ln -sfn "../${unit}" \
+                "${TARGET_DIR}/etc/systemd/system/${target_wants}.wants/${unit}"
+            ;;
+    esac
+}
+
 case "${DEFCONFIG_NAME}" in
     *usb_installer*)
         ln -sfn ../../../../usr/lib/systemd/system/suderra-os-install.service \
@@ -146,15 +179,13 @@ case "${DEFCONFIG_NAME}" in
         ln -sfn ../suderra-data.service \
             "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-data.service"
         if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
-            ln -sfn ../suderra-agent.service \
-                "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-agent.service"
+            enable_unit_if_present "suderra-agent.service" "multi-user.target"
         else
             ln -sfn ../suderra-firstboot.service \
                 "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-firstboot.service"
             ln -sfn ../../../../usr/lib/systemd/system/dropbear.service \
                 "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/dropbear.service"
-            ln -sfn ../suderra-agent.service \
-                "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-agent.service"
+            enable_unit_if_present "suderra-agent.service" "multi-user.target"
             ln -sfn ../suderra-provision-worker.path \
                 "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path"
             case "${DEFCONFIG_NAME}" in
@@ -225,8 +256,12 @@ disable *
 enable systemd-networkd.service
 enable chrony.service
 enable nftables.service
-enable suderra-agent.service
 EOF
+    if [ -e "${TARGET_DIR}/usr/lib/systemd/system/suderra-agent.service" ] ||
+       [ -e "${TARGET_DIR}/etc/systemd/system/suderra-agent.service" ]; then
+        printf '%s\n' 'enable suderra-agent.service' \
+            >> "${TARGET_DIR}/etc/systemd/system-preset/00-suderra-appliance.preset"
+    fi
 
 fi
 

@@ -30,6 +30,28 @@ need_file() {
     [ -s "$1" ] || die "required file missing or empty: $1"
 }
 
+production_mode() {
+    [ "${SUDERRA_SIGNING_MODE:-}" = "prod" ] || [ "${SUDERRA_RELEASE_TIER:-}" = "production" ]
+}
+
+reject_prod_file_key() {
+    local value="$1"
+    if ! production_mode; then
+        return 0
+    fi
+    case "${value}" in
+        pkcs11:*)
+            die "production PKCS#11 RAUC signing provider is not implemented yet; refusing file fallback"
+            ;;
+        "")
+            die "SUDERRA_RAUC_PKCS11_URI must be set for production RAUC signing"
+            ;;
+        *)
+            die "production RAUC signing rejects file-backed private keys: ${value}"
+            ;;
+    esac
+}
+
 resolve_rauc() {
     local candidate="${SUDERRA_RAUC:-}"
 
@@ -114,6 +136,9 @@ create_x86_bundle() {
             die "version contains unsupported characters: ${version}"
             ;;
     esac
+    if production_mode; then
+        reject_prod_file_key "${SUDERRA_RAUC_PKCS11_URI:-${signing_key}}"
+    fi
     [ -n "${signing_key}" ] || die "SUDERRA_RAUC_SIGNING_KEY must be set"
     [ -n "${signing_cert}" ] || die "SUDERRA_RAUC_SIGNING_CERT must be set"
     need_file "${signing_key}"

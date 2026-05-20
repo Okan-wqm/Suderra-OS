@@ -2,8 +2,10 @@
 Description=Mark current Suderra OS RAUC slot good
 Documentation=https://rauc.readthedocs.io/
 After=multi-user.target boot.mount suderra-data.service rauc.service
-Wants=boot.mount suderra-data.service
+Requires=boot.mount suderra-data.service
+RequiresMountsFor=/data /boot
 ConditionPathExists=/etc/rauc/system.conf
+ConditionPathExists=/usr/sbin/suderra-rauc-health-gate
 ConditionKernelCommandLine=|rauc.slot=A
 ConditionKernelCommandLine=|rauc.slot=B
 

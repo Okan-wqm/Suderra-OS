@@ -56,6 +56,21 @@ grep -q 'SUDERRA_HOST_KEYS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
         echo "ERROR: build-in-docker must support explicit host keyring mounts" >&2
         exit 1
     }
+grep -q 'SUDERRA_BUILDER_IMAGE' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must allow release builds to select a digest-pinned builder image" >&2
+        exit 1
+    }
+grep -q 'SUDERRA_RELEASE_HERMETIC' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must expose a hermetic release mode" >&2
+        exit 1
+    }
+grep -q 'requires SUDERRA_BUILDER_IMAGE pinned by digest' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: hermetic release mode must reject mutable builder tags" >&2
+        exit 1
+    }
 grep -q 'SUDERRA_CONTAINER_KEYS_DIR' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
     {
         echo "ERROR: build-in-docker must expose the container keyring path" >&2

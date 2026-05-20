@@ -30,7 +30,7 @@ syft "$image" -o cyclonedx-json
     ↓
 suderra-<target>.cyclonedx.json
     ↓
-release.yml / release-evidence job
+release.yml / protected release-sign job
     ↓
 cosign keyless signature (*.sig + *.cert)
     ↓

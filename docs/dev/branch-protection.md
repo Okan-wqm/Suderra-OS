@@ -61,7 +61,8 @@ Aynı kurallar + ek:
 
 ## Release Environment
 
-`release-publish` environment'ı GitHub Environments altında tanımlanır:
+`release-sign` ve `release-publish` environment'ları GitHub Environments
+altında tanımlanır:
 
 - Required reviewers: release manager ve maintainer/security-compliance rolünden
   iki farklı GitHub kullanıcısı
@@ -76,10 +77,14 @@ Aynı kurallar + ek:
 
 Release workflow iki yetki alanına ayrılmıştır:
 
-- `release-evidence` job'ı staged release bytes, cosign imzaları, GitHub
-  attestations, machine verification ve evidence üretir. Bu job `contents: read`,
-  `id-token: write` ve `attestations: write` kullanır; release yayınlama yetkisi
-  yoktur.
+- `release-stage` job'ı staged release bytes üretir. Bu job yalnız
+  `contents: read` ve `actions: read` kullanır; OIDC signing veya attestation
+  yetkisi yoktur.
+- `release-sign` job'ı sadece `release-sign` protected environment altında
+  çalışır. Cosign imzaları, GitHub attestations, structured machine
+  verification kayıtları ve final evidence burada üretilir. Bu job
+  `id-token: write` ve `attestations: write` kullanır; release yayınlama
+  yetkisi yoktur.
 - `publish` job'ı sadece `release-publish` protected environment altında çalışır
   ve tek `contents: write` yetkisine sahip job'dır.
 

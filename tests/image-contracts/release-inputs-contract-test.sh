@@ -367,6 +367,40 @@ for target, boards in boards_by_target.items():
             )
     sign_lab(lab_root, lab)
 
+signed_labs = [
+    json.loads((root / "release-lab-input" / version / target / "lab.json").read_text(encoding="utf-8"))
+    for target in boards_by_target
+]
+write_json(
+    root / "release-lab-input" / "station-registry.json",
+    {
+        "schema_version": "suderra.lab-station-registry.v1",
+        "stations": [
+            {
+                "station_id": "contract-station",
+                "fixture_id": "contract-fixture",
+                "public_key_sha256": signed_labs[0]["station_signature"]["public_key_sha256"],
+                "allowed_targets": sorted(boards_by_target),
+                "allowed_storage_by_id": sorted(
+                    {
+                        device["device_identity"]["storage_by_id"]
+                        for lab in signed_labs
+                        for device in lab["devices"]
+                    }
+                ),
+                "calibration_expires_at": "2099-01-01T00:00:00Z",
+                "adapter_inventory": {
+                    "flash": "contract-adapter",
+                    "readback": "contract-adapter",
+                    "uart": "contract-adapter",
+                    "revpi-io": "contract-adapter",
+                },
+                "operator_roles": ["contract"],
+            }
+        ],
+    },
+)
+
 for target in ("qemu-x86_64", "rpi4", "pi-cm4-revpi-usb-installer", "revpi4"):
     write_json(
         root / "release-approvals" / version / f"{target}.json",

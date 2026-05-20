@@ -96,7 +96,7 @@ jobs:
               handle.write(f"run_attempt={run.get('run_attempt', 1)}\n")
           PY
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ inputs.source_sha }}
           submodules: recursive
@@ -106,7 +106,7 @@ jobs:
         run: python3 scripts/ci/validate-build-matrix.py validate
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
         with:
           cosign-release: 'v2.4.1'
 
@@ -274,7 +274,7 @@ jobs:
           python3 scripts/evidence/validate-release-inputs.py "${args[@]}"
 
       - name: Upload preflight evidence bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inputs.source_sha }}
           path: |

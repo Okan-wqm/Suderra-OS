@@ -44,6 +44,16 @@
       "security-owner"
     ]
   },
+  "signing_environment": {
+    "name": "release-sign",
+    "allowed_ref": "refs/tags/v*",
+    "minimum_reviewers": 2,
+    "prevent_self_review": true,
+    "required_reviewers": [
+      "release-owner",
+      "security-owner"
+    ]
+  },
   "required_codeowners_patterns": [
     ".github/workflows/*.yml",
     ".github/CODEOWNERS",

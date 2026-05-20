@@ -57,23 +57,33 @@ rulesets = [
         "rules": [{"type": "non_fast_forward"}],
     },
 ]
-environment = {
-    "name": "release-publish",
-    "prevent_self_review": True,
-    "deployment_branch_policy": {
-        "protected_branches": False,
-        "custom_branch_policies": True,
-    },
-    "protection_rules": [
-        {
-            "type": "required_reviewers",
-            "reviewers": [
-                {"type": "User", "reviewer": {"login": "release-owner"}},
-                {"type": "User", "reviewer": {"login": "security-owner"}},
-            ],
-        }
-    ],
+def environment(name: str) -> dict:
+    return {
+        "name": name,
+        "prevent_self_review": True,
+        "deployment_branch_policy": {
+            "protected_branches": False,
+            "custom_branch_policies": True,
+        },
+        "protection_rules": [
+            {
+                "type": "required_reviewers",
+                "reviewers": [
+                    {"type": "User", "reviewer": {"login": "release-owner"}},
+                    {"type": "User", "reviewer": {"login": "security-owner"}},
+                ],
+            }
+        ],
+    }
+
+deployment_policy = {
+    "branch_policies": [
+        {"name": "v*", "type": "tag"}
+    ]
 }
+
+release_publish_environment = environment("release-publish")
+release_sign_environment = environment("release-sign")
 codeowners = {
     "schema_version": "suderra.codeowners-snapshot.v1",
     "patterns": policy["required_codeowners_patterns"],
@@ -81,12 +91,10 @@ codeowners = {
 files = {
     "main-branch-protection.json": branch,
     "rulesets.json": rulesets,
-    "release-publish-environment.json": environment,
-    "release-publish-deployment-branch-policies.json": {
-        "branch_policies": [
-            {"name": "v*", "type": "tag"}
-        ]
-    },
+    "release-sign-environment.json": release_sign_environment,
+    "release-sign-deployment-branch-policies.json": deployment_policy,
+    "release-publish-environment.json": release_publish_environment,
+    "release-publish-deployment-branch-policies.json": deployment_policy,
     "tag-protection.json": [{"pattern": "v*"}],
     "workflow-permissions.json": {
         "default_workflow_permissions": "read",

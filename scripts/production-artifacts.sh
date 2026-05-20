@@ -40,6 +40,29 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
+production_mode() {
+    [ "${SUDERRA_SIGNING_MODE:-}" = "prod" ] || [ "${SUDERRA_RELEASE_TIER:-}" = "production" ]
+}
+
+reject_prod_file_key() {
+    local role="$1"
+    local value="$2"
+    if ! production_mode; then
+        return 0
+    fi
+    case "${value}" in
+        pkcs11:*)
+            die "${role} PKCS#11 provider is not implemented yet; refusing to fall back to file signing"
+            ;;
+        "")
+            die "${role} PKCS#11 URI must be set for production signing"
+            ;;
+        *)
+            die "production ${role} signing rejects file-backed private keys: ${value}"
+            ;;
+    esac
+}
+
 resolve_grub_editenv() {
     local candidate="${SUDERRA_GRUB_EDITENV:-}"
 
@@ -146,6 +169,7 @@ build_signed_slot_uki() {
     [ -n "${stub}" ] || die "SUDERRA_UKI_STUB must point to linuxx64.efi.stub or equivalent"
     [ -n "${sb_key}" ] || die "SUDERRA_SECUREBOOT_SIGNING_KEY must be set"
     [ -n "${sb_cert}" ] || die "SUDERRA_SECUREBOOT_SIGNING_CERT must be set"
+    reject_prod_file_key "Secure Boot" "${sb_key}"
     need_file "${stub}"
     need_file "${sb_key}"
     need_file "${sb_cert}"
@@ -192,6 +216,7 @@ build_signed_grub() {
 
     [ -n "${sb_key}" ] || die "SUDERRA_SECUREBOOT_SIGNING_KEY must be set"
     [ -n "${sb_cert}" ] || die "SUDERRA_SECUREBOOT_SIGNING_CERT must be set"
+    reject_prod_file_key "GRUB Secure Boot" "${sb_key}"
     need_file "${input}"
     need_file "${sb_key}"
     need_file "${sb_cert}"
@@ -247,6 +272,7 @@ sign_image() {
 
     [ -n "${key}" ] || die "SUDERRA_IMAGE_SIGNING_KEY or SUDERRA_SECUREBOOT_SIGNING_KEY must be set"
     [ -n "${cert}" ] || die "SUDERRA_IMAGE_SIGNING_CERT or SUDERRA_SECUREBOOT_SIGNING_CERT must be set"
+    reject_prod_file_key "image" "${key}"
     need_file "${image}"
     need_file "${key}"
     need_file "${cert}"

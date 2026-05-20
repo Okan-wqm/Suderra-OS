@@ -83,7 +83,7 @@ Required top-level fields:
 | `sbom`, `vex` | CycloneDX SBOM and OpenVEX status when applicable. |
 | `reproducibility` | Independent rebuild comparison and logs. |
 | `security_scans` | Reports listed by the build matrix. |
-| `machine_verification` | SHA256SUMS, cosign, and attestation verification logs. |
+| `machine_verification` | SHA256SUMS, cosign, and attestation verification records plus preserved logs. |
 | `build_evidence` | Retained Build logs, warning-classifier JSON, and Buildroot source identity bound by ingress. |
 | `preflight_inputs` | Preserved approval, reproducibility, security, QEMU, and lab input files replayed by final validation. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
@@ -120,9 +120,10 @@ python3 scripts/evidence/release-evidence.py assemble-release \
     --force
 ```
 
-The command consumes staged release assets, `release-assets.json`, machine
-verification logs, preflight-bound Build logs, warning JSON, Buildroot source
-identity JSON, lab input, governance snapshots, security/reproducibility
+The command consumes staged release assets, `release-assets.json`,
+`suderra.machine-verification.v2` records, preserved machine verification logs,
+preflight-bound Build logs, warning JSON, Buildroot source identity JSON, lab
+input, governance snapshots, security/reproducibility
 reports, QEMU logs, and approval records. It preserves the original preflight
 input JSON/log/report files in the target bundle and `--require-pass
 --check-files` replays the same QEMU, lab, approval, security, warning, and
@@ -143,8 +144,8 @@ schema shape before normal validation.
 
 GitHub governance is policy-driven. `ci/github-governance-policy.yml` is the
 source of truth for required checks, CODEOWNERS coverage, ruleset names, and the
-protected `release-publish` environment. The release workflow collects GitHub API
-snapshots and validates them before build fan-out:
+protected `release-sign` and `release-publish` environments. The release
+workflow collects GitHub API snapshots and validates them before build fan-out:
 
 ```bash
 python3 scripts/evidence/collect-governance.py \
@@ -161,11 +162,12 @@ python3 scripts/evidence/validate-governance.py \
 
 `governance-policy-validation.json` must use
 `suderra.github-governance-validation.v2` and `status: passed`. Final evidence
-requires that file plus branch protection, ruleset, release environment,
-environment deployment policy, tag protection, workflow permission, CODEOWNERS,
-and audit snapshots. The release environment must have selected tag deployment
-policy for `refs/tags/v*`, prevent self-review, and include the required
-release/security reviewer identities from `ci/github-governance-policy.yml`.
+requires that file plus branch protection, ruleset, `release-sign`
+environment, `release-publish` environment, environment deployment policies,
+tag protection, workflow permission, CODEOWNERS, and audit snapshots. Both
+release environments must have selected tag deployment policy for
+`refs/tags/v*`, prevent self-review, and include the required release/security
+reviewer identities from `ci/github-governance-policy.yml`.
 
 ## QEMU Evidence
 
@@ -314,6 +316,13 @@ release evidence. `--require-pass` requires the aggregate hardware status to be
 `passed`, every target-required board ID to have a passed device entry, all
 required USB negative tests to pass, and all required runtime checks to have
 passed evidence files.
+
+Strict release profiles also require
+`release-lab-input/station-registry.json` with schema
+`suderra.lab-station-registry.v1`. The validator trusts the station public key,
+fixture, allowed targets, allowed `/dev/disk/by-id/*` media, calibration record,
+and adapter inventory from that external registry; it does not trust a public
+key embedded only in the submitted lab bundle.
 
 ## Residual Risk
 

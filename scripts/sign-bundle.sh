@@ -32,6 +32,19 @@ if [ ! -f "${BUNDLE}" ]; then
     exit 1
 fi
 
+if [ "${PROD_MODE}" -eq 1 ]; then
+    if [ -f "${KEYS_DIR}/rauc-signing.key" ] || [ -f "${KEYS_DIR}/cosign.key" ]; then
+        echo "ERROR: production signing rejects file-backed private keys; use PKCS#11/HSM provider evidence" >&2
+        exit 1
+    fi
+    if [ -z "${SUDERRA_RAUC_PKCS11_URI:-}" ]; then
+        echo "ERROR: production signing requires SUDERRA_RAUC_PKCS11_URI" >&2
+        exit 1
+    fi
+    echo "ERROR: production PKCS#11 RAUC signing provider is not implemented yet" >&2
+    exit 1
+fi
+
 # 1. RAUC re-sign (eğer bundle henüz imzasız ise)
 if [ -f "${KEYS_DIR}/rauc-signing.key" ]; then
     RAUC_READY=1

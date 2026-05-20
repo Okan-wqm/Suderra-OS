@@ -52,6 +52,14 @@ grep -q 'dropbear.service' "${POST_BUILD}" || {
     echo "ERROR: post-build contract must still know which remote shell unit to mask" >&2
     exit 1
 }
+grep -q 'enable_unit_if_present "suderra-agent.service"' "${POST_BUILD}" || {
+    echo "ERROR: post-build must not enable a missing suderra-agent.service" >&2
+    exit 1
+}
+if grep -q 'ln -sfn ../suderra-agent.service' "${POST_BUILD}"; then
+    echo "ERROR: post-build must not create dangling suderra-agent.service wants symlinks" >&2
+    exit 1
+fi
 
 grep -q 'production defconfig must not include Dropbear' "${POST_IMAGE}" || {
     echo "ERROR: production post-image gate must reject Dropbear" >&2
@@ -188,7 +196,8 @@ for token in \
     'suderra-${slot}.efi' \
     'grubx64.efi' \
     'grub-editenv' \
-    'SUDERRA_SECUREBOOT_SIGNING_KEY'
+    'SUDERRA_SECUREBOOT_SIGNING_KEY' \
+    'reject_prod_file_key'
 do
     grep -q "${token}" "${PRODUCTION_ARTIFACTS}" || {
         echo "ERROR: production artifact generator missing token: ${token}" >&2
@@ -208,6 +217,8 @@ grep -q 'build_signed_slot_uki "$2" "$3" B' "${PRODUCTION_ARTIFACTS}" || {
 for token in \
     'SUDERRA_RAUC_SIGNING_KEY' \
     'SUDERRA_RAUC_SIGNING_CERT' \
+    'SUDERRA_RAUC_PKCS11_URI' \
+    'reject_prod_file_key' \
     'manifest.raucm' \
     '[image.rootfs-verity]' \
     'hooks=post-install' \
@@ -245,12 +256,28 @@ grep -q 'ConditionKernelCommandLine=|rauc.slot=A' "${RAUC_MARK_GOOD_UNIT}" || {
     echo "ERROR: RAUC mark-good unit must be tied to a booted RAUC slot" >&2
     exit 1
 }
+grep -q 'RequiresMountsFor=/data /boot' "${RAUC_MARK_GOOD_UNIT}" || {
+    echo "ERROR: RAUC mark-good unit must require mounted /data and /boot" >&2
+    exit 1
+}
 grep -q 'ReadWritePaths=/data /boot' "${RAUC_MARK_GOOD_UNIT}" || {
     echo "ERROR: RAUC mark-good unit must be allowed to update the shared GRUB environment" >&2
     exit 1
 }
+if grep -Eq '^(Wants|Requires)=.*suderra-agent\.service' "${RAUC_MARK_GOOD_UNIT}"; then
+    echo "ERROR: RAUC mark-good unit must let the health gate decide whether an agent is installed" >&2
+    exit 1
+fi
+grep -q 'suderra-rauc-health-gate' "${RAUC_MARK_GOOD}" || {
+    echo "ERROR: RAUC mark-good must be gated by runtime health checks" >&2
+    exit 1
+}
 grep -q 'suderra-rauc-boot-state' "${RAUC_MARK_GOOD}" || {
     echo "ERROR: RAUC mark-good path must emit rollback/boot evidence" >&2
+    exit 1
+}
+grep -q 'suderra-rauc-health-gate' "${RAUC_PACKAGE_MK}" || {
+    echo "ERROR: RAUC package must install the health gate" >&2
     exit 1
 }
 grep -q 'suderra.rauc-boot-state.v1' "${RAUC_BOOT_STATE}" || {

@@ -62,7 +62,9 @@ Seçenekler:
 
 ## Yapılacaklar
 
-- [ ] Üretim HSM kararı (Faz 4 öncesi)
+- [ ] Üretim HSM/PKCS#11 provider implementation. Production scripts now
+      reject file-backed private keys instead of silently signing with PEM
+      files.
 - [ ] Cold ceremony prosedürü (yazılı runbook)
 - [ ] CI'da kısa-ömürlü key delegation
 - [ ] Anahtar yedekleme + kurtarma planı

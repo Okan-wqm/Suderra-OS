@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+[ -x /usr/bin/rauc ] || fail "rauc binary missing"
+[ -x /usr/sbin/suderra-rauc-boot-state ] || fail "suderra-rauc-boot-state missing"
+mountpoint -q /data || fail "/data is not mounted"
+mountpoint -q /boot || fail "/boot is not mounted"
+
+mkdir -p /data/rauc
+/usr/sbin/suderra-rauc-boot-state >/data/rauc/health-preflight.json
+
+active_slot="$(sed -n 's/.*"active_slot": "\([^"]*\)".*/\1/p' /data/rauc/health-preflight.json | head -n 1)"
+case "${active_slot}" in
+    A|B) ;;
+    *) fail "active RAUC slot is unknown" ;;
+esac
+
+/usr/bin/rauc status --output-format=json >/data/rauc/rauc-status.json
+
+if command -v systemctl >/dev/null 2>&1 &&
+   systemctl list-unit-files suderra-agent.service >/dev/null 2>&1; then
+    systemctl is-active --quiet suderra-agent.service ||
+        fail "suderra-agent.service is not active"
+fi
+
+printf '%s\n' "passed" >/data/rauc/health-gate.passed

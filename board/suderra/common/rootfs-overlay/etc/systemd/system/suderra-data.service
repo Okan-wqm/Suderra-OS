@@ -13,7 +13,7 @@ ExecStart=/bin/sh -c ' \
     set -e; \
     mkdir -p /data; \
     if ! mountpoint -q /data; then \
-        [ -e /dev/disk/by-label/SUDERRA-DATA ] || exit 0; \
+        [ -e /dev/disk/by-label/SUDERRA-DATA ] || { echo "SUDERRA-DATA partition missing" >&2; exit 1; }; \
         mount -L SUDERRA-DATA /data; \
     fi; \
     mkdir -p /data/suderra/lib /data/suderra/log /data/suderra/releases; \

@@ -26,7 +26,7 @@ jobs:
       payload_matrix: ${{ steps.matrix.outputs.payload_matrix }}
       qemu_matrix: ${{ steps.matrix.outputs.qemu_matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Validate build matrix
         run: python3 scripts/ci/validate-build-matrix.py validate
       - name: Emit dynamic matrices
@@ -66,7 +66,7 @@ jobs:
           free -h
           docker --version
           ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
 
@@ -120,13 +120,13 @@ jobs:
         run: ./scripts/ci/check-runner-resources.sh
 
       - name: Cache Buildroot downloads
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
           key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: ${{ env.SUDERRA_HOST_CCACHE_DIR }}
           key: ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}
@@ -269,7 +269,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.defconfig }}-build-logs
           path: build-logs/
@@ -285,7 +285,7 @@ jobs:
 
       - name: Upload image artifact
         if: success()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.defconfig }}-image
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
@@ -294,7 +294,7 @@ jobs:
 
       - name: Attest image and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
@@ -328,7 +328,7 @@ jobs:
           free -h
           docker --version
           ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
 
@@ -382,13 +382,13 @@ jobs:
         run: ./scripts/ci/check-runner-resources.sh
 
       - name: Cache Buildroot downloads
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
           key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: ${{ env.SUDERRA_HOST_CCACHE_DIR }}
           key: ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}
@@ -554,7 +554,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.defconfig }}-build-logs
           path: build-logs/
@@ -570,7 +570,7 @@ jobs:
 
       - name: Upload image artifact
         if: success()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.defconfig }}-image
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
@@ -579,7 +579,7 @@ jobs:
 
       - name: Attest payload image and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
@@ -597,9 +597,9 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+        uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
           targets: ${{ matrix.arch }}-unknown-linux-musl
       - name: Install musl build tooling
@@ -635,7 +635,7 @@ jobs:
           sha256sum "${out}" > "${out}.sha256"
           ls -lh "${out}" "${out}.sha256"
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: installer-${{ matrix.arch }}
           path: |
@@ -646,7 +646,7 @@ jobs:
 
       - name: Attest installer artifact
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
           subject-path: |
             suderra-installer-${{ matrix.arch }}
@@ -661,7 +661,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.qemu_matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install QEMU + OVMF
         run: |
@@ -682,7 +682,7 @@ jobs:
           fi
 
       - name: Download image artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ matrix.defconfig }}-image
           path: output/${{ matrix.defconfig }}/images/
@@ -700,7 +700,7 @@ jobs:
 
       - name: Upload boot logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.defconfig }}-qemu-boot-logs
           path: output/qemu-boot-logs/

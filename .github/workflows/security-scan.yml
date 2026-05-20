@@ -20,7 +20,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install Trivy binary
         env:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && steps.validate_trivy_fs_sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7c1e4cf0b20d7c1872b26569c00ba908797a59bf
         with:
           sarif_file: 'trivy-fs.sarif'
           category: 'trivy-fs'
@@ -66,7 +66,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install Trivy binary
         env:
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && steps.validate_trivy_config_sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7c1e4cf0b20d7c1872b26569c00ba908797a59bf
         with:
           sarif_file: 'trivy-config.sarif'
           category: 'trivy-config'
@@ -108,7 +108,7 @@ jobs:
     name: Gitleaks (secret scan)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
       - name: Install pinned gitleaks CLI
@@ -136,7 +136,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Install Grype
         env:
           GRYPE_VERSION: 0.112.0
@@ -167,7 +167,7 @@ jobs:
         run: python3 scripts/ci/validate-sarif.py results.sarif
       - name: Upload SARIF
         if: always() && steps.validate_grype_sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7c1e4cf0b20d7c1872b26569c00ba908797a59bf
         with:
           sarif_file: results.sarif
           category: grype-fs
@@ -176,7 +176,7 @@ jobs:
     name: VEX JSON syntax
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Validate OpenVEX JSON files
         run: |
           set -euo pipefail

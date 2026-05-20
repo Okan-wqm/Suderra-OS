@@ -20,6 +20,8 @@ SNAPSHOTS = {
     "repo.json": "repos/{repo}",
     "rulesets.json": "repos/{repo}/rulesets",
     "main-branch-protection.json": "repos/{repo}/branches/main/protection",
+    "release-sign-environment.json": "repos/{repo}/environments/release-sign",
+    "release-sign-deployment-branch-policies.json": "repos/{repo}/environments/release-sign/deployment-branch-policies",
     "release-publish-environment.json": "repos/{repo}/environments/release-publish",
     "release-publish-deployment-branch-policies.json": "repos/{repo}/environments/release-publish/deployment-branch-policies",
     "tag-protection.json": "repos/{repo}/tags/protection",

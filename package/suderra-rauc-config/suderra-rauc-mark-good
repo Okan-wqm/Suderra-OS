@@ -9,8 +9,13 @@ if [ ! -x /usr/sbin/suderra-rauc-boot-state ]; then
     echo "ERROR: suderra-rauc-boot-state missing" >&2
     exit 1
 fi
+if [ ! -x /usr/sbin/suderra-rauc-health-gate ]; then
+    echo "ERROR: suderra-rauc-health-gate missing" >&2
+    exit 1
+fi
 
 mkdir -p /data/rauc
+/usr/sbin/suderra-rauc-health-gate
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/pre-mark-good.json
 /usr/bin/rauc status mark-good
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/mark-good.json

@@ -313,6 +313,130 @@ with a structured contract:
   and replays the same validator against the archived preflight input.
 - Contract tests now reject the old log-only pass-string path.
 
+## Revised Remaining Plan After Six-Agent Attack
+
+Six independent plan reviews found that the remaining enterprise gap is not a
+single feature. It is a trust-boundary and evidence architecture problem. The
+remaining work is tracked by the following ordered plan:
+
+1. Split release trust boundaries. Unprivileged staging may prepare bytes, but
+   signing and attestation must run only under a protected `release-sign`
+   environment. Public publication must remain a separate protected
+   `release-publish` environment.
+2. Replace log-text evidence with structured verification facts. Release
+   evidence may preserve logs, but `passed` can only come from typed records
+   that bind subject bytes, signer identity, issuer, workflow ref, run ID, and
+   run attempt.
+3. Verify public release assets after GitHub Release publication. The verifier
+   must download only public assets, validate the publication manifest, require
+   sidecars for every non-sidecar asset, and re-run cosign plus GitHub
+   attestation verification.
+4. Collect release-critical inputs as signed producer artifacts: lab evidence,
+   QEMU semantic evidence, scanner reports, reproducibility, governance audit,
+   approval, VEX, source identity, and publication manifest.
+5. Make builder provenance release-bound. Release evidence must include a
+   signed builder image digest, pinned package/toolchain inputs, cargo vendor
+   identity, and immutable custom-kernel download mirrors.
+6. Replace lab spec packaging with station adapters for UART, power, flash,
+   readback, RevPi IO, and negative tests. Lab validators must trust pinned
+   station identities, not public keys embedded in the submitted JSON.
+7. Finish x86 production behavior with PKCS#11/HSM signing, reviewed UKI stub
+   provenance, Secure Boot tamper tests, dm-verity runtime tamper tests, RAUC
+   good/bad update rollback tests, bootcount fallback, and health-gated
+   mark-good.
+8. Remove or production-gate placeholder userspace services. A locked
+   production image must boot into managed behavior or fail closed; it must not
+   ship inert firstboot, OTA, telemetry, watchdog, factory reset, or
+   attestation placeholders as if they were controls.
+
+## Implemented Tenth Batch
+
+The tenth implementation batch closed the highest-risk release trust-boundary
+gap without changing the `production_ready=false` posture:
+
+- `release.yml` now separates release staging, protected signing, and protected
+  publication. `release-stage` prepares preflight-bound bytes without OIDC or
+  attestation permissions. `release-sign` runs under the protected
+  `release-sign` environment and is the only job with `attestations: write`.
+  `publish` runs under `release-publish` and has `id-token: write` only to sign
+  the post-publication verification record after public bytes are downloaded.
+- GitHub governance policy and collection now require both `release-sign` and
+  `release-publish` environments, selected tag-ref deployment policies,
+  reviewer controls, and self-review prevention.
+- Machine verification now requires `suderra.machine-verification.v2`
+  structured records for SHA256SUMS, cosign, and GitHub attestation checks.
+  Final evidence assembly no longer marks a check as passed from a log alone.
+- Publication manifest validation now rejects placeholder source metadata and
+  can require non-empty `.sig` and `.cert` sidecars for every non-sidecar public
+  asset.
+- The publish job now creates the final GitHub Release inside the protected
+  environment instead of leaving a draft for manual finalization, then downloads
+  the public asset set and re-runs manifest, cosign, and GitHub attestation
+  verification.
+
+## Implemented Eleventh Batch
+
+The eleventh batch applies the first fixes from the revised six-agent attack
+without changing the non-production posture:
+
+- Runtime enablement no longer creates a dangling `suderra-agent.service`
+  wants symlink when the edge-agent package is not selected. RAUC mark-good
+  remains health-gated, but the unit itself does not statically require an
+  optional agent; the health gate checks the agent only when the unit is present
+  in the image.
+- Protected publication now emits
+  `suderra.post-publication-verification.v1` as a signed workflow artifact.
+  The record is generated only after GitHub Release assets are downloaded, and
+  it binds the publication manifest, public asset digests, cosign sidecars, and
+  parsed GitHub attestation subjects.
+- A replay validator and negative contract test reject tampered
+  post-publication attestation subjects. This closes the previous gap where
+  public verification facts existed only in transient workflow logs.
+
+## 2026-05-20 Revised Six-Agent Attack Plan
+
+Six independent review agents attacked the remaining plan from release
+cryptography, supply chain, governance, lab hardware, runtime fail-closed, and
+x86 production boot angles. The revised order is intentionally stricter than
+the earlier backlog:
+
+1. Commit current release/evidence work only as alpha technical-dry-run
+   hardening. It must not be described as DSSE closure, production readiness, or
+   full enterprise evidence.
+2. Close governance and CI trust boundaries first: generated required-check
+   policy, full action SHA pinning, least-privilege workflow permissions,
+   protected signing/publication environments, tag governance, scanner artifact
+   binding, and audit-log collection.
+3. Freeze the builder and source boundary before any release-grade claim:
+   digest-pinned signed builder, pinned package/tool inputs, offline cargo
+   vendor identity, no mutable `suderra-builder:latest`, no live installs in
+   signing/verification jobs, and no unbound host caches for release builds.
+4. Replace lab JSON/spec packaging with station-acquired evidence. Strict
+   profiles require a station registry, approved station keys, by-id target
+   binding, station-generated flash/readback transcripts, adapter provenance,
+   RevPi IO structured results, and station-run USB negative tests.
+5. Move production userspace fail-closed ahead of production evidence. A
+   production image must require managed runtime, durable `/data` and `/boot`,
+   hardened audit/state writes, a single firstboot owner, and health-gated
+   RAUC mark-good.
+6. Prove x86 behavior with executable evidence before production signing:
+   enrolled Secure Boot QEMU, unsigned/wrong-cert/cmdline tamper rejection,
+   dm-verity runtime tamper failure, RAUC good/bad update rollback, bootcount,
+   and power-loss recovery.
+7. Upgrade public verification from log-presence to parsed proof. Machine
+   verification must compare DSSE subjects with the release byte manifest,
+   validate cosign identity/issuer/run metadata, and preserve signed
+   post-publication verification facts downloaded from GitHub Release assets.
+8. Introduce HSM/PKCS#11 production signing only after the behavior gates are
+   real. Production profiles must reject file private keys, require role-split
+   signing keys, record token serial/key ID/session evidence, and bind approved
+   UKI stub provenance.
+
+The active implementation rule is: a gate can move from backlog to closed only
+when the code path, validator, negative test, and release documentation all
+agree. Grep-token contracts may remain as lint, but they do not close
+production behavior.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -333,11 +457,12 @@ with a structured contract:
 - Add an independent rebuild producer or trusted import path that creates
   `suderra.reproducibility.v1` for every release target before
   release-candidate preflight.
-- Move signing/attestation into the protected publish environment.
-- Revalidate cosign signatures, DSSE/attestation subjects, workflow ref, source
-  SHA, run ID, and run attempt from downloaded release assets.
+- Add a signed post-publication evidence artifact for the public GitHub Release
+  verification result without weakening the immutable publication manifest.
+- Extend structured machine verification from workflow/run identity and subject
+  hashes to full DSSE predicate subject comparison for every attested asset.
 - Include tag binding, preflight metadata, source identity, scanner reports,
-  SBOM/VEX, and publication manifest in final evidence.
+  SBOM/VEX, and publication manifest verification facts in final evidence.
 
 ### Build and Supply Chain Batch
 

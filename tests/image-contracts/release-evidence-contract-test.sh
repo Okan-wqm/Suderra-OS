@@ -68,6 +68,53 @@ def write_text(rel: str, payload: str) -> tuple[str, int]:
     return write_bytes(rel, payload.encode("utf-8"))
 
 
+def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: int) -> dict:
+    record_rel = f"machine/{name}.json"
+    subjects = [
+        {
+            "name": data["artifacts"][0]["name"],
+            "sha256": data["artifacts"][0]["sha256"] or "6" * 64,
+            "bytes": data["artifacts"][0]["bytes"] or 1,
+        }
+    ]
+    record = {
+        "schema_version": "suderra.machine-verification.v2",
+        "name": name,
+        "status": "passed",
+        "generated_at": data["generated_at"],
+        "identity": "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/release.yml@refs/tags/v9.9.9",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "source": {
+            "repository": "Okan-wqm/Suderra-OS",
+            "workflow": "Release",
+            "run_id": data["source"]["ci"]["run_id"],
+            "run_attempt": data["source"]["ci"]["run_attempt"],
+            "ref": f"refs/tags/{data['version']}",
+        },
+        "log": {
+            "path": Path(log_rel).name,
+            "sha256": log_sha256,
+            "bytes": log_bytes,
+        },
+        "subjects": subjects,
+    }
+    if name == "attestations":
+        record["verified_subjects"] = [{"name": item["name"], "sha256": item["sha256"]} for item in subjects]
+        record["verification_material"] = {
+            "kind": "github-artifact-attestation-dsse",
+            "files": [
+                {
+                    "path": f"{data['artifacts'][0]['name']}.json",
+                    "sha256": "7" * 64,
+                    "bytes": 1,
+                    "subjects": record["verified_subjects"],
+                }
+            ],
+        }
+    digest, size = write_text(record_rel, json.dumps(record, sort_keys=True) + "\n")
+    return {"path": record_rel, "sha256": digest, "bytes": size}
+
+
 def reproducibility_payload(data: dict, comparison: str) -> dict:
     digest = hashlib.sha256(f"{data['target']}:reproducible".encode("utf-8")).hexdigest()
     return {
@@ -365,9 +412,10 @@ for scan in data["security_scans"]:
     data["preflight_inputs"]["security_reports"].append(
         {"name": scan["name"], "path": scan["report"], "sha256": digest, "bytes": size}
     )
-for check in data["machine_verification"].values():
+for name, check in data["machine_verification"].items():
     for rel in check["logs"]:
-        write_text(rel, "synthetic machine verification transcript\n")
+        digest, size = write_text(rel, "synthetic machine verification transcript\n")
+        check["record"] = write_machine_record(name, rel, digest, size)
 for name, check in data["governance"]["checks"].items():
     payload = {"status": "passed"}
     if name == "policy_validation":
@@ -380,6 +428,29 @@ evidence_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", enco
 PY
 
 python3 "${TOOL}" validate "${EVIDENCE}" --require-pass --check-files >/dev/null
+
+MISSING_MACHINE_RECORD="${TMPDIR}/missing-machine-record/v9.9.9/qemu-x86_64/evidence.json"
+mkdir -p "$(dirname "${MISSING_MACHINE_RECORD}")"
+cp -a "$(dirname "${EVIDENCE}")/." "$(dirname "${MISSING_MACHINE_RECORD}")/"
+python3 - "${MISSING_MACHINE_RECORD}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["machine_verification"]["cosign"]["record"] = None
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate "${MISSING_MACHINE_RECORD}" --require-pass --check-files 2>"${TMPDIR}/machine-record.err"; then
+    echo "ERROR: release evidence accepted log-only machine verification" >&2
+    exit 1
+fi
+grep -q "machine_verification.cosign.record" "${TMPDIR}/machine-record.err" || {
+    echo "ERROR: missing machine record failure did not cite the structured record" >&2
+    cat "${TMPDIR}/machine-record.err" >&2
+    exit 1
+}
 
 if python3 "${TOOL}" validate "${EVIDENCE}" --release-tier alpha --require-pass --check-files 2>"${TMPDIR}/tier.err"; then
     echo "ERROR: GA evidence unexpectedly validated with alpha release tier" >&2
@@ -438,6 +509,53 @@ def write_text(rel: str, payload: str) -> tuple[str, int]:
     payload_bytes = payload.encode("utf-8")
     path.write_bytes(payload_bytes)
     return hashlib.sha256(payload_bytes).hexdigest(), len(payload_bytes)
+
+
+def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: int) -> dict:
+    record_rel = f"machine/{name}.json"
+    subjects = [
+        {
+            "name": data["artifacts"][0]["name"],
+            "sha256": data["artifacts"][0]["sha256"] or "6" * 64,
+            "bytes": data["artifacts"][0]["bytes"] or 1,
+        }
+    ]
+    record = {
+        "schema_version": "suderra.machine-verification.v2",
+        "name": name,
+        "status": "passed",
+        "generated_at": data["generated_at"],
+        "identity": "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/release.yml@refs/tags/v9.9.9-alpha.1",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "source": {
+            "repository": "Okan-wqm/Suderra-OS",
+            "workflow": "Release",
+            "run_id": data["source"]["ci"]["run_id"],
+            "run_attempt": data["source"]["ci"]["run_attempt"],
+            "ref": f"refs/tags/{data['version']}",
+        },
+        "log": {
+            "path": Path(log_rel).name,
+            "sha256": log_sha256,
+            "bytes": log_bytes,
+        },
+        "subjects": subjects,
+    }
+    if name == "attestations":
+        record["verified_subjects"] = [{"name": item["name"], "sha256": item["sha256"]} for item in subjects]
+        record["verification_material"] = {
+            "kind": "github-artifact-attestation-dsse",
+            "files": [
+                {
+                    "path": f"{data['artifacts'][0]['name']}.json",
+                    "sha256": "7" * 64,
+                    "bytes": 1,
+                    "subjects": record["verified_subjects"],
+                }
+            ],
+        }
+    digest, size = write_text(record_rel, json.dumps(record, sort_keys=True) + "\n")
+    return {"path": record_rel, "sha256": digest, "bytes": size}
 
 
 def reproducibility_payload(data: dict, comparison: str) -> dict:
@@ -743,9 +861,10 @@ for scan in data["security_scans"]:
     data["preflight_inputs"]["security_reports"].append(
         {"name": scan["name"], "path": scan["report"], "sha256": digest, "bytes": size}
     )
-for check in data["machine_verification"].values():
+for name, check in data["machine_verification"].items():
     for rel in check["logs"]:
-        write_text(rel, "synthetic alpha machine verification transcript\n")
+        digest, size = write_text(rel, "synthetic alpha machine verification transcript\n")
+        check["record"] = write_machine_record(name, rel, digest, size)
 for name, check in data["governance"]["checks"].items():
     payload = {"status": "passed"}
     if name == "policy_validation":

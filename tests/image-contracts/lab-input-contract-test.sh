@@ -14,6 +14,7 @@ TARGET="pi-cm4-revpi-usb-installer"
 SOURCE_SHA="$(git -C "${PROJECT_ROOT}" rev-parse HEAD)"
 SOURCE_RUN_ID="123456789"
 ROOT="${TMPDIR}/release-lab-input/${VERSION}/${TARGET}"
+REGISTRY="${TMPDIR}/release-lab-input/station-registry.json"
 SPEC="${TMPDIR}/lab-spec.json"
 ARTIFACT="${TMPDIR}/artifact.img"
 KEY="${TMPDIR}/station.key"
@@ -21,9 +22,11 @@ KEY="${TMPDIR}/station.key"
 python3 -m py_compile "${VALIDATOR}" "${COLLECTOR}"
 "${COLLECTOR}" --help >/dev/null
 openssl genpkey -algorithm Ed25519 -out "${KEY}" >/dev/null 2>&1
+openssl pkey -in "${KEY}" -pubout -out "${TMPDIR}/station-public.pem" >/dev/null 2>&1
+KEY_SHA="$(sha256sum "${TMPDIR}/station-public.pem" | awk '{print $1}')"
 printf 'contract artifact bytes\n' >"${ARTIFACT}"
 
-python3 - "${PROJECT_ROOT}" "${TMPDIR}" "${SPEC}" "${ARTIFACT}" <<'PY'
+python3 - "${PROJECT_ROOT}" "${TMPDIR}" "${SPEC}" "${ARTIFACT}" "${REGISTRY}" "${KEY_SHA}" "${TARGET}" <<'PY'
 import importlib.util
 import json
 import sys
@@ -33,6 +36,9 @@ project_root = Path(sys.argv[1])
 tmp = Path(sys.argv[2])
 spec_path = Path(sys.argv[3])
 artifact = Path(sys.argv[4])
+registry_path = Path(sys.argv[5])
+key_sha = sys.argv[6]
+target = sys.argv[7]
 validator_path = project_root / "scripts" / "evidence" / "validate-lab-input.py"
 spec = importlib.util.spec_from_file_location("validate_lab_input", validator_path)
 module = importlib.util.module_from_spec(spec)
@@ -140,6 +146,31 @@ payload = {
     "negative_tests": negative_tests,
 }
 spec_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+registry = {
+    "schema_version": "suderra.lab-station-registry.v1",
+    "stations": [
+        {
+            "station_id": payload["station"]["station_id"],
+            "fixture_id": payload["station"]["fixture_id"],
+            "public_key_sha256": key_sha,
+            "allowed_targets": [target],
+            "allowed_storage_by_id": [
+                device["device_identity"]["storage_by_id"]
+                for device in payload["devices"]
+            ],
+            "calibration_expires_at": "2099-01-01T00:00:00Z",
+            "adapter_inventory": {
+                "flash": "contract-adapter",
+                "readback": "contract-adapter",
+                "uart": "contract-adapter",
+                "revpi-io": "contract-adapter",
+            },
+            "operator_roles": ["contract"],
+        }
+    ],
+}
+registry_path.parent.mkdir(parents=True, exist_ok=True)
+registry_path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
 python3 "${COLLECTOR}" collect \
@@ -150,15 +181,60 @@ python3 "${COLLECTOR}" collect \
     --artifact "${ARTIFACT}" \
     --spec "${SPEC}" \
     --signing-key "${KEY}" \
+    --station-registry "${REGISTRY}" \
     --output-root "${TMPDIR}/release-lab-input" \
     >/dev/null
+
+python3 - "${ROOT}/lab.json" "${REGISTRY}" "${TARGET}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+lab = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+registry = {
+    "schema_version": "suderra.lab-station-registry.v1",
+    "stations": [
+        {
+            "station_id": lab["station"]["station_id"],
+            "fixture_id": lab["station"]["fixture_id"],
+            "public_key_sha256": lab["station_signature"]["public_key_sha256"],
+            "allowed_targets": [sys.argv[3]],
+            "allowed_storage_by_id": [
+                device["device_identity"]["storage_by_id"]
+                for device in lab["devices"]
+            ],
+            "calibration_expires_at": "2099-01-01T00:00:00Z",
+            "adapter_inventory": {
+                "flash": "contract-adapter",
+                "readback": "contract-adapter",
+                "uart": "contract-adapter",
+                "revpi-io": "contract-adapter",
+            },
+            "operator_roles": ["contract"],
+        }
+    ],
+}
+Path(sys.argv[2]).write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 
 python3 "${VALIDATOR}" validate "${ROOT}/lab.json" \
     --require-pass \
     --check-files \
     --expected-source-sha "${SOURCE_SHA}" \
     --expected-source-run-id "${SOURCE_RUN_ID}" \
+    --station-registry "${REGISTRY}" \
     >/dev/null
+
+if python3 "${VALIDATOR}" validate "${ROOT}/lab.json" --require-pass --check-files \
+    2>"${TMPDIR}/registry.err"; then
+    echo "ERROR: strict lab input accepted self-trusting station key without registry" >&2
+    exit 1
+fi
+grep -q "station_registry" "${TMPDIR}/registry.err" || {
+    echo "ERROR: missing station registry failure did not identify station_registry" >&2
+    cat "${TMPDIR}/registry.err" >&2
+    exit 1
+}
 
 python3 - "${ROOT}/lab.json" <<'PY'
 import json
@@ -189,6 +265,7 @@ payload.pop("station_signature")
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 if python3 "${VALIDATOR}" validate "${UNSIGNED_ROOT}/lab.json" --require-pass --check-files \
+    --station-registry "${REGISTRY}" \
     2>"${TMPDIR}/unsigned.err"; then
     echo "ERROR: lab input accepted unsigned station evidence" >&2
     exit 1
@@ -213,6 +290,7 @@ payload["devices"][0]["serial"] = "tampered-after-signing"
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 if python3 "${VALIDATOR}" validate "${TAMPER_ROOT}/lab.json" --require-pass --check-files \
+    --station-registry "${REGISTRY}" \
     2>"${TMPDIR}/tamper.err"; then
     echo "ERROR: lab input accepted tampered signed payload" >&2
     exit 1
@@ -227,6 +305,7 @@ MISMATCH_ROOT="${TMPDIR}/release-lab-input/${VERSION}/rpi4"
 mkdir -p "${MISMATCH_ROOT}"
 cp -a "${ROOT}/." "${MISMATCH_ROOT}/"
 if python3 "${VALIDATOR}" validate "${MISMATCH_ROOT}/lab.json" --require-pass --check-files \
+    --station-registry "${REGISTRY}" \
     2>"${TMPDIR}/target.err"; then
     echo "ERROR: lab input accepted a target that does not match its evidence path" >&2
     exit 1
@@ -253,6 +332,7 @@ payload["devices"] = [
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 if python3 "${VALIDATOR}" validate "${MISSING_ROOT}/lab.json" --require-pass --check-files \
+    --station-registry "${REGISTRY}" \
     2>"${TMPDIR}/missing.err"; then
     echo "ERROR: lab input accepted missing RevPi evidence" >&2
     exit 1

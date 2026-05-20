@@ -404,6 +404,7 @@ def collect_command(args: argparse.Namespace) -> int:
         args.profile,
         args.source_sha,
         args.source_run_id,
+        args.station_registry,
     )
     if failures:
         for failure in failures:
@@ -424,6 +425,7 @@ def main() -> int:
     collect.add_argument("--artifact", type=Path, required=True)
     collect.add_argument("--spec", type=Path, required=True)
     collect.add_argument("--signing-key", type=Path, required=True)
+    collect.add_argument("--station-registry", type=Path)
     collect.add_argument("--output-root", type=Path, default=Path("release-lab-input"))
     collect.add_argument(
         "--profile",

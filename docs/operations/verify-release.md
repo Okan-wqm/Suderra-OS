@@ -92,8 +92,9 @@ cosign verify-blob \
 ## Manifest ve SHA256SUMS
 
 `manifest.json` `suderra-installer` tarafından tüketilen release manifest'idir.
-`SHA256SUMS` toplu hash dosyasıdır. İkisi de `release-evidence` job'ında cosign
-keyless ile imzalanır; GitHub Release yayını ayrı `publish` job'ında yapılır.
+`SHA256SUMS` toplu hash dosyasıdır. İkisi de protected `release-sign` job'ında
+cosign keyless ile imzalanır; GitHub Release yayını ayrı protected `publish`
+job'ında yapılır.
 
 ```bash
 for f in manifest.json SHA256SUMS; do

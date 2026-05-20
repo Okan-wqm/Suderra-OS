@@ -38,7 +38,23 @@ fi
 HOST_DL_DIR="${SUDERRA_HOST_DL_DIR:-${PROJECT_ROOT}/dl}"
 HOST_CCACHE_DIR="${SUDERRA_HOST_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
 HOST_OUTPUT_DIR="${SUDERRA_HOST_OUTPUT_DIR:-${PROJECT_ROOT}/output}"
+BUILDER_IMAGE="${SUDERRA_BUILDER_IMAGE:-suderra-builder:latest}"
+RELEASE_HERMETIC="${SUDERRA_RELEASE_HERMETIC:-0}"
 mkdir -p "${HOST_DL_DIR}" "${HOST_CCACHE_DIR}" "${HOST_OUTPUT_DIR}"
+
+if [ "${RELEASE_HERMETIC}" = "1" ]; then
+    case "${BUILDER_IMAGE}" in
+        *@sha256:*) ;;
+        *)
+            echo "ERROR: SUDERRA_RELEASE_HERMETIC=1 requires SUDERRA_BUILDER_IMAGE pinned by digest" >&2
+            exit 1
+            ;;
+    esac
+    if [ "${SUDERRA_ALLOW_RELEASE_CCACHE:-0}" != "1" ]; then
+        echo "ERROR: release-hermetic builds must not use mutable ccache; set a verified cache policy before enabling it" >&2
+        exit 1
+    fi
+fi
 
 TRUST_ROOT_VALIDATOR="${PROJECT_ROOT}/scripts/ci/validate-trust-roots.sh"
 
@@ -176,23 +192,27 @@ container_preflight_and_exec() {
 
     docker run --rm \
         "${DOCKER_COMMON_ARGS[@]}" \
-        suderra-builder:latest \
+        "${BUILDER_IMAGE}" \
         /bin/bash -lc \
         'validator_args=(--check-installer-env); if [ -n "${SUDERRA_EXPECTED_KEYS_PROFILE:-}" ]; then validator_args+=(--expected-profile "${SUDERRA_EXPECTED_KEYS_PROFILE}"); fi; if [ "${SUDERRA_REQUIRE_INSTALLER_SIGNING:-0}" = "1" ]; then validator_args+=(--require-installer-signing); fi; bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_TRUST_ROOTS_DIR:?}" "${validator_args[@]}"; exec "$@"' \
         bash "${container_cmd[@]}"
 }
 
 # Container imajı hazır mı?
-if ! docker image inspect suderra-builder:latest >/dev/null 2>&1; then
+if ! docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
+    if [ "${RELEASE_HERMETIC}" = "1" ]; then
+        echo "ERROR: release-hermetic builder image is not available locally: ${BUILDER_IMAGE}" >&2
+        exit 1
+    fi
     echo "==> suderra-builder container yok, build ediliyor..."
-    docker build -t suderra-builder:latest "${PROJECT_ROOT}/ci/"
+    docker build -t "${BUILDER_IMAGE}" "${PROJECT_ROOT}/ci/"
 fi
 
 # Shell modu
 if [ "${1}" = "--shell" ]; then
     exec docker run --rm -it \
         "${DOCKER_COMMON_ARGS[@]}" \
-        suderra-builder:latest \
+        "${BUILDER_IMAGE}" \
         /bin/bash -lc \
         'validator_args=(--check-installer-env); if [ -n "${SUDERRA_EXPECTED_KEYS_PROFILE:-}" ]; then validator_args+=(--expected-profile "${SUDERRA_EXPECTED_KEYS_PROFILE}"); fi; if [ "${SUDERRA_REQUIRE_INSTALLER_SIGNING:-0}" = "1" ]; then validator_args+=(--require-installer-signing); fi; bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_TRUST_ROOTS_DIR:?}" "${validator_args[@]}"; exec /bin/bash'
 fi

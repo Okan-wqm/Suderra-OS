@@ -577,6 +577,7 @@ def main() -> int:
     parser.add_argument("--source-sha")
     parser.add_argument("--source-run-id")
     parser.add_argument("--source-run-attempt")
+    parser.add_argument("--station-registry", type=Path)
     parser.add_argument("--build-workflow-name", default="Build")
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--require-ingress-signature", action="store_true")
@@ -649,6 +650,8 @@ def main() -> int:
         lab_args.extend(["--expected-source-sha", bound_source_sha])
     if bound_source_run_id:
         lab_args.extend(["--expected-source-run-id", bound_source_run_id])
+    station_registry = args.station_registry or args.root / "release-lab-input" / "station-registry.json"
+    lab_args.extend(["--station-registry", str(station_registry)])
     if args.check_files:
         lab_args.append("--check-files")
     failures.extend(run(lab_args))

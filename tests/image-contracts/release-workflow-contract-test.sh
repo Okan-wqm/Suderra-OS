@@ -96,6 +96,10 @@ grep -q 'collect-ci-check-evidence.py' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must convert exact source_sha CI checks into release security evidence" >&2
     exit 1
 }
+grep -q -- '--station-registry release-lab-input/station-registry.json' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate lab evidence against an external station registry" >&2
+    exit 1
+}
 grep -q 'check-runs?per_page=100' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must fetch source_sha GitHub check-runs for scanner evidence" >&2
     exit 1
@@ -156,10 +160,68 @@ grep -q 'release-publication-manifest.py validate' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must machine-validate the final publication manifest" >&2
     exit 1
 }
-grep -q 'Verify published draft asset byte set' "${RELEASE_WORKFLOW}" || {
-    echo "ERROR: release workflow must validate the draft GitHub Release asset set after publish" >&2
+grep -q 'release-stage:' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must separate unprivileged release staging from signing" >&2
     exit 1
 }
+grep -q 'release-sign:' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must have a protected signing job" >&2
+    exit 1
+}
+grep -q 'name: release-sign' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release signing job must run under the release-sign protected environment" >&2
+    exit 1
+}
+grep -q 'staged-release-' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must pass staged bytes to the protected signing job" >&2
+    exit 1
+}
+grep -q 'machine-verification-record.py create' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must create structured machine-verification records" >&2
+    exit 1
+}
+grep -q -- '--format json' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must preserve structured GitHub attestation JSON, not only logs" >&2
+    exit 1
+}
+grep -q -- '--attestation-json-dir machine-verification/attestations' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must compare DSSE subjects from attestation JSON" >&2
+    exit 1
+}
+python3 - "${RELEASE_WORKFLOW}" <<'PY'
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+inside = False
+body = []
+for line in lines:
+    if line == "  release-sign:":
+        inside = True
+        continue
+    if inside and line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
+        break
+    if inside:
+        body.append(line)
+if any("apt-get" in line for line in body):
+    raise SystemExit("protected release-sign job must not install live apt packages")
+PY
+grep -q 'Verify published release asset byte set and cryptography' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate the published GitHub Release asset set and cryptography after publish" >&2
+    exit 1
+}
+grep -q 'gh attestation verify "${f}"' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: published release verification must revalidate GitHub artifact attestations" >&2
+    exit 1
+}
+grep -q 'draft: false' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: protected publish job must create the final release, not a draft that is manually finalized" >&2
+    exit 1
+}
+if grep -q 'draft: true' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not leave final publication as a manual draft transition" >&2
+    exit 1
+fi
 if grep -q 'signed-release/release-evidence-generated' "${RELEASE_WORKFLOW}"; then
     echo "ERROR: GitHub Release assets must not publish generated evidence internals outside the archive" >&2
     exit 1
@@ -170,6 +232,18 @@ grep -q 'Final publication provenance attestation' "${RELEASE_WORKFLOW}" || {
 }
 grep -q 'preflight-binding:' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must require a successful release preflight binding" >&2
+    exit 1
+}
+grep -q 'post-publication-verification.py create' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must create replayable post-publication verification evidence" >&2
+    exit 1
+}
+grep -q 'post-publication-verification.py validate' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must replay-validate post-publication verification evidence" >&2
+    exit 1
+}
+grep -q 'post-publication-verification-' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must upload post-publication verification as a retained artifact" >&2
     exit 1
 }
 
@@ -186,6 +260,9 @@ workflow = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
 job = None
 contents_write_jobs = []
 release_publish_jobs = []
+release_sign_jobs = []
+id_token_write_jobs = []
+attestations_write_jobs = []
 for raw in workflow:
     if raw.startswith("  ") and not raw.startswith("    ") and raw.rstrip().endswith(":"):
         name = raw.strip()[:-1]
@@ -193,11 +270,23 @@ for raw in workflow:
             job = name
     if "contents: write" in raw and job:
         contents_write_jobs.append(job)
-    if "release-publish" in raw and job:
+    if raw.strip() == "name: release-publish" and job:
         release_publish_jobs.append(job)
+    if raw.strip() == "name: release-sign" and job:
+        release_sign_jobs.append(job)
+    if "id-token: write" in raw and job:
+        id_token_write_jobs.append(job)
+    if "attestations: write" in raw and job:
+        attestations_write_jobs.append(job)
 
 if contents_write_jobs != ["publish"]:
     raise SystemExit(f"contents: write must be limited to publish job, got {contents_write_jobs}")
 if release_publish_jobs != ["publish"]:
     raise SystemExit(f"release-publish environment must be limited to publish job, got {release_publish_jobs}")
+if release_sign_jobs != ["release-sign"]:
+    raise SystemExit(f"release-sign environment must be limited to release-sign job, got {release_sign_jobs}")
+if id_token_write_jobs != ["release-sign", "publish"]:
+    raise SystemExit(f"id-token: write must be limited to release-sign and publish jobs, got {id_token_write_jobs}")
+if attestations_write_jobs != ["release-sign"]:
+    raise SystemExit(f"attestations: write must be limited to release-sign job, got {attestations_write_jobs}")
 PY

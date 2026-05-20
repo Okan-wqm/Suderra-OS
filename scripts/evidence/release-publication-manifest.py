@@ -23,6 +23,7 @@ SELF_SIDECARS = {
     "release-publication-manifest.json.sig",
     "release-publication-manifest.json.cert",
 }
+PLACEHOLDERS = {"", "not_collected", "NOT_COLLECTED", "TO_BE_COLLECTED", "pending", "PENDING"}
 
 
 def now_utc() -> str:
@@ -35,6 +36,10 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def is_placeholder(value: Any) -> bool:
+    return not isinstance(value, str) or value.strip() in PLACEHOLDERS
 
 
 def load_release_evidence_module() -> Any:
@@ -109,6 +114,7 @@ def validate_manifest(
     release_dir: Path,
     expected_version: str | None,
     require_self_sidecars: bool,
+    require_asset_sidecars: bool,
 ) -> list[str]:
     failures: list[str] = []
     try:
@@ -124,8 +130,8 @@ def validate_manifest(
         failures.append("source must be an object")
     else:
         for field in ("repository", "workflow", "run_id", "run_attempt"):
-            if not isinstance(source.get(field), str) or not source[field].strip():
-                failures.append(f"source.{field} must be a non-empty string")
+            if is_placeholder(source.get(field)):
+                failures.append(f"source.{field} must be a non-placeholder string")
     scope = manifest.get("scope")
     if not isinstance(scope, dict):
         failures.append("scope must be an object")
@@ -162,6 +168,11 @@ def validate_manifest(
         if not file_path.is_file():
             failures.append(f"{path}.name references missing file: {name}")
             continue
+        if require_asset_sidecars and not name.endswith((".sig", ".cert")):
+            for suffix in (".sig", ".cert"):
+                sidecar = release_dir / f"{name}{suffix}"
+                if not sidecar.is_file() or sidecar.stat().st_size <= 0:
+                    failures.append(f"{path}.name missing non-empty sidecar: {name}{suffix}")
         if item.get("role") != classify_asset(name):
             failures.append(f"{path}.role does not match release asset classifier for {name}")
         if item.get("bytes") != file_path.stat().st_size:
@@ -209,6 +220,7 @@ def validate_command(args: argparse.Namespace) -> int:
         release_dir=args.release_dir,
         expected_version=args.expected_version,
         require_self_sidecars=args.require_self_sidecars,
+        require_asset_sidecars=args.require_asset_sidecars,
     )
     if failures:
         for failure in failures:
@@ -237,6 +249,7 @@ def main() -> int:
     validate.add_argument("--release-dir", type=Path, required=True)
     validate.add_argument("--expected-version")
     validate.add_argument("--require-self-sidecars", action="store_true")
+    validate.add_argument("--require-asset-sidecars", action="store_true")
     validate.set_defaults(func=validate_command)
 
     args = parser.parse_args()

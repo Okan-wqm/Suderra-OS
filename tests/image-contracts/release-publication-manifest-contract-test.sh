@@ -37,6 +37,7 @@ python3 "${TOOL}" validate \
     --release-dir "${RELEASE_DIR}" \
     --expected-version "${VERSION}" \
     --require-self-sidecars \
+    --require-asset-sidecars \
     >/dev/null
 
 printf 'unmanifested byte\n' >"${RELEASE_DIR}/unexpected-debug.json"
@@ -45,6 +46,7 @@ if python3 "${TOOL}" validate \
     --release-dir "${RELEASE_DIR}" \
     --expected-version "${VERSION}" \
     --require-self-sidecars \
+    --require-asset-sidecars \
     2>"${TMPDIR}/extra.err"; then
     echo "ERROR: publication manifest accepted an unlisted release file" >&2
     exit 1
@@ -62,6 +64,7 @@ if python3 "${TOOL}" validate \
     --release-dir "${RELEASE_DIR}" \
     --expected-version "${VERSION}" \
     --require-self-sidecars \
+    --require-asset-sidecars \
     2>"${TMPDIR}/tampered.err"; then
     echo "ERROR: publication manifest accepted tampered release bytes" >&2
     exit 1
@@ -69,5 +72,22 @@ fi
 grep -q "sha256 does not match" "${TMPDIR}/tampered.err" || {
     echo "ERROR: tamper failure did not cite sha256 mismatch" >&2
     cat "${TMPDIR}/tampered.err" >&2
+    exit 1
+}
+
+rm "${RELEASE_DIR}/suderra-qemu_x86_64.img.xz.cert"
+if python3 "${TOOL}" validate \
+    "${RELEASE_DIR}/release-publication-manifest.json" \
+    --release-dir "${RELEASE_DIR}" \
+    --expected-version "${VERSION}" \
+    --require-self-sidecars \
+    --require-asset-sidecars \
+    2>"${TMPDIR}/sidecar.err"; then
+    echo "ERROR: publication manifest accepted an unsigned public asset" >&2
+    exit 1
+fi
+grep -q "missing non-empty sidecar" "${TMPDIR}/sidecar.err" || {
+    echo "ERROR: missing sidecar failure did not cite sidecar" >&2
+    cat "${TMPDIR}/sidecar.err" >&2
     exit 1
 }
