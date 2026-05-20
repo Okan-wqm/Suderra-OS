@@ -195,6 +195,52 @@ boot and dm-verity artifacts as the factory image:
 - Production post-image now fails closed unless `SUDERRA_RELEASE_VERSION` and
   RAUC signing material are present and the signed RAUC bundle is generated.
 
+## Implemented Fourth Batch
+
+The fourth implementation batch replaced placeholder QEMU release semantics
+with machine-collected guest evidence:
+
+- QEMU images now include `suderra-qemu-semantic-collector`, which emits a
+  marker-delimited JSON record on the serial console.
+- The collector records `/etc/os-release`, `uname`, rootfs identity, failed
+  systemd units, network state, firstboot marker state, lockdown status,
+  listener inventory, and nftables ruleset evidence.
+- The collector unit is enabled only for the QEMU x86_64 dev defconfig path,
+  avoiding test-evidence output in hardware or production images.
+- `qmp-acceptance.py` now waits for the semantic collector when running the
+  `release-candidate` profile, parses the serial JSON, and binds semantic
+  checks to the collected facts.
+- Empty QEMU stderr is now preserved as a hashed log entry so strict release
+  validators still receive the required log role.
+- The QMP acceptance contract test now validates the collector script, systemd
+  unit, post-build enablement, parser behavior, release-candidate semantic
+  checks, and empty-stderr evidence preservation.
+
+## Implemented Fifth Batch
+
+The fifth implementation batch closed the unsigned/manual hardware lab input
+gap:
+
+- `scripts/evidence/suderra-lab.py collect` now creates
+  `suderra.lab-evidence.v3` from a station collection spec instead of requiring
+  operators to hand-write release JSON.
+- The collector imports the lab validator contract as its source of truth for
+  required checks, USB negative tests, and RevPi-specific checks.
+- Lab artifact binding is computed from the supplied build artifact bytes; the
+  collector rejects readback evidence whose SHA-256 or byte count does not
+  match that bound artifact.
+- The collector copies evidence files into `release-lab-input/<version>/<target>/`,
+  records per-file SHA-256 values, and signs a station bundle with an Ed25519
+  OpenSSL key.
+- Strict lab validation now requires `station_bundle` and `station_signature`,
+  verifies the signed station bundle, checks the station public-key fingerprint,
+  and rejects lab JSON changed after signing.
+- Final release evidence assembly now copies the station bundle, signature, and
+  public key into `hardware/input/` and preserves those records under
+  `hardware.station_bundle` and `hardware.station_signature`.
+- Release-input contract fixtures now exercise the same signed lab evidence
+  chain instead of relying on unsigned synthetic lab JSON.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -231,11 +277,13 @@ boot and dm-verity artifacts as the factory image:
 
 ### Hardware and Lab Batch
 
-- Add QEMU semantic collector and signed JSON output.
-- Add `suderra-lab collect` signed station bundle.
-- Bind lab validation to expected artifact digests from release binding.
-- Add full readback, UART transcript, RevPi IO checks, flash transcript, and
-  hardware-bound negative tests.
+- Sign the QEMU semantic evidence JSON or wrap it in the signed release input
+  archive after collection.
+- Replace the station spec ingestion path with direct station adapters for
+  UART, power control, flash invocation, readback, RevPi IO, and negative-test
+  execution.
+- Add hardware-bound negative tests for expected artifact mismatch, readback
+  mismatch, failed unmount, unsigned lab bundle, and RevPi IO failure.
 
 ## Required Verification
 

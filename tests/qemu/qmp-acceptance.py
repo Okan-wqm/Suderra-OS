@@ -23,6 +23,8 @@ from typing import Any
 
 
 SCHEMA_VERSION = "suderra.qemu-acceptance.v3"
+SEMANTIC_MARKER_BEGIN = "SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
+SEMANTIC_MARKER_END = "SUDERRA_QEMU_SEMANTIC_JSON_END"
 PASS_PATTERNS = {
     "banner": re.compile(r"Suderra OS"),
     "systemd": re.compile(r"(Welcome to|Reached target|systemd\[1\])"),
@@ -192,8 +194,8 @@ def qemu_version() -> str:
         return "not_collected"
 
 
-def relative_log_entry(evidence_dir: Path, role: str, path: Path) -> dict[str, str] | None:
-    if not path.is_file() or path.stat().st_size <= 0:
+def relative_log_entry(evidence_dir: Path, role: str, path: Path, allow_empty: bool = False) -> dict[str, str] | None:
+    if not path.is_file() or (path.stat().st_size <= 0 and not allow_empty):
         return None
     try:
         rel = path.relative_to(evidence_dir)
@@ -206,7 +208,47 @@ def relative_log_entry(evidence_dir: Path, role: str, path: Path) -> dict[str, s
     }
 
 
-def release_checks(passed: dict[str, bool], failed: dict[str, bool], profile: str = "smoke") -> dict[str, dict[str, str]]:
+def parse_semantic_guest_facts(serial: str) -> dict[str, Any]:
+    pattern = re.compile(
+        re.escape(SEMANTIC_MARKER_BEGIN)
+        + r"\s*(\{.*?\})\s*"
+        + re.escape(SEMANTIC_MARKER_END),
+        re.DOTALL,
+    )
+    for raw in reversed(pattern.findall(serial)):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def non_empty_fact(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip()) and value.strip() not in {"not_collected", "TO_BE_COLLECTED"}
+    if isinstance(value, dict):
+        return any(non_empty_fact(item) for item in value.values())
+    if isinstance(value, list):
+        return True
+    return value is not None
+
+
+def semantic_result(passed: bool, evidence: str, source: str) -> dict[str, str]:
+    return {
+        "status": "passed" if passed else "failed",
+        "evidence": evidence,
+        "source": source,
+    }
+
+
+def release_checks(
+    passed: dict[str, bool],
+    failed: dict[str, bool],
+    profile: str = "smoke",
+    guest_facts: dict[str, Any] | None = None,
+) -> dict[str, dict[str, str]]:
     uncollected_status = "failed" if profile == "release-candidate" else "not_applicable"
     checks = {
         name: {
@@ -236,6 +278,92 @@ def release_checks(passed: dict[str, bool], failed: dict[str, bool], profile: st
         "evidence": "serial log scanned for emergency/failure patterns",
         "source": "serial",
     }
+    facts = guest_facts or {}
+    if facts:
+        failed_units = facts.get("failed_units")
+        failed_count = None
+        if isinstance(failed_units, dict) and isinstance(failed_units.get("count"), int):
+            failed_count = failed_units["count"]
+        checks["zero-failed-units"] = semantic_result(
+            failed_count == 0,
+            f"systemctl --failed reported {failed_count} failed unit(s)"
+            if failed_count is not None else "systemctl --failed result was not collected",
+            "guest: systemctl --failed --no-legend --plain",
+        )
+
+        os_release = facts.get("os_release")
+        os_id = os_release.get("ID") if isinstance(os_release, dict) else None
+        checks["os-release"] = semantic_result(
+            non_empty_fact(os_id),
+            f"/etc/os-release ID={os_id}" if isinstance(os_id, str) else "/etc/os-release was not collected",
+            "guest: /etc/os-release",
+        )
+
+        kernel = facts.get("kernel")
+        kernel_release = kernel.get("release") if isinstance(kernel, dict) else kernel
+        checks["kernel"] = semantic_result(
+            non_empty_fact(kernel_release),
+            f"uname release={kernel_release}" if isinstance(kernel_release, str) else "uname was not collected",
+            "guest: uname -a",
+        )
+
+        rootfs = facts.get("rootfs")
+        rootfs_ok = isinstance(rootfs, dict) and any(
+            non_empty_fact(rootfs.get(key))
+            for key in ("cmdline_root", "mount_source", "partlabel", "fstype")
+        )
+        checks["rootfs"] = semantic_result(
+            rootfs_ok,
+            "rootfs mount and kernel root argument collected" if rootfs_ok else "rootfs identity was not collected",
+            "guest: /proc/cmdline and /proc/mounts",
+        )
+
+        network = facts.get("network")
+        network_state = network.get("state") if isinstance(network, dict) else None
+        checks["network"] = semantic_result(
+            non_empty_fact(network_state),
+            f"network state={network_state}" if isinstance(network_state, str) else "network state was not collected",
+            "guest: networkctl is-online or ip addr",
+        )
+
+        firstboot = facts.get("firstboot")
+        firstboot_done = firstboot.get("done_marker") if isinstance(firstboot, dict) else None
+        if firstboot_done is None and isinstance(firstboot, dict):
+            firstboot_done = firstboot.get("idempotent")
+        checks["firstboot-idempotence"] = semantic_result(
+            firstboot_done is True,
+            "/var/lib/suderra/.firstboot-done marker exists"
+            if firstboot_done is True else "firstboot done marker was not observed",
+            "guest: /var/lib/suderra/.firstboot-done",
+        )
+
+        lockdown = facts.get("lockdown")
+        lockdown_state = lockdown.get("status") if isinstance(lockdown, dict) else None
+        checks["lockdown-transition"] = semantic_result(
+            non_empty_fact(lockdown_state),
+            f"suderra-lockdown-status reported {lockdown_state}"
+            if isinstance(lockdown_state, str) else "lockdown status was not collected",
+            "guest: /usr/sbin/suderra-lockdown-status",
+        )
+
+        listeners = facts.get("listeners")
+        checks["listeners"] = semantic_result(
+            isinstance(listeners, list),
+            f"ss reported {len(listeners)} listener line(s)"
+            if isinstance(listeners, list)
+            else "listeners were not collected",
+            "guest: ss -H -lntup",
+        )
+
+        firewall = facts.get("firewall")
+        firewall_loaded = firewall.get("loaded") if isinstance(firewall, dict) else None
+        if firewall_loaded is None and isinstance(firewall, dict):
+            firewall_loaded = firewall.get("nft") == "loaded"
+        checks["firewall"] = semantic_result(
+            firewall_loaded is True,
+            "nft ruleset was collected" if firewall_loaded is True else "nft ruleset was not loaded",
+            "guest: nft list ruleset",
+        )
     return checks
 
 
@@ -433,6 +561,7 @@ def run(args: argparse.Namespace) -> int:
     qemu_args: list[str] = []
     error: str | None = None
     firmware: FirmwareConfig | None = None
+    serial = ""
 
     try:
         firmware = resolve_ovmf_firmware(args, prefix)
@@ -448,7 +577,10 @@ def run(args: argparse.Namespace) -> int:
                 qmp_drain(qmp_sock, qmp_events)
             serial = read_text(serial_log)
             passed, failed = evaluate(serial)
-            if all(passed.values()) or any(failed.values()):
+            semantic_ready = bool(parse_semantic_guest_facts(serial))
+            if any(failed.values()):
+                break
+            if all(passed.values()) and (args.profile != "release-candidate" or semantic_ready):
                 break
             if process.poll() is not None:
                 break
@@ -485,7 +617,8 @@ def run(args: argparse.Namespace) -> int:
     qemu_status = process.returncode if process is not None else None
     failed_checks = [name for name, hit in failed.items() if hit]
     missing_checks = [name for name, hit in passed.items() if not hit]
-    checks = release_checks(passed, failed, args.profile)
+    semantic_guest_facts = parse_semantic_guest_facts(serial)
+    checks = release_checks(passed, failed, args.profile, semantic_guest_facts)
     success = not failed_checks and not missing_checks and error is None
     if args.profile == "release-candidate":
         release_failures = [
@@ -505,10 +638,18 @@ def run(args: argparse.Namespace) -> int:
             relative_log_entry(evidence_log.parent, "serial", serial_log),
             relative_log_entry(evidence_log.parent, "qmp-events", qmp_log),
             relative_log_entry(evidence_log.parent, "qemu-stdout", stdout_log),
-            relative_log_entry(evidence_log.parent, "qemu-stderr", stderr_log),
+            relative_log_entry(evidence_log.parent, "qemu-stderr", stderr_log, allow_empty=True),
         )
         if entry is not None
     ]
+    guest_facts = dict(semantic_guest_facts)
+    guest_facts["firmware"] = firmware.evidence() if firmware else {"requested": str(args.ovmf), "mode": args.ovmf_mode}
+    guest_facts["legacy_checks"] = {
+        "passed": passed,
+        "failed": failed,
+        "missing": missing_checks,
+        "failing": failed_checks,
+    }
     evidence = {
         "schema_version": SCHEMA_VERSION,
         "version": args.version,
@@ -529,15 +670,7 @@ def run(args: argparse.Namespace) -> int:
         "source_sha": os.environ.get("SUDERRA_SOURCE_SHA"),
         "checks": checks,
         "logs": log_entries,
-        "guest_facts": {
-            "firmware": firmware.evidence() if firmware else {"requested": str(args.ovmf), "mode": args.ovmf_mode},
-            "legacy_checks": {
-                "passed": passed,
-                "failed": failed,
-                "missing": missing_checks,
-                "failing": failed_checks,
-            },
-        },
+        "guest_facts": guest_facts,
         "error": error,
         "status": "passed" if success else "failed",
         "result": "passed" if success else "failed",

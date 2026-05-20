@@ -37,6 +37,98 @@ def write_evidence(path: Path, text: str) -> str:
 def write_json(path: Path, payload: object) -> None:
     write(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
+
+def canonical_lab_payload(payload: dict) -> bytes:
+    unsigned = dict(payload)
+    unsigned.pop("station_bundle", None)
+    unsigned.pop("station_signature", None)
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def sign_lab(lab_root: Path, payload: dict) -> None:
+    station_key = root / "contract-station.key"
+    if not station_key.is_file():
+        subprocess.run(
+            ["openssl", "genpkey", "-algorithm", "Ed25519", "-out", str(station_key)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    public_key = lab_root / "station-public.pem"
+    bundle_path = lab_root / "station-bundle.json"
+    signature_path = lab_root / "station-bundle.json.sig"
+    subprocess.run(
+        ["openssl", "pkey", "-in", str(station_key), "-pubout", "-out", str(public_key)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    public_key_sha = hashlib.sha256(public_key.read_bytes()).hexdigest()
+    payload["station"]["trusted_key_fingerprint"] = public_key_sha
+    binding = payload["artifact_binding"]
+    evidence_files = []
+    for path in sorted(lab_root.rglob("*")):
+        if path.is_file() and path.name not in {"station-public.pem"}:
+            data = path.read_bytes()
+            evidence_files.append(
+                {
+                    "path": path.relative_to(lab_root).as_posix(),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "bytes": len(data),
+                }
+            )
+    bundle = {
+        "schema_version": "suderra.lab-station-bundle.v1",
+        "collector": "contract-fixture",
+        "version": payload["version"],
+        "target": payload["target"],
+        "lab_id": payload["lab_id"],
+        "station_id": payload["station"]["station_id"],
+        "generated_at": "2026-05-13T00:00:00Z",
+        "source_sha": binding["source_sha"],
+        "source_run_id": binding["source_run_id"],
+        "build_artifact_sha256": binding["build_artifact_sha256"],
+        "build_artifact_bytes": binding["build_artifact_bytes"],
+        "lab_payload_sha256": hashlib.sha256(canonical_lab_payload(payload)).hexdigest(),
+        "evidence_files": evidence_files,
+    }
+    write_json(bundle_path, bundle)
+    subprocess.run(
+        [
+            "openssl",
+            "pkeyutl",
+            "-sign",
+            "-rawin",
+            "-inkey",
+            str(station_key),
+            "-in",
+            str(bundle_path),
+            "-out",
+            str(signature_path),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    payload["station_bundle"] = {
+        "schema_version": "suderra.lab-station-bundle.v1",
+        "path": "station-bundle.json",
+        "sha256": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+        "bytes": bundle_path.stat().st_size,
+    }
+    payload["station_signature"] = {
+        "algorithm": "openssl-pkeyutl-ed25519-raw",
+        "signature": "station-bundle.json.sig",
+        "signature_sha256": hashlib.sha256(signature_path.read_bytes()).hexdigest(),
+        "public_key": "station-public.pem",
+        "public_key_sha256": public_key_sha,
+    }
+    write_json(lab_root / "lab.json", payload)
+
+
 write_json(
     root / "release-governance" / version / "governance-policy-validation.json",
     {
@@ -242,7 +334,7 @@ for target, boards in boards_by_target.items():
                     },
                 }
             )
-    write_json(lab_root / "lab.json", lab)
+    sign_lab(lab_root, lab)
 
 for target in ("qemu-x86_64", "rpi4", "pi-cm4-revpi-usb-installer", "revpi4"):
     write_json(

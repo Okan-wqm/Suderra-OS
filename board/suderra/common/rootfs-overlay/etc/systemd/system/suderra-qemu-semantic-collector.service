@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[Unit]
+Description=Suderra OS QEMU semantic evidence collector
+Documentation=https://github.com/Okan-wqm/suderra-os
+After=suderra-firstboot.service nftables.service systemd-networkd.service multi-user.target
+Wants=suderra-firstboot.service nftables.service
+ConditionPathExists=/usr/sbin/suderra-qemu-semantic-collector
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/sbin/suderra-qemu-semantic-collector >/dev/console'
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suderra-qemu-semantic
+
+[Install]
+WantedBy=multi-user.target

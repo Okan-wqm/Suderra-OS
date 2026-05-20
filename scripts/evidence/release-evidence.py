@@ -875,6 +875,23 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
         evidence["hardware"]["station"] = lab_input["station"]
     if isinstance(lab_input.get("artifact_binding"), dict):
         evidence["hardware"]["artifact_binding"] = lab_input["artifact_binding"]
+    if isinstance(lab_input.get("station_bundle"), dict):
+        station_bundle = dict(lab_input["station_bundle"])
+        bundle_path = station_bundle.get("path")
+        if isinstance(bundle_path, str):
+            copied = copy_input_relative(bundle_dir, lab_dir, bundle_path, "hardware/input")
+            if copied is not None:
+                station_bundle["path"] = copied
+        evidence["hardware"]["station_bundle"] = station_bundle
+    if isinstance(lab_input.get("station_signature"), dict):
+        station_signature = dict(lab_input["station_signature"])
+        for field in ("signature", "public_key"):
+            rel_path = station_signature.get(field)
+            if isinstance(rel_path, str):
+                copied = copy_input_relative(bundle_dir, lab_dir, rel_path, "hardware/input")
+                if copied is not None:
+                    station_signature[field] = copied
+        evidence["hardware"]["station_signature"] = station_signature
     devices = []
     for device in lab_input.get("devices", []):
         if not isinstance(device, dict):
@@ -1689,6 +1706,57 @@ def validate_hardware(
             validation.error("$.hardware.station", "must preserve station identity")
         if not isinstance(hardware.get("artifact_binding"), dict) or not hardware["artifact_binding"]:
             validation.error("$.hardware.artifact_binding", "must preserve artifact binding")
+        station_bundle = hardware.get("station_bundle")
+        if not isinstance(station_bundle, dict):
+            validation.error("$.hardware.station_bundle", "must preserve signed station bundle")
+        else:
+            check_relative_path(validation, "$.hardware.station_bundle.path", station_bundle.get("path"), True)
+            check_sha256(validation, "$.hardware.station_bundle.sha256", station_bundle.get("sha256"), True)
+            check_positive_int(validation, "$.hardware.station_bundle.bytes", station_bundle.get("bytes"), True)
+            check_file_sha256(
+                validation,
+                "$.hardware.station_bundle.sha256",
+                station_bundle.get("path"),
+                station_bundle.get("sha256"),
+            )
+            check_file_size(
+                validation,
+                "$.hardware.station_bundle.bytes",
+                station_bundle.get("path"),
+                station_bundle.get("bytes"),
+            )
+        station_signature = hardware.get("station_signature")
+        if not isinstance(station_signature, dict):
+            validation.error("$.hardware.station_signature", "must preserve station signature")
+        else:
+            for field in ("algorithm", "signature", "public_key"):
+                check_string(validation, f"$.hardware.station_signature.{field}", station_signature.get(field))
+            for field in ("signature_sha256", "public_key_sha256"):
+                check_sha256(validation, f"$.hardware.station_signature.{field}", station_signature.get(field), True)
+            check_relative_path(
+                validation,
+                "$.hardware.station_signature.signature",
+                station_signature.get("signature"),
+                True,
+            )
+            check_relative_path(
+                validation,
+                "$.hardware.station_signature.public_key",
+                station_signature.get("public_key"),
+                True,
+            )
+            check_file_sha256(
+                validation,
+                "$.hardware.station_signature.signature_sha256",
+                station_signature.get("signature"),
+                station_signature.get("signature_sha256"),
+            )
+            check_file_sha256(
+                validation,
+                "$.hardware.station_signature.public_key_sha256",
+                station_signature.get("public_key"),
+                station_signature.get("public_key_sha256"),
+            )
     devices = hardware.get("devices")
     if not isinstance(devices, list):
         validation.error("$.hardware.devices", "must be a list")

@@ -121,6 +121,7 @@ chmod 0755 "${TARGET_DIR}/usr/sbin/suderra-edge-install" \
            "${TARGET_DIR}/usr/sbin/suderra-lockdown" \
            "${TARGET_DIR}/usr/sbin/suderra-lockdown-status" \
            "${TARGET_DIR}/usr/sbin/suderra-firewall" \
+           "${TARGET_DIR}/usr/sbin/suderra-qemu-semantic-collector" \
            "${TARGET_DIR}/usr/sbin/suderra-provision" \
            "${TARGET_DIR}/usr/sbin/suderra-provision-worker" \
            "${TARGET_DIR}/usr/sbin/suderra-os-install" \
@@ -156,6 +157,12 @@ case "${DEFCONFIG_NAME}" in
                 "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-agent.service"
             ln -sfn ../suderra-provision-worker.path \
                 "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path"
+            case "${DEFCONFIG_NAME}" in
+                suderra_qemu_x86_64*)
+                    ln -sfn ../suderra-qemu-semantic-collector.service \
+                        "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-qemu-semantic-collector.service"
+                    ;;
+            esac
         fi
         ;;
 esac

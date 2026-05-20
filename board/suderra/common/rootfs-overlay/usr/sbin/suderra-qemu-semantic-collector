@@ -1,0 +1,225 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+MARK_BEGIN="SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
+MARK_END="SUDERRA_QEMU_SEMANTIC_JSON_END"
+WORK_DIR="/run/suderra-qemu-semantic"
+
+mkdir -p "${WORK_DIR}" 2>/dev/null || true
+
+json_escape() {
+    printf '%s' "$1" |
+        sed \
+            -e 's/\\/\\\\/g' \
+            -e 's/"/\\"/g' \
+            -e 's/	/\\t/g' \
+            -e 's/\r/\\r/g'
+}
+
+json_string() {
+    printf '"%s"' "$(json_escape "$1")"
+}
+
+json_bool() {
+    case "$1" in
+        1|true|yes) printf 'true' ;;
+        *) printf 'false' ;;
+    esac
+}
+
+strip_quotes() {
+    value="$1"
+    case "${value}" in
+        \"*\")
+            value="${value#\"}"
+            value="${value%\"}"
+            ;;
+    esac
+    printf '%s' "${value}"
+}
+
+os_release_value() {
+    key="$1"
+    value=""
+    if [ -r /etc/os-release ]; then
+        value="$(sed -n "s/^${key}=//p" /etc/os-release 2>/dev/null | head -n 1 || true)"
+    fi
+    strip_quotes "${value}"
+}
+
+json_lines_from_file() {
+    path="$1"
+    limit="$2"
+    count=0
+    first=1
+    printf '['
+    if [ -r "${path}" ]; then
+        while IFS= read -r line && [ "${count}" -lt "${limit}" ]; do
+            if [ "${first}" -eq 0 ]; then
+                printf ','
+            fi
+            json_string "${line}"
+            first=0
+            count=$((count + 1))
+        done < "${path}"
+    fi
+    printf ']'
+}
+
+count_non_empty_lines() {
+    path="$1"
+    count=0
+    if [ -r "${path}" ]; then
+        while IFS= read -r line; do
+            if [ -n "${line}" ]; then
+                count=$((count + 1))
+            fi
+        done < "${path}"
+    fi
+    printf '%s' "${count}"
+}
+
+sha256_or_empty() {
+    path="$1"
+    if [ -r "${path}" ] && command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "${path}" | sed 's/[[:space:]].*$//'
+    else
+        printf ''
+    fi
+}
+
+root_source=""
+root_fstype=""
+root_options=""
+if [ -r /proc/mounts ]; then
+    while read -r source mount_point fstype options _rest; do
+        if [ "${mount_point}" = "/" ]; then
+            root_source="${source}"
+            root_fstype="${fstype}"
+            root_options="${options}"
+            break
+        fi
+    done < /proc/mounts
+fi
+
+cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
+root_arg=""
+for word in ${cmdline}; do
+    case "${word}" in
+        root=*) root_arg="${word#root=}" ;;
+    esac
+done
+
+failed_units="${WORK_DIR}/failed-units.txt"
+: > "${failed_units}"
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --failed --no-legend --plain > "${failed_units}" 2>&1 || true
+fi
+failed_unit_count="$(count_non_empty_lines "${failed_units}")"
+
+network_state="not_collected"
+network_lines="${WORK_DIR}/network.txt"
+: > "${network_lines}"
+if command -v networkctl >/dev/null 2>&1; then
+    if networkctl is-online --timeout=5 > "${network_lines}" 2>&1; then
+        network_state="online"
+    else
+        network_state="offline"
+    fi
+elif command -v ip >/dev/null 2>&1; then
+    ip -o addr show scope global > "${network_lines}" 2>&1 || true
+    if [ "$(count_non_empty_lines "${network_lines}")" -gt 0 ]; then
+        network_state="addresses-present"
+    else
+        network_state="no-global-addresses"
+    fi
+fi
+
+listeners="${WORK_DIR}/listeners.txt"
+: > "${listeners}"
+if command -v ss >/dev/null 2>&1; then
+    ss -H -lntup > "${listeners}" 2>&1 || true
+fi
+
+ruleset="${WORK_DIR}/nft-ruleset.txt"
+: > "${ruleset}"
+firewall_loaded=0
+if command -v nft >/dev/null 2>&1; then
+    if nft list ruleset > "${ruleset}" 2>&1; then
+        firewall_loaded=1
+    fi
+fi
+ruleset_sha256="$(sha256_or_empty "${ruleset}")"
+
+firstboot_done=0
+if [ -f /var/lib/suderra/.firstboot-done ]; then
+    firstboot_done=1
+fi
+firstboot_state="not_collected"
+if command -v systemctl >/dev/null 2>&1; then
+    firstboot_state="$(systemctl is-active suderra-firstboot.service 2>/dev/null || true)"
+fi
+
+lockdown_output="${WORK_DIR}/lockdown-status.txt"
+: > "${lockdown_output}"
+lockdown_status="not_collected"
+lockdown_rc=127
+if [ -x /usr/sbin/suderra-lockdown-status ]; then
+    lockdown_rc=0
+    /usr/sbin/suderra-lockdown-status > "${lockdown_output}" 2>&1 || lockdown_rc=$?
+    if [ "${lockdown_rc}" -eq 0 ]; then
+        lockdown_status="locked"
+    else
+        lockdown_status="unlocked"
+    fi
+fi
+
+printf '%s\n' "${MARK_BEGIN}"
+printf '{'
+printf '"schema_version":"suderra.qemu-semantic.v1",'
+printf '"generated_by":"suderra-qemu-semantic-collector",'
+printf '"os_release":{'
+printf '"ID":'; json_string "$(os_release_value ID)"; printf ','
+printf '"VERSION_ID":'; json_string "$(os_release_value VERSION_ID)"; printf ','
+printf '"VARIANT":'; json_string "$(os_release_value VARIANT)"; printf ','
+printf '"IMAGE_ROLE":'; json_string "$(os_release_value IMAGE_ROLE)"; printf ','
+printf '"BUILD_ID":'; json_string "$(os_release_value BUILD_ID)"
+printf '},'
+printf '"kernel":{'
+printf '"release":'; json_string "$(uname -r 2>/dev/null || true)"; printf ','
+printf '"machine":'; json_string "$(uname -m 2>/dev/null || true)"; printf ','
+printf '"full":'; json_string "$(uname -a 2>/dev/null || true)"
+printf '},'
+printf '"rootfs":{'
+printf '"cmdline_root":'; json_string "${root_arg}"; printf ','
+printf '"mount_source":'; json_string "${root_source}"; printf ','
+printf '"fstype":'; json_string "${root_fstype}"; printf ','
+printf '"options":'; json_string "${root_options}"
+printf '},'
+printf '"failed_units":{'
+printf '"count":%s,' "${failed_unit_count}"
+printf '"lines":'; json_lines_from_file "${failed_units}" 40
+printf '},'
+printf '"network":{'
+printf '"state":'; json_string "${network_state}"; printf ','
+printf '"details":'; json_lines_from_file "${network_lines}" 40
+printf '},'
+printf '"firstboot":{'
+printf '"done_marker":'; json_bool "${firstboot_done}"; printf ','
+printf '"service_state":'; json_string "${firstboot_state}"
+printf '},'
+printf '"lockdown":{'
+printf '"status":'; json_string "${lockdown_status}"; printf ','
+printf '"exit_code":%s,' "${lockdown_rc}"
+printf '"output":'; json_lines_from_file "${lockdown_output}" 80
+printf '},'
+printf '"listeners":'; json_lines_from_file "${listeners}" 80; printf ','
+printf '"firewall":{'
+printf '"loaded":'; json_bool "${firewall_loaded}"; printf ','
+printf '"ruleset_sha256":'; json_string "${ruleset_sha256}"; printf ','
+printf '"ruleset":'; json_lines_from_file "${ruleset}" 120
+printf '}'
+printf '}\n'
+printf '%s\n' "${MARK_END}"

@@ -15,6 +15,8 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -22,6 +24,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 SCHEMA_VERSION = "suderra.lab-evidence.v3"
+STATION_BUNDLE_SCHEMA_VERSION = "suderra.lab-station-bundle.v1"
 LEGACY_SCHEMA_VERSIONS = {"suderra.lab-evidence.v2"}
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -124,6 +127,10 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
 def check_sha256(errors: list[str], path: str, value: Any) -> None:
     if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
         error(errors, path, "must be a lowercase sha256 hex digest")
@@ -152,6 +159,186 @@ def check_relative_file(
         actual_sha256 = sha256_file(actual)
         if actual_sha256 != expected_sha256:
             error(errors, path, f"referenced file sha256 mismatch: expected {expected_sha256}, got {actual_sha256}")
+
+
+def resolve_relative_file(
+    errors: list[str],
+    root: Path,
+    path: str,
+    value: Any,
+    check_files: bool,
+    expected_sha256: str | None = None,
+    expected_bytes: int | None = None,
+    allow_empty: bool = False,
+) -> Path | None:
+    if not is_string(value):
+        error(errors, path, "must be a relative file path")
+        return None
+    rel = Path(value)
+    if rel.is_absolute() or ".." in rel.parts:
+        error(errors, path, "must be relative and must not contain '..'")
+        return None
+    actual = root / rel
+    if not check_files:
+        return actual
+    if not actual.is_file() or (actual.stat().st_size <= 0 and not allow_empty):
+        error(errors, path, f"referenced file is missing or empty: {value}")
+        return actual
+    if expected_bytes is not None and actual.stat().st_size != expected_bytes:
+        error(
+            errors,
+            path,
+            f"referenced file size mismatch: expected {expected_bytes}, got {actual.stat().st_size}",
+        )
+    if expected_sha256 is not None:
+        actual_sha256 = sha256_file(actual)
+        if actual_sha256 != expected_sha256:
+            error(errors, path, f"referenced file sha256 mismatch: expected {expected_sha256}, got {actual_sha256}")
+    return actual
+
+
+def canonical_lab_payload(payload: dict[str, Any]) -> bytes:
+    unsigned = dict(payload)
+    unsigned.pop("station_bundle", None)
+    unsigned.pop("station_signature", None)
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def check_station_bundle(
+    errors: list[str],
+    root: Path,
+    payload: dict[str, Any],
+    check_files: bool,
+    profile: str,
+) -> None:
+    if profile not in STRICT_PROFILES:
+        return
+    station_bundle = payload.get("station_bundle")
+    station_signature = payload.get("station_signature")
+    if not isinstance(station_bundle, dict):
+        error(errors, "$.station_bundle", "must be an object for release lab input")
+        return
+    if not isinstance(station_signature, dict):
+        error(errors, "$.station_signature", "must be an object for release lab input")
+        return
+
+    if station_bundle.get("schema_version") != STATION_BUNDLE_SCHEMA_VERSION:
+        error(
+            errors,
+            "$.station_bundle.schema_version",
+            f"must be {STATION_BUNDLE_SCHEMA_VERSION}",
+        )
+    check_sha256(errors, "$.station_bundle.sha256", station_bundle.get("sha256"))
+    if not isinstance(station_bundle.get("bytes"), int) or station_bundle.get("bytes", 0) <= 0:
+        error(errors, "$.station_bundle.bytes", "must be a positive integer")
+    bundle_path = resolve_relative_file(
+        errors,
+        root,
+        "$.station_bundle.path",
+        station_bundle.get("path"),
+        check_files,
+        station_bundle.get("sha256") if isinstance(station_bundle.get("sha256"), str) else None,
+        station_bundle.get("bytes") if isinstance(station_bundle.get("bytes"), int) else None,
+    )
+
+    for field in ("algorithm", "signature", "public_key"):
+        check_string(errors, f"$.station_signature.{field}", station_signature.get(field))
+    if station_signature.get("algorithm") != "openssl-pkeyutl-ed25519-raw":
+        error(
+            errors,
+            "$.station_signature.algorithm",
+            "must be openssl-pkeyutl-ed25519-raw",
+        )
+    check_sha256(errors, "$.station_signature.signature_sha256", station_signature.get("signature_sha256"))
+    check_sha256(errors, "$.station_signature.public_key_sha256", station_signature.get("public_key_sha256"))
+    signature_path = resolve_relative_file(
+        errors,
+        root,
+        "$.station_signature.signature",
+        station_signature.get("signature"),
+        check_files,
+        station_signature.get("signature_sha256")
+        if isinstance(station_signature.get("signature_sha256"), str)
+        else None,
+    )
+    public_key_path = resolve_relative_file(
+        errors,
+        root,
+        "$.station_signature.public_key",
+        station_signature.get("public_key"),
+        check_files,
+        station_signature.get("public_key_sha256")
+        if isinstance(station_signature.get("public_key_sha256"), str)
+        else None,
+    )
+
+    station = payload.get("station") if isinstance(payload.get("station"), dict) else {}
+    public_key_sha256 = station_signature.get("public_key_sha256")
+    trusted_key_fingerprint = station.get("trusted_key_fingerprint")
+    if isinstance(public_key_sha256, str) and isinstance(trusted_key_fingerprint, str):
+        if trusted_key_fingerprint not in {public_key_sha256, f"sha256:{public_key_sha256}"}:
+            error(
+                errors,
+                "$.station.trusted_key_fingerprint",
+                "must match station public key sha256",
+            )
+
+    if not check_files or bundle_path is None:
+        return
+    try:
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        error(errors, "$.station_bundle.path", f"cannot read station bundle JSON: {exc}")
+        return
+    if not isinstance(bundle, dict):
+        error(errors, "$.station_bundle.path", "station bundle must be a JSON object")
+        return
+    if bundle.get("schema_version") != STATION_BUNDLE_SCHEMA_VERSION:
+        error(errors, "$.station_bundle.path", f"station bundle schema must be {STATION_BUNDLE_SCHEMA_VERSION}")
+    for field in ("version", "target", "lab_id"):
+        if bundle.get(field) != payload.get(field):
+            error(errors, f"$.station_bundle.{field}", f"must match top-level {field}")
+    station_id = station.get("station_id") if isinstance(station, dict) else None
+    if bundle.get("station_id") != station_id:
+        error(errors, "$.station_bundle.station_id", "must match station.station_id")
+    binding = payload.get("artifact_binding") if isinstance(payload.get("artifact_binding"), dict) else {}
+    for field in ("source_sha", "source_run_id", "build_artifact_sha256", "build_artifact_bytes"):
+        if bundle.get(field) != binding.get(field):
+            error(errors, f"$.station_bundle.{field}", f"must match artifact_binding.{field}")
+    expected_payload_sha = sha256_bytes(canonical_lab_payload(payload))
+    if bundle.get("lab_payload_sha256") != expected_payload_sha:
+        error(errors, "$.station_bundle.lab_payload_sha256", "must match unsigned lab payload")
+
+    if signature_path is None or public_key_path is None:
+        return
+    if shutil.which("openssl") is None:
+        error(errors, "$.station_signature", "openssl is required to verify station signature")
+        return
+    result = subprocess.run(
+        [
+            "openssl",
+            "pkeyutl",
+            "-verify",
+            "-rawin",
+            "-pubin",
+            "-inkey",
+            str(public_key_path),
+            "-sigfile",
+            str(signature_path),
+            "-in",
+            str(bundle_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        error(
+            errors,
+            "$.station_signature.signature",
+            result.stderr.strip() or result.stdout.strip() or "station bundle signature verification failed",
+        )
 
 
 def strip_comment(line: str) -> str:
@@ -370,7 +557,11 @@ def validate_lab(
                     bound_sha = binding.get("build_artifact_sha256")
                     bound_bytes = binding.get("build_artifact_bytes")
                     if isinstance(bound_sha, str) and expected_sha != bound_sha:
-                        error(errors, f"{device_path}.readback.expected_sha256", "must match bound build artifact sha256")
+                        error(
+                            errors,
+                            f"{device_path}.readback.expected_sha256",
+                            "must match bound build artifact sha256",
+                        )
                     if isinstance(bound_bytes, int) and readback.get("bytes_read") != bound_bytes:
                         error(errors, f"{device_path}.readback.bytes_read", "must match bound build artifact bytes")
         check_status(errors, f"{device_path}.status", device.get("status"))
@@ -484,14 +675,23 @@ def validate_lab(
             elif write_prevention.get("target_hash_unchanged") is not True:
                 error(errors, f"{item_path}.write_prevention.target_hash_unchanged", "must be true")
             else:
-                check_sha256(errors, f"{item_path}.write_prevention.before_sha256", write_prevention.get("before_sha256"))
+                check_sha256(
+                    errors,
+                    f"{item_path}.write_prevention.before_sha256",
+                    write_prevention.get("before_sha256"),
+                )
                 check_sha256(errors, f"{item_path}.write_prevention.after_sha256", write_prevention.get("after_sha256"))
                 if write_prevention.get("before_sha256") != write_prevention.get("after_sha256"):
                     error(errors, f"{item_path}.write_prevention.after_sha256", "must match before_sha256")
-                if not isinstance(write_prevention.get("bytes_checked"), int) or write_prevention.get("bytes_checked", 0) <= 0:
+                if (
+                    not isinstance(write_prevention.get("bytes_checked"), int)
+                    or write_prevention.get("bytes_checked", 0) <= 0
+                ):
                     error(errors, f"{item_path}.write_prevention.bytes_checked", "must be a positive integer")
         if require_pass and item.get("status") != "passed":
             error(errors, f"{item_path}.status", "must be passed for release lab input")
+    if is_v3:
+        check_station_bundle(errors, root, payload, check_files, profile)
     return errors
 
 
