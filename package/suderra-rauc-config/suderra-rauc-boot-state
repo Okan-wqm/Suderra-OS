@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+grubenv="/boot/EFI/BOOT/grubenv"
+status_json="/data/rauc/boot-state.json"
+
+mkdir -p /data/rauc
+
+active_slot="unknown"
+cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
+case " ${cmdline} " in
+    *" rauc.slot=A "*) active_slot="A" ;;
+    *" rauc.slot=B "*) active_slot="B" ;;
+esac
+
+order=""
+a_ok=""
+a_try=""
+b_ok=""
+b_try=""
+if [ -r "${grubenv}" ] && command -v grub-editenv >/dev/null 2>&1; then
+    env_dump="$(grub-editenv "${grubenv}" list 2>/dev/null || true)"
+    order="$(printf '%s\n' "${env_dump}" | sed -n 's/^ORDER=//p' | head -n 1)"
+    a_ok="$(printf '%s\n' "${env_dump}" | sed -n 's/^A_OK=//p' | head -n 1)"
+    a_try="$(printf '%s\n' "${env_dump}" | sed -n 's/^A_TRY=//p' | head -n 1)"
+    b_ok="$(printf '%s\n' "${env_dump}" | sed -n 's/^B_OK=//p' | head -n 1)"
+    b_try="$(printf '%s\n' "${env_dump}" | sed -n 's/^B_TRY=//p' | head -n 1)"
+fi
+
+rauc_status="unavailable"
+if command -v rauc >/dev/null 2>&1; then
+    rauc_status="$(rauc status --output-format=json 2>/dev/null || printf 'unavailable')"
+fi
+
+cat >"${status_json}.tmp" <<EOF
+{
+  "schema_version": "suderra.rauc-boot-state.v1",
+  "active_slot": "${active_slot}",
+  "grubenv_path": "${grubenv}",
+  "order": "${order}",
+  "A_OK": "${a_ok}",
+  "A_TRY": "${a_try}",
+  "B_OK": "${b_ok}",
+  "B_TRY": "${b_try}",
+  "rauc_status": $(if printf '%s' "${rauc_status}" | grep -q '^[[:space:]]*{'; then printf '%s' "${rauc_status}"; else printf '"%s"' "${rauc_status}"; fi)
+}
+EOF
+mv -f "${status_json}.tmp" "${status_json}"
+cat "${status_json}"

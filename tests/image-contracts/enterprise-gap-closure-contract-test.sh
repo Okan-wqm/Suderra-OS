@@ -7,16 +7,22 @@ POST_BUILD="${ROOT}/board/suderra/common/post-build.sh"
 POST_IMAGE="${ROOT}/board/suderra/common/post-image.sh"
 X86_DEFCONFIG="${ROOT}/configs/suderra_x86_64_defconfig"
 X86_GENIMAGE="${ROOT}/board/suderra/x86_64/genimage.cfg"
+X86_GRUB="${ROOT}/board/suderra/x86_64/grub.cfg"
 KERNEL_FRAGMENT="${ROOT}/board/suderra/common/kernel-fragment.config"
 FIRSTBOOT_UNIT="${ROOT}/package/suderra-firstboot/suderra-firstboot.service"
 OVERLAY_FIRSTBOOT_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-firstboot.service"
 DATA_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-data.service"
 NFTABLES_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/nftables.service"
+RAUC_MARK_GOOD_UNIT="${ROOT}/package/suderra-rauc-config/suderra-rauc-mark-good.service"
+RAUC_MOUNT_UNIT="${ROOT}/package/suderra-rauc-config/boot.mount"
+RAUC_MARK_GOOD="${ROOT}/package/suderra-rauc-config/suderra-rauc-mark-good"
+RAUC_BOOT_STATE="${ROOT}/package/suderra-rauc-config/suderra-rauc-boot-state"
 INSTALLER="${ROOT}/userspace/suderra-installer/src/cmd/install.rs"
 EDGE_INSTALL="${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-edge-install"
 MANIFEST="${ROOT}/userspace/suderra-installer/src/manifest.rs"
 PRODUCTION_ARTIFACTS="${ROOT}/scripts/production-artifacts.sh"
 RAUC_CONFIG="${ROOT}/package/suderra-rauc-config/system.conf"
+RAUC_PACKAGE_MK="${ROOT}/package/suderra-rauc-config/suderra-rauc-config.mk"
 PLAN_DOC="${ROOT}/docs/assessments/2026-05-20-enterprise-grade-gap-closure-plan.md"
 
 grep -q 'ExecStart=/usr/bin/suderra-firstboot' "${FIRSTBOOT_UNIT}" || {
@@ -66,11 +72,15 @@ grep -q 'x86 production boot/verity artifact' "${POST_IMAGE}" || {
     exit 1
 }
 grep -q 'sbverify --cert' "${POST_IMAGE}" || {
-    echo "ERROR: post-image must verify Secure Boot signature on the signed UKI" >&2
+    echo "ERROR: post-image must verify Secure Boot signatures on boot artifacts" >&2
     exit 1
 }
-grep -q 'suderra.efi.sig does not validate' "${POST_IMAGE}" || {
-    echo "ERROR: post-image must verify the signed UKI sidecar signature" >&2
+grep -q 'verify_signed_pe_artifact "suderra-A.efi"' "${POST_IMAGE}" || {
+    echo "ERROR: post-image must verify the signed slot UKI sidecar and Secure Boot signatures" >&2
+    exit 1
+}
+grep -q 'verify_signed_pe_artifact "grubx64.efi"' "${POST_IMAGE}" || {
+    echo "ERROR: post-image must verify the signed GRUB sidecar and Secure Boot signatures" >&2
     exit 1
 }
 
@@ -83,8 +93,12 @@ for token in \
     'BR2_PACKAGE_RAUC_DBUS=y' \
     'BR2_PACKAGE_RAUC_GPT=y' \
     'BR2_PACKAGE_RAUC_JSON=y' \
+    'BR2_PACKAGE_HOST_RAUC=y' \
     'BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y' \
-    'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES='
+    'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=' \
+    'BR2_TARGET_GRUB2_INSTALL_TOOLS=y' \
+    'loadenv' \
+    'chain'
 do
     grep -q "${token}" "${X86_DEFCONFIG}" || {
         echo "ERROR: x86 production defconfig missing token: ${token}" >&2
@@ -108,13 +122,31 @@ grep -q 'label = "SUDERRA-DATA"' "${X86_GENIMAGE}" || {
     echo "ERROR: x86 genimage must create a labelled /data filesystem" >&2
     exit 1
 }
+grep -q 'file EFI' "${X86_GENIMAGE}" || {
+    echo "ERROR: x86 genimage must include the generated EFI directory as a tree" >&2
+    exit 1
+}
 if awk '/partition rootfs-b[[:space:]]*{/,/}/ {print}' "${X86_GENIMAGE}" | grep -q 'image = "rootfs.ext4"'; then
     echo "ERROR: x86 rootfs-b must start blank for RAUC ownership" >&2
     exit 1
 fi
 
 for token in \
+    'load_env --file=${suderra_grubenv} ORDER A_OK A_TRY B_OK B_TRY' \
+    'save_env --file=${suderra_grubenv} A_TRY A_OK B_TRY B_OK ORDER' \
+    'chainloader (${esp})${selected_loader}' \
+    '/EFI/SUDERRA/suderra-A.efi' \
+    '/EFI/SUDERRA/suderra-B.efi'
+do
+    grep -q "${token}" "${X86_GRUB}" || {
+        echo "ERROR: x86 GRUB bootchooser missing token: ${token}" >&2
+        exit 1
+    }
+done
+
+for token in \
     'bootloader=grub' \
+    'grubenv=/boot/EFI/BOOT/grubenv' \
     'bundle-formats=verity' \
     'statusfile=/data/rauc/status.ini' \
     'device=/dev/disk/by-partlabel/rootfs-a' \
@@ -134,6 +166,10 @@ for token in \
     'sbsign' \
     'sbverify' \
     'SUDERRA_UKI_STUB' \
+    'SUDERRA_GRUB_EFI_INPUT' \
+    'suderra-${slot}.efi' \
+    'grubx64.efi' \
+    'grub-editenv' \
     'SUDERRA_SECUREBOOT_SIGNING_KEY'
 do
     grep -q "${token}" "${PRODUCTION_ARTIFACTS}" || {
@@ -141,6 +177,42 @@ do
         exit 1
     }
 done
+if grep -q 'efi-part/EFI/BOOT/BOOTX64.EFI' "${PRODUCTION_ARTIFACTS}" &&
+        ! grep -q 'efi-part/EFI/SUDERRA/suderra-${slot}.efi' "${PRODUCTION_ARTIFACTS}"; then
+    echo "ERROR: production artifacts must not replace signed GRUB with a direct-boot UKI" >&2
+    exit 1
+fi
+
+for token in \
+    'What=/dev/disk/by-partlabel/efi' \
+    'Where=/boot' \
+    'Before=rauc.service suderra-rauc-mark-good.service'
+do
+    grep -q "${token}" "${RAUC_MOUNT_UNIT}" || {
+        echo "ERROR: RAUC boot mount unit missing token: ${token}" >&2
+        exit 1
+    }
+done
+grep -q 'ConditionKernelCommandLine=|rauc.slot=A' "${RAUC_MARK_GOOD_UNIT}" || {
+    echo "ERROR: RAUC mark-good unit must be tied to a booted RAUC slot" >&2
+    exit 1
+}
+grep -q 'ReadWritePaths=/data /boot' "${RAUC_MARK_GOOD_UNIT}" || {
+    echo "ERROR: RAUC mark-good unit must be allowed to update the shared GRUB environment" >&2
+    exit 1
+}
+grep -q 'suderra-rauc-boot-state' "${RAUC_MARK_GOOD}" || {
+    echo "ERROR: RAUC mark-good path must emit rollback/boot evidence" >&2
+    exit 1
+}
+grep -q 'suderra.rauc-boot-state.v1' "${RAUC_BOOT_STATE}" || {
+    echo "ERROR: RAUC boot-state collector must emit typed JSON evidence" >&2
+    exit 1
+}
+grep -q 'boot.mount' "${RAUC_PACKAGE_MK}" || {
+    echo "ERROR: RAUC package must install and enable the EFI /boot mount" >&2
+    exit 1
+}
 
 grep -q 'RAUC-backed install engine is not implemented yet' "${INSTALLER}" || {
     echo "ERROR: installer must fail closed instead of reporting a copy as a successful install" >&2

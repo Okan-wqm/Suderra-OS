@@ -5,6 +5,12 @@ if [ ! -x /usr/bin/rauc ]; then
     echo "ERROR: rauc binary missing" >&2
     exit 1
 fi
+if [ ! -x /usr/sbin/suderra-rauc-boot-state ]; then
+    echo "ERROR: suderra-rauc-boot-state missing" >&2
+    exit 1
+fi
 
 mkdir -p /data/rauc
-exec /usr/bin/rauc status mark-good
+/usr/sbin/suderra-rauc-boot-state >/data/rauc/pre-mark-good.json
+/usr/bin/rauc status mark-good
+/usr/sbin/suderra-rauc-boot-state >/data/rauc/mark-good.json

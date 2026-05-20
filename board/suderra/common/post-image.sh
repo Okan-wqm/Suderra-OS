@@ -328,9 +328,15 @@ enforce_production_contract() {
     case "${DEFCONFIG_NAME}" in
         suderra_x86_64*)
             for artifact in \
-                "${BINARIES_DIR}/suderra.efi" \
-                "${BINARIES_DIR}/suderra.efi.sig" \
-                "${BINARIES_DIR}/suderra.efi.cert"
+                "${BINARIES_DIR}/grubx64.efi" \
+                "${BINARIES_DIR}/grubx64.efi.sig" \
+                "${BINARIES_DIR}/grubx64.efi.cert" \
+                "${BINARIES_DIR}/suderra-A.efi" \
+                "${BINARIES_DIR}/suderra-A.efi.sig" \
+                "${BINARIES_DIR}/suderra-A.efi.cert" \
+                "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI" \
+                "${BINARIES_DIR}/efi-part/EFI/BOOT/grubenv" \
+                "${BINARIES_DIR}/efi-part/EFI/SUDERRA/suderra-A.efi"
             do
                 if [ ! -s "${artifact}" ]; then
                     missing="${missing} ${artifact}"
@@ -440,30 +446,37 @@ enforce_production_contract() {
         exit 1
     fi
     if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
-        boot_pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/suderra.efi.pubkey"
-        if ! openssl x509 -in "${BINARIES_DIR}/suderra.efi.cert" \
-                -pubkey -noout > "${boot_pubkey}" 2>/dev/null; then
-            echo "ERROR: suderra.efi.cert does not contain a usable public key"
-            exit 1
-        fi
-        if ! openssl dgst -sha256 -verify "${boot_pubkey}" \
-                -signature "${BINARIES_DIR}/suderra.efi.sig" \
-                "${BINARIES_DIR}/suderra.efi" >/dev/null 2>&1; then
-            echo "ERROR: suderra.efi.sig does not validate against suderra.efi.cert"
-            rm -f "${boot_pubkey}"
-            exit 1
-        fi
-        rm -f "${boot_pubkey}"
-        if command -v sbverify >/dev/null 2>&1; then
-            if ! sbverify --cert "${BINARIES_DIR}/suderra.efi.cert" \
-                    "${BINARIES_DIR}/suderra.efi" >/dev/null 2>&1; then
-                echo "ERROR: suderra.efi must carry a valid Secure Boot signature"
+        verify_signed_pe_artifact() {
+            local name="$1"
+            local artifact="${BINARIES_DIR}/${name}"
+            local sig="${artifact}.sig"
+            local cert="${artifact}.cert"
+            local pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/${name}.pubkey"
+
+            if ! openssl x509 -in "${cert}" -pubkey -noout > "${pubkey}" 2>/dev/null; then
+                echo "ERROR: ${name}.cert does not contain a usable public key"
                 exit 1
             fi
-        else
+            if ! openssl dgst -sha256 -verify "${pubkey}" \
+                    -signature "${sig}" \
+                    "${artifact}" >/dev/null 2>&1; then
+                echo "ERROR: ${name}.sig does not validate against ${name}.cert"
+                rm -f "${pubkey}"
+                exit 1
+            fi
+            rm -f "${pubkey}"
+            if ! sbverify --cert "${cert}" "${artifact}" >/dev/null 2>&1; then
+                echo "ERROR: ${name} must carry a valid Secure Boot signature"
+                exit 1
+            fi
+        }
+
+        if ! command -v sbverify >/dev/null 2>&1; then
             echo "ERROR: sbverify not available in build environment — production gate cannot pass"
             exit 1
         fi
+        verify_signed_pe_artifact "grubx64.efi"
+        verify_signed_pe_artifact "suderra-A.efi"
     fi
 }
 

@@ -152,6 +152,30 @@ production-ready. It closed false-success and false-production surfaces:
 - A contract test exists at
   `tests/image-contracts/enterprise-gap-closure-contract-test.sh`.
 
+## Implemented Second Batch
+
+The second implementation batch corrected the x86 production boot-chain
+architecture so the RAUC/GRUB claim and Secure Boot artifact layout agree:
+
+- The x86 production boot path is now signed GRUB as `EFI/BOOT/BOOTX64.EFI`
+  plus signed slot UKIs under `EFI/SUDERRA/`.
+- The initial factory image generates a signed `suderra-A.efi` slot UKI whose
+  embedded command line includes `rauc.slot=A` and the dm-verity root mapping
+  for `rootfs-a`.
+- The GRUB config now reads and writes the RAUC GRUB environment file and uses
+  `ORDER`, `A_OK`, `A_TRY`, `B_OK`, and `B_TRY` to select slot A or B.
+- The GRUB environment is initialized during production artifact generation and
+  stored outside the redundant rootfs partitions at `EFI/BOOT/grubenv`.
+- The target mounts the EFI partition at `/boot` and RAUC is configured with
+  `grubenv=/boot/EFI/BOOT/grubenv` so userspace and GRUB operate on the same
+  boot state.
+- Production gates now verify both signed GRUB and the signed slot UKI with
+  sidecar signatures and Secure Boot signature validation.
+- `suderra-rauc-mark-good` now emits typed boot-state evidence before and after
+  `rauc status mark-good`.
+- The previous Rust formatting drift in `suderra-installer` state persistence
+  was corrected so `cargo fmt --all --check` can pass.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -160,8 +184,10 @@ production-ready. It closed false-success and false-production surfaces:
   file-based CI keys.
 - Provide a reviewed production `SUDERRA_UKI_STUB` source and artifact
   provenance.
-- Complete GRUB/RAUC bootchooser environment handling, bootcount fallback, and
-  rollback evidence.
+- Complete RAUC bundle generation for x86 so rootfs, verity metadata, and the
+  matching slot UKI are installed atomically into the inactive slot.
+- Extend the current one-try GRUB fallback into a tested bootcount/rollback
+  scenario covering good update, bad update, and power-loss cases.
 - Add QEMU Secure Boot tests: unsigned UKI rejection, modified cmdline
   rejection, and rootfs tamper failure.
 

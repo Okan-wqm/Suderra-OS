@@ -1,9 +1,11 @@
 [Unit]
 Description=Mark current Suderra OS RAUC slot good
 Documentation=https://rauc.readthedocs.io/
-After=multi-user.target suderra-data.service rauc.service
-Wants=suderra-data.service
+After=multi-user.target boot.mount suderra-data.service rauc.service
+Wants=boot.mount suderra-data.service
 ConditionPathExists=/etc/rauc/system.conf
+ConditionKernelCommandLine=|rauc.slot=A
+ConditionKernelCommandLine=|rauc.slot=B
 
 [Service]
 Type=oneshot
@@ -13,7 +15,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/data
+ReadWritePaths=/data /boot
 
 [Install]
 WantedBy=multi-user.target

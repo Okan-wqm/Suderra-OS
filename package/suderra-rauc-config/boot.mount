@@ -1,0 +1,13 @@
+[Unit]
+Description=Mount Suderra EFI system partition
+Documentation=https://rauc.readthedocs.io/en/latest/integration.html
+Before=rauc.service suderra-rauc-mark-good.service
+
+[Mount]
+What=/dev/disk/by-partlabel/efi
+Where=/boot
+Type=vfat
+Options=rw,nosuid,nodev,noexec,umask=0077,shortname=winnt
+
+[Install]
+WantedBy=local-fs.target

@@ -146,7 +146,8 @@ impl InstalledState {
         }
         let json = serde_json::to_string_pretty(self)?;
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).with_context(|| format!("state temp yazılamadı: {}", tmp.display()))?;
+        std::fs::write(&tmp, json)
+            .with_context(|| format!("state temp yazılamadı: {}", tmp.display()))?;
         std::fs::rename(&tmp, &path).with_context(|| {
             format!(
                 "state atomik rename başarısız: {} -> {}",
