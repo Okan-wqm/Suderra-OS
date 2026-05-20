@@ -9,7 +9,7 @@ for path in \
     build-logs/sample.warnings.json \
     release-lab-input/v0/target/lab.json \
     release-security/v0/trivy.json \
-    release-reproducibility/v0/target.log \
+    release-reproducibility/v0/target.json \
     release-approvals/v0/target.json \
     release-governance/v0/governance-policy-validation.json \
     release-ingress/v0/ingress-manifest.json \

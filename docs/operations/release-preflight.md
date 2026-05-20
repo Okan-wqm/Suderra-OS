@@ -107,7 +107,7 @@ The candidate bundle must include and the signed ingress manifest must digest:
 - `release-approvals/<version>/<target>.json` using
   `suderra.release-approval.v2`
 - `release-security/<version>/<scan>.json`
-- `release-reproducibility/<version>/<target>.log`
+- `release-reproducibility/<version>/<target>.json`
 
 All evidence must reference the same source commit, Build run ID, Buildroot
 submodule SHA, Buildroot upstream ref, Buildroot source mode, Buildroot patchset

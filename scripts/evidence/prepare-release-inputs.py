@@ -476,9 +476,21 @@ def init_command(args: argparse.Namespace) -> int:
                 },
             },
         )
-        repro = args.output_root / "release-reproducibility" / args.version / f"{target}.log"
-        repro.parent.mkdir(parents=True, exist_ok=True)
-        repro.write_text("TO_BE_COLLECTED: reproducibility comparison has not run\n", encoding="utf-8")
+        write_json(
+            args.output_root / "release-reproducibility" / args.version / f"{target}.json",
+            {
+                "schema_version": "suderra.reproducibility.v1",
+                "version": args.version,
+                "target": target,
+                "source_sha": args.source_sha,
+                "source_run_id": str(args.source_run_id),
+                "status": "not_run",
+                "generated_at": "TO_BE_COLLECTED",
+                "comparison": "TO_BE_COLLECTED",
+                "artifact_comparisons": [],
+                "logs": [],
+            },
+        )
 
     for scan in matrix.get("security_scans", []):
         write_json(

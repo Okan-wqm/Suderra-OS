@@ -1001,17 +1001,18 @@ def apply_release_inputs(
     target: str,
     evidence: dict[str, Any],
 ) -> None:
-    repro = input_root / "release-reproducibility" / version / f"{target}.log"
+    repro = input_root / "release-reproducibility" / version / f"{target}.json"
     if repro.is_file() and repro.stat().st_size > 0:
-        rel_repro = copy_into_bundle(bundle_dir, repro, "preflight/reproducibility/reproducibility.log")
+        repro_payload = read_json(repro)
+        rel_repro = copy_into_bundle(bundle_dir, repro, "preflight/reproducibility/reproducibility.json")
         evidence["preflight_inputs"]["reproducibility"] = {
             "path": rel_repro,
             "sha256": sha256_file(bundle_dir / rel_repro),
             "bytes": (bundle_dir / rel_repro).stat().st_size,
         }
         evidence["reproducibility"] = {
-            "status": "passed",
-            "comparison": "independent rebuild matched staged release bytes",
+            "status": repro_payload.get("status") if isinstance(repro_payload, dict) else "failed",
+            "comparison": repro_payload.get("comparison") if isinstance(repro_payload, dict) else "invalid input",
             "logs": [rel_repro],
         }
     for scan in evidence["security_scans"]:
@@ -1484,7 +1485,16 @@ def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], 
     if require_pass and repro_path is not None:
         try:
             module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
-            for failure in module.validate_repro(repro_path):
+            source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+            ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+            for failure in module.validate_repro(
+                repro_path,
+                str(evidence.get("version")),
+                str(evidence.get("target")),
+                source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                ci.get("run_id") if isinstance(ci.get("run_id"), str) else None,
+                True,
+            ):
                 validation.error("$.preflight_inputs.reproducibility.path", failure)
         except Exception as exc:
             validation.error("$.preflight_inputs.reproducibility.path", f"cannot validate reproducibility input: {exc}")

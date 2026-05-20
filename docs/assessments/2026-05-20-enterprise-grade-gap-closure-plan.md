@@ -297,6 +297,22 @@ implicit workflow status into signed, source-bound input records:
   collection and verifies that failed check runs cannot produce passed release
   security reports.
 
+## Implemented Ninth Batch
+
+The ninth implementation batch replaced log-word reproducibility acceptance
+with a structured contract:
+
+- Release reproducibility input is now `suderra.reproducibility.v1` JSON at
+  `release-reproducibility/<version>/<target>.json`.
+- `validate-release-inputs.py` requires source/version/target binding, passed
+  status, non-placeholder comparison text, non-empty artifact comparisons,
+  matched reference/rebuild SHA-256 values, and optional log digest checks.
+- `prepare-release-inputs.py init` now creates blocked JSON skeletons instead
+  of free-form `TO_BE_COLLECTED` logs.
+- Final release evidence assembly preserves the structured reproducibility JSON
+  and replays the same validator against the archived preflight input.
+- Contract tests now reject the old log-only pass-string path.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -314,8 +330,9 @@ implicit workflow status into signed, source-bound input records:
 
 ### Release Evidence Batch
 
-- Make release-preflight produce or import structured reproducibility evidence
-  instead of accepting `TO_BE_COLLECTED` skeletons or log-only pass strings.
+- Add an independent rebuild producer or trusted import path that creates
+  `suderra.reproducibility.v1` for every release target before
+  release-candidate preflight.
 - Move signing/attestation into the protected publish environment.
 - Revalidate cosign signatures, DSSE/attestation subjects, workflow ref, source
   SHA, run ID, and run attempt from downloaded release assets.

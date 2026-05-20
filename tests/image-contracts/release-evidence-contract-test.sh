@@ -67,6 +67,29 @@ def write_bytes(rel: str, payload: bytes) -> tuple[str, int]:
 def write_text(rel: str, payload: str) -> tuple[str, int]:
     return write_bytes(rel, payload.encode("utf-8"))
 
+
+def reproducibility_payload(data: dict, comparison: str) -> dict:
+    digest = hashlib.sha256(f"{data['target']}:reproducible".encode("utf-8")).hexdigest()
+    return {
+        "schema_version": "suderra.reproducibility.v1",
+        "version": data["version"],
+        "target": data["target"],
+        "source_sha": data["source"]["git_commit"],
+        "source_run_id": data["source"]["ci"]["run_id"],
+        "status": "passed",
+        "generated_at": data["generated_at"],
+        "comparison": comparison,
+        "artifact_comparisons": [
+            {
+                "artifact": f"{data['target']}.img.xz",
+                "status": "matched",
+                "reference_sha256": digest,
+                "rebuild_sha256": digest,
+            }
+        ],
+        "logs": [],
+    }
+
 data["source"]["git_commit"] = "0123456789abcdef0123456789abcdef01234567"
 data["source"]["dirty"] = False
 data["source"]["ci"]["run_id"] = "123456789"
@@ -129,7 +152,7 @@ data["vex"]["sha256"], _ = write_text(
 )
 data["reproducibility"]["status"] = "passed"
 data["reproducibility"]["comparison"] = "independent rebuild matched release artifact"
-data["reproducibility"]["logs"] = ["logs/reproducibility.log"]
+data["reproducibility"]["logs"] = ["preflight/reproducibility/reproducibility.json"]
 
 for scan in data["security_scans"]:
     scan["status"] = "passed"
@@ -318,7 +341,10 @@ data["preflight_inputs"]["approval"] = {
 }
 
 for rel in data["reproducibility"]["logs"]:
-    digest, size = write_text(rel, "synthetic reproducibility transcript matched\n")
+    digest, size = write_text(
+        rel,
+        json.dumps(reproducibility_payload(data, data["reproducibility"]["comparison"]), sort_keys=True) + "\n",
+    )
     data["preflight_inputs"]["reproducibility"] = {"path": rel, "sha256": digest, "bytes": size}
 for scan in data["security_scans"]:
     report_payload = {
@@ -414,6 +440,29 @@ def write_text(rel: str, payload: str) -> tuple[str, int]:
     return hashlib.sha256(payload_bytes).hexdigest(), len(payload_bytes)
 
 
+def reproducibility_payload(data: dict, comparison: str) -> dict:
+    digest = hashlib.sha256(f"{data['target']}:reproducible".encode("utf-8")).hexdigest()
+    return {
+        "schema_version": "suderra.reproducibility.v1",
+        "version": data["version"],
+        "target": data["target"],
+        "source_sha": data["source"]["git_commit"],
+        "source_run_id": data["source"]["ci"]["run_id"],
+        "status": "passed",
+        "generated_at": data["generated_at"],
+        "comparison": comparison,
+        "artifact_comparisons": [
+            {
+                "artifact": f"{data['target']}.img.xz",
+                "status": "matched",
+                "reference_sha256": digest,
+                "rebuild_sha256": digest,
+            }
+        ],
+        "logs": [],
+    }
+
+
 data["source"]["git_commit"] = "0123456789abcdef0123456789abcdef01234567"
 data["source"]["dirty"] = False
 data["source"]["ci"]["run_id"] = "123456789"
@@ -466,7 +515,7 @@ data["sbom"]["signature_verified"] = True
 data["vex"]["status"] = "not_collected"
 data["reproducibility"]["status"] = "passed"
 data["reproducibility"]["comparison"] = "single alpha candidate build accepted with residual risk"
-data["reproducibility"]["logs"] = ["logs/reproducibility.log"]
+data["reproducibility"]["logs"] = ["preflight/reproducibility/reproducibility.json"]
 
 for scan in data["security_scans"]:
     scan["status"] = "passed"
@@ -670,7 +719,10 @@ data["preflight_inputs"]["approval"] = {
 }
 
 for rel in data["reproducibility"]["logs"]:
-    digest, size = write_text(rel, "synthetic alpha reproducibility transcript matched\n")
+    digest, size = write_text(
+        rel,
+        json.dumps(reproducibility_payload(data, data["reproducibility"]["comparison"]), sort_keys=True) + "\n",
+    )
     data["preflight_inputs"]["reproducibility"] = {"path": rel, "sha256": digest, "bytes": size}
 for scan in data["security_scans"]:
     report_payload = {

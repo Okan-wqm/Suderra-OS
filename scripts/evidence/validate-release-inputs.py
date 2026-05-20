@@ -434,15 +434,91 @@ def validate_approval(path: Path, version: str, target: str, source_sha: str | N
     ]
 
 
-def validate_repro(path: Path) -> list[str]:
+def validate_repro(
+    path: Path,
+    version: str | None = None,
+    target: str | None = None,
+    source_sha: str | None = None,
+    source_run_id: str | None = None,
+    check_files: bool = False,
+) -> list[str]:
     if not path.is_file() or path.stat().st_size <= 0:
         return [f"missing reproducibility input: {path}"]
-    text = path.read_text(encoding="utf-8", errors="replace").lower()
-    if any(token in text for token in ("mismatch", "failed", "error", "different digest")):
-        return [f"reproducibility input reports mismatch or failure: {path}"]
-    if "matched" not in text and "passed" not in text:
-        return [f"reproducibility input must report matched or passed: {path}"]
-    return []
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return [f"reproducibility input must be suderra.reproducibility.v1 JSON: {path}"]
+    failures = []
+    if payload.get("schema_version") != "suderra.reproducibility.v1":
+        failures.append(f"reproducibility schema_version mismatch: {path}")
+    if version is not None and payload.get("version") != version:
+        failures.append(f"reproducibility version mismatch: {path}")
+    if target is not None and payload.get("target") != target:
+        failures.append(f"reproducibility target mismatch: {path}")
+    if source_sha is not None and payload.get("source_sha") != source_sha:
+        failures.append(f"reproducibility source_sha mismatch: {path}")
+    if source_run_id is not None and str(payload.get("source_run_id")) != str(source_run_id):
+        failures.append(f"reproducibility source_run_id mismatch: {path}")
+    if payload.get("status") != "passed":
+        failures.append(f"reproducibility status must be passed: {path}")
+    comparison = payload.get("comparison")
+    if not isinstance(comparison, str) or not comparison.strip() or is_placeholder(comparison):
+        failures.append(f"reproducibility comparison is required: {path}")
+    generated_at = payload.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.strip() or is_placeholder(generated_at):
+        failures.append(f"reproducibility generated_at is required: {path}")
+    comparisons = payload.get("artifact_comparisons")
+    if not isinstance(comparisons, list) or not comparisons:
+        failures.append(f"reproducibility artifact_comparisons must be a non-empty list: {path}")
+    else:
+        for idx, item in enumerate(comparisons):
+            if not isinstance(item, dict):
+                failures.append(f"reproducibility artifact_comparisons[{idx}] must be an object: {path}")
+                continue
+            if item.get("status") != "matched":
+                failures.append(f"reproducibility artifact_comparisons[{idx}].status must be matched: {path}")
+            artifact = item.get("artifact")
+            if not isinstance(artifact, str) or not artifact.strip() or is_placeholder(artifact):
+                failures.append(f"reproducibility artifact_comparisons[{idx}].artifact is required: {path}")
+            for field in ("reference_sha256", "rebuild_sha256"):
+                value = item.get(field)
+                if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
+                    failures.append(
+                        f"reproducibility artifact_comparisons[{idx}].{field} must be a non-zero sha256: {path}"
+                    )
+            if (
+                isinstance(item.get("reference_sha256"), str)
+                and isinstance(item.get("rebuild_sha256"), str)
+                and item["reference_sha256"] != item["rebuild_sha256"]
+            ):
+                failures.append(f"reproducibility artifact_comparisons[{idx}] digest mismatch: {path}")
+    logs = payload.get("logs", [])
+    if not isinstance(logs, list):
+        failures.append(f"reproducibility logs must be a list: {path}")
+    else:
+        base = path.parent
+        for idx, item in enumerate(logs):
+            if not isinstance(item, dict):
+                failures.append(f"reproducibility logs[{idx}] must be an object: {path}")
+                continue
+            rel = item.get("path")
+            digest = item.get("sha256")
+            if not isinstance(rel, str) or not rel.strip() or is_placeholder(rel):
+                failures.append(f"reproducibility logs[{idx}].path is required: {path}")
+                continue
+            rel_path = Path(rel)
+            if rel_path.is_absolute() or ".." in rel_path.parts:
+                failures.append(f"reproducibility logs[{idx}].path must be relative and contained: {path}")
+                continue
+            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) or digest == "0" * 64:
+                failures.append(f"reproducibility logs[{idx}].sha256 must be a non-zero sha256: {path}")
+                continue
+            if check_files:
+                log_path = base / rel_path
+                if not log_path.is_file() or log_path.stat().st_size <= 0:
+                    failures.append(f"reproducibility log missing or empty: {log_path}")
+                elif sha256_file(log_path) != digest:
+                    failures.append(f"reproducibility log sha mismatch: {log_path}")
+    return failures
 
 
 def validate_security_report(
@@ -600,9 +676,9 @@ def main() -> int:
         if row.get("release"):
             target = str(row["target"])
             approval = args.root / "release-approvals" / args.version / f"{target}.json"
-            repro = args.root / "release-reproducibility" / args.version / f"{target}.log"
+            repro = args.root / "release-reproducibility" / args.version / f"{target}.json"
             failures.extend(validate_approval(approval, args.version, target, bound_source_sha))
-            failures.extend(validate_repro(repro))
+            failures.extend(validate_repro(repro, args.version, target, bound_source_sha, bound_source_run_id, args.check_files))
     for scan in matrix.get("security_scans", []):
         report = args.root / "release-security" / args.version / f"{scan}.json"
         failures.extend(validate_security_report(report, str(scan), args.version, bound_source_sha, bound_source_run_id))

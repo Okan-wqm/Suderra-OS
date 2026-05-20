@@ -38,6 +38,29 @@ def write_json(path: Path, payload: object) -> None:
     write(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def reproducibility_payload(version: str, target: str, source_sha: str) -> dict:
+    digest = hashlib.sha256(f"{target}:reproducible".encode("utf-8")).hexdigest()
+    return {
+        "schema_version": "suderra.reproducibility.v1",
+        "version": version,
+        "target": target,
+        "source_sha": source_sha,
+        "source_run_id": "123456789",
+        "status": "passed",
+        "generated_at": "2026-05-13T00:00:00Z",
+        "comparison": "independent rebuild matched release artifact bytes",
+        "artifact_comparisons": [
+            {
+                "artifact": f"{target}.img.xz",
+                "status": "matched",
+                "reference_sha256": digest,
+                "rebuild_sha256": digest,
+            }
+        ],
+        "logs": [],
+    }
+
+
 def canonical_lab_payload(payload: dict) -> bytes:
     unsigned = dict(payload)
     unsigned.pop("station_bundle", None)
@@ -390,7 +413,10 @@ for target in ("qemu-x86_64", "rpi4", "pi-cm4-revpi-usb-installer", "revpi4"):
             },
         },
     )
-    write(root / "release-reproducibility" / version / f"{target}.log", "reproducibility matched\n")
+    write_json(
+        root / "release-reproducibility" / version / f"{target}.json",
+        reproducibility_payload(version, target, source_sha),
+    )
 
 for scan in (
     "actionlint",
@@ -640,6 +666,31 @@ python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
     --source-sha "${SOURCE_SHA}" \
     --check-files \
     >/dev/null
+
+mv "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.json" \
+    "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.json.bak"
+printf 'reproducibility matched\n' > "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.log"
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
+    --version "${VERSION}" \
+    --release-tier alpha \
+    --root "${TMPDIR}" \
+    --profile release-candidate \
+    --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    --source-sha "${SOURCE_SHA}" \
+    --check-files \
+    2>"${TMPDIR}/release-repro-log.err"; then
+    echo "ERROR: release input preflight accepted log-only reproducibility evidence" >&2
+    exit 1
+fi
+grep -q "reproducibility input" "${TMPDIR}/release-repro-log.err" || {
+    echo "ERROR: release input preflight did not report invalid reproducibility input" >&2
+    cat "${TMPDIR}/release-repro-log.err" >&2
+    exit 1
+}
+mv "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.json.bak" \
+    "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.json"
+rm -f "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.log"
 
 python3 - "${TMPDIR}/release-lab-input/${VERSION}/qemu-x86_64/qemu.json" <<'PY'
 import json
