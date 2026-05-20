@@ -1,0 +1,214 @@
+# Suderra OS Enterprise Grade Gap Closure Plan
+
+Date: 2026-05-20
+Status: Source of truth for the enterprise-grade implementation backlog
+
+## Purpose
+
+This document preserves the original enterprise-grade plan and the current
+implementation status. Future implementation work must use this file as the
+primary checklist instead of reconstructing the plan from chat history.
+
+`production_ready=false` stays closed until every production gate below is
+implemented and verified. Alpha/lab releases may continue only when evidence
+clearly marks them as non-production.
+
+## Original Plan
+
+### Summary
+
+- Suderra OS is not production-grade yet. The largest gaps are placeholder
+  runtime services, non-real OTA/RAUC behavior, incomplete secure boot and
+  dm-verity, fail-open provisioning, incomplete release evidence, and non-
+  hermetic build supply chain controls.
+- The first production target is **x86_64-first**.
+- RPi4, CM4, and RevPi4 remain lab or release-candidate targets until signed
+  FIT or equivalent Raspberry Pi secure boot, dm-verity, RAUC A/B,
+  anti-rollback, and hardware-bound negative tests exist.
+- factory/provisioning images are separate from locked production runtime
+  images.
+
+### P0: Fail-Closed Runtime Contract
+
+- Production images must not boot with Dropbear, getty, debug shell, static
+  root password, or local SSH provisioning enabled.
+- The firstboot service must have one owner. The packaged unit must execute the
+  installed `/usr/bin/suderra-firstboot` binary; overlay shell behavior is not a
+  production substitute.
+- Runtime state errors must fail closed. Corrupt installed-state JSON must block
+  install, upgrade, remove, and rollback instead of being treated as an empty
+  device.
+- The installer must not report success by copying a bundle into `/opt/suderra`.
+  Until RAUC is wired, any legacy copy path must be explicit lab-only behavior
+  behind `SUDERRA_ALLOW_LEGACY_COPY_INSTALL=1`.
+- systemd units for `/data`, firstboot, firewall, and agent startup must avoid
+  ordering cycles and must pass `systemd-analyze verify --root`.
+
+### P1: x86_64 Production Chain
+
+- x86_64 production must use signed UKI or an equivalent locked boot chain. A
+  GRUB plus mutable kernel/cmdline path is not a production claim.
+- dm-verity must be generated from the exact root filesystem artifact and its
+  roothash must be bound into signed boot metadata.
+- RAUC must own A/B update semantics: slot configuration, signed bundles,
+  bootchooser, mark-good, bootcount fallback, and rollback health evidence.
+- `production_ready` cannot pass while RAUC is absent, rootfs verity artifacts
+  are missing, or signed boot artifacts are only checked rather than produced.
+
+### P2: Provisioning and Edge Transaction Security
+
+- The root installer must not source files from an agent-writable directory.
+  Runtime work must happen under root-owned state such as
+  `/run/suderra-installer` or `/var/lib/suderra-installer`.
+- Edge install must require a signed typed manifest with device identity,
+  tenant binding, artifact digest, config payload digest, key epoch, rollback
+  floor, and monotonic version rules.
+- Activation must be transactional: stage, verify, write config, health check,
+  promote, lockdown. Failures must roll back the current link.
+- Downloads must be HTTPS-only with redirect protocol restrictions, max size,
+  timeout, and audit evidence.
+- The production-exposed `suderra-installer install edge` path must either use
+  the same transaction engine or be disabled until RAUC-backed install exists.
+
+### P3: Source, Buildroot, and Supply Chain
+
+- Release builds must bind the full source consumed by Buildroot: Buildroot
+  submodule identity plus the Suderra `BR2_EXTERNAL` tree, configs, board
+  files, packages, userspace, and release scripts.
+- CI/release builds must snapshot `BR2_EXTERNAL` from the clean Git tree instead
+  of consuming a mutable live workspace. Dirty release-relevant files must fail
+  the CI source contract.
+- Local Rust packages must move toward Buildroot cargo source isolation and
+  offline cargo4 vendor hashes. The edge-agent package remains disabled until
+  its cargo4 archive hash is regenerated and reviewed.
+- Builder provenance must include the signed builder image digest and pinned
+  toolchain/package inputs. Mutable apt repos and local `suderra-builder:latest`
+  are not sufficient enterprise evidence.
+- RPi/RevPi custom kernel tarballs must be covered by forced download hash
+  checks and immutable mirrors.
+
+### P4: Release Evidence and Publication
+
+- signed release ingress must be created only after all release-critical inputs
+  are collected: build artifacts, source identity, matrix digest, scanner
+  reports, reproducibility reports, governance approval, QEMU evidence, and lab
+  evidence.
+- Final evidence must validate cryptographic facts, not log text. Cosign,
+  artifact attestations, DSSE subjects, source SHA, run ID, run attempt, signer
+  identity, and issuer must be checked from downloaded release assets.
+- Publication verification must cover the public byte set and its sidecars:
+  `release-evidence-<version>.tar.zst`, signatures, certificates, SBOM/VEX,
+  release publication manifest, and attestations.
+- Release-critical GitHub Actions must be full-SHA pinned or rejected by
+  contract tests.
+
+### P5: hardware/lab evidence
+
+- QEMU acceptance must include a semantic guest collector for `/etc/os-release`,
+  `uname`, rootfs identity, failed systemd units, firstboot idempotence,
+  lockdown state, listeners, and nftables rules.
+- Hardware/lab evidence must be collected by a signed station CLI, not
+  hand-written JSON. It must include station identity, board identity, UART
+  transcript, flash transcript, full readback hash, firmware/boot evidence,
+  RevPi IO checks, and negative tests.
+- Lab validators must compare against expected artifact digests from release
+  binding. Self-reported artifact hashes are not trusted evidence.
+
+### P6: Rust and Userspace Quality
+
+- Placeholder binaries must be removed from production images or gated behind
+  explicit experimental flags until end-to-end tests exist.
+- `suderra-installer` state writes must be atomic, and audit/state failures must
+  not be silently ignored on production paths.
+- The Edge Agent package must not be enabled until cargo4 vendor hashes and its
+  first-class CI matrix are revalidated.
+- Rust toolchain and dependency policy must be explicit across Suderra OS
+  userspace and the edge-agent/aquaculture workspace.
+
+## Implemented First Batch
+
+The first implementation batch intentionally did not make Suderra OS
+production-ready. It closed false-success and false-production surfaces:
+
+- x86_64 production defconfig no longer enables Dropbear or getty.
+- Production post-build lockdown is automatic for the production variant.
+- Production post-image gates reject Dropbear, getty, placeholder firstboot, and
+  missing RAUC before any production claim can pass.
+- The packaged firstboot unit now points at `/usr/bin/suderra-firstboot`.
+- Build source identity records the Suderra external tree digest and release
+  source identity, and CI requires a clean external tree before snapshotting it.
+- Installer state handling and install behavior now fail closed instead of
+  treating a copy operation as a successful OTA/install.
+- Edge install uses a root-owned work directory, HTTPS-only fetches, digest-
+  bound config payloads, downgrade guard, health-check promotion, and rollback
+  on activation or lockdown failure.
+- x86_64 production defconfig now enables RAUC, the Suderra RAUC slot
+  configuration package, and the common kernel hardening fragment.
+- x86_64 genimage now starts rootfs B blank for RAUC ownership, reserves verity
+  hash partitions, and creates a labelled `SUDERRA-DATA` filesystem.
+- `scripts/production-artifacts.sh` now generates dm-verity metadata, composes
+  the x86 verity kernel command line, builds a signed UKI from an explicit EFI
+  stub, signs the disk image, and feeds those artifacts into post-image gates.
+- A contract test exists at
+  `tests/image-contracts/enterprise-gap-closure-contract-test.sh`.
+
+## Remaining Implementation Backlog
+
+### Next Batch: x86_64 Production Chain
+
+- Provide production Secure Boot signing key access through HSM/KMS rather than
+  file-based CI keys.
+- Provide a reviewed production `SUDERRA_UKI_STUB` source and artifact
+  provenance.
+- Complete GRUB/RAUC bootchooser environment handling, bootcount fallback, and
+  rollback evidence.
+- Add QEMU Secure Boot tests: unsigned UKI rejection, modified cmdline
+  rejection, and rootfs tamper failure.
+
+### Release Evidence Batch
+
+- Make release-preflight produce scanner and reproducibility evidence instead
+  of accepting `TO_BE_COLLECTED` skeletons.
+- Move signing/attestation into the protected publish environment.
+- Revalidate cosign signatures, DSSE/attestation subjects, workflow ref, source
+  SHA, run ID, and run attempt from downloaded release assets.
+- Include tag binding, preflight metadata, source identity, scanner reports,
+  SBOM/VEX, and publication manifest in final evidence.
+
+### Build and Supply Chain Batch
+
+- Publish and verify a signed builder image by immutable digest.
+- Pin apt snapshots or package versions used by the builder image.
+- Refactor local Rust packages toward Buildroot cargo source isolation and
+  offline cargo4 vendor archives.
+- Revalidate edge-agent cargo4 hash before enabling the package.
+- Enable forced hash checks for custom RPi/RevPi kernel downloads.
+
+### Hardware and Lab Batch
+
+- Add QEMU semantic collector and signed JSON output.
+- Add `suderra-lab collect` signed station bundle.
+- Bind lab validation to expected artifact digests from release binding.
+- Add full readback, UART transcript, RevPi IO checks, flash transcript, and
+  hardware-bound negative tests.
+
+## Required Verification
+
+- `./scripts/run-tests.sh image-contracts`
+- `git diff --check`
+- `systemd-analyze verify --root` for each built target
+- QEMU Secure Boot and dm-verity tamper tests once signed UKI/verity exists
+- RAUC good update, bad signature, failed health rollback, mark-good, bootcount
+  fallback, corrupt state, and power-loss scenarios
+- Release evidence negative tests for tampered ingress, unlisted input, wrong
+  source SHA, wrong run attempt, non-SHA action pin, signing before approval,
+  and publication signature mismatch
+- Hardware/lab negative tests for expected artifact mismatch, readback mismatch,
+  failed unmount, unsigned lab bundle, and RevPi IO failure
+
+## Operating Rule
+
+When continuing enterprise-grade implementation, start from the **Remaining
+Implementation Backlog** above. Do not open `production_ready=true` or remove
+the fail-closed gates until the corresponding implementation and verification
+sections are complete.

@@ -9,14 +9,15 @@
 use crate::audit::{Event, EventKind, EventResult};
 use crate::cli::RollbackArgs;
 use crate::manifest::InstalledState;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use tracing::info;
 
 /// `rollback` çalıştır
 pub async fn run(args: RollbackArgs) -> Result<()> {
     info!("paket rollback: {}", args.package);
 
-    let state = InstalledState::load().unwrap_or_default();
+    let state = InstalledState::load()
+        .context("installed state okunamadı; corrupt state ile rollback fail-closed durur")?;
     let current = state.installed.get(&args.package).ok_or_else(|| {
         anyhow::anyhow!(
             "'{}' kurulu değil — rollback için önce bir sürüm kurmalısın",

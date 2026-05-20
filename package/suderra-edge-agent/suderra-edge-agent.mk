@@ -48,12 +48,12 @@ endef
 define SUDERRA_EDGE_AGENT_PERMISSIONS
 	/var/lib/suderra        d 750 suderra suderra - - - - -
 	/var/lib/suderra/edge   d 750 suderra suderra - - - - -
-	/var/lib/suderra/config d 750 suderra suderra - - - - -
+	/var/lib/suderra/config d 750 root    suderra - - - - -
 	/var/log/suderra        d 750 suderra suderra - - - - -
 	/etc/suderra            d 755 root    root    - - - - -
 	/opt/suderra            d 755 root    root    - - - - -
 	/opt/suderra/edge       d 755 root    root    - - - - -
-	/var/lib/suderra/config/config.yaml f 600 suderra suderra - - - - -
+	/var/lib/suderra/config/config.yaml f 640 root    suderra - - - - -
 endef
 
 $(eval $(cargo-package))

@@ -1,0 +1,19 @@
+[Unit]
+Description=Mark current Suderra OS RAUC slot good
+Documentation=https://rauc.readthedocs.io/
+After=multi-user.target suderra-data.service rauc.service
+Wants=suderra-data.service
+ConditionPathExists=/etc/rauc/system.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/suderra-rauc-mark-good
+RemainAfterExit=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/data
+
+[Install]
+WantedBy=multi-user.target

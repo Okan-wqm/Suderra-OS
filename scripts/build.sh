@@ -17,6 +17,7 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 DEFCONFIG="${1:?Kullanım: $0 <defconfig>}"
 BUILDROOT_DIR="${BUILDROOT_DIR:-${PROJECT_ROOT}/buildroot}"
 BUILDROOT_SOURCE_DIR="${BUILDROOT_SOURCE_DIR:-}"
+BR2_EXTERNAL_SOURCE_DIR="${BR2_EXTERNAL_SOURCE_DIR:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/${DEFCONFIG}}"
 export BR2_DL_DIR="${BR2_DL_DIR:-${PROJECT_ROOT}/dl}"
 export BR2_CCACHE_DIR="${BR2_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
@@ -41,7 +42,6 @@ fi
 
 # Build
 echo "==> Suderra OS build: ${DEFCONFIG}"
-echo "==> BR2_EXTERNAL: ${PROJECT_ROOT}"
 echo "==> BUILDROOT_DIR: ${BUILDROOT_DIR}"
 echo "==> OUTPUT_DIR: ${OUTPUT_DIR}"
 echo "==> BR2_DL_DIR: ${BR2_DL_DIR}"
@@ -51,7 +51,11 @@ mkdir -p "${BR2_DL_DIR}" "${BR2_CCACHE_DIR}"
 if [ -z "${BUILDROOT_SOURCE_DIR}" ]; then
     BUILDROOT_SOURCE_DIR="$("${SCRIPT_DIR}/buildroot-source.sh" prepare --defconfig "${DEFCONFIG}")"
 fi
+if [ -z "${BR2_EXTERNAL_SOURCE_DIR}" ]; then
+    BR2_EXTERNAL_SOURCE_DIR="$("${SCRIPT_DIR}/buildroot-source.sh" prepare-external --defconfig "${DEFCONFIG}")"
+fi
 echo "==> BUILDROOT_SOURCE_DIR: ${BUILDROOT_SOURCE_DIR}"
+echo "==> BR2_EXTERNAL_SOURCE_DIR: ${BR2_EXTERNAL_SOURCE_DIR}"
 
 if [ -n "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT:-}" ]; then
     mkdir -p "$(dirname -- "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT}")"
@@ -61,7 +65,7 @@ if [ -n "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT:-}" ]; then
         > "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT}"
 fi
 
-make -C "${BUILDROOT_SOURCE_DIR}" BR2_EXTERNAL="${PROJECT_ROOT}" O="${OUTPUT_DIR}" "${DEFCONFIG}"
+make -C "${BUILDROOT_SOURCE_DIR}" BR2_EXTERNAL="${BR2_EXTERNAL_SOURCE_DIR}" O="${OUTPUT_DIR}" "${DEFCONFIG}"
 make -C "${BUILDROOT_SOURCE_DIR}" O="${OUTPUT_DIR}"
 
 echo ""

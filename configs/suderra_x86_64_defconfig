@@ -37,6 +37,7 @@ BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.6"
 BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
 BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/x86_64/linux-x86_64.config"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/kernel-fragment.config"
 BR2_LINUX_KERNEL_BZIMAGE=y
 BR2_LINUX_KERNEL_INSTALL_TARGET=y
 
@@ -78,8 +79,11 @@ BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users
 # BR2_PACKAGE_TPM2_TSS=y
 # BR2_PACKAGE_TPM2_TOOLS=y
 
-# RAUC — Faz 4'te aktif
-# BR2_PACKAGE_RAUC=y
+# RAUC A/B update controller
+BR2_PACKAGE_RAUC=y
+BR2_PACKAGE_RAUC_DBUS=y
+BR2_PACKAGE_RAUC_GPT=y
+BR2_PACKAGE_RAUC_JSON=y
 
 # Network tools
 BR2_PACKAGE_IPROUTE2=y
@@ -90,9 +94,10 @@ BR2_PACKAGE_LIBCURL=y
 BR2_PACKAGE_LIBCURL_CURL=y
 BR2_PACKAGE_LIBCURL_OPENSSL=y
 BR2_PACKAGE_CA_CERTIFICATES=y
-BR2_PACKAGE_DROPBEAR=y
+# Production runtime must not boot with an SSH provisioning surface.
+# Factory/provisioning access belongs in a separate lab/installer profile.
+# BR2_PACKAGE_DROPBEAR is not set
 # BR2_PACKAGE_DROPBEAR_CLIENT is not set
-BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
 
 # Time sync (PTP destekli, endüstriyel için kritik)
 BR2_PACKAGE_CHRONY=y
@@ -101,20 +106,18 @@ BR2_PACKAGE_LINUXPTP=y
 # Suderra custom paketleri (Faz 2+)
 BR2_PACKAGE_SUDERRA_OS_INSTALLER=y
 BR2_PACKAGE_SUDERRA_KEYS=y
+BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y
 # BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
 
 # Build optimizations
 BR2_TARGET_GENERIC_HOSTNAME="suderra"
 BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
-# Production defconfig: no interactive root login. The provision user
-# (board/suderra/common/users.txt) handles first-boot setup via a forced
-# command shell; runtime access is through Edge Agent's audit-logged
-# control plane. suderra-lockdown locks any remaining shells at runtime.
+# Production defconfig: no interactive root login and no getty/SSH
+# provisioning surface. Runtime access is through the signed Edge control
+# plane after production boot/verity/OTA gates are implemented.
 # BR2_TARGET_ENABLE_ROOT_LOGIN is not set
-BR2_TARGET_GENERIC_GETTY=y
-BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
-BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+# BR2_TARGET_GENERIC_GETTY is not set
 
 # Reproducible build
 BR2_REPRODUCIBLE=y

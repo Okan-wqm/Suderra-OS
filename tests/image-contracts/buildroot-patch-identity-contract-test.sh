@@ -40,6 +40,9 @@ from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 for field, pattern in {
+    "suderra_source_sha": r"^[0-9a-f]{40}$",
+    "suderra_external_tree_sha256": r"^[0-9a-f]{64}$",
+    "suderra_release_source_id": r"^[0-9a-f]{64}$",
     "buildroot_index_sha": r"^[0-9a-f]{40}$",
     "buildroot_patchset_sha256": r"^[0-9a-f]{64}$",
     "buildroot_effective_source_id": r"^[0-9a-f]{64}$",
@@ -49,6 +52,8 @@ for field, pattern in {
         raise SystemExit(f"ERROR: invalid {field}: {value!r}")
 if payload.get("schema_version") != "suderra.buildroot-source-identity.v2":
     raise SystemExit("ERROR: Buildroot source identity must use v2 schema")
+if not isinstance(payload.get("suderra_external_dirty_paths"), list):
+    raise SystemExit("ERROR: source identity must record external dirty path list")
 if payload.get("buildroot_upstream_ref") != "2025.05.3":
     raise SystemExit("ERROR: Buildroot source identity must bind upstream ref 2025.05.3")
 if payload.get("buildroot_source_mode") != "clean-native":
@@ -76,8 +81,20 @@ grep -q 'buildroot-source.sh" prepare' "${ROOT}/scripts/build.sh" || {
     echo "ERROR: build.sh must prepare an isolated Buildroot source tree" >&2
     exit 1
 }
+grep -q 'buildroot-source.sh" prepare-external' "${ROOT}/scripts/build.sh" || {
+    echo "ERROR: build.sh must prepare an isolated BR2_EXTERNAL source tree" >&2
+    exit 1
+}
+grep -q 'BR2_EXTERNAL="${BR2_EXTERNAL_SOURCE_DIR}"' "${ROOT}/scripts/build.sh" || {
+    echo "ERROR: build.sh must build against the isolated BR2_EXTERNAL source tree" >&2
+    exit 1
+}
 grep -q 'SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT' "${ROOT}/scripts/build-in-docker.sh" || {
     echo "ERROR: Docker build wrapper must pass Buildroot source identity output path" >&2
+    exit 1
+}
+grep -q 'SUDERRA_REQUIRE_CLEAN_EXTERNAL' "${ROOT}/.github/workflows/build.yml" || {
+    echo "ERROR: CI builds must require a clean BR2_EXTERNAL tree before snapshotting" >&2
     exit 1
 }
 if grep -q 'apply-buildroot-patches.sh buildroot' "${ROOT}/.github/workflows/build.yml"; then

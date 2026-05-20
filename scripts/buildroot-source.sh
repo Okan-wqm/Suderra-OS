@@ -24,6 +24,7 @@ Usage:
   $0 status
   $0 verify-native-rust
   $0 prepare [--defconfig NAME]
+  $0 prepare-external [--defconfig NAME]
   $0 clean-managed
   $0 clean-managed-rust-patch
 EOF
@@ -54,6 +55,16 @@ require_submodule() {
 
 status_lines() {
     git_buildroot status --porcelain --untracked-files=all
+}
+
+external_status_lines() {
+    git_super status --porcelain --untracked-files=all -- \
+        . \
+        ':(exclude)buildroot' \
+        ':(exclude)output' \
+        ':(exclude)dl' \
+        ':(exclude).ccache' \
+        ':(exclude)build-logs'
 }
 
 is_pristine() {
@@ -168,6 +179,43 @@ prepare_cmd() {
     printf '%s\n' "${target}"
 }
 
+prepare_external_cmd() {
+    local defconfig="manual"
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --defconfig)
+                defconfig="${2:?--defconfig requires a value}"
+                shift 2
+                ;;
+            *)
+                echo "ERROR: unknown prepare-external argument: $1" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    local source_sha metadata release_source_id base target dirty
+    source_sha="$(git_super rev-parse HEAD)"
+    dirty="$(external_status_lines)"
+    if [ -n "${dirty}" ] && [ "${SUDERRA_REQUIRE_CLEAN_EXTERNAL:-0}" = "1" ]; then
+        echo "ERROR: BR2_EXTERNAL source tree has uncommitted release-relevant changes" >&2
+        printf '%s\n' "${dirty}" >&2
+        echo "Commit the changes or unset SUDERRA_REQUIRE_CLEAN_EXTERNAL for local dirty development builds." >&2
+        exit 1
+    fi
+
+    metadata="$(python3 "${PROJECT_ROOT}/scripts/ci/buildroot-patch-identity.py" metadata \
+        --source-sha "${source_sha}" \
+        --buildroot-dir "${BUILDROOT_DIR}")"
+    release_source_id="$(printf '%s\n' "${metadata}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["suderra_release_source_id"])')"
+    base="${SOURCE_ROOT}/${release_source_id}"
+    mkdir -p "${base}"
+    target="$(mktemp -d "${base}/${defconfig}.external.$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
+    git_super archive --format=tar "${source_sha}" | tar -C "${target}" -xf -
+    rm -rf "${target}/buildroot" "${target}/output" "${target}/dl" "${target}/.ccache" "${target}/build-logs"
+    printf '%s\n' "${target}"
+}
+
 clean_managed() {
     case "${SOURCE_ROOT}" in
         "${PROJECT_ROOT}/output/.buildroot-src"|/tmp/*) ;;
@@ -191,6 +239,7 @@ main() {
         status) status_cmd "$@" ;;
         verify-native-rust) verify_native_rust "$@" ;;
         prepare) prepare_cmd "$@" ;;
+        prepare-external) prepare_external_cmd "$@" ;;
         clean-managed) clean_managed "$@" ;;
         clean-managed-rust-patch) clean_managed_rust_patch "$@" ;;
         --help|-h|help) usage ;;

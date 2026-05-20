@@ -144,14 +144,19 @@ case "${DEFCONFIG_NAME}" in
     *)
         ln -sfn ../suderra-data.service \
             "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-data.service"
-        ln -sfn ../suderra-firstboot.service \
-            "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-firstboot.service"
-        ln -sfn ../../../../usr/lib/systemd/system/dropbear.service \
-            "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/dropbear.service"
-        ln -sfn ../suderra-agent.service \
-            "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-agent.service"
-        ln -sfn ../suderra-provision-worker.path \
-            "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path"
+        if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+            ln -sfn ../suderra-agent.service \
+                "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-agent.service"
+        else
+            ln -sfn ../suderra-firstboot.service \
+                "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-firstboot.service"
+            ln -sfn ../../../../usr/lib/systemd/system/dropbear.service \
+                "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/dropbear.service"
+            ln -sfn ../suderra-agent.service \
+                "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-agent.service"
+            ln -sfn ../suderra-provision-worker.path \
+                "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path"
+        fi
         ;;
 esac
 
@@ -160,8 +165,9 @@ esac
 # provision kullanıcısı açıktır. Edge artifact kurulduktan sonra
 # /usr/sbin/suderra-lockdown bu politikayı runtime'da uygular. CI veya
 # embedded-agent imajları için build-time lockdown SUDERRA_APPLIANCE_MODE=1 ile
-# zorlanabilir.
-if [ "${SUDERRA_APPLIANCE_MODE:-0}" = "1" ]; then
+# zorlanabilir. Production variant her zaman kilitli imaj üretir; factory
+# provisioning ayrı profile taşınmalıdır.
+if [ "${SUDERRA_APPLIANCE_MODE:-0}" = "1" ] || [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
     echo "==> Appliance lockdown uygulanıyor"
 
     # Root dahil tüm interactive password login yüzeyini kapat.
@@ -212,7 +218,6 @@ disable *
 enable systemd-networkd.service
 enable chrony.service
 enable nftables.service
-enable suderra-firstboot.service
 enable suderra-agent.service
 EOF
 

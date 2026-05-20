@@ -2,9 +2,9 @@
 set -eu
 
 CONFIG=/etc/suderra/edge-install.env
-STATE_DIR=/var/lib/suderra/edge
+STATE_DIR=/var/lib/suderra-installer/edge
 CONFIG_DIR=/var/lib/suderra/config
-WORK_DIR="${STATE_DIR}/install"
+WORK_DIR=/run/suderra-installer/edge
 RELEASES_DIR=/opt/suderra/edge/releases
 CURRENT_LINK=/opt/suderra/edge/current
 EDGE_PUBKEY="${SUDERRA_EDGE_PUBKEY:-/etc/suderra/edge-artifact.ed25519.pub}"
@@ -21,6 +21,7 @@ MANIFEST=
 MANIFEST_URL=
 MIN_KEY_EPOCH="${SUDERRA_EDGE_MIN_KEY_EPOCH:-1}"
 MIN_ROLLBACK_FLOOR="${SUDERRA_EDGE_MIN_ROLLBACK_FLOOR:-v0.1.0-alpha}"
+MAX_DOWNLOAD_BYTES="${SUDERRA_EDGE_MAX_DOWNLOAD_BYTES:-268435456}"
 
 usage() {
     cat <<'EOF'
@@ -61,6 +62,45 @@ detect_arch() {
     esac
 }
 
+fetch_https() {
+    url="$1"
+    output="$2"
+    case "${url}" in
+        https://*) ;;
+        *)
+            echo "ERROR: only https:// artifact and manifest URLs are accepted: ${url}" >&2
+            exit 2
+            ;;
+    esac
+    curl \
+        --fail \
+        --location \
+        --proto '=https' \
+        --proto-redir '=https' \
+        --max-time 120 \
+        --max-filesize "${MAX_DOWNLOAD_BYTES}" \
+        --show-error \
+        --silent \
+        --output "${output}" \
+        "${url}"
+}
+
+version_key() {
+    # Numeric SemVer core comparator for monotonic install guard. Pre-release
+    # labels are intentionally ignored; signed manifest rollback_floor remains
+    # the authority for finer policy.
+    value="${1#v}"
+    major="${value%%.*}"
+    rest="${value#*.}"
+    minor="${rest%%.*}"
+    rest="${rest#*.}"
+    patch="${rest%%[-+]*}"
+    case "${major}" in ''|*[!0-9]*) major=0 ;; esac
+    case "${minor}" in ''|*[!0-9]*) minor=0 ;; esac
+    case "${patch}" in ''|*[!0-9]*) patch=0 ;; esac
+    printf '%06d.%06d.%06d\n' "${major}" "${minor}" "${patch}"
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --interactive)
@@ -99,15 +139,18 @@ if [ -f "${CONFIG}" ]; then
     MIN_ROLLBACK_FLOOR="${SUDERRA_EDGE_MIN_ROLLBACK_FLOOR:-${MIN_ROLLBACK_FLOOR}}"
 fi
 
-mkdir -p "${WORK_DIR}" "${CONFIG_DIR}" "${RELEASES_DIR}" /var/log/suderra
-chmod 0750 /var/lib/suderra "${STATE_DIR}" "${WORK_DIR}" "${CONFIG_DIR}" /var/log/suderra 2>/dev/null || true
+mkdir -p "${STATE_DIR}" "${WORK_DIR}" "${CONFIG_DIR}" "${RELEASES_DIR}" /var/log/suderra
+chmod 0750 /var/lib/suderra "${CONFIG_DIR}" /var/log/suderra 2>/dev/null || true
+chmod 0700 "${STATE_DIR}" "${WORK_DIR}" 2>/dev/null || true
 chown root:root /var/lib/suderra 2>/dev/null || true
-chown suderra:suderra "${STATE_DIR}" "${WORK_DIR}" "${CONFIG_DIR}" /var/log/suderra 2>/dev/null || true
+chown root:root "${STATE_DIR}" "${WORK_DIR}" 2>/dev/null || true
+chown root:suderra "${CONFIG_DIR}" 2>/dev/null || true
+chown suderra:suderra /var/log/suderra 2>/dev/null || true
 
 if [ -n "${MANIFEST_URL}" ]; then
     MANIFEST="${WORK_DIR}/edge-manifest.json"
     echo "==> Downloading Suderra OS Edge manifest"
-    curl --fail --location --show-error --silent --output "${MANIFEST}" "${MANIFEST_URL}"
+    fetch_https "${MANIFEST_URL}" "${MANIFEST}"
 fi
 
 if [ -n "${MANIFEST}" ]; then
@@ -167,6 +210,18 @@ if [ -z "${VERSION}" ] || [ -z "${URL}" ] || [ -z "${EXPECTED_SHA256}" ]; then
     exit 2
 fi
 
+CURRENT_STATE="${STATE_DIR}/current.env"
+if [ -f "${CURRENT_STATE}" ]; then
+    current_version="$(sed -n 's/^VERSION=//p' "${CURRENT_STATE}" | head -n 1)"
+    if [ -n "${current_version}" ] &&
+       [ "$(version_key "${VERSION}")" \< "$(version_key "${current_version}")" ] &&
+       [ "${SUDERRA_EDGE_ALLOW_SIGNED_ROLLBACK:-0}" != "1" ]; then
+        echo "ERROR: refusing monotonic downgrade ${current_version} -> ${VERSION}" >&2
+        echo "A signed rollback authorization path must set SUDERRA_EDGE_ALLOW_SIGNED_ROLLBACK=1." >&2
+        exit 2
+    fi
+fi
+
 ARTIFACT="${WORK_DIR}/edge-artifact"
 EXTRACT_DIR="${WORK_DIR}/extract"
 RELEASE_DIR="${RELEASES_DIR}/${VERSION}"
@@ -175,7 +230,7 @@ rm -rf "${EXTRACT_DIR}"
 mkdir -p "${EXTRACT_DIR}" "${RELEASE_DIR}"
 
 echo "==> Downloading Suderra Edge artifact"
-curl --fail --location --show-error --silent --output "${ARTIFACT}" "${URL}"
+fetch_https "${URL}" "${ARTIFACT}"
 
 echo "==> Verifying signed Suderra Edge artifact"
 "${VERIFY_BIN}" edge-manifest verify-artifact \
@@ -210,42 +265,63 @@ echo "==> Installing ${BIN_NAME} to ${RELEASE_DIR}"
 install -m 0755 "${CANDIDATE}" "${RELEASE_DIR}/.suderra-agent.new"
 chown root:root "${RELEASE_DIR}/.suderra-agent.new"
 mv -f "${RELEASE_DIR}/.suderra-agent.new" "${RELEASE_DIR}/suderra-agent"
+OLD_LINK_TARGET=
+if [ -L "${CURRENT_LINK}" ]; then
+    OLD_LINK_TARGET="$(readlink "${CURRENT_LINK}")"
+fi
 ln -sfn "releases/${VERSION}" "${CURRENT_LINK}"
 chown -h root:root "${CURRENT_LINK}" 2>/dev/null || true
 
 if [ -n "${CONFIG_PAYLOAD_FILE:-}" ] && [ -s "${CONFIG_PAYLOAD_FILE}" ]; then
     install -m 0600 "${CONFIG_PAYLOAD_FILE}" "${CONFIG_DIR}/config.yaml"
-elif [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
-    {
-        printf 'device_id: "00000000-0000-0000-0000-000000000000"\n'
-        printf 'device_code: "UNACTIVATED"\n'
-        printf 'api_url: "https://provisioning.example.com"\n'
-        if [ -n "${ACTIVATION_TOKEN:-}" ]; then
-            printf 'provisioning_token: "%s"\n' "${ACTIVATION_TOKEN}"
-        fi
-        printf 'mqtt:\n'
-        printf '  broker: null\n'
-        printf '  port: 8883\n'
-        printf '  username: null\n'
-        printf '  password: null\n'
-        printf '  tls:\n'
-        printf '    enabled: true\n'
-        printf '    verify_hostname: true\n'
-        printf '  topics: {}\n'
-    } > "${CONFIG_DIR}/config.yaml"
+else
+    echo "ERROR: signed Edge manifest must contain a digest-bound config payload" >&2
+    if [ -n "${OLD_LINK_TARGET}" ]; then
+        ln -sfn "${OLD_LINK_TARGET}" "${CURRENT_LINK}"
+    else
+        rm -f "${CURRENT_LINK}"
+    fi
+    exit 2
 fi
-chown suderra:suderra "${CONFIG_DIR}/config.yaml" 2>/dev/null || true
-chmod 0600 "${CONFIG_DIR}/config.yaml"
+chown root:suderra "${CONFIG_DIR}/config.yaml" 2>/dev/null || true
+chmod 0640 "${CONFIG_DIR}/config.yaml"
 
 echo "==> Enabling Suderra Edge service"
 systemctl daemon-reload
 systemctl enable suderra-agent.service
-systemctl restart suderra-agent.service
+if ! systemctl restart suderra-agent.service || ! systemctl is-active --quiet suderra-agent.service; then
+    echo "ERROR: Suderra Edge service failed after activation; rolling back current link" >&2
+    if [ -n "${OLD_LINK_TARGET}" ]; then
+        ln -sfn "${OLD_LINK_TARGET}" "${CURRENT_LINK}"
+        systemctl restart suderra-agent.service || true
+    else
+        rm -f "${CURRENT_LINK}"
+    fi
+    exit 1
+fi
 
 if [ "${LOCKDOWN_AFTER_INSTALL}" = "1" ]; then
-    /usr/sbin/suderra-lockdown
+    if ! /usr/sbin/suderra-lockdown; then
+        echo "ERROR: lockdown failed after activation; rolling back current link" >&2
+        if [ -n "${OLD_LINK_TARGET}" ]; then
+            ln -sfn "${OLD_LINK_TARGET}" "${CURRENT_LINK}"
+            systemctl restart suderra-agent.service || true
+        else
+            rm -f "${CURRENT_LINK}"
+        fi
+        exit 1
+    fi
 else
     echo "==> Lockdown skipped by SUDERRA_LOCKDOWN_AFTER_INSTALL=${LOCKDOWN_AFTER_INSTALL}"
 fi
+
+{
+    printf 'VERSION=%s\n' "${VERSION}"
+    printf 'ARTIFACT_SHA256=%s\n' "${EXPECTED_SHA256}"
+    printf 'BINARY_NAME=%s\n' "${BIN_NAME}"
+    printf 'FORMAT=%s\n' "${FORMAT}"
+} > "${STATE_DIR}/current.env.tmp"
+mv -f "${STATE_DIR}/current.env.tmp" "${STATE_DIR}/current.env"
+chmod 0600 "${STATE_DIR}/current.env"
 
 echo "==> Suderra Edge install complete"

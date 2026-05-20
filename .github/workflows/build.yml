@@ -52,6 +52,7 @@ jobs:
       SUDERRA_HOST_KEYS_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/keys
       SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
       SUDERRA_EXPECTED_KEYS_PROFILE: ci
+      SUDERRA_REQUIRE_CLEAN_EXTERNAL: "1"
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}

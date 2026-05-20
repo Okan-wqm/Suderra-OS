@@ -44,6 +44,7 @@ docs/
 
 ### Operasyon
 
+- [Enterprise Grade Gap Closure Plan](assessments/2026-05-20-enterprise-grade-gap-closure-plan.md) — tarihli source-of-truth production backlog
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı

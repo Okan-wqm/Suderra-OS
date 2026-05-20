@@ -24,7 +24,7 @@
 //! }
 //! ```
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Bir release'in komple manifesti
@@ -145,7 +145,15 @@ impl InstalledState {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).with_context(|| format!("state temp yazılamadı: {}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).with_context(|| {
+            format!(
+                "state atomik rename başarısız: {} -> {}",
+                tmp.display(),
+                path.display()
+            )
+        })?;
         Ok(())
     }
 

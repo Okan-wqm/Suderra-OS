@@ -24,6 +24,13 @@ NATIVE_BUILDROOT_REF = "2025.05.3"
 NATIVE_BUILDROOT_COMMIT = "019201c6e007d80c1ab1bf65b98d9902bc767bdd"
 NATIVE_RUST_VERSION = "1.86.0"
 APPLIED_DIFF_DOMAIN = b"suderra-buildroot-applied-diff-from-patchset-v1\n"
+EXTERNAL_DIRTY_EXCLUDES = (
+    "buildroot",
+    "output",
+    "dl",
+    ".ccache",
+    "build-logs",
+)
 
 
 def run(
@@ -111,6 +118,57 @@ def buildroot_index_sha(source_sha: str) -> str:
     return parts[2]
 
 
+def external_tree_entries(source_sha: str) -> list[dict[str, str]]:
+    if not SOURCE_SHA_RE.fullmatch(source_sha):
+        raise RuntimeError(f"source_sha must be a lowercase git commit sha: {source_sha}")
+    output = run(["git", "ls-tree", "-r", "-z", "--full-tree", source_sha]).stdout
+    entries: list[dict[str, str]] = []
+    for raw in output.split(b"\0"):
+        if not raw:
+            continue
+        meta, raw_path = raw.split(b"\t", 1)
+        mode, object_type, object_id = meta.decode("ascii").split()
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        if path == "buildroot" or path.startswith("buildroot/"):
+            continue
+        entries.append(
+            {
+                "mode": mode,
+                "type": object_type,
+                "object": object_id,
+                "path": path,
+            }
+        )
+    return entries
+
+
+def external_tree_sha256(source_sha: str) -> str:
+    return sha256_bytes(
+        json.dumps(
+            external_tree_entries(source_sha),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+
+def release_source_id(source_sha: str, external_tree_digest: str, buildroot_effective_id: str) -> str:
+    return sha256_bytes(
+        (
+            "suderra-release-source-identity-v1\n"
+            f"source:{source_sha}\n"
+            f"external-tree:{external_tree_digest}\n"
+            f"buildroot-effective:{buildroot_effective_id}\n"
+        ).encode("utf-8")
+    )
+
+
+def external_status_lines() -> list[str]:
+    args = ["git", "status", "--porcelain", "--untracked-files=all", "--", "."]
+    args.extend(f":(exclude){path}" for path in EXTERNAL_DIRTY_EXCLUDES)
+    return run(args).stdout.decode("utf-8", errors="replace").splitlines()
+
+
 def buildroot_upstream_ref(base_sha: str) -> str:
     if base_sha == NATIVE_BUILDROOT_COMMIT:
         return NATIVE_BUILDROOT_REF
@@ -184,20 +242,30 @@ def metadata(source_sha: str, buildroot_dir: Path = BUILDROOT_DIR) -> dict[str, 
     source_mode = "staged-patched-tree" if expected_patched else "clean-native"
     worktree_diff_sha = current_buildroot_diff_sha256(buildroot_dir)
     diff_identity_sha = worktree_diff_sha if expected_patched else None
+    buildroot_effective_id = effective_source_id(
+        base_sha,
+        patchset_digest,
+        diff_identity_sha,
+        upstream_ref=upstream_ref,
+        source_mode=source_mode,
+    )
+    external_tree_digest = external_tree_sha256(source_sha)
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
+        "suderra_source_sha": source_sha,
+        "suderra_external_tree_sha256": external_tree_digest,
+        "suderra_external_dirty_paths": external_status_lines(),
+        "suderra_release_source_id": release_source_id(
+            source_sha,
+            external_tree_digest,
+            buildroot_effective_id,
+        ),
         "buildroot_index_sha": base_sha,
         "buildroot_upstream_ref": upstream_ref,
         "buildroot_source_mode": source_mode,
         "buildroot_patchset_sha256": patchset_digest,
         "buildroot_patch_files": entries,
-        "buildroot_effective_source_id": effective_source_id(
-            base_sha,
-            patchset_digest,
-            diff_identity_sha,
-            upstream_ref=upstream_ref,
-            source_mode=source_mode,
-        ),
+        "buildroot_effective_source_id": buildroot_effective_id,
         "buildroot_expected_patched": expected_patched,
         "buildroot_rust_version": read_buildroot_var(buildroot_dir, "package/rust/rust.mk", "RUST_VERSION"),
         "buildroot_rust_bin_version": read_buildroot_var(
@@ -298,6 +366,22 @@ def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
     effective = payload.get("buildroot_effective_source_id")
     if not isinstance(effective, str) or not re.fullmatch(r"[0-9a-f]{64}", effective):
         failures.append("buildroot_effective_source_id must be a lowercase sha256")
+    source_sha = payload.get("suderra_source_sha")
+    if not isinstance(source_sha, str) or not SOURCE_SHA_RE.fullmatch(source_sha):
+        failures.append("suderra_source_sha must be a lowercase git commit sha")
+    external_tree = payload.get("suderra_external_tree_sha256")
+    if not isinstance(external_tree, str) or not re.fullmatch(r"[0-9a-f]{64}", external_tree):
+        failures.append("suderra_external_tree_sha256 must be a lowercase sha256")
+    release_id = payload.get("suderra_release_source_id")
+    if not isinstance(release_id, str) or not re.fullmatch(r"[0-9a-f]{64}", release_id):
+        failures.append("suderra_release_source_id must be a lowercase sha256")
+    dirty_paths = payload.get("suderra_external_dirty_paths")
+    if not isinstance(dirty_paths, list):
+        failures.append("suderra_external_dirty_paths must be a list")
+    else:
+        for index, item in enumerate(dirty_paths):
+            if not isinstance(item, str) or not item:
+                failures.append(f"suderra_external_dirty_paths[{index}] must be a non-empty string")
     digest = payload.get("buildroot_patchset_sha256")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         failures.append("buildroot_patchset_sha256 must be a lowercase sha256")
@@ -407,6 +491,23 @@ def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
         )
         if effective != expected_effective:
             failures.append("buildroot_effective_source_id must bind index, upstream ref, mode, patchset, and diff identity")
+    if (
+        isinstance(source_sha, str)
+        and SOURCE_SHA_RE.fullmatch(source_sha)
+        and isinstance(external_tree, str)
+        and re.fullmatch(r"[0-9a-f]{64}", external_tree)
+        and isinstance(effective, str)
+        and re.fullmatch(r"[0-9a-f]{64}", effective)
+        and isinstance(release_id, str)
+    ):
+        expected_release_id = release_source_id(source_sha, external_tree, effective)
+        if release_id != expected_release_id:
+            failures.append("suderra_release_source_id must bind source SHA, external tree, and Buildroot effective source")
+        result = run(["git", "cat-file", "-e", f"{source_sha}^{{commit}}"], check=False)
+        if result.returncode == 0:
+            expected_external_tree = external_tree_sha256(source_sha)
+            if external_tree != expected_external_tree:
+                failures.append("suderra_external_tree_sha256 must match the source SHA git tree excluding buildroot")
     return failures
 
 

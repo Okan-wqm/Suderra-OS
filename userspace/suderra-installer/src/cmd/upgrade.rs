@@ -11,14 +11,15 @@
 use crate::cli::{InstallArgs, UpgradeArgs};
 use crate::manifest::InstalledState;
 use crate::sources::Mirror;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
 /// `upgrade` çalıştır
 pub async fn run(args: UpgradeArgs) -> Result<()> {
     info!("paket yükseltme: {}", args.package);
 
-    let state = InstalledState::load().unwrap_or_default();
+    let state = InstalledState::load()
+        .context("installed state okunamadı; corrupt state ile upgrade fail-closed durur")?;
     if let Some(current) = state.installed.get(&args.package) {
         info!("mevcut sürüm: {}", current.version);
     } else {

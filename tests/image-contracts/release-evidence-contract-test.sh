@@ -184,6 +184,17 @@ source_identity["buildroot_effective_source_id"] = hashlib.sha256(
         "diff-identity:none\n"
     ).encode("utf-8")
 ).hexdigest()
+source_identity["suderra_source_sha"] = data["source"]["git_commit"]
+source_identity["suderra_external_tree_sha256"] = "3" * 64
+source_identity["suderra_external_dirty_paths"] = []
+source_identity["suderra_release_source_id"] = hashlib.sha256(
+    (
+        "suderra-release-source-identity-v1\n"
+        f"source:{source_identity['suderra_source_sha']}\n"
+        f"external-tree:{source_identity['suderra_external_tree_sha256']}\n"
+        f"buildroot-effective:{source_identity['buildroot_effective_source_id']}\n"
+    ).encode("utf-8")
+).hexdigest()
 for item, text in (
     (data["build_evidence"]["logs"][0], "synthetic build log\n"),
     (
@@ -504,6 +515,17 @@ source_identity["buildroot_effective_source_id"] = hashlib.sha256(
         f"source-mode:{source_identity['buildroot_source_mode']}\n"
         f"patchset:{source_identity['buildroot_patchset_sha256']}\n"
         "diff-identity:none\n"
+    ).encode("utf-8")
+).hexdigest()
+source_identity["suderra_source_sha"] = data["source"]["git_commit"]
+source_identity["suderra_external_tree_sha256"] = "3" * 64
+source_identity["suderra_external_dirty_paths"] = []
+source_identity["suderra_release_source_id"] = hashlib.sha256(
+    (
+        "suderra-release-source-identity-v1\n"
+        f"source:{source_identity['suderra_source_sha']}\n"
+        f"external-tree:{source_identity['suderra_external_tree_sha256']}\n"
+        f"buildroot-effective:{source_identity['buildroot_effective_source_id']}\n"
     ).encode("utf-8")
 ).hexdigest()
 for item, text in (

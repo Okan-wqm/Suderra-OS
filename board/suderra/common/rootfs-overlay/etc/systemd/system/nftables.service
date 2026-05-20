@@ -2,6 +2,8 @@
 Description=Suderra OS nftables firewall
 Documentation=man:nft(8)
 DefaultDependencies=no
+Wants=suderra-data.service
+After=suderra-data.service
 Before=network-pre.target shutdown.target
 Wants=network-pre.target
 Conflicts=shutdown.target

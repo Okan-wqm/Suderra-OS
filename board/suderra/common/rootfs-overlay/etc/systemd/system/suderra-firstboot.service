@@ -19,7 +19,7 @@ Description=Suderra OS firstboot initialization
 Documentation=https://github.com/Okan-wqm/suderra-os
 DefaultDependencies=no
 After=local-fs.target systemd-tmpfiles-setup.service suderra-data.service
-Before=sysinit.target suderra-agent.service
+Before=suderra-agent.service
 ConditionPathExists=!/var/lib/suderra/.firstboot-done
 
 [Service]

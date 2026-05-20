@@ -6,7 +6,7 @@
 use crate::audit::{Event, EventKind, EventResult};
 use crate::cli::RemoveArgs;
 use crate::manifest::InstalledState;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tracing::info;
 
@@ -14,7 +14,8 @@ use tracing::info;
 pub async fn run(args: RemoveArgs) -> Result<()> {
     info!("paket kaldırma: {}", args.package);
 
-    let mut state = InstalledState::load().unwrap_or_default();
+    let mut state = InstalledState::load()
+        .context("installed state okunamadı; corrupt state ile remove fail-closed durur")?;
     if !state.installed.contains_key(&args.package) {
         println!("'{}' kurulu değil.", args.package);
         return Ok(());

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if [ ! -x /usr/bin/rauc ]; then
+    echo "ERROR: rauc binary missing" >&2
+    exit 1
+fi
+
+mkdir -p /data/rauc
+exec /usr/bin/rauc status mark-good

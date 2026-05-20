@@ -21,6 +21,7 @@ source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-edge-agent/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-firstboot/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-os-installer/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
+source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-rauc-config/Config.in"
 
 #
 # Profil seçimi — hangi varyant build ediliyor
@@ -36,13 +37,14 @@ config BR2_PACKAGE_SUDERRA_VARIANT_DEV
 	  Production'da KULLANMA.
 
 config BR2_PACKAGE_SUDERRA_VARIANT_PROD
-	bool "Production appliance (provision, then Suderra agent only)"
+	bool "Production appliance (locked runtime, no factory provisioning)"
 	help
-	  Üretim varyantı local console provisioning ile başlar. Edge
-	  artifact kurulunca suderra-lockdown root login, getty, debug shell
-	  ve remote shell servislerini kapatır; runtime'da sadece zorunlu
-	  sistem servisleri ve suderra-agent çalışır.
-	  dm-verity, secure boot, imzalı release ve RAUC üretim kapılarıdır.
+	  Üretim varyantı kilitli runtime imajıdır. Dropbear, getty,
+	  debug shell ve local factory provisioning bu imajda açık
+	  gelmez. Factory/provisioning akışı ayrı dev/lab veya installer
+	  profiliyle yapılır.
+	  dm-verity, secure boot, imzalı release, RAUC ve hardware evidence
+	  üretim kapılarıdır.
 
 endchoice
 

@@ -8,7 +8,7 @@ Wants=local-fs.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/suderra-firstboot
+ExecStart=/usr/bin/suderra-firstboot
 
 # Sertleştirme — TPM ve disk encryption gereği root capabilities lazım
 ProtectSystem=strict

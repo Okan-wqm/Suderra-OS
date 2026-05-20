@@ -111,6 +111,10 @@ def buildroot_metadata_for_binding(identity: dict[str, Any]) -> dict[str, Any]:
         "buildroot_staged_diff_sha256",
         "buildroot_applied_diff_sha256",
         "buildroot_worktree_diff_sha256",
+        "suderra_source_sha",
+        "suderra_external_tree_sha256",
+        "suderra_external_dirty_paths",
+        "suderra_release_source_id",
     ):
         if field in identity:
             output[field] = identity.get(field)
@@ -167,6 +171,10 @@ def buildroot_source_metadata_from_evidence(
         "buildroot_staged_diff_sha256",
         "buildroot_applied_diff_sha256",
         "buildroot_worktree_diff_sha256",
+        "suderra_source_sha",
+        "suderra_external_tree_sha256",
+        "suderra_external_dirty_paths",
+        "suderra_release_source_id",
     ]
     first_defconfig, first = identities[0]
     for defconfig, payload in identities[1:]:

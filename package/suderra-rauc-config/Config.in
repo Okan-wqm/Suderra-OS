@@ -1,0 +1,9 @@
+config BR2_PACKAGE_SUDERRA_RAUC_CONFIG
+	bool "suderra-rauc-config"
+	depends on BR2_INIT_SYSTEMD
+	depends on BR2_PACKAGE_RAUC
+	help
+	  Suderra OS RAUC runtime configuration for A/B rootfs slots.
+
+comment "suderra-rauc-config needs systemd and rauc"
+	depends on !BR2_INIT_SYSTEMD || !BR2_PACKAGE_RAUC

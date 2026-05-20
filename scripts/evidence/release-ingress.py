@@ -105,6 +105,10 @@ def buildroot_identity_payload_from_mapping(payload: dict[str, Any]) -> dict[str
         "buildroot_staged_diff_sha256",
         "buildroot_applied_diff_sha256",
         "buildroot_worktree_diff_sha256",
+        "suderra_source_sha",
+        "suderra_external_tree_sha256",
+        "suderra_external_dirty_paths",
+        "suderra_release_source_id",
     ):
         if field in payload:
             identity[field] = payload.get(field)
@@ -310,6 +314,10 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "buildroot_expected_diff_sha256",
         "buildroot_staged_diff_sha256",
         "buildroot_worktree_diff_sha256",
+        "suderra_source_sha",
+        "suderra_external_tree_sha256",
+        "suderra_external_dirty_paths",
+        "suderra_release_source_id",
     ):
         if binding.get(field) is not None:
             manifest[field] = binding.get(field)
@@ -426,6 +434,10 @@ def validate_manifest(
                 "buildroot_expected_diff_sha256",
                 "buildroot_staged_diff_sha256",
                 "buildroot_worktree_diff_sha256",
+                "suderra_source_sha",
+                "suderra_external_tree_sha256",
+                "suderra_external_dirty_paths",
+                "suderra_release_source_id",
             ):
                 if field in binding or field in manifest:
                     if str(manifest.get(field)) != str(binding.get(field)):
@@ -441,6 +453,14 @@ def validate_manifest(
         failures.append("$.buildroot_index_sha: must be a lowercase git commit sha")
     check_sha256(failures, "$.buildroot_patchset_sha256", manifest.get("buildroot_patchset_sha256"))
     check_sha256(failures, "$.buildroot_effective_source_id", manifest.get("buildroot_effective_source_id"))
+    if "suderra_source_sha" in manifest:
+        value = manifest.get("suderra_source_sha")
+        if not isinstance(value, str) or not SOURCE_SHA_RE.fullmatch(value):
+            failures.append("$.suderra_source_sha: must be a lowercase git commit sha")
+    if "suderra_external_tree_sha256" in manifest:
+        check_sha256(failures, "$.suderra_external_tree_sha256", manifest.get("suderra_external_tree_sha256"))
+    if "suderra_release_source_id" in manifest:
+        check_sha256(failures, "$.suderra_release_source_id", manifest.get("suderra_release_source_id"))
     if manifest.get("buildroot_applied_diff_sha256") is not None:
         check_sha256(failures, "$.buildroot_applied_diff_sha256", manifest.get("buildroot_applied_diff_sha256"))
     for field in (

@@ -79,6 +79,7 @@ else
     esac
 fi
 echo "    Variant: ${SUDERRA_OS_VARIANT}"
+PRODUCTION_ARTIFACTS="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/production-artifacts.sh"
 
 reproducible_timestamp() {
     local epoch="${SOURCE_DATE_EPOCH:-}"
@@ -257,6 +258,11 @@ if [ -n "${GRUB_CFG}" ]; then
     install -D -m 0644 "${GRUB_CFG}" "${BINARIES_DIR}/efi-part/EFI/BOOT/grub.cfg"
 fi
 
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ] && [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
+    echo "==> x86 production boot/verity artifact üretimi"
+    "${PRODUCTION_ARTIFACTS}" x86-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
+fi
+
 # genimage host tool'u Buildroot'ta otomatik kurulur (BR2_PACKAGE_HOST_GENIMAGE)
 GENIMAGE_TMP="${BUILD_DIR:-${BINARIES_DIR}/..}/genimage.tmp"
 rm -rf "${GENIMAGE_TMP}"
@@ -290,6 +296,10 @@ if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ]; then
     cat "${BINARIES_DIR}/MANIFEST.txt"
 fi
 
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+    "${PRODUCTION_ARTIFACTS}" sign-image "${BINARIES_DIR}" "${IMAGE_OUTPUT_NAME}"
+fi
+
 enforce_production_contract() {
     missing=""
     production_target="0"
@@ -319,7 +329,8 @@ enforce_production_contract() {
         suderra_x86_64*)
             for artifact in \
                 "${BINARIES_DIR}/suderra.efi" \
-                "${BINARIES_DIR}/suderra.efi.sig"
+                "${BINARIES_DIR}/suderra.efi.sig" \
+                "${BINARIES_DIR}/suderra.efi.cert"
             do
                 if [ ! -s "${artifact}" ]; then
                     missing="${missing} ${artifact}"
@@ -386,10 +397,14 @@ enforce_production_contract() {
 
     # Verity hash tree must actually correspond to the rootfs it claims to
     # protect. Without this check the file could be any 4KiB+ blob.
+    rootfs_artifact="${BINARIES_DIR}/rootfs.ext4"
+    if [ -s "${BINARIES_DIR}/rootfs.img" ]; then
+        rootfs_artifact="${BINARIES_DIR}/rootfs.img"
+    fi
     if command -v veritysetup >/dev/null 2>&1; then
         declared_roothash="$(cat "${BINARIES_DIR}/rootfs.verity.roothash")"
         if ! veritysetup verify \
-                "${BINARIES_DIR}/rootfs.img" \
+                "${rootfs_artifact}" \
                 "${BINARIES_DIR}/rootfs.verity" \
                 "${declared_roothash}" >/dev/null 2>&1; then
             echo "ERROR: rootfs.verity hash tree does not match declared roothash"
@@ -403,6 +418,52 @@ enforce_production_contract() {
     if grep -q '^BR2_TARGET_ENABLE_ROOT_LOGIN=y' "${BR2_CONFIG}" 2>/dev/null; then
         echo "ERROR: production defconfig must not enable BR2_TARGET_ENABLE_ROOT_LOGIN"
         exit 1
+    fi
+    if grep -q '^BR2_TARGET_GENERIC_GETTY=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must not enable BR2_TARGET_GENERIC_GETTY"
+        exit 1
+    fi
+    if grep -q '^BR2_PACKAGE_DROPBEAR=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must not include Dropbear; use a separate factory/provisioning image"
+        exit 1
+    fi
+    if grep -q '^BR2_PACKAGE_SUDERRA_FIRSTBOOT=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must not include placeholder suderra-firstboot"
+        exit 1
+    fi
+    if ! grep -q '^BR2_PACKAGE_RAUC=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must enable RAUC A/B update support before production_ready can pass"
+        exit 1
+    fi
+    if ! grep -q '^BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y' "${BR2_CONFIG}" 2>/dev/null; then
+        echo "ERROR: production defconfig must install Suderra RAUC slot configuration"
+        exit 1
+    fi
+    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
+        boot_pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/suderra.efi.pubkey"
+        if ! openssl x509 -in "${BINARIES_DIR}/suderra.efi.cert" \
+                -pubkey -noout > "${boot_pubkey}" 2>/dev/null; then
+            echo "ERROR: suderra.efi.cert does not contain a usable public key"
+            exit 1
+        fi
+        if ! openssl dgst -sha256 -verify "${boot_pubkey}" \
+                -signature "${BINARIES_DIR}/suderra.efi.sig" \
+                "${BINARIES_DIR}/suderra.efi" >/dev/null 2>&1; then
+            echo "ERROR: suderra.efi.sig does not validate against suderra.efi.cert"
+            rm -f "${boot_pubkey}"
+            exit 1
+        fi
+        rm -f "${boot_pubkey}"
+        if command -v sbverify >/dev/null 2>&1; then
+            if ! sbverify --cert "${BINARIES_DIR}/suderra.efi.cert" \
+                    "${BINARIES_DIR}/suderra.efi" >/dev/null 2>&1; then
+                echo "ERROR: suderra.efi must carry a valid Secure Boot signature"
+                exit 1
+            fi
+        else
+            echo "ERROR: sbverify not available in build environment — production gate cannot pass"
+            exit 1
+        fi
     fi
 }
 

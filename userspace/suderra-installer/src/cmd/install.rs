@@ -251,7 +251,8 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     install_bundle(&target, &args.package, args.start_service).await?;
 
     // State güncelle
-    let mut state = InstalledState::load().unwrap_or_default();
+    let mut state = InstalledState::load()
+        .context("installed state okunamadı; corrupt state ile kurulum fail-closed durur")?;
     state.record_install(InstalledPackage {
         name: args.package.clone(),
         version: manifest.version.clone(),
@@ -318,7 +319,8 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
 
     install_bundle(local, &args.package, args.start_service).await?;
 
-    let mut state = InstalledState::load().unwrap_or_default();
+    let mut state = InstalledState::load()
+        .context("installed state okunamadı; corrupt state ile kurulum fail-closed durur")?;
     state.record_install(InstalledPackage {
         name: args.package.clone(),
         version: "local".into(),
@@ -339,21 +341,25 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
     Ok(())
 }
 
-/// RAUC bundle install — Faz 4'te tam, şu an stub
+/// RAUC bundle install.
 async fn install_bundle(
     bundle: &std::path::Path,
     package: &str,
     start_service: bool,
 ) -> Result<()> {
-    info!("bundle kurulumu (stub): {}", bundle.display());
+    info!("bundle kurulumu: {}", bundle.display());
 
-    // TODO Faz 4 (RAUC integration):
-    //   1. rauc install <bundle>
-    //   2. rauc status mark-good
-    //   3. systemctl enable suderra-edge-agent.service
-    //   4. systemctl start suderra-edge-agent.service (start_service ise)
+    if std::env::var("SUDERRA_ALLOW_LEGACY_COPY_INSTALL").as_deref() != Ok("1") {
+        bail!(
+            "RAUC-backed install engine is not implemented yet; refusing to copy {} into /opt/suderra as a successful install",
+            bundle.display()
+        );
+    }
+    if is_production_variant() {
+        bail!("production images cannot use SUDERRA_ALLOW_LEGACY_COPY_INSTALL");
+    }
 
-    // Faz 2-D MVP: dosyayı /opt/suderra/<package>/'a kopyala
+    warn!("SUDERRA_ALLOW_LEGACY_COPY_INSTALL=1 active; using lab-only copy install path");
     let target_dir = PathBuf::from("/opt/suderra").join(package);
     tokio::fs::create_dir_all(&target_dir).await?;
     let target_file = target_dir.join(

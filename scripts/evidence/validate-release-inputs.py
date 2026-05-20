@@ -130,6 +130,10 @@ def buildroot_identity_payload_from_binding(binding: dict[str, Any]) -> dict[str
         "buildroot_staged_diff_sha256",
         "buildroot_applied_diff_sha256",
         "buildroot_worktree_diff_sha256",
+        "suderra_source_sha",
+        "suderra_external_tree_sha256",
+        "suderra_external_dirty_paths",
+        "suderra_release_source_id",
     ):
         if field in binding:
             payload[field] = binding.get(field)
@@ -157,6 +161,10 @@ def compare_buildroot_identity_to_binding(
         ("buildroot_staged_diff_sha256", "buildroot_staged_diff_sha256"),
         ("buildroot_applied_diff_sha256", "buildroot_applied_diff_sha256"),
         ("buildroot_worktree_diff_sha256", "buildroot_worktree_diff_sha256"),
+        ("suderra_source_sha", "suderra_source_sha"),
+        ("suderra_external_tree_sha256", "suderra_external_tree_sha256"),
+        ("suderra_external_dirty_paths", "suderra_external_dirty_paths"),
+        ("suderra_release_source_id", "suderra_release_source_id"),
     ]
     for identity_field, binding_field in field_pairs:
         if payload.get(identity_field) != binding.get(binding_field):

@@ -504,6 +504,10 @@ write_json(
         "buildroot_expected_patched": metadata["buildroot_expected_patched"],
         "buildroot_rust_version": metadata["buildroot_rust_version"],
         "buildroot_rust_bin_version": metadata["buildroot_rust_bin_version"],
+        "suderra_source_sha": metadata["suderra_source_sha"],
+        "suderra_external_tree_sha256": metadata["suderra_external_tree_sha256"],
+        "suderra_external_dirty_paths": metadata["suderra_external_dirty_paths"],
+        "suderra_release_source_id": metadata["suderra_release_source_id"],
         "producer": {
             "provider": "github-actions",
             "repository": "Okan-wqm/Suderra-OS",

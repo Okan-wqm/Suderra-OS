@@ -30,6 +30,7 @@ $(find "${PROJECT_ROOT}/configs/" -maxdepth 1 -type f -printf '  %f\n' | sort)
   SUDERRA_CONTAINER_KEYS_DIR # Container içindeki keyring yolu (varsayılan: /tmp/suderra-keys/current)
   SOURCE_DATE_EPOCH       # Reproducible build için (varsayılan: git commit time)
   SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT # Optional source identity JSON path inside the container
+  SUDERRA_REQUIRE_CLEAN_EXTERNAL # 1 ise BR2_EXTERNAL snapshot için dirty tree reddedilir
 EOF
     exit 0
 fi
@@ -150,7 +151,8 @@ for name in \
     SUDERRA_VERSION \
     SUDERRA_BUILD_ID \
     SUDERRA_VARIANT \
-    SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT
+    SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT \
+    SUDERRA_REQUIRE_CLEAN_EXTERNAL
 do
     add_extra_env "${name}"
 done

@@ -62,6 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Signing / SBOM / dm-verity (production gate verification)
     openssl \
     cryptsetup-bin \
+    sbsigntool \
     # QEMU for testing
     qemu-system-x86 \
     qemu-system-arm \

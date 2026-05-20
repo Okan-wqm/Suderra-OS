@@ -292,6 +292,10 @@ def validate_cross_binding_command(args: argparse.Namespace) -> int:
         "buildroot_expected_diff_sha256",
         "buildroot_staged_diff_sha256",
         "buildroot_worktree_diff_sha256",
+        "suderra_source_sha",
+        "suderra_external_tree_sha256",
+        "suderra_external_dirty_paths",
+        "suderra_release_source_id",
     ):
         if field in release_input or field in ingress:
             if release_input.get(field) != ingress.get(field):
