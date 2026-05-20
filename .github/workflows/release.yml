@@ -201,7 +201,7 @@ jobs:
             --release-input "release-inputs/${VERSION}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --ingress-manifest "release-ingress/${VERSION}/ingress-manifest.json"
       - name: Install cosign
-        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
         with:
           cosign-release: 'v2.4.1'
       - name: Validate downloaded preflight binding
@@ -261,7 +261,7 @@ jobs:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: .
       - name: Install cosign
-        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
         with:
           cosign-release: 'v2.4.1'
       - name: Validate release inputs
@@ -565,7 +565,7 @@ jobs:
           path: .
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
         with:
           cosign-release: 'v2.4.1'
 
@@ -606,7 +606,7 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: SLSA build provenance attestation
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-path: |
             release/suderra-*.img.xz
@@ -754,7 +754,7 @@ jobs:
             --require-asset-sidecars
 
       - name: Final publication provenance attestation
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-path: |
             release/release-evidence-*.tar.zst
@@ -919,7 +919,7 @@ jobs:
             signed-release/release/*.cert
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
         with:
           cosign-release: 'v2.4.1'
 

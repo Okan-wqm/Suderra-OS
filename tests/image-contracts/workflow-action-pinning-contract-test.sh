@@ -34,6 +34,22 @@ for workflow in sorted(workflow_root.glob("*.yml")):
                 f"{workflow}:{line_no}: ossf/scorecard-action must pin the peeled v2.4.0 commit, "
                 "not the annotated tag object SHA"
             )
+        if value == "github/codeql-action/upload-sarif@7c1e4cf0b20d7c1872b26569c00ba908797a59bf":
+            failures.append(
+                f"{workflow}:{line_no}: github/codeql-action/upload-sarif must pin the peeled v4 commit, "
+                "not the annotated tag object SHA"
+            )
+        annotated_tag_objects = {
+            "actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661": "v3",
+            "DavidAnson/markdownlint-cli2-action@fa0cd0f1a052f54da593c83860f2292982f5d142": "v23.2.0",
+            "ibiqlik/action-yamllint@ae1abb2821b567e96742aa776f7b62c9b6a26bc8": "v3",
+            "sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409": "v3.7.0",
+        }
+        if value in annotated_tag_objects:
+            failures.append(
+                f"{workflow}:{line_no}: {value} is annotated tag object {annotated_tag_objects[value]}; "
+                "pin the peeled commit SHA"
+            )
 
 if failures:
     for failure in failures:
