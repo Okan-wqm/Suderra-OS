@@ -294,7 +294,7 @@ jobs:
 
       - name: Attest image and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
@@ -579,7 +579,7 @@ jobs:
 
       - name: Attest payload image and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
@@ -646,7 +646,7 @@ jobs:
 
       - name: Attest installer artifact
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: |
             suderra-installer-${{ matrix.arch }}
