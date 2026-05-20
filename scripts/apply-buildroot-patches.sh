@@ -5,6 +5,10 @@
 # The Buildroot submodule tracks upstream directly; local deltas that are not
 # accepted upstream live under patches/buildroot so superproject commits never
 # point at private or dirty submodule commits.
+#
+# Normal Suderra builds no longer call this script against buildroot/. It is
+# retained for future non-upstream Buildroot patch queues and must be pointed at
+# an isolated source tree.
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -27,7 +31,8 @@ fi
 PRE_PATCH_STATUS="$(git -C "${BUILDROOT_DIR}" status --porcelain --untracked-files=all)"
 if [ -n "${PRE_PATCH_STATUS}" ]; then
     if python3 "${PROJECT_ROOT}/scripts/ci/buildroot-patch-identity.py" validate-applied \
-        --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" >/dev/null 2>&1; then
+        --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" \
+        --buildroot-dir "${BUILDROOT_DIR}" >/dev/null 2>&1; then
         echo "==> Buildroot patchset already applied and validated"
         exit 0
     fi
@@ -58,4 +63,5 @@ for patch in "${PATCH_DIR}"/*.patch; do
 done
 
 python3 "${PROJECT_ROOT}/scripts/ci/buildroot-patch-identity.py" validate-applied \
-    --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)"
+    --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" \
+    --buildroot-dir "${BUILDROOT_DIR}"

@@ -96,7 +96,7 @@ jobs:
           fi
           echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
           echo "Buildroot pinned at ${expected_sha}"
-          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}"
+          ./scripts/buildroot-source.sh verify-native-rust
 
       - name: Compute installer payload metadata
         id: payload_meta
@@ -122,7 +122,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
-          key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
+          key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
         uses: actions/cache@v5
@@ -173,9 +173,9 @@ jobs:
         run: |
           set -euo pipefail
           set -x
-          ./scripts/apply-buildroot-patches.sh buildroot
+          buildroot_source_dir="$(./scripts/buildroot-source.sh prepare --defconfig "${{ matrix.defconfig }}-smoke")"
           # Önce sadece defconfig parse edebiliyor muyuz?
-          make -C buildroot \
+          make -C "${buildroot_source_dir}" \
             BR2_EXTERNAL="$(pwd)" \
             O="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}" \
             "${{ matrix.defconfig }}" 2>&1 | tail -30
@@ -205,7 +205,8 @@ jobs:
               echo "::error::Build step timeout budget exhausted before ${defconfig}"
               exit 124
             fi
-            timeout --kill-after=60s "${remaining}s" \
+            SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT="/workspace/build-logs/${defconfig}.source-identity.json" \
+              timeout --kill-after=60s "${remaining}s" \
               ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
             python3 scripts/ci/classify-build-warnings.py \
               --policy ci/build-warning-policy.json \
@@ -252,8 +253,18 @@ jobs:
             echo "::error::Defconfig ${{ matrix.defconfig }} missing or empty"
             exit 1
           fi
-          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}" \
-            > "build-logs/${{ matrix.defconfig }}.source-identity.json"
+          test -s "build-logs/${{ matrix.defconfig }}.source-identity.json"
+
+      - name: Verify Buildroot submodule stayed clean
+        if: always()
+        run: |
+          set -euo pipefail
+          git -C buildroot status --porcelain --untracked-files=all > /tmp/buildroot-status
+          if [ -s /tmp/buildroot-status ]; then
+            echo "::error::Buildroot submodule was modified by the build"
+            cat /tmp/buildroot-status
+            exit 1
+          fi
 
       - name: Upload build logs
         if: always()
@@ -347,6 +358,7 @@ jobs:
           fi
           echo "sha=${expected_sha}" >> "$GITHUB_OUTPUT"
           echo "Buildroot pinned at ${expected_sha}"
+          ./scripts/buildroot-source.sh verify-native-rust
 
       - name: Compute installer payload metadata
         id: payload_meta
@@ -372,7 +384,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
-          key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
+          key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
 
       - name: Cache ccache
         uses: actions/cache@v5
@@ -423,8 +435,8 @@ jobs:
         run: |
           set -euo pipefail
           set -x
-          ./scripts/apply-buildroot-patches.sh buildroot
-          make -C buildroot \
+          buildroot_source_dir="$(./scripts/buildroot-source.sh prepare --defconfig "${{ matrix.defconfig }}-smoke")"
+          make -C "${buildroot_source_dir}" \
             BR2_EXTERNAL="$(pwd)" \
             O="${SUDERRA_HOST_OUTPUT_DIR}/${{ matrix.defconfig }}" \
             "${{ matrix.defconfig }}" 2>&1 | tail -30
@@ -488,7 +500,8 @@ jobs:
               echo "::error::Build step timeout budget exhausted before ${defconfig}"
               exit 124
             fi
-            timeout --kill-after=60s "${remaining}s" \
+            SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT="/workspace/build-logs/${defconfig}.source-identity.json" \
+              timeout --kill-after=60s "${remaining}s" \
               ./scripts/build-in-docker.sh "${defconfig}" 2>&1 | tee "${log_path}"
             python3 scripts/ci/classify-build-warnings.py \
               --policy ci/build-warning-policy.json \
@@ -525,8 +538,18 @@ jobs:
           prepare_payload_signing_keys
           export_payload_images
           build_and_check "${{ matrix.defconfig }}"
-          python3 scripts/ci/buildroot-patch-identity.py metadata --source-sha "${GITHUB_SHA}" \
-            > "build-logs/${{ matrix.defconfig }}.source-identity.json"
+          test -s "build-logs/${{ matrix.defconfig }}.source-identity.json"
+
+      - name: Verify Buildroot submodule stayed clean
+        if: always()
+        run: |
+          set -euo pipefail
+          git -C buildroot status --porcelain --untracked-files=all > /tmp/buildroot-status
+          if [ -s /tmp/buildroot-status ]; then
+            echo "::error::Buildroot submodule was modified by the build"
+            cat /tmp/buildroot-status
+            exit 1
+          fi
 
       - name: Upload build logs
         if: always()

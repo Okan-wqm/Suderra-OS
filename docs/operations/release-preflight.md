@@ -110,20 +110,21 @@ The candidate bundle must include and the signed ingress manifest must digest:
 - `release-reproducibility/<version>/<target>.log`
 
 All evidence must reference the same source commit, Build run ID, Buildroot
-submodule SHA, Buildroot patchset digest, effective Buildroot source ID, matrix
-hash, Rust toolchain/Cargo.lock digests, and artifact digests. The binding
+submodule SHA, Buildroot upstream ref, Buildroot source mode, Buildroot patchset
+digest, effective Buildroot source ID, matrix hash, Rust toolchain/Cargo.lock
+digests, and artifact digests. The binding
 manifest must cover the exact `ci/build-matrix.yml` release artifact set,
 installer binaries, build logs, warning classifier JSON, and Buildroot source
 identity JSON; extra, missing, all-zero, absolute-path, or placeholder artifact
 entries fail closed.
 
-For patched Buildroot builds, `buildroot_applied_diff_sha256` is mandatory and
-is part of `buildroot_effective_source_id`. The fingerprint is derived from the
-ordered Suderra Buildroot patch files, so it is available in clean CI checkouts
-before patch application and remains stable after deterministic application.
-Release builds must come from a clean isolated Buildroot worktree after
-deterministic patch application; unrelated local dirty submodule state is never
-accepted as release source identity.
+Current alpha builds use `clean-native` Buildroot source identity:
+Buildroot `2025.05.3`, native Rust `1.86.0`, no Suderra Buildroot patch files,
+and no applied/worktree diff digest. If a future patched Buildroot build is
+introduced, `buildroot_applied_diff_sha256` becomes mandatory and part of
+`buildroot_effective_source_id`. Release builds must come from a clean isolated
+Buildroot source tree; unrelated local dirty submodule state is never accepted
+as release source identity.
 
 Approval files must include at least two distinct roles for enterprise alpha:
 `release-owner` and either `maintainer` or `security-compliance`. The same

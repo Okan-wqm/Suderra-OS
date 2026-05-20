@@ -535,6 +535,54 @@ def buildroot_source_metadata(source_sha: str) -> dict[str, Any]:
         return {"buildroot_index_sha": buildroot_index_sha()}
 
 
+def buildroot_metadata_for_manifest(identity: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    if "schema_version" in identity:
+        output["buildroot_source_identity_schema_version"] = identity.get("schema_version")
+    for field in (
+        "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
+        "buildroot_patchset_sha256",
+        "buildroot_patch_files",
+        "buildroot_effective_source_id",
+        "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_applied_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if field in identity:
+            output[field] = identity.get(field)
+    return output
+
+
+def buildroot_metadata_from_release_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    if "buildroot_source_identity_schema_version" in binding:
+        output["buildroot_source_identity_schema_version"] = binding.get("buildroot_source_identity_schema_version")
+    for field in (
+        "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
+        "buildroot_patchset_sha256",
+        "buildroot_patch_files",
+        "buildroot_effective_source_id",
+        "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_applied_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if field in binding:
+            output[field] = binding.get(field)
+    return output
+
+
 def load_script_module(name: str, rel_path: str) -> Any:
     script = ROOT / rel_path
     spec = importlib.util.spec_from_file_location(name, script)
@@ -574,7 +622,12 @@ def classify_release_asset(name: str) -> str:
     return "release-control"
 
 
-def release_asset_manifest(version: str, release_dir: Path, matrix_path: Path) -> dict[str, Any]:
+def release_asset_manifest(
+    version: str,
+    release_dir: Path,
+    matrix_path: Path,
+    binding_manifest: Path | None = None,
+) -> dict[str, Any]:
     files: list[dict[str, Any]] = []
     for path in sorted(release_dir.iterdir(), key=lambda item: item.name):
         if not path.is_file():
@@ -588,7 +641,14 @@ def release_asset_manifest(version: str, release_dir: Path, matrix_path: Path) -
             }
         )
     git_commit = git_output(["rev-parse", "HEAD"]) or "unknown"
-    buildroot_metadata = buildroot_source_metadata(git_commit) if re.fullmatch(r"[0-9a-f]{40}", git_commit) else {}
+    buildroot_metadata: dict[str, Any] = {}
+    if binding_manifest is not None:
+        binding = read_json(binding_manifest)
+        if not isinstance(binding, dict):
+            raise ValueError(f"binding manifest is missing or invalid JSON: {binding_manifest}")
+        buildroot_metadata = buildroot_metadata_from_release_binding(binding)
+    elif re.fullmatch(r"[0-9a-f]{40}", git_commit):
+        buildroot_metadata = buildroot_metadata_for_manifest(buildroot_source_metadata(git_commit))
     return {
         "schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
         "version": version,
@@ -2195,7 +2255,11 @@ def asset_manifest_command(args: argparse.Namespace) -> int:
     if not args.release_dir.is_dir():
         print(f"ERROR: release directory not found: {args.release_dir}", file=sys.stderr)
         return 1
-    manifest = release_asset_manifest(args.version, args.release_dir, args.matrix)
+    try:
+        manifest = release_asset_manifest(args.version, args.release_dir, args.matrix, args.binding_manifest)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     if not manifest["files"]:
         print(f"ERROR: release directory contains no files: {args.release_dir}", file=sys.stderr)
         return 1
@@ -2341,6 +2405,7 @@ def main() -> int:
     asset_manifest.add_argument("--version", required=True)
     asset_manifest.add_argument("--release-dir", type=Path, required=True)
     asset_manifest.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    asset_manifest.add_argument("--binding-manifest", type=Path)
     asset_manifest.add_argument("--output", type=Path, required=True)
     asset_manifest.set_defaults(func=asset_manifest_command)
 

@@ -87,16 +87,15 @@ build-revpi4:
 .PHONY: _build
 _build:
 	@if [ ! -d "$(BUILDROOT_DIR)" ]; then \
-		echo "ERROR: $(BUILDROOT_DIR) yok. Faz 1'de submodule olarak eklenecek."; \
-		echo "Geçici çözüm: git clone https://gitlab.com/buildroot.org/buildroot.git -b 2024.11 $(BUILDROOT_DIR)"; \
+		echo "ERROR: $(BUILDROOT_DIR) yok."; \
+		echo "Çözüm: git submodule update --init --recursive"; \
 		exit 1; \
 	fi
 	@if [ -z "$(DEFCONFIG)" ]; then \
 		echo "ERROR: DEFCONFIG belirtilmedi."; exit 1; \
 	fi
 	@echo "==> Building $(DEFCONFIG) (Suderra OS v$(VERSION))"
-	$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR2_EXTERNAL) O=$(OUTPUT_DIR)/$(DEFCONFIG) $(DEFCONFIG)
-	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUTPUT_DIR)/$(DEFCONFIG)
+	OUTPUT_DIR=$(OUTPUT_DIR)/$(DEFCONFIG) BUILDROOT_DIR=$(BUILDROOT_DIR) ./scripts/build.sh $(DEFCONFIG)
 
 # --- Çalıştırma ---
 

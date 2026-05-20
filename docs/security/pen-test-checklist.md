@@ -69,7 +69,8 @@
 
 - [ ] Reproducible build: `scripts/verify-reproducible.sh` (2 build aynı SHA256)
 - [ ] SBOM mevcut + güncel: `output/sbom.cyclonedx.json`
-- [ ] Hash dosyaları doğru: `make -C buildroot check-package-hashes`
+- [ ] Hash dosyaları doğru: izole Buildroot source tree ile
+  `make -C "${buildroot_source_dir}" check-package-hashes`
 
 ## Otomasyon
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -21,8 +22,10 @@ import sys
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = "suderra.release-ingress.v1"
-BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v1"
+BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v2"
+BUILDROOT_IDENTITY_SCHEMA_FIELD = "buildroot_source_identity_schema_version"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDERS = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING", ""}
@@ -72,6 +75,51 @@ def sha256_file(path: Path) -> str:
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_buildroot_identity_module() -> Any:
+    script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+    spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def buildroot_identity_payload_from_mapping(payload: dict[str, Any]) -> dict[str, Any]:
+    identity: dict[str, Any] = {}
+    if BUILDROOT_IDENTITY_SCHEMA_FIELD in payload:
+        identity["schema_version"] = payload.get(BUILDROOT_IDENTITY_SCHEMA_FIELD)
+    for field in (
+        "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
+        "buildroot_patchset_sha256",
+        "buildroot_patch_files",
+        "buildroot_effective_source_id",
+        "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_applied_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if field in payload:
+            identity[field] = payload.get(field)
+    return identity
+
+
+def validate_buildroot_identity(failures: list[str], path: str, payload: dict[str, Any]) -> None:
+    try:
+        module = load_buildroot_identity_module()
+    except Exception as exc:
+        failures.append(f"{path}: cannot load Buildroot source identity validator: {exc}")
+        return
+    identity = buildroot_identity_payload_from_mapping(payload)
+    for failure in module.validate_metadata_payload(identity):
+        failures.append(f"{path}: {failure}")
 
 
 def check_string(failures: list[str], path: str, value: Any) -> None:
@@ -166,6 +214,7 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         return {}, [f"binding manifest must be a JSON object: {args.binding_manifest}"]
     if binding.get("schema_version") != BINDING_SCHEMA_VERSION:
         failures.append(f"binding schema_version must be {BINDING_SCHEMA_VERSION}")
+    validate_buildroot_identity(failures, "binding Buildroot source identity", binding)
     generated_at = now_utc()
     expires_at = generated_at + timedelta(days=args.expires_days)
     producer = {
@@ -240,18 +289,30 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "source_run_attempt": str(binding.get("source_run_attempt")),
         "build_workflow_name": binding.get("build_workflow_name"),
         "matrix_sha256": binding.get("matrix_sha256"),
+        "buildroot_source_identity_schema_version": binding.get("buildroot_source_identity_schema_version"),
         "buildroot_index_sha": binding.get("buildroot_index_sha"),
+        "buildroot_upstream_ref": binding.get("buildroot_upstream_ref"),
+        "buildroot_source_mode": binding.get("buildroot_source_mode"),
         "buildroot_patchset_sha256": binding.get("buildroot_patchset_sha256"),
         "buildroot_patch_files": binding.get("buildroot_patch_files"),
         "buildroot_effective_source_id": binding.get("buildroot_effective_source_id"),
-        "buildroot_applied_diff_sha256": binding.get("buildroot_applied_diff_sha256"),
         "buildroot_expected_patched": binding.get("buildroot_expected_patched"),
+        "buildroot_rust_version": binding.get("buildroot_rust_version"),
+        "buildroot_rust_bin_version": binding.get("buildroot_rust_bin_version"),
         "producer": producer,
         "generated_at": format_utc(generated_at),
         "expires_at": format_utc(expires_at),
         "schema_roles": SCHEMA_ROLES,
         "files": sorted(files, key=lambda item: (str(item["defconfig"]), str(item["artifact"]))),
     }
+    for field in (
+        "buildroot_applied_diff_sha256",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if binding.get(field) is not None:
+            manifest[field] = binding.get(field)
     return manifest, failures
 
 
@@ -323,9 +384,14 @@ def validate_manifest(
         "source_run_attempt",
         "build_workflow_name",
         "matrix_sha256",
+        "buildroot_source_identity_schema_version",
         "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
         "buildroot_patchset_sha256",
         "buildroot_effective_source_id",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
     ):
         check_string(failures, f"$.{field}", manifest.get(field))
     if expected_version is not None and manifest.get("version") != expected_version:
@@ -346,11 +412,20 @@ def validate_manifest(
                 "source_run_attempt",
                 "build_workflow_name",
                 "matrix_sha256",
+                "buildroot_source_identity_schema_version",
                 "buildroot_index_sha",
+                "buildroot_upstream_ref",
+                "buildroot_source_mode",
                 "buildroot_patchset_sha256",
+                "buildroot_patch_files",
                 "buildroot_effective_source_id",
                 "buildroot_applied_diff_sha256",
                 "buildroot_expected_patched",
+                "buildroot_rust_version",
+                "buildroot_rust_bin_version",
+                "buildroot_expected_diff_sha256",
+                "buildroot_staged_diff_sha256",
+                "buildroot_worktree_diff_sha256",
             ):
                 if field in binding or field in manifest:
                     if str(manifest.get(field)) != str(binding.get(field)):
@@ -368,8 +443,16 @@ def validate_manifest(
     check_sha256(failures, "$.buildroot_effective_source_id", manifest.get("buildroot_effective_source_id"))
     if manifest.get("buildroot_applied_diff_sha256") is not None:
         check_sha256(failures, "$.buildroot_applied_diff_sha256", manifest.get("buildroot_applied_diff_sha256"))
+    for field in (
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if manifest.get(field) is not None:
+            check_sha256(failures, f"$.{field}", manifest.get(field))
     if not isinstance(manifest.get("buildroot_expected_patched"), bool):
         failures.append("$.buildroot_expected_patched: must be a boolean")
+    validate_buildroot_identity(failures, "$.buildroot_source_identity", manifest)
     patch_files = manifest.get("buildroot_patch_files")
     if not isinstance(patch_files, list):
         failures.append("$.buildroot_patch_files: must be a list")

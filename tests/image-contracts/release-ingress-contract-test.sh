@@ -104,9 +104,11 @@ metadata = json.loads(
         text=True,
     )
 )
+binding_metadata = dict(metadata)
+binding_metadata["buildroot_source_identity_schema_version"] = binding_metadata.pop("schema_version")
 
 binding = {
-    "schema_version": "suderra.release-input-binding.v1",
+    "schema_version": "suderra.release-input-binding.v2",
     "profile": "release-candidate",
     "version": version,
     "source_sha": source_sha,
@@ -123,7 +125,7 @@ binding = {
     "release_targets": [],
     "generated_at": "2026-05-13T00:00:00Z",
 }
-binding.update(metadata)
+binding.update(binding_metadata)
 path = root / "release-inputs" / version / "release-candidate.json"
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8")

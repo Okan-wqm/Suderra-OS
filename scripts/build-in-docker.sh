@@ -29,6 +29,7 @@ $(find "${PROJECT_ROOT}/configs/" -maxdepth 1 -type f -printf '  %f\n' | sort)
   SUDERRA_HOST_KEYS_DIR   # Container'a readonly mount edilecek host keyring dizini
   SUDERRA_CONTAINER_KEYS_DIR # Container içindeki keyring yolu (varsayılan: /tmp/suderra-keys/current)
   SOURCE_DATE_EPOCH       # Reproducible build için (varsayılan: git commit time)
+  SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT # Optional source identity JSON path inside the container
 EOF
     exit 0
 fi
@@ -148,7 +149,8 @@ for name in \
     SUDERRA_REQUIRE_INSTALLER_SIGNING \
     SUDERRA_VERSION \
     SUDERRA_BUILD_ID \
-    SUDERRA_VARIANT
+    SUDERRA_VARIANT \
+    SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT
 do
     add_extra_env "${name}"
 done

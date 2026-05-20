@@ -107,7 +107,7 @@ Katman 7: Audit               → journald → upstream syslog (lokal dolmasın)
 
 | Bileşen | Versiyon | LTS bitiş |
 |---|---|---|
-| Buildroot | 2024.11.x | TBD |
+| Buildroot | 2025.05.3 | TBD |
 | Linux kernel | 6.12.x | TBD |
 | systemd | TBD | - |
 | RAUC | TBD | - |

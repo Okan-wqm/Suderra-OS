@@ -37,7 +37,8 @@ docker build -t suderra-builder ci/
 
 ## Buildroot Submodule
 
-Buildroot 2024.11.x LTS `buildroot/` dizininde git submodule olarak pinli.
+Buildroot 2025.05.x `buildroot/` dizininde git submodule olarak pinli.
+Aktif pin `2025.05.3` ve native Rust `1.86.0` içerir.
 
 ```bash
 # İlk klonlamada otomatik gelmesi için:
@@ -49,7 +50,7 @@ git submodule update --init --recursive
 # Submodule pin SHA'sını güncellemek için (yeni LTS patch geldiğinde):
 cd buildroot
 git fetch
-git checkout 2024.11.x
+git checkout 2025.05.x
 cd ..
 git add buildroot
 git commit -s -m "build: bump Buildroot to <new-sha>"
@@ -57,6 +58,15 @@ git commit -s -m "build: bump Buildroot to <new-sha>"
 
 **Neden submodule:** SHA pin = reproducible build (CRA + SLSA gereksinimi).
 Upstream main'in kırılmaları bizi etkilemez.
+
+Normal build akışı `buildroot/` içinde patch uygulamaz. `scripts/build.sh` ve CI,
+pinli submodule'den `output/.buildroot-src/` altında izole source tree üretir.
+Submodule'un temizliğini kontrol etmek için:
+
+```bash
+./scripts/buildroot-source.sh verify-native-rust
+./scripts/buildroot-source.sh status
+```
 
 ## Host Kurulum (Docker olmadan)
 

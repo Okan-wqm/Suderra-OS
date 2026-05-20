@@ -17,7 +17,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v1"
+BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v2"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 

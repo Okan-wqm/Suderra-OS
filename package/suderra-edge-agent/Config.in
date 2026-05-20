@@ -1,5 +1,10 @@
+config BR2_PACKAGE_SUDERRA_EDGE_AGENT_CARGO4_HASH_REVALIDATED
+	bool
+	default n
+
 config BR2_PACKAGE_SUDERRA_EDGE_AGENT
 	bool "suderra-agent"
+	depends on BR2_PACKAGE_SUDERRA_EDGE_AGENT_CARGO4_HASH_REVALIDATED
 	depends on BR2_INIT_SYSTEMD
 	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
 	depends on BR2_TOOLCHAIN_HAS_THREADS
@@ -18,3 +23,6 @@ config BR2_PACKAGE_SUDERRA_EDGE_AGENT
 
 comment "suderra-agent needs systemd, threads, and a Rust-supported target"
 	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+
+comment "suderra-agent requires cargo4 vendor archive hash revalidation for Buildroot 2025.05.3"
+	depends on !BR2_PACKAGE_SUDERRA_EDGE_AGENT_CARGO4_HASH_REVALIDATED

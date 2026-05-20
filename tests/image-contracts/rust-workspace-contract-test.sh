@@ -52,11 +52,31 @@ grep -q 'rust-version = "1.86"' "${WORKSPACE}" ||
         echo "ERROR: userspace/Cargo.toml must declare rust-version 1.86" >&2
         exit 1
     }
-grep -q 'RUST_VERSION = 1.86.0' "${ROOT}/patches/buildroot/0001-buildroot-rust-1.86.0.patch" ||
+git -C "${ROOT}/buildroot" show HEAD:package/rust/rust.mk | grep -q 'RUST_VERSION = 1.86.0' ||
     {
-        echo "ERROR: Buildroot Rust patch must carry the Rust 1.86.0 package version" >&2
+        echo "ERROR: Buildroot native rust package must be version 1.86.0" >&2
         exit 1
     }
+git -C "${ROOT}/buildroot" show HEAD:package/rust-bin/rust-bin.mk | grep -q 'RUST_BIN_VERSION = 1.86.0' ||
+    {
+        echo "ERROR: Buildroot native rust-bin package must be version 1.86.0" >&2
+        exit 1
+    }
+git -C "${ROOT}/buildroot" show HEAD:package/pkg-download.mk | grep -q 'BR_FMT_VERSION_cargo = -cargo4' ||
+    {
+        echo "ERROR: Buildroot 2025.05.3 cargo vendor archive format must be cargo4" >&2
+        exit 1
+    }
+grep -q 'BR2_PACKAGE_SUDERRA_EDGE_AGENT_CARGO4_HASH_REVALIDATED' \
+    "${ROOT}/package/suderra-edge-agent/Config.in" ||
+    {
+        echo "ERROR: suderra-edge-agent must stay gated until its cargo4 hash is revalidated" >&2
+        exit 1
+    }
+if grep -R '^BR2_PACKAGE_SUDERRA_EDGE_AGENT=y' "${ROOT}/configs"; then
+    echo "ERROR: suderra-edge-agent cannot be enabled until its Buildroot 2025.05 cargo4 hash is revalidated" >&2
+    exit 1
+fi
 if grep -R 'Rust 1\.85' "${ROOT}/docs/dev/rust-workspace.md" "${ROOT}/userspace/README.md" "${ROOT}/docs/architecture/ARCHITECTURE.md"; then
     echo "ERROR: active Rust docs must not describe Rust 1.85 as the current pin" >&2
     exit 1

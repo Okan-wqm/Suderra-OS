@@ -1,4 +1,4 @@
-# ADR-0001: Build sistemi olarak Buildroot 2024.11 LTS seçimi
+# ADR-0001: Build sistemi olarak Buildroot seçimi
 
 - **Status:** Accepted
 - **Date:** 2026-05-11
@@ -21,13 +21,15 @@ Suderra OS için endüstriyel-grade, sertleştirilmiş, OTA-güncellenebilir bir
 
 ## Decision
 
-**Buildroot 2024.11 LTS** kullanılacak. Pure scratch, base dağıtım YOK.
+**Buildroot** kullanılacak. Pure scratch, base dağıtım YOK. Aktif üretim
+hazırlık pini Buildroot `2025.05.3`; bu pin native Rust `1.86.0` içerdiği için
+Suderra-local Rust Buildroot patch kuyruğu kullanılmaz.
 
 ## Alternatives Considered
 
 | Seçenek | Artılar | Eksiler | Karar |
 |---|---|---|---|
-| **Buildroot 2024.11 LTS** | Basit Kconfig, hızlı öğrenme eğrisi, küçük imaj, BR2_EXTERNAL pattern olgun, musl first-class, RAUC desteği var | Layer mimarisi yok (Yocto kadar modüler değil), paket sayısı Yocto'dan az | **SEÇİLDİ** |
+| **Buildroot 2025.05.x** | Basit Kconfig, hızlı öğrenme eğrisi, küçük imaj, BR2_EXTERNAL pattern olgun, musl first-class, RAUC desteği var, native Rust 1.86.0 | Layer mimarisi yok (Yocto kadar modüler değil), paket sayısı Yocto'dan az | **SEÇİLDİ** |
 | Yocto Project (Scarthgap LTS) | Endüstri standardı (otomotiv, IoT), layer sistemi güçlü, BSP zenginliği, meta-security/meta-virtualization | Öğrenme eğrisi dik, build süresi 2-3x, tek geliştirici için fazla, recipe yazımı karmaşık | Reddedildi: ekip büyüyünce yeniden değerlendirilebilir |
 | Alpine Linux base (apkbuild) | Hızlı başlangıç, musl native, küçük | Hazır dağıtım — kontrol az, OTA disiplini yok, verified boot zinciri belirsiz | Reddedildi: marka değeri ve kontrol kaybı |
 | Torizon OS / balenaOS base | OTA + immutable hazır, 1-2 ayda pilot | "Suderra OS by Torizon", vendor lock, marka değeri düşer | Reddedildi: stratejik bağımsızlık tercih |
@@ -49,7 +51,8 @@ Suderra OS için endüstriyel-grade, sertleştirilmiş, OTA-güncellenebilir bir
 
 - Yocto layer sistemi yok → eğer ileride çok board desteklenmeli ise BR2_EXTERNAL'da iç organizasyon zorlaşır
 - Yocto kadar zengin meta-security/meta-virtualization layer'ları yok
-- Buildroot 6 ayda bir LTS değişikliği (2024.11 → 2025.11) — major upgrade planlanmalı
+- Buildroot 6 ayda bir release değişikliği yapar; major upgrade ayrı migration
+  branch, full matrix build ve release evidence contract doğrulaması ister
 - Kernel CONFIG fragment yönetimi manuel (Yocto'da meta-secureboot var)
 
 ### Neutral / Trade-offs
@@ -60,9 +63,10 @@ Suderra OS için endüstriyel-grade, sertleştirilmiş, OTA-güncellenebilir bir
 ## Implementation Notes
 
 - Buildroot `git submodule` olarak `buildroot/` dizinine eklenecek (Faz 1)
-- Tag: `2024.11.x` (en son patch sürümü, LTS commitment)
+- Tag: `2025.05.3`
 - `BR2_EXTERNAL=$(CURDIR)` pattern — bu repo dış katman olarak çalışır
-- `make BR2_EXTERNAL=... suderra_qemu_x86_64_defconfig`
+- Normal build `buildroot/` submodule'ünü kirletmez; izole source tree
+  `scripts/buildroot-source.sh prepare` ile üretilir
 - Buildroot upgrade'i için 6 ayda bir ADR güncellemesi
 
 ## References

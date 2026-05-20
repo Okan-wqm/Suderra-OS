@@ -90,7 +90,7 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 ### Added — Faz 1 başı (Buildroot Submodule + Defconfig Fill) — Katman 2
 
 **Buildroot integration:**
-- `buildroot/` git submodule (gitlab.com/buildroot.org/buildroot, branch 2024.11.x LTS)
+- `buildroot/` git submodule (gitlab.com/buildroot.org/buildroot, branch 2025.05.x)
 - `.gitmodules` — submodule pin (SHA = reproducible build için kritik)
 - `.gitignore` — `/buildroot/output/` ve `/buildroot/dl/` ignore (kaynak tracked)
 

@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILDROOT_DIR = ROOT / "buildroot"
 PATCH_DIR = ROOT / "patches" / "buildroot"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SCHEMA_VERSION = "suderra.buildroot-source-identity.v2"
+NATIVE_BUILDROOT_REF = "2025.05.3"
+NATIVE_BUILDROOT_COMMIT = "019201c6e007d80c1ab1bf65b98d9902bc767bdd"
+NATIVE_RUST_VERSION = "1.86.0"
 APPLIED_DIFF_DOMAIN = b"suderra-buildroot-applied-diff-from-patchset-v1\n"
 
 
@@ -107,38 +111,109 @@ def buildroot_index_sha(source_sha: str) -> str:
     return parts[2]
 
 
-def effective_source_id(base_sha: str, patchset_digest: str, applied_diff_sha256: str | None = None) -> str:
-    applied = applied_diff_sha256 or "none"
+def buildroot_upstream_ref(base_sha: str) -> str:
+    if base_sha == NATIVE_BUILDROOT_COMMIT:
+        return NATIVE_BUILDROOT_REF
+    tags = git_stdout(["tag", "--points-at", base_sha], cwd=BUILDROOT_DIR).splitlines()
+    if NATIVE_BUILDROOT_REF in tags:
+        return NATIVE_BUILDROOT_REF
+    return tags[0] if tags else base_sha
+
+
+def effective_source_id(
+    base_sha: str,
+    patchset_digest: str,
+    diff_identity_sha256: str | None = None,
+    *,
+    upstream_ref: str = "unknown",
+    source_mode: str = "clean-native",
+) -> str:
+    diff_identity = diff_identity_sha256 or "none"
     return sha256_bytes(
-        f"buildroot:{base_sha}\npatchset:{patchset_digest}\napplied-diff:{applied}\n".encode("utf-8")
+        (
+            "buildroot-source-identity-v2\n"
+            f"index:{base_sha}\n"
+            f"upstream-ref:{upstream_ref}\n"
+            f"source-mode:{source_mode}\n"
+            f"patchset:{patchset_digest}\n"
+            f"diff-identity:{diff_identity}\n"
+        ).encode("utf-8")
     )
 
 
-def current_buildroot_diff_sha256() -> str | None:
-    if not BUILDROOT_DIR.is_dir():
+def is_git_worktree(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    result = run(["git", "rev-parse", "--is-inside-work-tree"], cwd=path, check=False)
+    return result.returncode == 0 and result.stdout.decode("utf-8", errors="replace").strip() == "true"
+
+
+def current_buildroot_diff_sha256(buildroot_dir: Path = BUILDROOT_DIR) -> str | None:
+    if not is_git_worktree(buildroot_dir):
         return None
-    diff = run(["git", "diff", "--binary", "--full-index"], cwd=BUILDROOT_DIR).stdout
+    diff = run(["git", "diff", "--binary", "--full-index"], cwd=buildroot_dir).stdout
     if not diff:
         return None
     return sha256_bytes(diff)
 
 
-def metadata(source_sha: str) -> dict[str, Any]:
+def buildroot_status_lines(buildroot_dir: Path = BUILDROOT_DIR) -> list[str]:
+    if not is_git_worktree(buildroot_dir):
+        return []
+    return git_stdout(["status", "--porcelain", "--untracked-files=all"], cwd=buildroot_dir).splitlines()
+
+
+def read_buildroot_var(buildroot_dir: Path, rel_path: str, var_name: str) -> str | None:
+    path = buildroot_dir / rel_path
+    if not path.is_file():
+        return None
+    pattern = re.compile(rf"^\s*{re.escape(var_name)}\s*=\s*(\S+)\s*$")
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def metadata(source_sha: str, buildroot_dir: Path = BUILDROOT_DIR) -> dict[str, Any]:
     entries = patch_entries()
     base_sha = buildroot_index_sha(source_sha)
     patchset_digest = patchset_sha256(entries)
-    applied_diff_sha = canonical_applied_diff_sha256(entries)
-    worktree_diff_sha = current_buildroot_diff_sha256()
+    upstream_ref = buildroot_upstream_ref(base_sha)
+    expected_patched = bool(entries)
+    source_mode = "staged-patched-tree" if expected_patched else "clean-native"
+    worktree_diff_sha = current_buildroot_diff_sha256(buildroot_dir)
+    diff_identity_sha = worktree_diff_sha if expected_patched else None
     payload: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
         "buildroot_index_sha": base_sha,
+        "buildroot_upstream_ref": upstream_ref,
+        "buildroot_source_mode": source_mode,
         "buildroot_patchset_sha256": patchset_digest,
         "buildroot_patch_files": entries,
-        "buildroot_effective_source_id": effective_source_id(base_sha, patchset_digest, applied_diff_sha),
-        "buildroot_expected_patched": bool(entries),
+        "buildroot_effective_source_id": effective_source_id(
+            base_sha,
+            patchset_digest,
+            diff_identity_sha,
+            upstream_ref=upstream_ref,
+            source_mode=source_mode,
+        ),
+        "buildroot_expected_patched": expected_patched,
+        "buildroot_rust_version": read_buildroot_var(buildroot_dir, "package/rust/rust.mk", "RUST_VERSION"),
+        "buildroot_rust_bin_version": read_buildroot_var(
+            buildroot_dir,
+            "package/rust-bin/rust-bin.mk",
+            "RUST_BIN_VERSION",
+        ),
     }
-    if applied_diff_sha is not None:
-        payload["buildroot_applied_diff_sha256"] = applied_diff_sha
-    if worktree_diff_sha is not None:
+    if expected_patched:
+        if worktree_diff_sha is not None:
+            payload["buildroot_expected_diff_sha256"] = worktree_diff_sha
+            payload["buildroot_staged_diff_sha256"] = worktree_diff_sha
+            payload["buildroot_applied_diff_sha256"] = worktree_diff_sha
+        else:
+            payload["buildroot_expected_diff_sha256"] = canonical_applied_diff_sha256(entries)
+    elif worktree_diff_sha is not None:
         payload["buildroot_worktree_diff_sha256"] = worktree_diff_sha
     return payload
 
@@ -166,20 +241,26 @@ def expected_touched_files() -> set[str]:
     return touched
 
 
-def validate_applied(source_sha: str) -> list[str]:
+def validate_applied(source_sha: str, buildroot_dir: Path = BUILDROOT_DIR) -> list[str]:
     failures: list[str] = []
-    if not BUILDROOT_DIR.is_dir():
-        return [f"Buildroot submodule not found: {BUILDROOT_DIR}"]
+    if not buildroot_dir.is_dir():
+        return [f"Buildroot source not found: {buildroot_dir}"]
+    if not is_git_worktree(buildroot_dir):
+        return [f"Buildroot source is not a git worktree: {buildroot_dir}"]
     try:
         expected_base = buildroot_index_sha(source_sha)
     except RuntimeError as exc:
         return [str(exc)]
-    actual_base = git_text(["rev-parse", "HEAD"], cwd=BUILDROOT_DIR)
+    actual_base = git_text(["rev-parse", "HEAD"], cwd=buildroot_dir)
     if actual_base != expected_base:
         failures.append(f"Buildroot HEAD {actual_base} does not match index {expected_base}")
 
     expected_files = expected_touched_files()
-    status_lines = git_stdout(["status", "--porcelain", "--untracked-files=all"], cwd=BUILDROOT_DIR).splitlines()
+    status_lines = buildroot_status_lines(buildroot_dir)
+    if not expected_files:
+        if status_lines:
+            failures.append("clean-native Buildroot source must not be dirty")
+        return failures
     for line in status_lines:
         status = line[:2]
         rel = line[3:].strip()
@@ -191,11 +272,11 @@ def validate_applied(source_sha: str) -> list[str]:
             failures.append(f"unexpected Buildroot status for patch-managed path: {status} {rel}")
 
     for patch in reversed(patch_paths()):
-        result = run(["git", "apply", "--reverse", "--check", str(patch)], cwd=BUILDROOT_DIR, check=False)
+        result = run(["git", "apply", "--reverse", "--check", str(patch)], cwd=buildroot_dir, check=False)
         if result.returncode != 0:
             zero_context = run(
                 ["git", "apply", "--unidiff-zero", "--reverse", "--check", str(patch)],
-                cwd=BUILDROOT_DIR,
+                cwd=buildroot_dir,
                 check=False,
             )
             if zero_context.returncode != 0:
@@ -209,6 +290,8 @@ def validate_applied(source_sha: str) -> list[str]:
 
 def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
     failures: list[str] = []
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        failures.append(f"schema_version must be {SCHEMA_VERSION}")
     index_sha = payload.get("buildroot_index_sha")
     if not isinstance(index_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", index_sha):
         failures.append("buildroot_index_sha must be a lowercase git commit sha")
@@ -241,9 +324,17 @@ def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
                 failures.append(f"buildroot_patch_files[{index}].sha256 must be a lowercase sha256")
     if not isinstance(payload.get("buildroot_expected_patched"), bool):
         failures.append("buildroot_expected_patched must be true or false")
+    upstream_ref = payload.get("buildroot_upstream_ref")
+    if not isinstance(upstream_ref, str) or not upstream_ref:
+        failures.append("buildroot_upstream_ref must be a non-empty string")
+    source_mode = payload.get("buildroot_source_mode")
+    if source_mode not in {"clean-native", "staged-patched-tree"}:
+        failures.append("buildroot_source_mode must be clean-native or staged-patched-tree")
+    for field in ("buildroot_rust_version", "buildroot_rust_bin_version"):
+        value = payload.get(field)
+        if value is not None and value != NATIVE_RUST_VERSION:
+            failures.append(f"{field} must be {NATIVE_RUST_VERSION}")
     applied_diff = payload.get("buildroot_applied_diff_sha256")
-    if payload.get("buildroot_expected_patched") is True and not applied_diff:
-        failures.append("buildroot_applied_diff_sha256 is required when Buildroot patches are expected")
     if applied_diff is not None and not (
         isinstance(applied_diff, str)
         and re.fullmatch(r"[0-9a-f]{64}", applied_diff)
@@ -257,17 +348,65 @@ def validate_metadata_payload(payload: dict[str, Any]) -> list[str]:
         and worktree_diff != "0" * 64
     ):
         failures.append("buildroot_worktree_diff_sha256 must be a non-zero lowercase sha256 when present")
+    expected_diff = payload.get("buildroot_expected_diff_sha256")
+    staged_diff = payload.get("buildroot_staged_diff_sha256")
+    for field, value in (
+        ("buildroot_expected_diff_sha256", expected_diff),
+        ("buildroot_staged_diff_sha256", staged_diff),
+    ):
+        if value is not None and not (
+            isinstance(value, str)
+            and re.fullmatch(r"[0-9a-f]{64}", value)
+            and value != "0" * 64
+        ):
+            failures.append(f"{field} must be a non-zero lowercase sha256 when present")
+    if source_mode == "clean-native":
+        if index_sha != NATIVE_BUILDROOT_COMMIT:
+            failures.append(f"clean-native Buildroot source must be {NATIVE_BUILDROOT_REF} ({NATIVE_BUILDROOT_COMMIT})")
+        if upstream_ref != NATIVE_BUILDROOT_REF:
+            failures.append(f"clean-native Buildroot source must bind upstream ref {NATIVE_BUILDROOT_REF}")
+        if payload.get("buildroot_expected_patched") is not False:
+            failures.append("clean-native Buildroot source must not be marked patched")
+        if files not in ([], None):
+            failures.append("clean-native Buildroot source must not list patch files")
+        for field in (
+            "buildroot_applied_diff_sha256",
+            "buildroot_worktree_diff_sha256",
+            "buildroot_expected_diff_sha256",
+            "buildroot_staged_diff_sha256",
+        ):
+            if payload.get(field) is not None:
+                failures.append(f"clean-native Buildroot source must not include {field}")
+    elif source_mode == "staged-patched-tree":
+        if payload.get("buildroot_expected_patched") is not True:
+            failures.append("staged-patched-tree Buildroot source must be marked patched")
+        if not files:
+            failures.append("staged-patched-tree Buildroot source must list patch files")
+        if not applied_diff:
+            failures.append("buildroot_applied_diff_sha256 is required when Buildroot patches are expected")
+        if not expected_diff or not staged_diff:
+            failures.append("staged-patched-tree Buildroot source must include expected and staged diff digests")
+        elif expected_diff != staged_diff:
+            failures.append("buildroot_staged_diff_sha256 must match buildroot_expected_diff_sha256")
     if (
         isinstance(index_sha, str)
         and isinstance(digest, str)
         and isinstance(effective, str)
+        and isinstance(upstream_ref, str)
+        and isinstance(source_mode, str)
         and re.fullmatch(r"[0-9a-f]{40}", index_sha)
         and re.fullmatch(r"[0-9a-f]{64}", digest)
-        and (applied_diff is None or isinstance(applied_diff, str))
     ):
-        expected_effective = effective_source_id(index_sha, digest, applied_diff if isinstance(applied_diff, str) else None)
+        diff_identity = staged_diff if source_mode == "staged-patched-tree" and isinstance(staged_diff, str) else None
+        expected_effective = effective_source_id(
+            index_sha,
+            digest,
+            diff_identity,
+            upstream_ref=upstream_ref,
+            source_mode=source_mode,
+        )
         if effective != expected_effective:
-            failures.append("buildroot_effective_source_id must bind index, patchset, and applied diff")
+            failures.append("buildroot_effective_source_id must bind index, upstream ref, mode, patchset, and diff identity")
     return failures
 
 
@@ -277,13 +416,15 @@ def main() -> int:
 
     meta = subparsers.add_parser("metadata")
     meta.add_argument("--source-sha", default=git_text(["rev-parse", "HEAD"]))
+    meta.add_argument("--buildroot-dir", type=Path, default=BUILDROOT_DIR)
 
     applied = subparsers.add_parser("validate-applied")
     applied.add_argument("--source-sha", default=git_text(["rev-parse", "HEAD"]))
+    applied.add_argument("--buildroot-dir", type=Path, default=BUILDROOT_DIR)
 
     args = parser.parse_args()
     if args.command == "metadata":
-        payload = metadata(args.source_sha)
+        payload = metadata(args.source_sha, args.buildroot_dir)
         failures = validate_metadata_payload(payload)
         if failures:
             for failure in failures:
@@ -292,7 +433,7 @@ def main() -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if args.command == "validate-applied":
-        failures = validate_applied(args.source_sha)
+        failures = validate_applied(args.source_sha, args.buildroot_dir)
         if failures:
             for failure in failures:
                 print(f"ERROR: {failure}", file=sys.stderr)

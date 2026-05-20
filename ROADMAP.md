@@ -43,7 +43,7 @@ aquaculture_platform/sens-api-gateway       (ayrı repo, submodule veya cargo so
 
 ### İçerik
 
-- [ ] Buildroot 2024.11 LTS `git submodule` olarak ekle
+- [ ] Buildroot 2025.05.3 `git submodule` olarak pinle
 - [ ] `configs/suderra_qemu_x86_64_defconfig` doldur:
   - Arch: x86_64, musl, kernel 6.12 LTS
   - Init: BR2_INIT_SYSTEMD=y (minimal)
@@ -305,11 +305,11 @@ Faz 1 başlamadan önce netleşmesi gerekenler:
 **Şimdi (Faz 1 girişi):**
 
 1. Hedef x86_64 endüstriyel PC modelini kesinleştir
-2. Buildroot 2024.11 LTS submodule olarak ekle
+2. Buildroot 2025.05.3 submodule pinini doğrula
 3. `configs/suderra_qemu_x86_64_defconfig` doldurmaya başla
 4. İlk QEMU boot — `Suderra OS v0.1.0-alpha` banner
 
-**Önerilen ilk task:** `git submodule add https://gitlab.com/buildroot.org/buildroot.git -b 2024.11 buildroot/`
+**Önerilen ilk task:** `git submodule update --init --recursive`
 
 ## Revizyon Tarihçesi
 

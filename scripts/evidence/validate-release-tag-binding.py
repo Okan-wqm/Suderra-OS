@@ -278,11 +278,20 @@ def validate_cross_binding_command(args: argparse.Namespace) -> int:
     for field in (
         "build_workflow_name",
         "matrix_sha256",
+        "buildroot_source_identity_schema_version",
         "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
         "buildroot_patchset_sha256",
+        "buildroot_patch_files",
         "buildroot_effective_source_id",
         "buildroot_applied_diff_sha256",
         "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_worktree_diff_sha256",
     ):
         if field in release_input or field in ingress:
             if release_input.get(field) != ingress.get(field):

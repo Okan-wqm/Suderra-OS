@@ -24,7 +24,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.release-input-binding.v1"
+SCHEMA_VERSION = "suderra.release-input-binding.v2"
+BUILDROOT_IDENTITY_SCHEMA_FIELD = "buildroot_source_identity_schema_version"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SEMVER_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$")
 
@@ -47,6 +48,10 @@ def sha256_file(path: Path) -> str:
 
 def read_text_sha256(path: Path) -> str:
     return sha256_bytes(path.read_bytes())
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def run_git(args: list[str]) -> str:
@@ -85,6 +90,92 @@ def buildroot_source_metadata(source_sha: str) -> dict[str, Any]:
     if failures:
         raise RuntimeError("; ".join(failures))
     return payload
+
+
+def buildroot_metadata_for_binding(identity: dict[str, Any]) -> dict[str, Any]:
+    """Map a Buildroot source-identity payload into release binding fields."""
+    output = {
+        BUILDROOT_IDENTITY_SCHEMA_FIELD: identity.get("schema_version"),
+    }
+    for field in (
+        "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
+        "buildroot_patchset_sha256",
+        "buildroot_patch_files",
+        "buildroot_effective_source_id",
+        "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_applied_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if field in identity:
+            output[field] = identity.get(field)
+    return output
+
+
+def buildroot_source_metadata_from_evidence(
+    build_evidence: list[dict[str, Any]],
+    artifact_root: Path | None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    if artifact_root is None:
+        return None, []
+    identities: list[tuple[str, dict[str, Any]]] = []
+    script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+    spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+    if spec is None or spec.loader is None:
+        return None, [f"cannot import {script}"]
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for evidence in build_evidence:
+        if evidence.get("role") != "buildroot-source-identity":
+            continue
+        rel = evidence.get("path")
+        if not isinstance(rel, str):
+            errors.append("Buildroot source identity evidence path must be a string")
+            continue
+        path = artifact_root / rel
+        try:
+            payload = read_json(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"cannot read Buildroot source identity {path}: {exc}")
+            continue
+        if not isinstance(payload, dict):
+            errors.append(f"Buildroot source identity must be a JSON object: {path}")
+            continue
+        for failure in module.validate_metadata_payload(payload):
+            errors.append(f"{path}: {failure}")
+        identities.append((str(evidence.get("defconfig")), payload))
+    if not identities:
+        return None, errors
+    identity_fields = [
+        "schema_version",
+        "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
+        "buildroot_patchset_sha256",
+        "buildroot_patch_files",
+        "buildroot_effective_source_id",
+        "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_applied_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ]
+    first_defconfig, first = identities[0]
+    for defconfig, payload in identities[1:]:
+        for field in identity_fields:
+            if payload.get(field) != first.get(field):
+                errors.append(
+                    f"Buildroot source identity mismatch for {defconfig}: {field} differs from {first_defconfig}"
+                )
+    return buildroot_metadata_for_binding(first), errors
 
 
 def release_rows(matrix: dict[str, Any]) -> list[dict[str, Any]]:
@@ -207,23 +298,31 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         args.require_artifacts,
     )
     errors.extend(artifact_errors)
-    try:
-        buildroot_metadata = buildroot_source_metadata(args.source_sha)
-    except Exception as exc:
-        errors.append(f"cannot resolve Buildroot source identity for {args.source_sha}: {exc}")
-        buildroot_metadata = {
-            "buildroot_index_sha": "",
-            "buildroot_patchset_sha256": "",
-            "buildroot_patch_files": [],
-            "buildroot_effective_source_id": "",
-            "buildroot_expected_patched": False,
-        }
     build_evidence, build_evidence_errors = build_evidence_entries(
         matrix,
         artifact_root,
         args.require_artifacts,
     )
     errors.extend(build_evidence_errors)
+    buildroot_metadata, buildroot_errors = buildroot_source_metadata_from_evidence(build_evidence, artifact_root)
+    errors.extend(buildroot_errors)
+    if buildroot_metadata is None:
+        try:
+            buildroot_metadata = buildroot_source_metadata(args.source_sha)
+        except Exception as exc:
+            errors.append(f"cannot resolve Buildroot source identity for {args.source_sha}: {exc}")
+            buildroot_metadata = {
+                BUILDROOT_IDENTITY_SCHEMA_FIELD: "",
+                "buildroot_index_sha": "",
+                "buildroot_upstream_ref": "",
+                "buildroot_source_mode": "",
+                "buildroot_patchset_sha256": "",
+                "buildroot_patch_files": [],
+                "buildroot_effective_source_id": "",
+                "buildroot_expected_patched": False,
+            }
+        else:
+            buildroot_metadata = buildroot_metadata_for_binding(buildroot_metadata)
     installers, installer_errors = installer_entries(artifact_root, args.require_artifacts)
     errors.extend(installer_errors)
     matrix_sha256 = read_text_sha256(matrix_path)

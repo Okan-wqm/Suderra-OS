@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_approval import validate_approval_payload  # noqa: E402
 
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v1"
+BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v2"
+BUILDROOT_IDENTITY_SCHEMA_FIELD = "buildroot_source_identity_schema_version"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDER_VALUES = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
@@ -101,6 +102,67 @@ def load_binding(path: Path | None, failures: list[str]) -> dict[str, Any] | Non
     return payload
 
 
+def load_buildroot_identity_module() -> Any:
+    script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
+    spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def buildroot_identity_payload_from_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if BUILDROOT_IDENTITY_SCHEMA_FIELD in binding:
+        payload["schema_version"] = binding.get(BUILDROOT_IDENTITY_SCHEMA_FIELD)
+    for field in (
+        "buildroot_index_sha",
+        "buildroot_upstream_ref",
+        "buildroot_source_mode",
+        "buildroot_patchset_sha256",
+        "buildroot_patch_files",
+        "buildroot_effective_source_id",
+        "buildroot_expected_patched",
+        "buildroot_rust_version",
+        "buildroot_rust_bin_version",
+        "buildroot_expected_diff_sha256",
+        "buildroot_staged_diff_sha256",
+        "buildroot_applied_diff_sha256",
+        "buildroot_worktree_diff_sha256",
+    ):
+        if field in binding:
+            payload[field] = binding.get(field)
+    return payload
+
+
+def compare_buildroot_identity_to_binding(
+    failures: list[str],
+    payload: dict[str, Any],
+    binding: dict[str, Any],
+    prefix: str,
+) -> None:
+    field_pairs = [
+        ("schema_version", BUILDROOT_IDENTITY_SCHEMA_FIELD),
+        ("buildroot_index_sha", "buildroot_index_sha"),
+        ("buildroot_upstream_ref", "buildroot_upstream_ref"),
+        ("buildroot_source_mode", "buildroot_source_mode"),
+        ("buildroot_patchset_sha256", "buildroot_patchset_sha256"),
+        ("buildroot_patch_files", "buildroot_patch_files"),
+        ("buildroot_effective_source_id", "buildroot_effective_source_id"),
+        ("buildroot_expected_patched", "buildroot_expected_patched"),
+        ("buildroot_rust_version", "buildroot_rust_version"),
+        ("buildroot_rust_bin_version", "buildroot_rust_bin_version"),
+        ("buildroot_expected_diff_sha256", "buildroot_expected_diff_sha256"),
+        ("buildroot_staged_diff_sha256", "buildroot_staged_diff_sha256"),
+        ("buildroot_applied_diff_sha256", "buildroot_applied_diff_sha256"),
+        ("buildroot_worktree_diff_sha256", "buildroot_worktree_diff_sha256"),
+    ]
+    for identity_field, binding_field in field_pairs:
+        if payload.get(identity_field) != binding.get(binding_field):
+            failures.append(f"{prefix}: {identity_field} must match release input binding")
+
+
 def validate_binding(
     binding: dict[str, Any] | None,
     args: argparse.Namespace,
@@ -147,40 +209,13 @@ def validate_binding(
             expected_buildroot = None
         if expected_buildroot is not None and buildroot_index_sha != expected_buildroot:
             failures.append("binding buildroot_index_sha does not match source_sha tree")
-    for field in ("buildroot_patchset_sha256", "buildroot_effective_source_id"):
-        value = binding.get(field)
-        if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
-            failures.append(f"binding {field} must be a lowercase sha256")
-        elif value == "0" * 64:
-            failures.append(f"binding {field} must not use all-zero sha256")
-    applied_diff = binding.get("buildroot_applied_diff_sha256")
-    if applied_diff is not None and (
-        not isinstance(applied_diff, str) or not SHA256_RE.fullmatch(applied_diff) or applied_diff == "0" * 64
-    ):
-        failures.append("binding buildroot_applied_diff_sha256 must be a non-zero sha256 when present")
-    if not isinstance(binding.get("buildroot_expected_patched"), bool):
-        failures.append("binding buildroot_expected_patched must be a boolean")
-    patch_files = binding.get("buildroot_patch_files")
-    if not isinstance(patch_files, list):
-        failures.append("binding buildroot_patch_files must be a list")
-    else:
-        seen_patch_paths: set[str] = set()
-        for index, patch in enumerate(patch_files):
-            if not isinstance(patch, dict):
-                failures.append(f"binding buildroot_patch_files[{index}] must be an object")
-                continue
-            rel = patch.get("path")
-            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
-                failures.append(f"binding buildroot_patch_files[{index}].path must be a relative non-placeholder path")
-            elif rel in seen_patch_paths:
-                failures.append(f"duplicate Buildroot patch file: {rel}")
-            else:
-                seen_patch_paths.add(rel)
-            digest = patch.get("sha256")
-            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) or digest == "0" * 64:
-                failures.append(f"binding buildroot_patch_files[{index}].sha256 must be a non-zero sha256")
-            if not isinstance(patch.get("bytes"), int) or patch.get("bytes", 0) <= 0:
-                failures.append(f"binding buildroot_patch_files[{index}].bytes must be positive")
+    try:
+        buildroot_module = load_buildroot_identity_module()
+        identity_payload = buildroot_identity_payload_from_binding(binding)
+        for failure in buildroot_module.validate_metadata_payload(identity_payload):
+            failures.append(f"binding Buildroot source identity: {failure}")
+    except Exception as exc:
+        failures.append(f"cannot validate binding Buildroot source identity: {exc}")
     for field in ("userspace_cargo_lock_sha256", "userspace_rust_toolchain_sha256"):
         value = binding.get(field)
         if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
@@ -304,25 +339,10 @@ def validate_binding(
                         failures.append(f"Buildroot source identity must be JSON: {path}")
                     else:
                         try:
-                            script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
-                            spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
-                            if spec is None or spec.loader is None:
-                                raise RuntimeError(f"cannot import {script}")
-                            module = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(module)
+                            module = load_buildroot_identity_module()
                             for failure in module.validate_metadata_payload(payload):
                                 failures.append(f"{path}: {failure}")
-                            for field in (
-                                "buildroot_index_sha",
-                                "buildroot_patchset_sha256",
-                                "buildroot_effective_source_id",
-                            ):
-                                if payload.get(field) != binding.get(field):
-                                    failures.append(f"{path}: {field} must match release input binding")
-                            if payload.get("buildroot_patch_files") and not payload.get("buildroot_applied_diff_sha256"):
-                                failures.append(
-                                    f"{path}: patched Buildroot build evidence must include buildroot_applied_diff_sha256"
-                                )
+                            compare_buildroot_identity_to_binding(failures, payload, binding, str(path))
                         except Exception as exc:
                             failures.append(f"cannot validate Buildroot source identity {path}: {exc}")
         if expected_build_evidence:

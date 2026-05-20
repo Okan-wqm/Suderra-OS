@@ -20,7 +20,7 @@ Her geliştirici aynı imajı, aynı SHA256 ile build edebilmeli. Bu hem supply 
 | Faktör | Mekanizma |
 |---|---|
 | Build host | Pinli Docker image |
-| Buildroot version | git submodule pinned (tag: 2024.11.x) |
+| Buildroot version | git submodule pinned (tag: 2025.05.3) |
 | Toolchain | Buildroot tarafından bootstrap (deterministik) |
 | Source code | git commit SHA |
 | Timestamps | `SOURCE_DATE_EPOCH` env var |

@@ -1,7 +1,7 @@
 # Suderra OS — Build Container
 #
 # Reproducible build için pinli Ubuntu 24.04 base.
-# Buildroot 2024.11 LTS bağımlılıklarını içerir.
+# Buildroot 2025.05.x bağımlılıklarını içerir.
 #
 # Build:
 #   docker build -t suderra-builder ci/
@@ -12,7 +12,7 @@
 FROM ubuntu:24.04@sha256:80dd3c3b9c6cecb9f1667e9290b3bc61b78c2678c02cbdae5f0fea92cc6734ab
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG BUILDROOT_VERSION=2024.11
+ARG BUILDROOT_VERSION=2025.05
 
 # Reproducible build için locale ve timezone sabitle
 ENV LC_ALL=C

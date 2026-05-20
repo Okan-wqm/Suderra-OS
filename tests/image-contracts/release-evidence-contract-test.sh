@@ -164,16 +164,24 @@ data["build_evidence"] = {
     ],
 }
 source_identity = {
+    "schema_version": "suderra.buildroot-source-identity.v2",
     "buildroot_expected_patched": False,
-    "buildroot_index_sha": "1" * 40,
+    "buildroot_index_sha": "019201c6e007d80c1ab1bf65b98d9902bc767bdd",
     "buildroot_patch_files": [],
     "buildroot_patchset_sha256": "2" * 64,
+    "buildroot_rust_bin_version": "1.86.0",
+    "buildroot_rust_version": "1.86.0",
+    "buildroot_source_mode": "clean-native",
+    "buildroot_upstream_ref": "2025.05.3",
 }
 source_identity["buildroot_effective_source_id"] = hashlib.sha256(
     (
-        "buildroot:" + source_identity["buildroot_index_sha"] + "\n"
-        "patchset:" + source_identity["buildroot_patchset_sha256"] + "\n"
-        "applied-diff:none\n"
+        "buildroot-source-identity-v2\n"
+        f"index:{source_identity['buildroot_index_sha']}\n"
+        f"upstream-ref:{source_identity['buildroot_upstream_ref']}\n"
+        f"source-mode:{source_identity['buildroot_source_mode']}\n"
+        f"patchset:{source_identity['buildroot_patchset_sha256']}\n"
+        "diff-identity:none\n"
     ).encode("utf-8")
 ).hexdigest()
 for item, text in (
@@ -478,16 +486,24 @@ data["build_evidence"] = {
     ],
 }
 source_identity = {
+    "schema_version": "suderra.buildroot-source-identity.v2",
     "buildroot_expected_patched": False,
-    "buildroot_index_sha": "1" * 40,
+    "buildroot_index_sha": "019201c6e007d80c1ab1bf65b98d9902bc767bdd",
     "buildroot_patch_files": [],
     "buildroot_patchset_sha256": "2" * 64,
+    "buildroot_rust_bin_version": "1.86.0",
+    "buildroot_rust_version": "1.86.0",
+    "buildroot_source_mode": "clean-native",
+    "buildroot_upstream_ref": "2025.05.3",
 }
 source_identity["buildroot_effective_source_id"] = hashlib.sha256(
     (
-        "buildroot:" + source_identity["buildroot_index_sha"] + "\n"
-        "patchset:" + source_identity["buildroot_patchset_sha256"] + "\n"
-        "applied-diff:none\n"
+        "buildroot-source-identity-v2\n"
+        f"index:{source_identity['buildroot_index_sha']}\n"
+        f"upstream-ref:{source_identity['buildroot_upstream_ref']}\n"
+        f"source-mode:{source_identity['buildroot_source_mode']}\n"
+        f"patchset:{source_identity['buildroot_patchset_sha256']}\n"
+        "diff-identity:none\n"
     ).encode("utf-8")
 ).hexdigest()
 for item, text in (

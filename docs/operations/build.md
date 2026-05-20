@@ -32,14 +32,32 @@ git submodule update --init --recursive
 # Build
 make build-qemu                  # veya make build-x86, make build-arm
 
-# Buildroot'u doğrudan çağırmak için:
-make -C buildroot \
-    BR2_EXTERNAL=$(pwd) \
-    O=$(pwd)/output/qemu \
+# İzole Buildroot source tree ile doğrudan Buildroot çağırmak için:
+buildroot_source_dir="$(./scripts/buildroot-source.sh prepare --defconfig suderra_qemu_x86_64_defconfig)"
+make -C "${buildroot_source_dir}" \
+    BR2_EXTERNAL="$(pwd)" \
+    O="$(pwd)/output/qemu" \
     suderra_qemu_x86_64_defconfig
-make -C buildroot \
-    BR2_EXTERNAL=$(pwd) \
-    O=$(pwd)/output/qemu
+make -C "${buildroot_source_dir}" \
+    BR2_EXTERNAL="$(pwd)" \
+    O="$(pwd)/output/qemu"
+```
+
+## Buildroot 2025.05.3 Native Rust Migration
+
+Buildroot `2025.05.3` native Rust `1.86.0` içerdiği için eski
+`patches/buildroot/0001-buildroot-rust-1.86.0.patch` kuyruğu kaldırıldı.
+`buildroot/` artık sadece pinli upstream submodule olarak temiz kalmalı; build
+hazırlığı `output/.buildroot-src/` altında izole source tree oluşturur.
+
+Mimari plan:
+[`Buildroot 2025.05.3 Native Rust Migration Enterprise Plan`](../assessments/2026-05-20-buildroot-2025-05-native-rust-migration-plan.md).
+
+Kontrol komutları:
+
+```bash
+./scripts/buildroot-source.sh verify-native-rust
+./scripts/buildroot-source.sh status
 ```
 
 ## Defconfig'ler

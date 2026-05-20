@@ -407,6 +407,8 @@ metadata = json.loads(
         text=True,
     )
 )
+binding_metadata = dict(metadata)
+binding_metadata["buildroot_source_identity_schema_version"] = binding_metadata.pop("schema_version")
 source_identity_payload = json.dumps(metadata, sort_keys=True) + "\n"
 for defconfig, target in (
     ("suderra_qemu_x86_64_defconfig", "qemu-x86_64"),
@@ -427,7 +429,7 @@ for defconfig, target in (
         }
     )
 binding = {
-    "schema_version": "suderra.release-input-binding.v1",
+    "schema_version": "suderra.release-input-binding.v2",
     "profile": "release-candidate",
     "version": version,
     "source_sha": source_sha,
@@ -444,7 +446,7 @@ binding = {
     "release_targets": [],
     "generated_at": "2026-05-13T00:00:00Z",
 }
-binding.update(metadata)
+binding.update(binding_metadata)
 write_json(
     root / "release-inputs" / version / "release-candidate.json",
     binding,
@@ -491,12 +493,17 @@ write_json(
         "source_run_attempt": "1",
         "build_workflow_name": "Build",
         "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
+        "buildroot_source_identity_schema_version": binding_metadata["buildroot_source_identity_schema_version"],
         "buildroot_index_sha": metadata["buildroot_index_sha"],
+        "buildroot_upstream_ref": metadata["buildroot_upstream_ref"],
+        "buildroot_source_mode": metadata["buildroot_source_mode"],
         "buildroot_patchset_sha256": metadata["buildroot_patchset_sha256"],
         "buildroot_patch_files": metadata["buildroot_patch_files"],
         "buildroot_effective_source_id": metadata["buildroot_effective_source_id"],
         "buildroot_applied_diff_sha256": metadata.get("buildroot_applied_diff_sha256"),
         "buildroot_expected_patched": metadata["buildroot_expected_patched"],
+        "buildroot_rust_version": metadata["buildroot_rust_version"],
+        "buildroot_rust_bin_version": metadata["buildroot_rust_bin_version"],
         "producer": {
             "provider": "github-actions",
             "repository": "Okan-wqm/Suderra-OS",
@@ -509,7 +516,7 @@ write_json(
         "expires_at": "2099-01-01T00:00:00Z",
         "schema_roles": {
             "approval": "suderra.release-approval.v2",
-            "binding_manifest": "suderra.release-input-binding.v1",
+            "binding_manifest": "suderra.release-input-binding.v2",
             "lab_input": "suderra.lab-evidence.v3",
             "qemu_input": "suderra.qemu-acceptance.v3",
             "release_evidence": "suderra.release-evidence.v3",

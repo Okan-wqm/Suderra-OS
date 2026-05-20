@@ -82,6 +82,12 @@ grep -q 'validate-release-artifact-binding.py' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must compare staged release bytes to the preflight binding" >&2
     exit 1
 }
+grep -q 'release-evidence.py asset-manifest' "${RELEASE_WORKFLOW}" &&
+    grep -q -- '--binding-manifest "release-inputs/' "${RELEASE_WORKFLOW}" ||
+    {
+        echo "ERROR: release asset manifest must bind preflight Buildroot source identity" >&2
+        exit 1
+    }
 grep -q 'release-ingress.py create' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must create a release ingress manifest" >&2
     exit 1

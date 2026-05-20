@@ -519,6 +519,7 @@ jobs:
           python3 scripts/evidence/release-evidence.py asset-manifest \
             --version "${{ needs.validate.outputs.version }}" \
             --release-dir release \
+            --binding-manifest "release-inputs/${{ needs.validate.outputs.version }}/${{ needs.validate.outputs.preflight_profile }}.json" \
             --output release/release-assets.json
           cat release/release-assets.json
 

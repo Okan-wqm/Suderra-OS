@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Suderra OS — Host build wrapper
-# Buildroot zaten clone edilmiş olmalı (./buildroot/).
+# Buildroot submodule must be checked out cleanly. The actual build uses a
+# managed source tree prepared from that pinned upstream checkout.
 #
 # Kullanım:
 #   ./scripts/build.sh <defconfig>
@@ -15,7 +16,9 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 
 DEFCONFIG="${1:?Kullanım: $0 <defconfig>}"
 BUILDROOT_DIR="${BUILDROOT_DIR:-${PROJECT_ROOT}/buildroot}"
+BUILDROOT_SOURCE_DIR="${BUILDROOT_SOURCE_DIR:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/${DEFCONFIG}}"
+export BR2_DL_DIR="${BR2_DL_DIR:-${PROJECT_ROOT}/dl}"
 export BR2_CCACHE_DIR="${BR2_CCACHE_DIR:-${PROJECT_ROOT}/.ccache}"
 
 # Buildroot var mı?
@@ -23,7 +26,7 @@ if [ ! -d "${BUILDROOT_DIR}" ]; then
     echo "ERROR: Buildroot bulunamadı: ${BUILDROOT_DIR}"
     echo ""
     echo "İlk seferde clone et:"
-    echo "  git clone https://gitlab.com/buildroot.org/buildroot.git -b 2024.11 ${BUILDROOT_DIR}"
+    echo "  git submodule update --init --recursive"
     exit 1
 fi
 
@@ -41,15 +44,25 @@ echo "==> Suderra OS build: ${DEFCONFIG}"
 echo "==> BR2_EXTERNAL: ${PROJECT_ROOT}"
 echo "==> BUILDROOT_DIR: ${BUILDROOT_DIR}"
 echo "==> OUTPUT_DIR: ${OUTPUT_DIR}"
+echo "==> BR2_DL_DIR: ${BR2_DL_DIR}"
 echo "==> BR2_CCACHE_DIR: ${BR2_CCACHE_DIR}"
 
-mkdir -p "${BR2_CCACHE_DIR}"
-"${SCRIPT_DIR}/apply-buildroot-patches.sh" "${BUILDROOT_DIR}"
+mkdir -p "${BR2_DL_DIR}" "${BR2_CCACHE_DIR}"
+if [ -z "${BUILDROOT_SOURCE_DIR}" ]; then
+    BUILDROOT_SOURCE_DIR="$("${SCRIPT_DIR}/buildroot-source.sh" prepare --defconfig "${DEFCONFIG}")"
+fi
+echo "==> BUILDROOT_SOURCE_DIR: ${BUILDROOT_SOURCE_DIR}"
 
-cd "${BUILDROOT_DIR}"
+if [ -n "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT:-}" ]; then
+    mkdir -p "$(dirname -- "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT}")"
+    python3 "${SCRIPT_DIR}/ci/buildroot-patch-identity.py" metadata \
+        --source-sha "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)" \
+        --buildroot-dir "${BUILDROOT_SOURCE_DIR}" \
+        > "${SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT}"
+fi
 
-make BR2_EXTERNAL="${PROJECT_ROOT}" O="${OUTPUT_DIR}" "${DEFCONFIG}"
-make O="${OUTPUT_DIR}"
+make -C "${BUILDROOT_SOURCE_DIR}" BR2_EXTERNAL="${PROJECT_ROOT}" O="${OUTPUT_DIR}" "${DEFCONFIG}"
+make -C "${BUILDROOT_SOURCE_DIR}" O="${OUTPUT_DIR}"
 
 echo ""
 echo "==> Build tamamlandı"
