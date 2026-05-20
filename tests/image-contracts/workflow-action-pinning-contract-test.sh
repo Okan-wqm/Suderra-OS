@@ -29,6 +29,11 @@ for workflow in sorted(workflow_root.glob("*.yml")):
         _, ref = value.rsplit("@", 1)
         if not sha_re.fullmatch(ref):
             failures.append(f"{workflow}:{line_no}: action ref must be a full commit SHA: {value}")
+        if value == "ossf/scorecard-action@ff5dd8929f96a8a4dc67d13f32b8c75057829621":
+            failures.append(
+                f"{workflow}:{line_no}: ossf/scorecard-action must pin the peeled v2.4.0 commit, "
+                "not the annotated tag object SHA"
+            )
 
 if failures:
     for failure in failures:
