@@ -92,6 +92,14 @@ grep -q 'release-ingress.py create' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must create a release ingress manifest" >&2
     exit 1
 }
+grep -q 'collect-ci-check-evidence.py' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must convert exact source_sha CI checks into release security evidence" >&2
+    exit 1
+}
+grep -q 'check-runs?per_page=100' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must fetch source_sha GitHub check-runs for scanner evidence" >&2
+    exit 1
+}
 grep -q 'cosign sign-blob' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must sign the ingress manifest" >&2
     exit 1

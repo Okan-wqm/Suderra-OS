@@ -135,10 +135,12 @@ approval schema is consumed by preflight and by final release evidence assembly.
 Release-candidate preflight downloads only the expected image, installer, and
 build-log artifacts from one successful `Build` run, verifies their GitHub
 Artifact Attestations against `.github/workflows/build.yml` on `refs/heads/main`,
-and records them in signed `suderra.release-ingress.v1`. The tag workflow
-downloads the approved preflight artifact, verifies the ingress cosign identity,
-stages release-named files from `build-artifacts/`, signs, attests, and
-publishes those bytes. Before signing,
+collects exact-commit GitHub check-run security evidence into
+`release-security/<version>/*.json`, and records the resulting input tree in
+signed `suderra.release-ingress.v1`. The tag workflow downloads the approved
+preflight artifact, verifies the ingress cosign identity, stages release-named
+files from `build-artifacts/`, signs, attests, and publishes those bytes. Before
+signing,
 `validate-release-artifact-binding.py` maps staged release files back to their
 preflight-bound source artifacts and compares SHA-256 digests:
 

@@ -276,6 +276,27 @@ surface for the Raspberry Pi and RevPi targets:
   that lacks forced hash checking, the expected hash directory, a real
   SHA-256 entry, or uses a placeholder digest.
 
+## Implemented Eighth Batch
+
+The eighth implementation batch moved release-preflight security evidence from
+implicit workflow status into signed, source-bound input records:
+
+- `scripts/evidence/collect-ci-check-evidence.py` now converts GitHub
+  check-run data for the exact `source_sha` into
+  `suderra.release-security-report.v1` records for every scan in
+  `ci/build-matrix.yml`.
+- The collector fails closed when a required check is missing, still running,
+  failed, or when a new security scan lacks an explicit check-run mapping.
+- `release-preflight.yml` now requests `checks: read`, captures the exact
+  `source_sha` check-run JSON, and generates `release-security/<version>/*.json`
+  before signing the ingress manifest.
+- Ingress manifest creation now happens after governance/security input
+  collection and technical dry-run skeleton generation, so the signed ingress
+  covers the current preflight input tree instead of only early binding files.
+- Contract coverage now rejects preflight workflows that omit CI check security
+  collection and verifies that failed check runs cannot produce passed release
+  security reports.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -293,8 +314,8 @@ surface for the Raspberry Pi and RevPi targets:
 
 ### Release Evidence Batch
 
-- Make release-preflight produce scanner and reproducibility evidence instead
-  of accepting `TO_BE_COLLECTED` skeletons.
+- Make release-preflight produce or import structured reproducibility evidence
+  instead of accepting `TO_BE_COLLECTED` skeletons or log-only pass strings.
 - Move signing/attestation into the protected publish environment.
 - Revalidate cosign signatures, DSSE/attestation subjects, workflow ref, source
   SHA, run ID, and run attempt from downloaded release assets.

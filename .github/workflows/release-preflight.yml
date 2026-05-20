@@ -28,6 +28,7 @@ on:
 permissions:
   actions: read
   attestations: read
+  checks: read
   contents: read
   id-token: write
 
@@ -179,6 +180,52 @@ jobs:
             --require-artifacts \
             --output "release-inputs/${VERSION}/${PROFILE}.json"
 
+      - name: Collect governance evidence
+        if: ${{ inputs.profile != 'technical-dry-run' }}
+        env:
+          GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/collect-governance.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --version "${VERSION}" \
+            --output-root release-governance \
+            --repo-root .
+          python3 scripts/evidence/validate-governance.py \
+            --policy ci/github-governance-policy.yml \
+            --snapshot-root "release-governance/${VERSION}" \
+            --output "release-governance/${VERSION}/governance-policy-validation.json"
+
+      - name: Collect CI check security evidence
+        if: ${{ inputs.profile != 'technical-dry-run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "release-security/${VERSION}"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/commits/${SOURCE_SHA}/check-runs?per_page=100" \
+            > "release-security/${VERSION}/github-check-runs.json"
+          python3 scripts/evidence/collect-ci-check-evidence.py \
+            --version "${VERSION}" \
+            --source-sha "${SOURCE_SHA}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --checks-json "release-security/${VERSION}/github-check-runs.json" \
+            --output-root release-security
+
+      - name: Initialize technical dry-run skeletons
+        if: ${{ inputs.profile == 'technical-dry-run' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/prepare-release-inputs.py init \
+            --version "${VERSION}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --source-run-attempt "${{ steps.source.outputs.run_attempt }}" \
+            --source-sha "${SOURCE_SHA}" \
+            --profile "${PROFILE}" \
+            --artifact-root build-artifacts \
+            --output-root .
+
       - name: Create release ingress manifest
         run: |
           set -euo pipefail
@@ -198,35 +245,6 @@ jobs:
             --output-signature="release-ingress/${VERSION}/ingress-manifest.json.sig" \
             --output-certificate="release-ingress/${VERSION}/ingress-manifest.json.cert" \
             "release-ingress/${VERSION}/ingress-manifest.json"
-
-      - name: Collect governance evidence
-        if: ${{ inputs.profile != 'technical-dry-run' }}
-        env:
-          GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
-        run: |
-          set -euo pipefail
-          python3 scripts/evidence/collect-governance.py \
-            --repo "${GITHUB_REPOSITORY}" \
-            --version "${VERSION}" \
-            --output-root release-governance \
-            --repo-root .
-          python3 scripts/evidence/validate-governance.py \
-            --policy ci/github-governance-policy.yml \
-            --snapshot-root "release-governance/${VERSION}" \
-            --output "release-governance/${VERSION}/governance-policy-validation.json"
-
-      - name: Initialize technical dry-run skeletons
-        if: ${{ inputs.profile == 'technical-dry-run' }}
-        run: |
-          set -euo pipefail
-          python3 scripts/evidence/prepare-release-inputs.py init \
-            --version "${VERSION}" \
-            --source-run-id "${SOURCE_RUN_ID}" \
-            --source-run-attempt "${{ steps.source.outputs.run_attempt }}" \
-            --source-sha "${SOURCE_SHA}" \
-            --profile "${PROFILE}" \
-            --artifact-root build-artifacts \
-            --output-root .
 
       - name: Validate release input contract
         run: |
