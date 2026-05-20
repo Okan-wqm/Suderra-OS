@@ -9,6 +9,7 @@ python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" validate
 
 python3 - "${PROJECT_ROOT}" <<'PY'
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +55,21 @@ if base & payload:
     raise SystemExit(f"base/payload matrix overlap: {sorted(base & payload)}")
 if release_base & release_payload:
     raise SystemExit(f"release base/payload matrix overlap: {sorted(release_base & release_payload)}")
+
+legacy_text = subprocess.check_output(
+    ["git", "-C", str(root / "buildroot"), "show", "HEAD:Config.in.legacy"],
+    text=True,
+)
+legacy_symbols = set(re.findall(r"^config (BR2_[A-Za-z0-9_]+)$", legacy_text, flags=re.MULTILINE))
+selected_legacy: list[str] = []
+selected_re = re.compile(r"^(BR2_[A-Za-z0-9_]+)=(y|m|\".+\"|[1-9].*)$")
+for config in sorted((root / "configs").glob("*_defconfig")):
+    for line_no, line in enumerate(config.read_text(encoding="utf-8").splitlines(), start=1):
+        match = selected_re.match(line.strip())
+        if match and match.group(1) in legacy_symbols:
+            selected_legacy.append(f"{config.relative_to(root)}:{line_no}:{line.strip()}")
+if selected_legacy:
+    raise SystemExit("legacy Buildroot Kconfig symbols selected:\n" + "\n".join(selected_legacy))
 PY
 
 python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" \
