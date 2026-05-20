@@ -132,7 +132,7 @@ write_x86_verity_cmdline() {
 build_signed_slot_uki() {
     local binaries_dir="$1"
     local target_dir="$2"
-    local slot="A"
+    local slot="$3"
     local stub="${SUDERRA_UKI_STUB:-}"
     local sb_key="${SUDERRA_SECUREBOOT_SIGNING_KEY:-}"
     local sb_cert="${SUDERRA_SECUREBOOT_SIGNING_CERT:-}"
@@ -266,7 +266,8 @@ case "${command}" in
         generate_verity "$2"
         initialize_grubenv "$2"
         build_signed_grub "$2"
-        build_signed_slot_uki "$2" "$3"
+        build_signed_slot_uki "$2" "$3" A
+        build_signed_slot_uki "$2" "$3" B
         ;;
     sign-image)
         [ "$#" -eq 3 ] || {

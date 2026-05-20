@@ -176,6 +176,25 @@ architecture so the RAUC/GRUB claim and Secure Boot artifact layout agree:
 - The previous Rust formatting drift in `suderra-installer` state persistence
   was corrected so `cargo fmt --all --check` can pass.
 
+## Implemented Third Batch
+
+The third implementation batch started binding RAUC updates to the same signed
+boot and dm-verity artifacts as the factory image:
+
+- Production artifact generation now emits both signed slot UKIs,
+  `suderra-A.efi` and `suderra-B.efi`.
+- The production image gate requires and verifies the inactive slot UKI as well
+  as the active slot UKI.
+- RAUC slot configuration now models `rootfs-a-verity` and `rootfs-b-verity`
+  as child slots of their matching rootfs slots, so the rootfs and verity hash
+  tree are updated as one group.
+- `scripts/create-rauc-bundle.sh` creates a signed x86 RAUC bundle from the
+  production rootfs, verity tree, and slot UKIs.
+- `scripts/rauc-x86-slot-hook.sh` installs the matching signed slot UKI into
+  the shared EFI partition during the rootfs post-install hook.
+- Production post-image now fails closed unless `SUDERRA_RELEASE_VERSION` and
+  RAUC signing material are present and the signed RAUC bundle is generated.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain
@@ -184,8 +203,8 @@ architecture so the RAUC/GRUB claim and Secure Boot artifact layout agree:
   file-based CI keys.
 - Provide a reviewed production `SUDERRA_UKI_STUB` source and artifact
   provenance.
-- Complete RAUC bundle generation for x86 so rootfs, verity metadata, and the
-  matching slot UKI are installed atomically into the inactive slot.
+- Exercise the x86 RAUC bundle path in QEMU/hardware with real good update,
+  bad signature, failed health, mark-good, and rollback evidence.
 - Extend the current one-try GRUB fallback into a tested bootcount/rollback
   scenario covering good update, bad update, and power-loss cases.
 - Add QEMU Secure Boot tests: unsigned UKI rejection, modified cmdline

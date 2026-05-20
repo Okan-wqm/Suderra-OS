@@ -80,6 +80,8 @@ else
 fi
 echo "    Variant: ${SUDERRA_OS_VARIANT}"
 PRODUCTION_ARTIFACTS="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/production-artifacts.sh"
+CREATE_RAUC_BUNDLE="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/create-rauc-bundle.sh"
+RAUC_BUNDLE_PATH=""
 
 reproducible_timestamp() {
     local epoch="${SOURCE_DATE_EPOCH:-}"
@@ -298,6 +300,16 @@ fi
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
     "${PRODUCTION_ARTIFACTS}" sign-image "${BINARIES_DIR}" "${IMAGE_OUTPUT_NAME}"
+    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
+        release_version="${SUDERRA_RELEASE_VERSION:-}"
+        if [ -z "${release_version}" ]; then
+            echo "ERROR: SUDERRA_RELEASE_VERSION is required for production RAUC bundle generation"
+            exit 1
+        fi
+        RAUC_BUNDLE_PATH="${BINARIES_DIR}/suderra-os-${release_version}-x86_64.raucb"
+        echo "==> x86 production RAUC bundle üretimi: $(basename "${RAUC_BUNDLE_PATH}")"
+        "${CREATE_RAUC_BUNDLE}" x86 "${BINARIES_DIR}" "${release_version}" "${RAUC_BUNDLE_PATH}"
+    fi
 fi
 
 enforce_production_contract() {
@@ -334,9 +346,14 @@ enforce_production_contract() {
                 "${BINARIES_DIR}/suderra-A.efi" \
                 "${BINARIES_DIR}/suderra-A.efi.sig" \
                 "${BINARIES_DIR}/suderra-A.efi.cert" \
+                "${BINARIES_DIR}/suderra-B.efi" \
+                "${BINARIES_DIR}/suderra-B.efi.sig" \
+                "${BINARIES_DIR}/suderra-B.efi.cert" \
                 "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI" \
                 "${BINARIES_DIR}/efi-part/EFI/BOOT/grubenv" \
-                "${BINARIES_DIR}/efi-part/EFI/SUDERRA/suderra-A.efi"
+                "${BINARIES_DIR}/efi-part/EFI/SUDERRA/suderra-A.efi" \
+                "${BINARIES_DIR}/efi-part/EFI/SUDERRA/suderra-B.efi" \
+                "${RAUC_BUNDLE_PATH}"
             do
                 if [ ! -s "${artifact}" ]; then
                     missing="${missing} ${artifact}"
@@ -477,6 +494,7 @@ enforce_production_contract() {
         fi
         verify_signed_pe_artifact "grubx64.efi"
         verify_signed_pe_artifact "suderra-A.efi"
+        verify_signed_pe_artifact "suderra-B.efi"
     fi
 }
 

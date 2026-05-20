@@ -21,6 +21,8 @@ INSTALLER="${ROOT}/userspace/suderra-installer/src/cmd/install.rs"
 EDGE_INSTALL="${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-edge-install"
 MANIFEST="${ROOT}/userspace/suderra-installer/src/manifest.rs"
 PRODUCTION_ARTIFACTS="${ROOT}/scripts/production-artifacts.sh"
+CREATE_RAUC_BUNDLE="${ROOT}/scripts/create-rauc-bundle.sh"
+RAUC_X86_HOOK="${ROOT}/scripts/rauc-x86-slot-hook.sh"
 RAUC_CONFIG="${ROOT}/package/suderra-rauc-config/system.conf"
 RAUC_PACKAGE_MK="${ROOT}/package/suderra-rauc-config/suderra-rauc-config.mk"
 PLAN_DOC="${ROOT}/docs/assessments/2026-05-20-enterprise-grade-gap-closure-plan.md"
@@ -79,8 +81,20 @@ grep -q 'verify_signed_pe_artifact "suderra-A.efi"' "${POST_IMAGE}" || {
     echo "ERROR: post-image must verify the signed slot UKI sidecar and Secure Boot signatures" >&2
     exit 1
 }
+grep -q 'verify_signed_pe_artifact "suderra-B.efi"' "${POST_IMAGE}" || {
+    echo "ERROR: post-image must verify the inactive signed slot UKI sidecar and Secure Boot signatures" >&2
+    exit 1
+}
 grep -q 'verify_signed_pe_artifact "grubx64.efi"' "${POST_IMAGE}" || {
     echo "ERROR: post-image must verify the signed GRUB sidecar and Secure Boot signatures" >&2
+    exit 1
+}
+grep -q 'SUDERRA_RELEASE_VERSION is required for production RAUC bundle generation' "${POST_IMAGE}" || {
+    echo "ERROR: production post-image must require a versioned RAUC bundle" >&2
+    exit 1
+}
+grep -q 'create-rauc-bundle.sh' "${POST_IMAGE}" || {
+    echo "ERROR: production post-image must generate a signed RAUC bundle" >&2
     exit 1
 }
 
@@ -150,7 +164,11 @@ for token in \
     'bundle-formats=verity' \
     'statusfile=/data/rauc/status.ini' \
     'device=/dev/disk/by-partlabel/rootfs-a' \
-    'device=/dev/disk/by-partlabel/rootfs-b'
+    'device=/dev/disk/by-partlabel/rootfs-a-verity' \
+    'parent=rootfs.0' \
+    'device=/dev/disk/by-partlabel/rootfs-b' \
+    'device=/dev/disk/by-partlabel/rootfs-b-verity' \
+    'parent=rootfs.1'
 do
     grep -q "${token}" "${RAUC_CONFIG}" || {
         echo "ERROR: RAUC system.conf missing token: ${token}" >&2
@@ -182,6 +200,36 @@ if grep -q 'efi-part/EFI/BOOT/BOOTX64.EFI' "${PRODUCTION_ARTIFACTS}" &&
     echo "ERROR: production artifacts must not replace signed GRUB with a direct-boot UKI" >&2
     exit 1
 fi
+grep -q 'build_signed_slot_uki "$2" "$3" B' "${PRODUCTION_ARTIFACTS}" || {
+    echo "ERROR: production artifacts must generate the inactive slot UKI for RAUC updates" >&2
+    exit 1
+}
+
+for token in \
+    'SUDERRA_RAUC_SIGNING_KEY' \
+    'SUDERRA_RAUC_SIGNING_CERT' \
+    'manifest.raucm' \
+    '[image.rootfs-verity]' \
+    'hooks=post-install' \
+    'rauc-x86-slot-hook.sh' \
+    'rauc_tool'
+do
+    grep -Fq "${token}" "${CREATE_RAUC_BUNDLE}" || {
+        echo "ERROR: RAUC bundle generator missing token: ${token}" >&2
+        exit 1
+    }
+done
+for token in \
+    'RAUC_BUNDLE_MOUNT_POINT' \
+    'RAUC_SLOT_BOOTNAME' \
+    '/boot/EFI/SUDERRA/suderra-${bootname}.efi' \
+    'slot-post-install'
+do
+    grep -Fq "${token}" "${RAUC_X86_HOOK}" || {
+        echo "ERROR: RAUC x86 slot hook missing token: ${token}" >&2
+        exit 1
+    }
+done
 
 for token in \
     'What=/dev/disk/by-partlabel/efi' \
