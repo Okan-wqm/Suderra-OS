@@ -17,6 +17,7 @@ from typing import Any
 
 SCHEMA_VERSION = "suderra.hsm-signing-session.v1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+PKCS11_KEY_URI_RE = re.compile(r"^pkcs11:.*(?:object|id)=")
 PLACEHOLDERS = {"", "not_collected", "NOT_COLLECTED", "TO_BE_COLLECTED", "pending", "PENDING"}
 
 
@@ -45,6 +46,8 @@ def validate(payload: dict[str, Any], *, pkcs11_uri: str, certificate: Path, req
     failures: list[str] = []
     if payload.get("schema_version") != SCHEMA_VERSION:
         failures.append(f"schema_version must be {SCHEMA_VERSION}")
+    if not PKCS11_KEY_URI_RE.search(pkcs11_uri):
+        failures.append("pkcs11_uri must be a pkcs11: key URI containing object= or id=")
     if payload.get("pkcs11_uri") != pkcs11_uri:
         failures.append("pkcs11_uri must match requested signing key URI")
     if not certificate.is_file() or certificate.stat().st_size <= 0:

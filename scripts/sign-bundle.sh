@@ -67,6 +67,22 @@ production_signing_evidence() {
         >/dev/null
 }
 
+require_pkcs11_key_uri() {
+    local uri="$1"
+    case "${uri}" in
+        pkcs11:*object=*|pkcs11:*id=*)
+            ;;
+        pkcs11:*)
+            echo "ERROR: production signing PKCS#11 URI must identify a key with object= or id=" >&2
+            exit 1
+            ;;
+        *)
+            echo "ERROR: production signing requires a pkcs11: URI" >&2
+            exit 1
+            ;;
+    esac
+}
+
 if [ "${PROD_MODE}" -eq 1 ]; then
     if [ -f "${KEYS_DIR}/rauc-signing.key" ] || [ -f "${KEYS_DIR}/cosign.key" ]; then
         echo "ERROR: production signing rejects file-backed private keys; use PKCS#11/HSM provider evidence" >&2
@@ -76,6 +92,7 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         echo "ERROR: production signing requires SUDERRA_RAUC_PKCS11_URI" >&2
         exit 1
     fi
+    require_pkcs11_key_uri "${SUDERRA_RAUC_PKCS11_URI}"
     if [ -z "${SUDERRA_RAUC_SIGNING_CERT:-}" ] || [ ! -s "${SUDERRA_RAUC_SIGNING_CERT}" ]; then
         echo "ERROR: production signing requires SUDERRA_RAUC_SIGNING_CERT" >&2
         exit 1

@@ -42,12 +42,13 @@ reject_prod_file_key() {
         return 0
     fi
     case "${value}" in
-        pkcs11:*)
-            ;;
-        pkcs11:object=*|pkcs11:token=*)
-            ;;
         "")
             die "SUDERRA_RAUC_PKCS11_URI must be set for production RAUC signing"
+            ;;
+        pkcs11:*object=*|pkcs11:*id=*)
+            ;;
+        pkcs11:*)
+            die "production RAUC signing PKCS#11 URI must identify a key with object= or id="
             ;;
         *)
             die "production RAUC signing rejects file-backed private keys: ${value}"
