@@ -66,6 +66,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert module.firmware_qemu_args(bios) == ["-bios", str(monolithic)]
 
     assert module.SCHEMA_VERSION == "suderra.qemu-acceptance.v3"
+    assert module.required_pass_patterns("smoke") == ("banner", "provisioning-ready")
+    assert module.required_pass_patterns("release-candidate") == ("banner", "provisioning-ready")
     checks = module.release_checks(
         {"banner": True, "systemd": True, "provisioning-ready": True},
         {"kernel-panic": False, "oom-or-systemd-failure": False},
@@ -88,6 +90,18 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert required <= set(checks)
     assert checks["boot"]["status"] == "passed"
     assert checks["no-kernel-panic"]["status"] == "passed"
+    smoke_login_only = module.release_checks(
+        {"banner": True, "systemd": False, "provisioning-ready": True},
+        {"kernel-panic": False, "oom-or-systemd-failure": False},
+    )
+    assert smoke_login_only["boot"]["status"] == "passed"
+    assert smoke_login_only["systemd"]["status"] == "not_applicable"
+    release_without_systemd_proof = module.release_checks(
+        {"banner": True, "systemd": False, "provisioning-ready": True},
+        {"kernel-panic": False, "oom-or-systemd-failure": False},
+        profile="release-candidate",
+    )
+    assert release_without_systemd_proof["systemd"]["status"] == "failed"
 
     semantic_payload = {
         "schema_version": "suderra.qemu-semantic.v1",
@@ -111,11 +125,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert facts["os_release"]["ID"] == "suderra-os"
     assert facts["listeners"] == []
     candidate_checks = module.release_checks(
-        {"banner": True, "systemd": True, "provisioning-ready": True},
+        {"banner": True, "systemd": False, "provisioning-ready": True},
         {"kernel-panic": False, "oom-or-systemd-failure": False},
         profile="release-candidate",
         guest_facts=facts,
     )
+    assert candidate_checks["systemd"]["status"] == "passed"
     for name in (
         "zero-failed-units",
         "os-release",

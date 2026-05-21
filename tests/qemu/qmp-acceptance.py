@@ -30,6 +30,8 @@ PASS_PATTERNS = {
     "systemd": re.compile(r"(Welcome to|Reached target|systemd\[1\])"),
     "provisioning-ready": re.compile(r"(suderra login| login:|Reached target|reached target|multi-user\.target)"),
 }
+SMOKE_REQUIRED_PASS_PATTERNS = ("banner", "provisioning-ready")
+RELEASE_CANDIDATE_REQUIRED_PASS_PATTERNS = ("banner", "provisioning-ready")
 RELEASE_CHECK_NAMES = (
     "boot",
     "systemd",
@@ -169,6 +171,12 @@ def evaluate(serial: str) -> tuple[dict[str, bool], dict[str, bool]]:
     return passed, failed
 
 
+def required_pass_patterns(profile: str) -> tuple[str, ...]:
+    if profile == "release-candidate":
+        return RELEASE_CANDIDATE_REQUIRED_PASS_PATTERNS
+    return SMOKE_REQUIRED_PASS_PATTERNS
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -263,11 +271,35 @@ def release_checks(
         "evidence": "serial banner or login prompt observed",
         "source": "serial",
     }
-    checks["systemd"] = {
-        "status": "passed" if passed.get("systemd") else "failed",
-        "evidence": "systemd boot text observed on serial",
-        "source": "serial",
-    }
+    facts = guest_facts or {}
+    failed_units = facts.get("failed_units")
+    failed_count = None
+    if isinstance(failed_units, dict) and isinstance(failed_units.get("count"), int):
+        failed_count = failed_units["count"]
+    if passed.get("systemd"):
+        checks["systemd"] = {
+            "status": "passed",
+            "evidence": "systemd boot text observed on serial",
+            "source": "serial",
+        }
+    elif failed_count is not None:
+        checks["systemd"] = {
+            "status": "passed",
+            "evidence": f"systemctl --failed executed and reported {failed_count} failed unit(s)",
+            "source": "guest: systemctl --failed --no-legend --plain",
+        }
+    elif profile == "release-candidate":
+        checks["systemd"] = {
+            "status": "failed",
+            "evidence": "systemd proof was not collected by serial text or semantic collector",
+            "source": "serial or guest: systemctl --failed --no-legend --plain",
+        }
+    else:
+        checks["systemd"] = {
+            "status": "not_applicable",
+            "evidence": "smoke profile observed boot/login readiness but did not collect systemd proof",
+            "source": "harness-profile",
+        }
     checks["no-kernel-panic"] = {
         "status": "failed" if failed.get("kernel-panic") else "passed",
         "evidence": "serial log scanned for Kernel panic",
@@ -278,12 +310,7 @@ def release_checks(
         "evidence": "serial log scanned for emergency/failure patterns",
         "source": "serial",
     }
-    facts = guest_facts or {}
     if facts:
-        failed_units = facts.get("failed_units")
-        failed_count = None
-        if isinstance(failed_units, dict) and isinstance(failed_units.get("count"), int):
-            failed_count = failed_units["count"]
         checks["zero-failed-units"] = semantic_result(
             failed_count == 0,
             f"systemctl --failed reported {failed_count} failed unit(s)"
@@ -581,7 +608,8 @@ def run(args: argparse.Namespace) -> int:
             semantic_ready = bool(parse_semantic_guest_facts(serial))
             if any(failed.values()):
                 break
-            if all(passed.values()) and (args.profile != "release-candidate" or semantic_ready):
+            required_observed = all(passed.get(name) for name in required_pass_patterns(args.profile))
+            if required_observed and (args.profile != "release-candidate" or semantic_ready):
                 break
             if process.poll() is not None:
                 break
@@ -617,7 +645,7 @@ def run(args: argparse.Namespace) -> int:
 
     qemu_status = process.returncode if process is not None else None
     failed_checks = [name for name, hit in failed.items() if hit]
-    missing_checks = [name for name, hit in passed.items() if not hit]
+    missing_checks = [name for name in required_pass_patterns(args.profile) if not passed.get(name)]
     semantic_guest_facts = parse_semantic_guest_facts(serial)
     checks = release_checks(passed, failed, args.profile, semantic_guest_facts)
     success = not failed_checks and not missing_checks and error is None
