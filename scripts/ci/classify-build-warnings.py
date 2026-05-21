@@ -22,6 +22,7 @@ from pathlib import Path
 
 
 WARNING_RE = re.compile(r"\b(?:warning|WARNING):")
+GITHUB_ACTIONS_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+")
 BUILD_ENV_FAILURE_RE = re.compile(
     r"(?:^|: )(?:chown|chgrp): invalid (?:user|group):|(?:^|: )install: invalid (?:user|group)"
 )
@@ -52,6 +53,18 @@ FRAGMENTED_POSIX_YACC_RE = re.compile(
     r"^(?:\.?\d+(?:[.-]\d+)+): (?P<body>warning: POSIX Yacc does not support\b.*)$"
 )
 BUILD_OUTPUT_PATH_RE = re.compile(r"(?:/workspace/|\.\./)?output/[^/\s'`]+/")
+DEFCONFIG_OUTPUT_PATH_RE = re.compile(r"(?:\.\./)+[^/\s'`]+_defconfig/")
+OUTPUT_BUILD_PACKAGE_VERSION_RE = re.compile(
+    r"(\$OUTPUT_DIR/build/[A-Za-z0-9_.+-]+?)-\d[0-9A-Za-z.+_~-]*(?=/)"
+)
+GCC_VERSION_COMPONENT_RE = re.compile(
+    r"((?:aarch64|x86_64)-buildroot-linux-gnu)/\d+(?:\.\d+)+(?:-[^/\s'`]*)?"
+)
+UBSAN_SYMBOLIZED_LOC_WARNING_RE = re.compile(
+    r"(?:\.\./)*libsanitizer/ubsan/ubsan_handlers\.cpp(?::\d+(?:[.:]\d+)*)?: warning: "
+    r"'[^']*SymbolizedLoc[^']*' may be used uninitialized "
+    r"\[-Wmaybe-uninitialized\]"
+)
 AUTOCONF_PREFIXED_LOCATION_RE = re.compile(
     r"^checking .*?\.\.\. (?P<diagnostic>.*?:\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?:warning|WARNING):.*)$"
 )
@@ -63,6 +76,9 @@ STABLE_WARNING_MARKERS = (
     "WARNING: 'makeinfo' is missing",
 )
 AWK_SCRIPT_WARNING_RE = re.compile(r"^awk: (?P<script>\./[^:]+)(?::\d+(?:[.-]\d+)*)?: warning:(?P<body>.*)$")
+KCONFIG_ASSIGNMENT_WARNING_RE = re.compile(
+    r"^(?P<location>\.config):\d+:(?P<body>warning: trying to assign nonexistent symbol \S+)$"
+)
 FAKEROOT_WRAPAWK_REGEXP_WARNING = (
     "./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"
 )
@@ -111,7 +127,17 @@ def stable_warning_text(text: str) -> str:
 
 
 def normalize_warning_text(text: str) -> str:
+    text = GITHUB_ACTIONS_TIMESTAMP_RE.sub("", text)
     text = BUILD_OUTPUT_PATH_RE.sub("$OUTPUT_DIR/", text)
+    text = DEFCONFIG_OUTPUT_PATH_RE.sub("$OUTPUT_DIR/", text)
+    text = OUTPUT_BUILD_PACKAGE_VERSION_RE.sub(r"\1-$PACKAGE_VERSION", text)
+    text = GCC_VERSION_COMPONENT_RE.sub(r"\1/$GCC_VERSION", text)
+    text = UBSAN_SYMBOLIZED_LOC_WARNING_RE.sub(
+        "libsanitizer/ubsan/ubsan_handlers.cpp: warning: "
+        "'Loc.__ubsan::Location::SymbolizedLoc' may be used uninitialized "
+        "[-Wmaybe-uninitialized]",
+        text,
+    )
     awk_match = AWK_SCRIPT_WARNING_RE.match(text)
     if awk_match:
         text = f"{awk_match.group('script')}: warning:{awk_match.group('body')}"
@@ -140,6 +166,9 @@ def fingerprint(text: str) -> str:
     fragmented_yacc = FRAGMENTED_POSIX_YACC_RE.match(stable_text)
     if fragmented_yacc:
         return fragmented_yacc.group("body")
+    kconfig_warning = KCONFIG_ASSIGNMENT_WARNING_RE.match(stable_text)
+    if kconfig_warning:
+        return f"{kconfig_warning.group('location')}: {kconfig_warning.group('body')}"
     return raw_fingerprint(text)
 
 
@@ -157,24 +186,27 @@ def collect(path: Path) -> list[WarningLine]:
     warnings: list[WarningLine] = []
     current_package: str | None = None
     for line_number, raw in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-        package_match = BUILDROOT_PACKAGE_RE.match(raw)
+        line = GITHUB_ACTIONS_TIMESTAMP_RE.sub("", raw)
+        if line.startswith(("build warning summary:", "policy: ")):
+            continue
+        package_match = BUILDROOT_PACKAGE_RE.match(line)
         if package_match:
             current_package = package_match.group("package")
-        elif BUILDROOT_CORE_CONTEXT_RE.search(raw):
+        elif BUILDROOT_CORE_CONTEXT_RE.search(line):
             current_package = "buildroot-kconfig"
-        if not (WARNING_RE.search(raw) or BUILD_ENV_FAILURE_RE.search(raw)):
+        if not (WARNING_RE.search(line) or BUILD_ENV_FAILURE_RE.search(line)):
             continue
-        raw_key = raw_fingerprint(raw.strip())
-        canonical_key = canonical_package_fingerprint(current_package, fingerprint(raw.strip()))
-        if current_package and not OWNED_PATH_RE.search(raw):
+        raw_key = raw_fingerprint(line.strip())
+        canonical_key = canonical_package_fingerprint(current_package, fingerprint(line.strip()))
+        if current_package and not OWNED_PATH_RE.search(line):
             raw_key = f"{current_package}: {raw_key}"
             canonical_key = f"{current_package}: {canonical_key}"
         warnings.append(
             WarningLine(
                 path=str(path),
                 line_number=line_number,
-                text=raw.strip(),
-                category=classify(raw, current_package),
+                text=line.strip(),
+                category=classify(line, current_package),
                 fingerprint=canonical_key,
                 raw_fingerprint=raw_key,
                 package=current_package,

@@ -21,7 +21,7 @@ plural.y:51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 .1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 libtool: install: warning: remember to run `libtool --finish /tmp/example'
 libtool: install: warning: remember to run `libtool --finish /workspace/output/foo_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'
-libtool: install: warning: remember to run `libtool --finish ../output/bar_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'
+libtool: install: warning: remember to run `libtool --finish ../output/bar_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.4.0'
 checking if /tmp/tool supports -c -o file.o... libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries
 libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries
 configure: WARNING: using cross tools not prefixed with host triplet
@@ -40,9 +40,12 @@ make[1]: Entering directory '/workspace/buildroot/support/kconfig'
 >>> host-gcc-final 13.3.0 Building
 checking sys/filio.h usability... Makefile:888: warning: overriding recipe for target 'all-multi'
 checking sys/filio.h presence... Makefile:910: warning: overriding recipe for target 'all-multi'
+libsanitizer/ubsan/ubsan_handlers.cpp:520:8: warning: '*(const __sanitizer::SymbolizedStack**)((char*)&Loc + offsetof(__ubsan::Location, __ubsan::Location::SymbolizedLoc))' may be used uninitialized [-Wmaybe-uninitialized]
+>>> busybox 1.37.0 Building
+.config:1154:warning: trying to assign nonexistent symbol ASH_SLEEP
 >>> host-systemd 256.7 Building
 ../output/foo_defconfig/build/host-systemd-256.7/meson.build:907: WARNING:
-../output/bar_defconfig/build/host-systemd-256.7/meson.build:913: WARNING:
+2026-05-20T18:14:48.1728532Z ../../../bar_defconfig/build/host-systemd-256.17/meson.build:913: WARNING:
 LOG
 
 python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
@@ -76,17 +79,19 @@ import json
 import sys
 
 evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
-assert evidence["summary"] == {"known-upstream": 27, "owned": 0, "third-party": 0}
-assert evidence["unique_fingerprints"] == 17
+assert evidence["summary"] == {"known-upstream": 29, "owned": 0, "third-party": 0}
+assert evidence["unique_fingerprints"] == 19
 assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 3
 raw = {warning["raw_fingerprint"] for warning in evidence["warnings"]}
 assert ".1-7: warning: POSIX Yacc does not support %define [-Wyacc]" in raw
-assert evidence["fingerprints"]["libtool: install: warning: remember to run `libtool --finish $OUTPUT_DIR/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'"] == 2
+assert evidence["fingerprints"]["libtool: install: warning: remember to run `libtool --finish $OUTPUT_DIR/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/$GCC_VERSION'"] == 2
 assert evidence["fingerprints"]["libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries"] == 2
 assert evidence["fingerprints"]["configure: WARNING: Continuing even with errors mentioned immediately above this line."] == 2
 assert evidence["fingerprints"]["host-fakeroot: ./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"] == 4
 assert evidence["fingerprints"]["host-gcc-final: Makefile: warning: overriding recipe for target 'all-multi'"] == 2
-assert evidence["fingerprints"]["host-systemd: $OUTPUT_DIR/build/host-systemd-256.7/meson.build: WARNING:"] == 2
+assert evidence["fingerprints"]["host-gcc-final: libsanitizer/ubsan/ubsan_handlers.cpp: warning: 'Loc.__ubsan::Location::SymbolizedLoc' may be used uninitialized [-Wmaybe-uninitialized]"] == 1
+assert evidence["fingerprints"]["busybox: .config: warning: trying to assign nonexistent symbol ASH_SLEEP"] == 1
+assert evidence["fingerprints"]["host-systemd: $OUTPUT_DIR/build/host-systemd-$PACKAGE_VERSION/meson.build: WARNING:"] == 2
 assert not evidence["failing"]
 PY
 
@@ -163,6 +168,18 @@ if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
     --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
     "${TMP_DIR}/fragment-negative.log" >/dev/null 2>&1; then
     echo "ERROR: unrelated fragmented warning was incorrectly canonicalized into policy" >&2
+    exit 1
+fi
+
+cat > "${TMP_DIR}/kconfig-negative.log" <<'LOG'
+>>> busybox 1.37.0 Building
+.config:1154:warning: trying to assign nonexistent symbol NEW_UNKNOWN_SYMBOL
+LOG
+
+if python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
+    "${TMP_DIR}/kconfig-negative.log" >/dev/null 2>&1; then
+    echo "ERROR: unrelated Kconfig assignment warning was incorrectly allowed" >&2
     exit 1
 fi
 
