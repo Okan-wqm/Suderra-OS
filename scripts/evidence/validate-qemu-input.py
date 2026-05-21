@@ -13,9 +13,10 @@ import sys
 from typing import Any
 
 
-SCHEMA_VERSION = "suderra.qemu-acceptance.v3"
-LEGACY_SCHEMA_VERSIONS = {"suderra.qemu-acceptance.v2"}
-STATUS_VALUES = {"passed", "failed", "infra-error", "timeout", "not-applicable"}
+SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
+LEGACY_SCHEMA_VERSIONS = {"suderra.qemu-acceptance.v2", "suderra.qemu-acceptance.v3"}
+STATUS_VALUES = {"passed", "failed", "infra-error", "infra_error", "timeout", "not-applicable", "not_applicable"}
+FAILURE_CLASSES = {"none", "timeout", "infra_error", "semantic_failure", "security_failure", "operator_error"}
 REQUIRED_CHECKS = {
     "boot",
     "systemd",
@@ -47,6 +48,13 @@ SEMANTIC_FACT_FIELDS = (
     "firstboot",
     "lockdown",
 )
+PRODUCTION_FACT_FIELDS = (
+    "secure_boot",
+    "dm_verity",
+    "rauc",
+    "data_encryption",
+    "anti_rollback",
+)
 SEMANTIC_CHECKS = {
     "zero-failed-units",
     "os-release",
@@ -58,7 +66,17 @@ SEMANTIC_CHECKS = {
     "listeners",
     "firewall",
 }
-STRICT_PROFILES = {"release-candidate", "production-candidate"}
+PRODUCTION_RUNTIME_CHECKS = {
+    "secure-boot-enforced",
+    "dm-verity-tamper-rejection",
+    "rauc-good-update",
+    "rauc-bad-signature-rejection",
+    "rauc-health-rollback",
+    "data-luks",
+    "anti-rollback",
+}
+STRICT_PROFILES = {"release-candidate", "production-candidate", "production-runtime"}
+PRODUCTION_PROFILES = {"production-candidate", "production-runtime"}
 
 
 def error(errors: list[str], path: str, message: str) -> None:
@@ -179,6 +197,85 @@ def check_binding(
         error(errors, "$.image_sha256", f"must match bound artifact sha256 {expected_artifact_sha256}")
 
 
+def validate_termination(errors: list[str], payload: dict[str, Any], require_pass: bool, profile: str) -> None:
+    termination = payload.get("termination")
+    schema_version = payload.get("schema_version")
+    if schema_version != SCHEMA_VERSION:
+        if profile in STRICT_PROFILES:
+            error(errors, "$.schema_version", f"strict QEMU profile requires {SCHEMA_VERSION}")
+        return
+    if not isinstance(termination, dict):
+        error(errors, "$.termination", "must be an object")
+        return
+    for field in ("mode", "reason"):
+        check_string(errors, f"$.termination.{field}", termination.get(field))
+    for field in ("killed", "timeout", "qmp_quit_sent", "qmp_quit_ack", "acceptable"):
+        if not isinstance(termination.get(field), bool):
+            error(errors, f"$.termination.{field}", "must be a boolean")
+    exit_status = termination.get("exit_status")
+    if exit_status is not None and not isinstance(exit_status, int):
+        error(errors, "$.termination.exit_status", "must be an integer or null")
+    sig = termination.get("signal")
+    if sig is not None and (not isinstance(sig, int) or sig <= 0):
+        error(errors, "$.termination.signal", "must be a positive integer or null")
+    if require_pass or payload.get("status") == "passed":
+        if termination.get("acceptable") is not True:
+            error(errors, "$.termination.acceptable", "must be true for passed QEMU evidence")
+        if termination.get("killed") is not False:
+            error(errors, "$.termination.killed", "must be false for passed QEMU evidence")
+        if termination.get("timeout") is not False:
+            error(errors, "$.termination.timeout", "must be false for passed QEMU evidence")
+        if exit_status != 0:
+            error(errors, "$.termination.exit_status", "must be 0 for passed QEMU evidence")
+        if payload.get("qemu_exit_status") != 0:
+            error(errors, "$.qemu_exit_status", "must be 0 for passed QEMU evidence")
+
+
+def validate_production_facts(errors: list[str], facts: dict[str, Any], checks: dict[str, Any]) -> None:
+    os_release = facts.get("os_release")
+    variant = os_release.get("VARIANT") if isinstance(os_release, dict) else None
+    if variant != "prod":
+        error(errors, "$.guest_facts.os_release.VARIANT", "must be prod for production-runtime QEMU input")
+    rootfs = facts.get("rootfs")
+    root_source = rootfs.get("mount_source") if isinstance(rootfs, dict) else None
+    cmdline_root = rootfs.get("cmdline_root") if isinstance(rootfs, dict) else None
+    if not any(isinstance(value, str) and ("dm-" in value or "verity" in value.lower()) for value in (root_source, cmdline_root)):
+        error(errors, "$.guest_facts.rootfs", "must show dm-verity-backed rootfs for production-runtime")
+    lockdown = facts.get("lockdown")
+    lockdown_status = lockdown.get("status") if isinstance(lockdown, dict) else None
+    if lockdown_status not in {"integrity", "confidentiality", "locked", "enforced"}:
+        error(errors, "$.guest_facts.lockdown.status", "must be an enforced lockdown state for production-runtime")
+    listeners = facts.get("listeners")
+    if not isinstance(listeners, list):
+        error(errors, "$.guest_facts.listeners", "must be a list for production-runtime")
+    firewall = facts.get("firewall")
+    if not isinstance(firewall, dict) or firewall.get("loaded") is not True:
+        error(errors, "$.guest_facts.firewall.loaded", "must be true for production-runtime")
+    for field in PRODUCTION_FACT_FIELDS:
+        if field not in facts:
+            error(errors, f"$.guest_facts.{field}", "must be collected for production-runtime")
+    secure_boot = facts.get("secure_boot")
+    if not isinstance(secure_boot, dict) or secure_boot.get("enabled") is not True:
+        error(errors, "$.guest_facts.secure_boot.enabled", "must be true for production-runtime")
+    dm_verity = facts.get("dm_verity")
+    if not isinstance(dm_verity, dict) or dm_verity.get("active") is not True:
+        error(errors, "$.guest_facts.dm_verity.active", "must be true for production-runtime")
+    rauc = facts.get("rauc")
+    if not isinstance(rauc, dict) or rauc.get("available") is not True:
+        error(errors, "$.guest_facts.rauc.available", "must be true for production-runtime")
+    data_encryption = facts.get("data_encryption")
+    if not isinstance(data_encryption, dict) or data_encryption.get("encrypted") is not True:
+        error(errors, "$.guest_facts.data_encryption.encrypted", "must be true for production-runtime")
+    anti_rollback = facts.get("anti_rollback")
+    rollback_floor = anti_rollback.get("rollback_floor") if isinstance(anti_rollback, dict) else None
+    if not isinstance(rollback_floor, str) or not rollback_floor.strip() or rollback_floor in PLACEHOLDER_VALUES:
+        error(errors, "$.guest_facts.anti_rollback.rollback_floor", "must be collected for production-runtime")
+    for name in ("rootfs", "lockdown-transition", "listeners", "firewall", *sorted(PRODUCTION_RUNTIME_CHECKS)):
+        result = checks.get(name)
+        if not isinstance(result, dict) or result.get("status") != "passed":
+            error(errors, f"$.checks.{name}.status", "must be passed for production-runtime")
+
+
 def validate(
     path: Path,
     check_files: bool,
@@ -206,6 +303,12 @@ def validate(
     if schema_version != SCHEMA_VERSION:
         if profile in STRICT_PROFILES or schema_version not in LEGACY_SCHEMA_VERSIONS:
             error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
+    failure_class = payload.get("failure_class")
+    if schema_version == SCHEMA_VERSION:
+        if failure_class not in FAILURE_CLASSES:
+            error(errors, "$.failure_class", f"must be one of: {', '.join(sorted(FAILURE_CLASSES))}")
+        if payload.get("status") == "passed" and failure_class != "none":
+            error(errors, "$.failure_class", "must be none when status is passed")
     for field in ("version", "target", "generated_at", "image", "qemu_version", "firmware"):
         check_string(errors, f"$.{field}", payload.get(field))
         if profile in STRICT_PROFILES and payload.get("status") == "passed":
@@ -218,6 +321,7 @@ def validate(
         error(errors, "$.status", f"must be one of: {', '.join(sorted(STATUS_VALUES))}")
     if require_pass and status != "passed":
         error(errors, "$.status", "must be passed for release QEMU input")
+    validate_termination(errors, payload, require_pass, profile)
     logs = payload.get("logs")
     log_roles: set[str] = set()
     semantic_log_path: Path | None = None
@@ -256,6 +360,10 @@ def validate(
     missing = sorted(REQUIRED_CHECKS - set(checks))
     if missing:
         error(errors, "$.checks", f"missing required checks: {', '.join(missing)}")
+    if profile in PRODUCTION_PROFILES:
+        missing_production = sorted(PRODUCTION_RUNTIME_CHECKS - set(checks))
+        if missing_production:
+            error(errors, "$.checks", f"missing production-runtime checks: {', '.join(missing_production)}")
     for name, result in checks.items():
         if not isinstance(result, dict):
             error(errors, f"$.checks.{name}", "must be an object")
@@ -294,6 +402,8 @@ def validate(
         if "listeners" in facts and not isinstance(listeners, list):
             error(errors, "$.guest_facts.listeners", "must be a list")
         check_semantic_log(errors, semantic_log_path, facts, check_files)
+        if profile in PRODUCTION_PROFILES:
+            validate_production_facts(errors, facts, checks)
     return errors
 
 
@@ -304,7 +414,7 @@ def main() -> int:
     parser.add_argument("--require-pass", action="store_true")
     parser.add_argument(
         "--profile",
-        choices=("smoke", "technical-dry-run", "release-candidate", "production-candidate"),
+        choices=("smoke", "technical-dry-run", "release-candidate", "production-candidate", "production-runtime"),
         default="release-candidate",
     )
     parser.add_argument("--expected-version")

@@ -75,6 +75,40 @@ defconfigs:
     blocker: x86-production-secureboot-verity-rauc-and-hardware-evidence-missing
     description: Industrial x86_64 production target.
 
+  - name: suderra_qemu_x86_64_prod_ab_defconfig
+    target: qemu-x86_64-prod-ab
+    arch: x86_64
+    artifact: disk.img
+    release_artifact: suderra-qemu-x86_64-prod-ab.img.xz
+    expected_artifacts:
+      - disk.img
+      - disk.img.xz
+      - MANIFEST.txt
+    qemu_test: false
+    ci_build: false
+    release: false
+    timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
+    production_required: true
+    production_ready: false
+    profile: production-runtime
+    boot_mode: uefi-secureboot-uki-qemu
+    partition_table: gpt
+    root_partition: rootfs-a
+    root_identity: verity-signed-cmdline
+    genimage: board/suderra/x86_64/genimage.cfg
+    post_image_arg: suderra_qemu_x86_64_prod_ab
+    signing: production-required
+    acceptance: qemu-system-x86_64-production-runtime-blocked
+    blocker: production-runtime-qemu-secureboot-verity-rauc-hsm-evidence-missing
+    description: Non-public QEMU production-runtime A/B evidence lane.
+
   - name: suderra_aarch64_defconfig
     target: generic-aarch64-template
     arch: aarch64

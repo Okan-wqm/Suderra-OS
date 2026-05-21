@@ -17,7 +17,8 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_VERSION = "suderra.post-publication-verification.v1"
+SCHEMA_VERSION = "suderra.post-publication-verification.v2"
+LEGACY_SCHEMA_VERSIONS = {"suderra.post-publication-verification.v1"}
 PLACEHOLDERS = {"", "not_collected", "NOT_COLLECTED", "TO_BE_COLLECTED", "pending", "PENDING"}
 
 
@@ -97,6 +98,7 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
         "run_id": args.run_id or os.environ.get("GITHUB_RUN_ID"),
         "run_attempt": args.run_attempt or os.environ.get("GITHUB_RUN_ATTEMPT"),
         "ref": args.ref or os.environ.get("GITHUB_REF"),
+        "source_sha": args.source_sha or os.environ.get("GITHUB_SHA"),
     }
     for field, value in (("identity", identity), ("issuer", issuer), *source.items()):
         if is_placeholder(value):
@@ -121,12 +123,29 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
 
         attestation_payload = json.loads(attestation_path.read_text(encoding="utf-8"))
         verified_subjects: dict[tuple[str, str], dict[str, str]] = {}
+        provenance: list[dict[str, Any]] = []
         for statement in machine.iter_attestation_statements(attestation_payload):
-            for subject in machine.subjects_from_statement(statement):
+            subjects = machine.subjects_from_statement(statement)
+            for subject in subjects:
                 verified_subjects[machine.subject_identity(subject)] = {
                     "name": subject["name"],
                     "sha256": subject["sha256"],
                 }
+            if subjects:
+                context, provenance_failures = machine.provenance_context(
+                    statement,
+                    expected_repository=str(source["repository"]),
+                    expected_ref=str(source["ref"]),
+                    expected_run_id=str(source["run_id"]),
+                    expected_run_attempt=str(source["run_attempt"]),
+                    expected_source_sha=str(source["source_sha"]),
+                )
+                if provenance_failures:
+                    raise ValueError(
+                        f"attestation provenance for {name} does not match publication context: "
+                        + "; ".join(provenance_failures)
+                    )
+                provenance.append(context)
         expected_subject = (name, sha256_file(asset_path))
         if expected_subject not in verified_subjects:
             actual = sorted(f"{item[0]}@{item[1]}" for item in verified_subjects)
@@ -153,6 +172,7 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
                     "sha256": sha256_file(attestation_path),
                     "bytes": attestation_path.stat().st_size,
                     "subjects": sorted(verified_subjects.values(), key=lambda value: (value["name"], value["sha256"])),
+                    "provenance": provenance,
                 },
             }
         )
@@ -211,7 +231,7 @@ def validate_file_ref(value: Any, path: str, failures: list[str]) -> None:
 
 def validate_record(payload: dict[str, Any], *, expected_version: str | None = None) -> list[str]:
     failures: list[str] = []
-    if payload.get("schema_version") != SCHEMA_VERSION:
+    if payload.get("schema_version") not in LEGACY_SCHEMA_VERSIONS | {SCHEMA_VERSION}:
         failures.append(f"schema_version must be {SCHEMA_VERSION}")
     if expected_version is not None and payload.get("version") != expected_version:
         failures.append(f"version must be {expected_version}")
@@ -227,6 +247,8 @@ def validate_record(payload: dict[str, Any], *, expected_version: str | None = N
         for field in ("repository", "workflow", "run_id", "run_attempt", "ref"):
             if is_placeholder(source.get(field)):
                 failures.append(f"source.{field} must be non-placeholder")
+        if payload.get("schema_version") == SCHEMA_VERSION and is_placeholder(source.get("source_sha")):
+            failures.append("source.source_sha must be non-placeholder")
     validate_file_ref(payload.get("publication_manifest"), "publication_manifest", failures)
     assets = payload.get("assets")
     if not isinstance(assets, list) or not assets:
@@ -256,6 +278,10 @@ def validate_record(payload: dict[str, Any], *, expected_version: str | None = N
         validate_file_ref(attestation, f"{path}.attestation", failures)
         if isinstance(attestation, dict):
             validate_subjects(attestation.get("subjects"), f"{path}.attestation.subjects", failures)
+            if payload.get("schema_version") == SCHEMA_VERSION:
+                provenance = attestation.get("provenance")
+                if not isinstance(provenance, list) or not provenance:
+                    failures.append(f"{path}.attestation.provenance must be a non-empty list")
             if isinstance(name, str) and isinstance(sha, str):
                 subjects = attestation.get("subjects")
                 if isinstance(subjects, list) and (name, sha) not in subject_set(subjects):
@@ -294,6 +320,7 @@ def validate_command(args: argparse.Namespace) -> int:
             run_id=payload.get("source", {}).get("run_id") if isinstance(payload.get("source"), dict) else None,
             run_attempt=payload.get("source", {}).get("run_attempt") if isinstance(payload.get("source"), dict) else None,
             ref=payload.get("source", {}).get("ref") if isinstance(payload.get("source"), dict) else None,
+            source_sha=payload.get("source", {}).get("source_sha") if isinstance(payload.get("source"), dict) else None,
         )
         try:
             expected = create_record(create_args)
@@ -327,6 +354,7 @@ def main() -> int:
     create.add_argument("--run-id")
     create.add_argument("--run-attempt")
     create.add_argument("--ref")
+    create.add_argument("--source-sha")
     create.set_defaults(func=create_command)
 
     validate = subparsers.add_parser("validate")

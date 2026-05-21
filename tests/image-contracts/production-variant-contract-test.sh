@@ -4,14 +4,20 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "${TMPDIR}"' EXIT
 POST_IMAGE="${PROJECT_ROOT}/board/suderra/common/post-image.sh"
 POST_BUILD="${PROJECT_ROOT}/board/suderra/common/post-build.sh"
 SIGN_BUNDLE="${PROJECT_ROOT}/scripts/sign-bundle.sh"
+CREATE_RAUC_BUNDLE="${PROJECT_ROOT}/scripts/create-rauc-bundle.sh"
+HSM_EVIDENCE="${PROJECT_ROOT}/scripts/evidence/validate-hsm-signing-evidence.py"
 
 grep -q 'BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${POST_IMAGE}"
 grep -q 'BR2 Suderra variant.*conflicts with SUDERRA_VARIANT' "${POST_IMAGE}"
 grep -q 'requires BR2_CONFIG or SUDERRA_VARIANT' "${POST_IMAGE}"
 grep -q 'SUDERRA_VARIANT must be dev or prod' "${POST_IMAGE}"
+grep -q 'production variant requires SUDERRA_SIGNING_MODE=prod' "${POST_IMAGE}"
+grep -q 'export SUDERRA_SIGNING_MODE="prod"' "${POST_IMAGE}"
 grep -q 'enforce_production_contract' "${POST_IMAGE}"
 grep -q 'SUDERRA_INSTALLER_PAYLOAD_PUBKEY must point to the pinned Ed25519 public key' "${POST_IMAGE}"
 grep -q 'openssl pkeyutl -verify -rawin -pubin' "${POST_IMAGE}"
@@ -26,4 +32,73 @@ grep -q 'SUDERRA_RELEASE_TIER' "${SIGN_BUNDLE}"
 grep -q 'PROD_MODE' "${SIGN_BUNDLE}"
 grep -q 'warn_or_fail' "${SIGN_BUNDLE}"
 grep -q 'SUDERRA_RAUC_PKCS11_URI' "${SIGN_BUNDLE}"
+grep -q 'SUDERRA_HSM_SIGNING_EVIDENCE' "${SIGN_BUNDLE}"
+grep -q 'validate-hsm-signing-evidence.py' "${SIGN_BUNDLE}"
 grep -q 'production signing rejects file-backed private keys' "${SIGN_BUNDLE}"
+grep -q 'RAUC bundle HSM/PKCS#11' "${SIGN_BUNDLE}"
+if grep -q 'PKCS#11 RAUC signing provider is not implemented' "${SIGN_BUNDLE}"; then
+    echo "ERROR: production signing must have a real PKCS#11 provider path, not a placeholder hard-fail" >&2
+    exit 1
+fi
+
+grep -q 'SUDERRA_RAUC_PKCS11_URI' "${CREATE_RAUC_BUNDLE}"
+grep -q 'SUDERRA_HSM_SIGNING_EVIDENCE' "${CREATE_RAUC_BUNDLE}"
+grep -q 'validate-hsm-signing-evidence.py' "${CREATE_RAUC_BUNDLE}"
+grep -q 'production RAUC signing rejects file-backed private keys' "${CREATE_RAUC_BUNDLE}"
+if grep -q 'PKCS#11 RAUC signing provider is not implemented' "${CREATE_RAUC_BUNDLE}"; then
+    echo "ERROR: RAUC bundle creation must support production PKCS#11 signing without file fallback" >&2
+    exit 1
+fi
+
+python3 -m py_compile "${HSM_EVIDENCE}"
+grep -q 'suderra.hsm-signing-session.v1' "${HSM_EVIDENCE}"
+grep -q 'hardware_backed' "${HSM_EVIDENCE}"
+grep -q 'certificate_sha256' "${HSM_EVIDENCE}"
+
+python3 - "${TMPDIR}" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+cert = root / "rauc-signing.crt"
+cert.write_text("contract certificate\n", encoding="utf-8")
+payload = {
+    "schema_version": "suderra.hsm-signing-session.v1",
+    "mode": "production",
+    "provider": "contract-hsm",
+    "hardware_backed": True,
+    "hsm_serial": "contract-serial",
+    "pkcs11_uri": "pkcs11:token=Suderra;object=rauc-prod;type=private",
+    "key_label": "rauc-prod",
+    "key_id": "01",
+    "certificate_sha256": hashlib.sha256(cert.read_bytes()).hexdigest(),
+    "ceremony_id": "CER-2026-0001",
+    "operator": "release-operator",
+    "issuer": "security-compliance",
+    "started_at": "2026-05-21T00:00:00Z",
+    "expires_at": "2099-01-01T00:00:00Z",
+    "audit": {
+        "log_sha256": "a" * 64,
+        "transcript_sha256": "b" * 64,
+    },
+}
+(root / "hsm-evidence.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+python3 "${HSM_EVIDENCE}" validate \
+    "${TMPDIR}/hsm-evidence.json" \
+    --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
+    --certificate "${TMPDIR}/rauc-signing.crt" \
+    --require-production \
+    >/dev/null
+if python3 "${HSM_EVIDENCE}" validate \
+    "${TMPDIR}/hsm-evidence.json" \
+    --pkcs11-uri 'pkcs11:token=Suderra;object=wrong;type=private' \
+    --certificate "${TMPDIR}/rauc-signing.crt" \
+    --require-production \
+    2>"${TMPDIR}/hsm-uri.err"; then
+    echo "ERROR: HSM signing evidence validator accepted the wrong PKCS#11 URI" >&2
+    exit 1
+fi
+grep -q "pkcs11_uri" "${TMPDIR}/hsm-uri.err"

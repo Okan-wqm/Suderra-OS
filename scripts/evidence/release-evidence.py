@@ -30,8 +30,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.release-evidence.v3"
-LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2"}
+SCHEMA_VERSION = "suderra.release-evidence.v4"
+LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2", "suderra.release-evidence.v3"}
 ASSET_MANIFEST_SCHEMA_VERSION = "suderra.release-assets.v1"
 APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
 
@@ -78,11 +78,13 @@ TARGET_CONTRACT_FIELDS = {
 }
 
 STATUS_VALUES = {"passed", "failed", "not_run", "not_applicable", "not_collected"}
+FAILURE_CLASS_VALUES = {"none", "timeout", "infra_error", "semantic_failure", "security_failure", "operator_error"}
 VEX_STATUS_VALUES = {"present", "not_applicable", "not_collected"}
 RISK_STATUS_VALUES = {"none", "accepted", "blocked"}
 DECISION_STATUS_VALUES = {"approved", "approved_with_residual_risk", "blocked"}
 MACHINE_VERIFICATION_CHECKS = ("sha256sums", "cosign", "attestations")
-MACHINE_VERIFICATION_SCHEMA_VERSION = "suderra.machine-verification.v2"
+MACHINE_VERIFICATION_SCHEMA_VERSION = "suderra.machine-verification.v3"
+LEGACY_MACHINE_VERIFICATION_SCHEMA_VERSIONS = {"suderra.machine-verification.v2"}
 GOVERNANCE_CHECKS = (
     "policy_validation",
     "branch_protection",
@@ -96,7 +98,19 @@ GOVERNANCE_CHECKS = (
     "codeowners",
     "audit_log",
 )
-REQUIRED_RUNTIME_CHECKS = ("dm_verity", "rauc", "lockdown", "nmap", "systemd_security")
+REQUIRED_RUNTIME_CHECKS = (
+    "secure_boot",
+    "dm_verity",
+    "dm_verity_tamper",
+    "rauc_good_update",
+    "rauc_bad_signature",
+    "rauc_health_rollback",
+    "anti_rollback",
+    "data_luks",
+    "lockdown",
+    "nmap",
+    "systemd_security",
+)
 REQUIRED_QEMU_CHECKS = (
     "boot",
     "systemd",
@@ -396,6 +410,7 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "approval": None,
             "reproducibility": None,
             "security_reports": [],
+            "security_raw_evidence": [],
             "qemu": None,
             "lab": None,
         },
@@ -460,6 +475,18 @@ def check_bool(validation: Validation, path: str, value: Any) -> None:
 def check_status(validation: Validation, path: str, value: Any, allowed: set[str]) -> None:
     if value not in allowed:
         validation.error(path, f"must be one of: {', '.join(sorted(allowed))}")
+
+
+def normalize_release_status(value: Any) -> str:
+    if value == "passed":
+        return "passed"
+    if value in {"failed", "timeout", "infra-error", "infra_error"}:
+        return "failed"
+    if value in {"not-applicable", "not_applicable"}:
+        return "not_applicable"
+    if value in STATUS_VALUES:
+        return str(value)
+    return "not_collected"
 
 
 def check_sha256(validation: Validation, path: str, value: Any, required: bool) -> None:
@@ -753,6 +780,29 @@ def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: di
                 record_source,
                 f"machine-verification/{name}.json",
             )
+            material_refs: list[dict[str, Any]] = []
+            material = record_payload.get("verification_material") if isinstance(record_payload, dict) else None
+            if name == "attestations" and isinstance(material, dict):
+                files = material.get("files")
+                if isinstance(files, list):
+                    for item in files:
+                        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                            continue
+                        source_json = release_dir / "machine-verification" / "attestations" / Path(item["path"]).name
+                        if not source_json.is_file() or source_json.stat().st_size <= 0:
+                            continue
+                        rel = copy_into_bundle(
+                            bundle_dir,
+                            source_json,
+                            f"machine-verification/attestations/{source_json.name}",
+                        )
+                        material_refs.append(
+                            {
+                                "path": rel,
+                                "sha256": sha256_file(bundle_dir / rel),
+                                "bytes": (bundle_dir / rel).stat().st_size,
+                            }
+                        )
             evidence["machine_verification"][name] = {
                 "status": "passed",
                 "logs": [copy_into_bundle(bundle_dir, source, f"machine-verification/{name}.log")],
@@ -762,6 +812,8 @@ def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: di
                     "bytes": (bundle_dir / record_rel).stat().st_size,
                 },
             }
+            if material_refs:
+                evidence["machine_verification"][name]["materials"] = material_refs
 
 
 def apply_build_evidence(bundle_dir: Path, input_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
@@ -857,7 +909,7 @@ def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str
             continue
         source = qemu_dir / log_path
         copy_input_relative(bundle_dir, qemu_dir, log_path, "qemu/input")
-        if source.is_file() and source.stat().st_size > 0:
+        if source.is_file():
             copied = copy_into_bundle(bundle_dir, source, f"qemu/{idx}-{Path(log_path).name}")
             copied_path = bundle_dir / copied
             record: dict[str, Any] = {
@@ -878,9 +930,29 @@ def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str
             for name, result in checks.items()
             if isinstance(result, dict) and result.get("status") == "passed"
         ]
+    execution_fields = (
+        "schema_version",
+        "profile",
+        "started_at",
+        "completed_at",
+        "timeout_seconds",
+        "qemu_exit_status",
+        "qemu_args",
+        "termination",
+        "failure_class",
+        "result",
+        "error",
+    )
+    execution = {
+        field: qemu_input.get(field)
+        for field in execution_fields
+        if field in qemu_input
+    }
     evidence["qemu"] = {
         "required": True,
-        "status": qemu_input.get("status", "not_collected"),
+        "status": normalize_release_status(qemu_input.get("status", "not_collected")),
+        "failure_class": qemu_input.get("failure_class", "none" if qemu_input.get("status") == "passed" else "semantic_failure"),
+        "validation_profile": qemu_input.get("profile"),
         "input": {
             "path": input_copy,
             "sha256": sha256_file(bundle_dir / input_copy),
@@ -892,12 +964,21 @@ def apply_qemu_input(bundle_dir: Path, lab_root: Path, version: str, target: str
         "firmware_sha256": qemu_input.get("firmware_sha256"),
         "logs": logs,
         "checks": checks if isinstance(checks, list) else [],
+        "check_details": semantic_checks,
         "semantic_checks": semantic_checks,
+        "execution": execution,
         "guest_facts": qemu_input.get("guest_facts", {}),
     }
 
 
-def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
+def apply_hardware_input(
+    bundle_dir: Path,
+    lab_root: Path,
+    governance_root: Path,
+    version: str,
+    target: str,
+    evidence: dict[str, Any],
+) -> None:
     lab_dir = lab_root / version / target
     lab_input = read_json(lab_dir / "lab.json")
     if not isinstance(lab_input, dict):
@@ -917,13 +998,18 @@ def apply_hardware_input(bundle_dir: Path, lab_root: Path, version: str, target:
         evidence["hardware"]["station"] = lab_input["station"]
     if isinstance(lab_input.get("artifact_binding"), dict):
         evidence["hardware"]["artifact_binding"] = lab_input["artifact_binding"]
-    registry_source = lab_root / "station-registry.json"
+    registry_source = governance_root / version / "station-registry.json"
+    registry_source_domain = "release-governance"
+    if not registry_source.is_file():
+        registry_source = lab_root / "station-registry.json"
+        registry_source_domain = "release-lab-input"
     if registry_source.is_file():
         registry_rel = copy_into_bundle(bundle_dir, registry_source, "hardware/input/station-registry.json")
         evidence["hardware"]["station_registry"] = {
             "path": registry_rel,
             "sha256": sha256_file(bundle_dir / registry_rel),
             "bytes": (bundle_dir / registry_rel).stat().st_size,
+            "source_domain": registry_source_domain,
         }
     if isinstance(lab_input.get("station_bundle"), dict):
         station_bundle = dict(lab_input["station_bundle"])
@@ -1068,6 +1154,7 @@ def apply_release_inputs(
     for scan in evidence["security_scans"]:
         report = input_root / "release-security" / version / f"{scan['name']}.json"
         if report.is_file() and report.stat().st_size > 0:
+            report_payload = read_json(report)
             scan["status"] = "passed"
             rel_report = copy_into_bundle(bundle_dir, report, f"preflight/security/{report.name}")
             scan["report"] = rel_report
@@ -1079,6 +1166,37 @@ def apply_release_inputs(
                     "bytes": (bundle_dir / rel_report).stat().st_size,
                 }
             )
+            if isinstance(report_payload, dict):
+                evidence_path = report_payload.get("evidence_path")
+                evidence_sha = report_payload.get("evidence_sha256")
+                evidence_bytes = report_payload.get("evidence_bytes")
+                if isinstance(evidence_path, str) and not Path(evidence_path).is_absolute() and ".." not in Path(evidence_path).parts:
+                    raw_source = input_root / "release-security" / evidence_path
+                    if raw_source.is_file() and raw_source.stat().st_size > 0:
+                        raw_rel = copy_into_bundle(
+                            bundle_dir,
+                            raw_source,
+                            f"preflight/security/raw/{sha256_file(raw_source)}-{Path(evidence_path).name}",
+                        )
+                        raw_record = {
+                            "name": scan["name"],
+                            "source_path": evidence_path,
+                            "path": raw_rel,
+                            "sha256": sha256_file(bundle_dir / raw_rel),
+                            "bytes": (bundle_dir / raw_rel).stat().st_size,
+                        }
+                        if isinstance(evidence_sha, str):
+                            raw_record["report_sha256"] = evidence_sha
+                        if isinstance(evidence_bytes, int):
+                            raw_record["report_bytes"] = evidence_bytes
+                        raw_items = evidence["preflight_inputs"]["security_raw_evidence"]
+                        if not any(
+                            isinstance(item, dict)
+                            and item.get("sha256") == raw_record["sha256"]
+                            and item.get("source_path") == raw_record["source_path"]
+                            for item in raw_items
+                        ):
+                            raw_items.append(raw_record)
     approval_path = input_root / "release-approvals" / version / f"{target}.json"
     approvals = read_json(approval_path)
     if isinstance(approvals, dict):
@@ -1417,10 +1535,16 @@ def validate_machine_verification(validation: Validation, evidence: dict[str, An
             if not isinstance(payload, dict):
                 validation.error(f"{path}.record.path", "must be machine verification JSON")
             else:
-                if payload.get("schema_version") != MACHINE_VERIFICATION_SCHEMA_VERSION:
+                schema_version = payload.get("schema_version")
+                if schema_version not in LEGACY_MACHINE_VERIFICATION_SCHEMA_VERSIONS | {MACHINE_VERIFICATION_SCHEMA_VERSION}:
                     validation.error(
                         f"{path}.record.path",
                         f"schema_version must be {MACHINE_VERIFICATION_SCHEMA_VERSION}",
+                    )
+                elif require_pass and schema_version != MACHINE_VERIFICATION_SCHEMA_VERSION:
+                    validation.error(
+                        f"{path}.record.path",
+                        f"release-ready evidence requires {MACHINE_VERIFICATION_SCHEMA_VERSION}",
                     )
                 try:
                     verifier = load_script_module(
@@ -1453,6 +1577,13 @@ def validate_machine_verification(validation: Validation, evidence: dict[str, An
                         actual_log = file_for_relative_path(validation, matching_logs[0])
                         if actual_log is not None and sha256_file(actual_log) != log["sha256"]:
                             validation.error(f"{path}.record.path", "record log sha256 must match preserved log")
+                if name == "attestations" and require_pass:
+                    materials = check.get("materials")
+                    if not isinstance(materials, list) or not materials:
+                        validation.error(f"{path}.materials", "must preserve raw attestation JSON material")
+                    else:
+                        for idx, material_ref in enumerate(materials):
+                            validate_preserved_ref(validation, f"{path}.materials[{idx}]", material_ref, True)
         if require_pass and check.get("status") != "passed":
             validation.error(f"{path}.status", "must be passed for release-ready evidence")
         if require_pass and not logs:
@@ -1610,6 +1741,34 @@ def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], 
     if not isinstance(reports, list):
         validation.error("$.preflight_inputs.security_reports", "must be a list")
         reports = []
+    raw_reports = inputs.get("security_raw_evidence")
+    raw_by_source: dict[tuple[str, str], dict[str, Any]] = {}
+    if not isinstance(raw_reports, list):
+        validation.error("$.preflight_inputs.security_raw_evidence", "must be a list")
+        raw_reports = []
+    for idx, item in enumerate(raw_reports):
+        raw_path = f"$.preflight_inputs.security_raw_evidence[{idx}]"
+        raw_file = validate_preserved_ref(validation, raw_path, item, require_pass)
+        if not isinstance(item, dict):
+            continue
+        check_string(validation, f"{raw_path}.name", item.get("name"))
+        check_string(validation, f"{raw_path}.source_path", item.get("source_path"))
+        if isinstance(item.get("source_path"), str):
+            rel = Path(item["source_path"])
+            if rel.is_absolute() or ".." in rel.parts:
+                validation.error(f"{raw_path}.source_path", "must be relative and must not contain '..'")
+        if "report_sha256" in item:
+            check_sha256(validation, f"{raw_path}.report_sha256", item.get("report_sha256"), True)
+            if item.get("report_sha256") != item.get("sha256"):
+                validation.error(f"{raw_path}.report_sha256", "must match preserved raw evidence sha256")
+        if "report_bytes" in item:
+            check_positive_int(validation, f"{raw_path}.report_bytes", item.get("report_bytes"), True)
+            if item.get("report_bytes") != item.get("bytes"):
+                validation.error(f"{raw_path}.report_bytes", "must match preserved raw evidence bytes")
+        if isinstance(item.get("source_path"), str) and isinstance(item.get("sha256"), str):
+            raw_by_source[(item["source_path"], item["sha256"])] = item
+        if raw_file is not None and raw_file.stat().st_size > 10 * 1024 * 1024:
+            validation.error(raw_path, "raw security evidence exceeds 10 MiB cap")
     for idx, item in enumerate(reports):
         report_path = validate_preserved_ref(
             validation,
@@ -1631,6 +1790,23 @@ def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], 
                     str(ci.get("run_id")) if ci.get("run_id") is not None else None,
                 ):
                     validation.error(f"$.preflight_inputs.security_reports[{idx}].path", failure)
+                report_payload = read_json(report_path)
+                if isinstance(report_payload, dict):
+                    evidence_path = report_payload.get("evidence_path")
+                    evidence_sha = report_payload.get("evidence_sha256")
+                    evidence_bytes = report_payload.get("evidence_bytes")
+                    if isinstance(evidence_path, str) and isinstance(evidence_sha, str):
+                        raw = raw_by_source.get((evidence_path, evidence_sha))
+                        if not isinstance(raw, dict):
+                            validation.error(
+                                f"$.preflight_inputs.security_reports[{idx}].path",
+                                "must preserve matching raw security evidence",
+                            )
+                        elif isinstance(evidence_bytes, int) and raw.get("bytes") != evidence_bytes:
+                            validation.error(
+                                f"$.preflight_inputs.security_reports[{idx}].path",
+                                "raw security evidence bytes must match report",
+                            )
             except Exception as exc:
                 validation.error(f"$.preflight_inputs.security_reports[{idx}].path", f"cannot validate security report: {exc}")
 
@@ -1707,7 +1883,12 @@ def validate_qemu(
                     check_string(validation, f"{path}.role", log.get("role"))
                 check_relative_path(validation, f"{path}.path", log.get("path"), True)
                 check_sha256(validation, f"{path}.sha256", log.get("sha256"), True)
-                check_positive_int(validation, f"{path}.bytes", log.get("bytes"), True)
+                allow_empty = log.get("role") == "qemu-stderr"
+                if allow_empty:
+                    if not isinstance(log.get("bytes"), int) or log.get("bytes") < 0:
+                        validation.error(f"{path}.bytes", "must be a non-negative integer")
+                else:
+                    check_positive_int(validation, f"{path}.bytes", log.get("bytes"), True)
                 check_file_sha256(validation, f"{path}.sha256", log.get("path"), log.get("sha256"))
                 check_file_size(validation, f"{path}.bytes", log.get("path"), log.get("bytes"))
                 if "input_sha256" in log:
@@ -1721,6 +1902,33 @@ def validate_qemu(
         for idx, check in enumerate(checks):
             if not is_non_empty_string(check):
                 validation.error(f"$.qemu.checks[{idx}]", "must be a non-empty string")
+    if "failure_class" in qemu and qemu.get("failure_class") not in FAILURE_CLASS_VALUES:
+        validation.error("$.qemu.failure_class", f"must be one of: {', '.join(sorted(FAILURE_CLASS_VALUES))}")
+    execution = qemu.get("execution")
+    if execution is not None:
+        if not isinstance(execution, dict):
+            validation.error("$.qemu.execution", "must be an object")
+        else:
+            if "termination" in execution:
+                termination = execution.get("termination")
+                if not isinstance(termination, dict):
+                    validation.error("$.qemu.execution.termination", "must be an object")
+                else:
+                    for field in ("killed", "timeout", "qmp_quit_sent", "qmp_quit_ack", "acceptable"):
+                        if field in termination and not isinstance(termination.get(field), bool):
+                            validation.error(f"$.qemu.execution.termination.{field}", "must be a boolean")
+                    if require_pass and expected_required:
+                        if termination.get("acceptable") is not True:
+                            validation.error("$.qemu.execution.termination.acceptable", "must be true when QEMU evidence is required")
+                        if termination.get("killed") is not False:
+                            validation.error("$.qemu.execution.termination.killed", "must be false when QEMU evidence is required")
+                        if termination.get("exit_status") != 0:
+                            validation.error("$.qemu.execution.termination.exit_status", "must be 0 when QEMU evidence is required")
+            if require_pass and expected_required and execution.get("qemu_exit_status") not in (0, None):
+                validation.error("$.qemu.execution.qemu_exit_status", "must be 0 when QEMU evidence is required")
+    check_details = qemu.get("check_details")
+    if check_details is not None and not isinstance(check_details, dict):
+        validation.error("$.qemu.check_details", "must be an object")
 
     if require_pass and expected_required:
         qemu_input = qemu.get("input")
@@ -1738,7 +1946,9 @@ def validate_qemu(
                     try:
                         module = load_script_module("validate_qemu_input", "scripts/evidence/validate-qemu-input.py")
                         source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
-                        profile = "release-candidate" if "-" in str(evidence.get("version", "")) else "production-candidate"
+                        profile = qemu.get("validation_profile")
+                        if not isinstance(profile, str) or not profile:
+                            profile = "release-candidate" if "-" in str(evidence.get("version", "")) else "production-candidate"
                         for failure in module.validate(
                             qemu_input_path,
                             True,
@@ -1773,9 +1983,9 @@ def validate_qemu(
             ):
                 if field not in facts:
                     validation.error("$.qemu.guest_facts", f"missing semantic fact: {field}")
-        semantic_checks = qemu.get("semantic_checks")
+        semantic_checks = qemu.get("check_details") or qemu.get("semantic_checks")
         if not isinstance(semantic_checks, dict) or not semantic_checks:
-            validation.error("$.qemu.semantic_checks", "must preserve semantic QEMU check details")
+            validation.error("$.qemu.check_details", "must preserve semantic QEMU check details")
         if qemu.get("status") != "passed":
             validation.error("$.qemu.status", "must be passed when QEMU evidence is required")
         if not logs:
@@ -1805,6 +2015,11 @@ def validate_hardware(
         if not isinstance(station_registry, dict):
             validation.error("$.hardware.station_registry", "must preserve external station registry")
         else:
+            if station_registry.get("source_domain") != "release-governance":
+                validation.error(
+                    "$.hardware.station_registry.source_domain",
+                    "must be release-governance for release-ready evidence",
+                )
             check_relative_path(validation, "$.hardware.station_registry.path", station_registry.get("path"), True)
             check_sha256(validation, "$.hardware.station_registry.sha256", station_registry.get("sha256"), True)
             check_positive_int(validation, "$.hardware.station_registry.bytes", station_registry.get("bytes"), True)
@@ -2369,6 +2584,7 @@ def schema_contract() -> dict[str, Any]:
         "required_top_level_fields": sorted(TOP_LEVEL_FIELDS),
         "target_contract_fields": sorted(TARGET_CONTRACT_FIELDS),
         "status_values": sorted(STATUS_VALUES),
+        "failure_class_values": sorted(FAILURE_CLASS_VALUES),
         "vex_status_values": sorted(VEX_STATUS_VALUES),
         "residual_risk_status_values": sorted(RISK_STATUS_VALUES),
         "release_decision_status_values": sorted(DECISION_STATUS_VALUES),
@@ -2584,7 +2800,7 @@ def assemble_release_command(args: argparse.Namespace) -> int:
         apply_build_evidence(bundle_dir, args.input_root, args.version, target, evidence)
         apply_governance(bundle_dir, args.governance_root, args.version, evidence)
         apply_qemu_input(bundle_dir, args.lab_root, args.version, target, evidence)
-        apply_hardware_input(bundle_dir, args.lab_root, args.version, target, evidence)
+        apply_hardware_input(bundle_dir, args.lab_root, args.governance_root, args.version, target, evidence)
         apply_release_inputs(bundle_dir, args.release_dir, args.input_root, args.version, target, evidence)
 
         evidence_path = bundle_dir / "evidence.json"

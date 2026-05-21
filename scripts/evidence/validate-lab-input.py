@@ -11,6 +11,7 @@ actual staged, signed, and attested release bytes.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -118,6 +119,15 @@ def check_string(errors: list[str], path: str, value: Any) -> None:
 def check_status(errors: list[str], path: str, value: Any) -> None:
     if value not in STATUS_VALUES:
         error(errors, path, f"must be one of: {', '.join(sorted(STATUS_VALUES))}")
+
+
+def parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return None
+    try:
+        return datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
 
 
 def sha256_file(path: Path) -> str:
@@ -231,6 +241,7 @@ def check_station_registry(
     payload: dict[str, Any],
     registry: dict[str, Any] | None,
     public_key_sha256: Any,
+    profile: str,
 ) -> None:
     if not isinstance(registry, dict):
         error(errors, "$.station_registry", "strict lab input requires an external station registry")
@@ -252,10 +263,17 @@ def check_station_registry(
         error(errors, "$.target", "must be allowed by external station registry")
     elif not isinstance(allowed_targets, list) or not allowed_targets:
         error(errors, "$.station_registry.allowed_targets", "must be a non-empty list")
-    if not is_string(entry.get("calibration_expires_at")):
+    calibration_expires_at = entry.get("calibration_expires_at")
+    calibration_expiry = parse_utc(calibration_expires_at)
+    if calibration_expiry is None:
         error(errors, "$.station_registry.calibration_expires_at", "must be recorded")
+    elif profile in STRICT_PROFILES and calibration_expiry <= datetime.now(timezone.utc):
+        error(errors, "$.station_registry.calibration_expires_at", "must be in the future")
     if not isinstance(entry.get("adapter_inventory"), dict) or not entry["adapter_inventory"]:
         error(errors, "$.station_registry.adapter_inventory", "must be a non-empty object")
+    operator_roles = entry.get("operator_roles")
+    if profile in STRICT_PROFILES and (not isinstance(operator_roles, list) or not operator_roles):
+        error(errors, "$.station_registry.operator_roles", "must be a non-empty list")
     allowed_storage = entry.get("allowed_storage_by_id")
     if not isinstance(allowed_storage, list) or not allowed_storage:
         error(errors, "$.station_registry.allowed_storage_by_id", "must be a non-empty list")
@@ -342,7 +360,7 @@ def check_station_bundle(
 
     station = payload.get("station") if isinstance(payload.get("station"), dict) else {}
     public_key_sha256 = station_signature.get("public_key_sha256")
-    check_station_registry(errors, payload, station_registry, public_key_sha256)
+    check_station_registry(errors, payload, station_registry, public_key_sha256, profile)
     trusted_key_fingerprint = station.get("trusted_key_fingerprint")
     if isinstance(public_key_sha256, str) and isinstance(trusted_key_fingerprint, str):
         if trusted_key_fingerprint not in {public_key_sha256, f"sha256:{public_key_sha256}"}:

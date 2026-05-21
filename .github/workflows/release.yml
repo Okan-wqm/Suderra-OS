@@ -307,6 +307,12 @@ jobs:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: .
 
+      - name: Download governance evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-governance-${{ needs.validate.outputs.version }}
+          path: .
+
       - name: Validate full-matrix lab evidence input
         run: |
           set -euo pipefail
@@ -315,7 +321,7 @@ jobs:
             --root release-lab-input \
             --profile "${{ needs.validate.outputs.preflight_profile }}" \
             --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
-            --station-registry release-lab-input/station-registry.json \
+            --station-registry release-governance/${{ needs.validate.outputs.version }}/station-registry.json \
             --require-pass \
             --check-files
 
@@ -324,12 +330,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
-
-      - name: Download governance evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: release-governance-${{ needs.validate.outputs.version }}
-          path: .
 
       - name: Stage release files
         run: |
@@ -629,6 +629,7 @@ jobs:
           COSIGN_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
+          SOURCE_COMMIT="$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")"
           mkdir -p machine-verification
           sha256sum -c SHA256SUMS | tee machine-verification/sha256sums.log
           python3 ../scripts/evidence/machine-verification-record.py create \
@@ -637,7 +638,8 @@ jobs:
             --log machine-verification/sha256sums.log \
             --output machine-verification/sha256sums.json \
             --identity "${COSIGN_IDENTITY}" \
-            --issuer "https://token.actions.githubusercontent.com"
+            --issuer "https://token.actions.githubusercontent.com" \
+            --source-sha "${SOURCE_COMMIT}"
           : > machine-verification/cosign.log
           find . -maxdepth 1 -type f \
             ! -name '*.sig' \
@@ -659,7 +661,8 @@ jobs:
             --log machine-verification/cosign.log \
             --output machine-verification/cosign.json \
             --identity "${COSIGN_IDENTITY}" \
-            --issuer "https://token.actions.githubusercontent.com"
+            --issuer "https://token.actions.githubusercontent.com" \
+            --source-sha "${SOURCE_COMMIT}"
           : > machine-verification/attestations.log
           mkdir -p machine-verification/attestations
           find . -maxdepth 1 -type f \
@@ -684,6 +687,7 @@ jobs:
             --output machine-verification/attestations.json \
             --identity "${COSIGN_IDENTITY}" \
             --issuer "https://token.actions.githubusercontent.com" \
+            --source-sha "${SOURCE_COMMIT}" \
             --attestation-json-dir machine-verification/attestations
 
       - name: Assemble and validate final release evidence
@@ -836,7 +840,7 @@ jobs:
           tag_name: ${{ needs.validate.outputs.version }}
           name: "Suderra OS ${{ needs.validate.outputs.version }}"
           generate_release_notes: true
-          draft: false
+          draft: true
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           body: |
             # Suderra OS ${{ needs.validate.outputs.version }}
@@ -929,6 +933,7 @@ jobs:
           COSIGN_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
+          SOURCE_COMMIT="$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")"
           rm -rf downloaded-release
           mkdir -p downloaded-release
           gh release download "${{ needs.validate.outputs.version }}" \
@@ -970,7 +975,8 @@ jobs:
             --attestation-json-dir downloaded-release-attestations \
             --output post-publication-verification/release-post-publication-verification.json \
             --identity "${COSIGN_IDENTITY}" \
-            --issuer "https://token.actions.githubusercontent.com"
+            --issuer "https://token.actions.githubusercontent.com" \
+            --source-sha "${SOURCE_COMMIT}"
           cosign sign-blob \
             --yes \
             --output-signature post-publication-verification/release-post-publication-verification.json.sig \
@@ -981,6 +987,29 @@ jobs:
             --expected-version "${{ needs.validate.outputs.version }}" \
             --release-dir downloaded-release \
             --attestation-json-dir downloaded-release-attestations
+          cp downloaded-release-attestations/*.json post-publication-verification/
+          python3 scripts/evidence/release-publication-proof-manifest.py create \
+            --version "${{ needs.validate.outputs.version }}" \
+            --release-dir downloaded-release \
+            --proof-dir post-publication-verification \
+            --output post-publication-verification/release-publication-proof-manifest.json
+          cosign sign-blob \
+            --yes \
+            --output-signature post-publication-verification/release-publication-proof-manifest.json.sig \
+            --output-certificate post-publication-verification/release-publication-proof-manifest.json.cert \
+            post-publication-verification/release-publication-proof-manifest.json
+          python3 scripts/evidence/release-publication-proof-manifest.py validate \
+            post-publication-verification/release-publication-proof-manifest.json \
+            --release-dir downloaded-release \
+            --proof-dir post-publication-verification \
+            --expected-version "${{ needs.validate.outputs.version }}"
+          gh release upload "${{ needs.validate.outputs.version }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber \
+            post-publication-verification/*
+          gh release edit "${{ needs.validate.outputs.version }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false
 
       - name: Upload post-publication verification evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -32,10 +32,11 @@ PLACEHOLDERS = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", 
 SCHEMA_ROLES = {
     "binding_manifest": BINDING_SCHEMA_VERSION,
     "approval": "suderra.release-approval.v2",
-    "qemu_input": "suderra.qemu-acceptance.v3",
+    "qemu_input": "suderra.qemu-acceptance.v4",
     "lab_input": "suderra.lab-evidence.v3",
-    "release_evidence": "suderra.release-evidence.v3",
+    "release_evidence": "suderra.release-evidence.v4",
 }
+OPTIONAL_EMPTY_INPUT_ROLES = {"qemu-stderr"}
 PREFLIGHT_INPUT_DIRS = (
     "release-inputs",
     "release-lab-input",
@@ -200,6 +201,8 @@ def input_role_for_path(rel_path: Path) -> str:
         return "qemu-input"
     if parts[0] == "release-lab-input" and rel_path.name == "qemu-semantic.json":
         return "qemu-semantic"
+    if parts[0] == "release-lab-input" and rel_path.name in {"qemu-stderr.log", "stderr.log"}:
+        return "qemu-stderr"
     if parts[0] == "release-lab-input" and rel_path.name == "lab.json":
         return "lab-input"
     if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json":
@@ -280,13 +283,17 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
             if not root.is_dir():
                 continue
             for path in sorted(root.rglob("*")):
-                if not path.is_file() or path.stat().st_size <= 0:
+                if not path.is_file():
                     continue
                 rel_path = path.relative_to(input_root)
+                role = input_role_for_path(rel_path)
+                if path.stat().st_size <= 0 and role not in OPTIONAL_EMPTY_INPUT_ROLES:
+                    failures.append(f"preflight input is empty and not allowlisted: {rel_path.as_posix()}")
+                    continue
                 append_file_record(
                     files,
                     source="preflight-input",
-                    role=input_role_for_path(rel_path),
+                    role=role,
                     path=path,
                     rel_path=rel_path,
                     defconfig=rel_path.parts[2] if len(rel_path.parts) > 3 and rel_path.parts[0] == "release-lab-input" else "release-input",
@@ -534,8 +541,9 @@ def validate_manifest(
             failures.append(f"{path}.source: must be build-artifact, build-evidence, installer-artifact, or preflight-input")
         rel_path = check_relative_path(failures, f"{path}.path", item.get("path"))
         check_sha256(failures, f"{path}.sha256", item.get("sha256"))
-        if not isinstance(item.get("bytes"), int) or item.get("bytes", 0) <= 0:
-            failures.append(f"{path}.bytes: must be a positive integer")
+        allow_empty = source == "preflight-input" and item.get("role") in OPTIONAL_EMPTY_INPUT_ROLES
+        if not isinstance(item.get("bytes"), int) or item.get("bytes", -1) < 0 or (item.get("bytes") == 0 and not allow_empty):
+            failures.append(f"{path}.bytes: must be a positive integer unless role allows empty evidence")
         if rel_path is not None:
             rel = rel_path.as_posix()
             if rel in seen_paths:
@@ -544,7 +552,7 @@ def validate_manifest(
             root = input_root if source == "preflight-input" else artifact_root
             if root is not None:
                 actual = root / rel_path
-                if not actual.is_file() or actual.stat().st_size <= 0:
+                if not actual.is_file() or (actual.stat().st_size <= 0 and not allow_empty):
                     failures.append(f"{path}.path: referenced file is missing or empty: {rel}")
                 else:
                     if actual.stat().st_size != item.get("bytes"):

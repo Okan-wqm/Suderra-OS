@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 SCHEMA_VERSION = "suderra.release-security-report.v1"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+MAX_RAW_EVIDENCE_BYTES = 10 * 1024 * 1024
 
 CHECKS_BY_SCAN = {
     "actionlint": ("GitHub Actions Lint",),
@@ -156,6 +157,17 @@ def collect(args: argparse.Namespace) -> int:
     check_runs = check_runs_from_payload(payload)
     latest = latest_checks_by_name(check_runs)
     evidence_sha = sha256_file(args.checks_json)
+    evidence_bytes = args.checks_json.stat().st_size
+    if evidence_bytes <= 0:
+        print(f"ERROR: check-runs JSON is empty: {args.checks_json}", file=sys.stderr)
+        return 1
+    if evidence_bytes > MAX_RAW_EVIDENCE_BYTES:
+        print(
+            f"ERROR: check-runs JSON exceeds raw evidence cap "
+            f"({evidence_bytes} > {MAX_RAW_EVIDENCE_BYTES} bytes): {args.checks_json}",
+            file=sys.stderr,
+        )
+        return 1
     out_dir = args.output_root / args.version
 
     failures: list[str] = []
@@ -178,6 +190,7 @@ def collect(args: argparse.Namespace) -> int:
                 "tool_version": "v1",
                 "evidence_type": "github_check_runs",
                 "evidence_sha256": evidence_sha,
+                "evidence_bytes": evidence_bytes,
                 "evidence_path": args.checks_json.relative_to(args.output_root).as_posix()
                 if args.checks_json.is_relative_to(args.output_root)
                 else args.checks_json.as_posix(),

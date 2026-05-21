@@ -74,7 +74,7 @@ Required top-level fields:
 
 | Field | Purpose |
 |---|---|
-| `schema_version` | Must be `suderra.release-evidence.v3`. |
+| `schema_version` | Must be `suderra.release-evidence.v4` for promotion evidence; v2/v3 are archive-only. |
 | `version`, `target` | Must match the bundle path components. |
 | `target_contract` | Snapshot from `ci/build-matrix.yml`. |
 | `source` | Repository, tag, commit, clean/dirty state, and CI run ID. |
@@ -89,7 +89,7 @@ Required top-level fields:
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
 | `hardware` | Board serial logs and hardware acceptance results. |
-| `runtime_checks` | `dm_verity`, `rauc`, `lockdown`, `nmap`, and `systemd_security`. |
+| `runtime_checks` | `secure_boot`, `dm_verity`, `dm_verity_tamper`, `rauc_good_update`, `rauc_bad_signature`, `rauc_health_rollback`, `anti_rollback`, `data_luks`, `lockdown`, `nmap`, and `systemd_security`. |
 | `approvals` | Release-owner or security approvals. |
 | `residual_risk` | Accepted or blocking residual risk records. |
 | `release_decision` | `blocked`, `approved`, or `approved_with_residual_risk`. |
@@ -121,9 +121,10 @@ python3 scripts/evidence/release-evidence.py assemble-release \
 ```
 
 The command consumes staged release assets, `release-assets.json`,
-`suderra.machine-verification.v2` records, preserved machine verification logs,
-preflight-bound Build logs, warning JSON, Buildroot source identity JSON, lab
-input, governance snapshots, security/reproducibility
+`suderra.machine-verification.v3` records, preserved machine verification logs,
+preserved raw attestation JSON, preflight-bound Build logs, warning JSON,
+Buildroot source identity JSON, lab input, governance snapshots,
+security/reproducibility
 reports, QEMU logs, and approval records. It preserves the original preflight
 input JSON/log/report files in the target bundle and `--require-pass
 --check-files` replays the same QEMU, lab, approval, security, warning, and
@@ -131,10 +132,16 @@ reproducibility validators against those preserved files. It intentionally
 produces bundles that fail `--require-pass` until every required input is
 present. Legacy v2 evidence can be updated structurally with:
 
+Security reports must preserve their raw scanner/check-run input. Each
+`suderra.release-security-report.v1` includes `evidence_path`,
+`evidence_sha256`, and `evidence_bytes`; final evidence stores the matching raw
+file under `preflight_inputs.security_raw_evidence` and rejects release-ready
+evidence when a report cannot be replay-bound to that raw byte stream.
+
 ```bash
 python3 scripts/evidence/release-evidence.py migrate \
     release-evidence/v0.1.0-alpha.1/rpi4/evidence.json \
-    --output /tmp/evidence-v3.json
+    --output /tmp/evidence-v4.json
 ```
 
 Migration does not manufacture missing release evidence; it only updates the
@@ -187,8 +194,9 @@ python3 scripts/evidence/validate-qemu-input.py \
     release-lab-input/v0.1.0-alpha.1/qemu-x86_64/qemu.json
 ```
 
-The file uses `suderra.qemu-acceptance.v3` and must contain image and firmware
-hashes, QEMU version, guest facts, logs, and required checks:
+The file uses `suderra.qemu-acceptance.v4` for promotion evidence and must
+contain image and firmware hashes, QEMU version, guest facts, logs, termination
+status, `failure_class`, and required checks:
 `boot`, `systemd`, `zero-failed-units`, `no-kernel-panic`,
 `no-emergency-mode`, `os-release`, `kernel`, `rootfs`, `network`,
 `firstboot-idempotence`, `lockdown-transition`, `listeners`, and `firewall`.
@@ -198,7 +206,9 @@ At minimum collect:
 - QEMU command line and boot log.
 - Kernel and systemd boot completion log.
 - Application startup log.
-- Exit status from the QEMU acceptance test.
+- Exit status and termination details from the QEMU acceptance test. Passed
+  evidence must exit cleanly; forced-kill or non-zero exit cannot satisfy
+  release-ready validation.
 
 Store logs under the target bundle, for example:
 
@@ -318,11 +328,13 @@ required USB negative tests to pass, and all required runtime checks to have
 passed evidence files.
 
 Strict release profiles also require
-`release-lab-input/station-registry.json` with schema
-`suderra.lab-station-registry.v1`. The validator trusts the station public key,
-fixture, allowed targets, allowed `/dev/disk/by-id/*` media, calibration record,
-and adapter inventory from that external registry; it does not trust a public
-key embedded only in the submitted lab bundle.
+`release-governance/<version>/station-registry.json` with schema
+`suderra.lab-station-registry.v1`. The registry is a governance-owned trust
+root, not part of the submitted lab bundle. The validator trusts the station
+public key, fixture, allowed targets, allowed `/dev/disk/by-id/*` media,
+calibration record, and adapter inventory from that protected registry; it does
+not trust a public key or station allowlist embedded only in lab input.
+Calibration expiry must be a future UTC timestamp for strict profiles.
 
 ## Residual Risk
 

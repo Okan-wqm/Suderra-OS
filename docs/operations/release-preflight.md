@@ -106,7 +106,9 @@ The candidate bundle must include and the signed ingress manifest must digest:
 - `release-governance/<version>/governance-policy-validation.json`
 - `release-approvals/<version>/<target>.json` using
   `suderra.release-approval.v2`
-- `release-security/<version>/<scan>.json`
+- `release-security/<version>/<scan>.json` plus the raw
+  `release-security/<version>/github-check-runs.json` byte stream referenced by
+  each report
 - `release-reproducibility/<version>/<target>.json`
 
 All evidence must reference the same source commit, Build run ID, Buildroot

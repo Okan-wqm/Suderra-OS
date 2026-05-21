@@ -207,7 +207,7 @@ qemu_checks = {
 write_json(
     qemu_root / "qemu.json",
     {
-        "schema_version": "suderra.qemu-acceptance.v3",
+        "schema_version": "suderra.qemu-acceptance.v4",
         "version": version,
         "target": "qemu-x86_64",
         "source_sha": source_sha,
@@ -218,6 +218,20 @@ write_json(
         "firmware": "OVMF_CODE.fd",
         "firmware_sha256": "b" * 64,
         "status": "passed",
+        "profile": "release-candidate",
+        "failure_class": "none",
+        "qemu_exit_status": 0,
+        "termination": {
+            "mode": "exited",
+            "exit_status": 0,
+            "signal": None,
+            "killed": False,
+            "timeout": False,
+            "qmp_quit_sent": True,
+            "qmp_quit_ack": True,
+            "reason": "contract fixture exited cleanly",
+            "acceptable": True,
+        },
         "logs": [
             {"role": "serial", "path": "serial.log", "sha256": serial_sha},
             {"role": "qmp-events", "path": "qmp.json", "sha256": qmp_sha},
@@ -372,7 +386,7 @@ signed_labs = [
     for target in boards_by_target
 ]
 write_json(
-    root / "release-lab-input" / "station-registry.json",
+    root / "release-governance" / version / "station-registry.json",
     {
         "schema_version": "suderra.lab-station-registry.v1",
         "stations": [
@@ -466,6 +480,9 @@ for scan in (
     "trivy",
     "grype",
 ):
+    raw_rel = f"{version}/{scan}-raw.json"
+    raw_payload = f"{scan} passed\n"
+    raw_sha = write_evidence(root / "release-security" / raw_rel, raw_payload)
     write_json(
         root / "release-security" / version / f"{scan}.json",
         {
@@ -479,7 +496,9 @@ for scan in (
             "tool": scan,
             "tool_version": "contract",
             "evidence_type": "contract-log",
-            "evidence_sha256": hashlib.sha256(f"{scan} passed\n".encode("utf-8")).hexdigest(),
+            "evidence_path": raw_rel,
+            "evidence_sha256": raw_sha,
+            "evidence_bytes": len(raw_payload.encode("utf-8")),
             "severity_counts": {"critical": 0, "high": 0},
         },
     )
@@ -682,8 +701,8 @@ write_json(
             "approval": "suderra.release-approval.v2",
             "binding_manifest": "suderra.release-input-binding.v2",
             "lab_input": "suderra.lab-evidence.v3",
-            "qemu_input": "suderra.qemu-acceptance.v3",
-            "release_evidence": "suderra.release-evidence.v3",
+            "qemu_input": "suderra.qemu-acceptance.v4",
+            "release_evidence": "suderra.release-evidence.v4",
         },
         "files": ingress_files,
     },

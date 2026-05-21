@@ -25,6 +25,7 @@ BUILDROOT_IDENTITY_SCHEMA_FIELD = "buildroot_source_identity_schema_version"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDER_VALUES = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
+MAX_RAW_SECURITY_EVIDENCE_BYTES = 10 * 1024 * 1024
 
 
 def run(args: list[str]) -> list[str]:
@@ -527,6 +528,7 @@ def validate_security_report(
     version: str,
     source_sha: str | None,
     source_run_id: str | None,
+    check_files: bool = False,
 ) -> list[str]:
     payload = read_json(path)
     if not isinstance(payload, dict):
@@ -544,13 +546,37 @@ def validate_security_report(
         failures.append(f"security report scan mismatch: {path}")
     if payload.get("status") != "passed":
         failures.append(f"security report status must be passed: {path}")
-    for field in ("generated_at", "tool", "tool_version", "evidence_type", "evidence_sha256"):
+    for field in ("generated_at", "tool", "tool_version", "evidence_type", "evidence_sha256", "evidence_path"):
         value = payload.get(field)
         if field == "evidence_sha256":
             if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
                 failures.append(f"security report evidence_sha256 must be a non-zero sha256: {path}")
+        elif field == "evidence_path":
+            if not isinstance(value, str) or not value.strip() or is_placeholder(value):
+                failures.append(f"security report missing evidence_path: {path}")
+            else:
+                rel = Path(value)
+                if rel.is_absolute() or ".." in rel.parts:
+                    failures.append(f"security report evidence_path must be relative and confined: {path}")
         elif not isinstance(value, str) or not value.strip() or is_placeholder(value):
             failures.append(f"security report missing {field}: {path}")
+    evidence_bytes = payload.get("evidence_bytes")
+    if not isinstance(evidence_bytes, int) or evidence_bytes <= 0:
+        failures.append(f"security report evidence_bytes must be positive: {path}")
+    elif evidence_bytes > MAX_RAW_SECURITY_EVIDENCE_BYTES:
+        failures.append(f"security report raw evidence exceeds size cap: {path}")
+    evidence_path = payload.get("evidence_path")
+    evidence_sha = payload.get("evidence_sha256")
+    if check_files and isinstance(evidence_path, str) and not Path(evidence_path).is_absolute() and ".." not in Path(evidence_path).parts:
+        raw_root = path.parent.parent
+        raw_path = raw_root / evidence_path
+        if not raw_path.is_file():
+            failures.append(f"security report raw evidence missing: {raw_path}")
+        else:
+            if raw_path.stat().st_size != evidence_bytes:
+                failures.append(f"security report raw evidence size mismatch: {raw_path}")
+            if isinstance(evidence_sha, str) and SHA256_RE.fullmatch(evidence_sha) and sha256_file(raw_path) != evidence_sha:
+                failures.append(f"security report raw evidence sha256 mismatch: {raw_path}")
     counts = payload.get("severity_counts")
     if isinstance(counts, dict):
         for severity in ("critical", "high"):
@@ -650,7 +676,13 @@ def main() -> int:
         lab_args.extend(["--expected-source-sha", bound_source_sha])
     if bound_source_run_id:
         lab_args.extend(["--expected-source-run-id", bound_source_run_id])
-    station_registry = args.station_registry or args.root / "release-lab-input" / "station-registry.json"
+    station_registry = args.station_registry or args.root / "release-governance" / args.version / "station-registry.json"
+    try:
+        registry_rel = station_registry.resolve().relative_to((args.root / "release-lab-input").resolve())
+    except ValueError:
+        registry_rel = None
+    if registry_rel is not None and args.profile != "technical-dry-run":
+        failures.append("station registry must be a protected governance input, not release-lab-input")
     lab_args.extend(["--station-registry", str(station_registry)])
     if args.check_files:
         lab_args.append("--check-files")
@@ -684,7 +716,7 @@ def main() -> int:
             failures.extend(validate_repro(repro, args.version, target, bound_source_sha, bound_source_run_id, args.check_files))
     for scan in matrix.get("security_scans", []):
         report = args.root / "release-security" / args.version / f"{scan}.json"
-        failures.extend(validate_security_report(report, str(scan), args.version, bound_source_sha, bound_source_run_id))
+        failures.extend(validate_security_report(report, str(scan), args.version, bound_source_sha, bound_source_run_id, args.check_files))
 
     if failures:
         for failure in failures:

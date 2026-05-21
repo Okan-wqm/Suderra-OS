@@ -389,7 +389,7 @@ def plan_command(args: argparse.Namespace) -> int:
 
 def skeleton_qemu(version: str, target: str, source_sha: str) -> dict[str, Any]:
     return {
-        "schema_version": "suderra.qemu-acceptance.v3",
+        "schema_version": "suderra.qemu-acceptance.v4",
         "version": version,
         "target": target,
         "source_sha": source_sha,
@@ -400,6 +400,20 @@ def skeleton_qemu(version: str, target: str, source_sha: str) -> dict[str, Any]:
         "firmware": "TO_BE_COLLECTED",
         "firmware_sha256": "0" * 64,
         "status": "failed",
+        "profile": "release-candidate",
+        "failure_class": "operator_error",
+        "qemu_exit_status": None,
+        "termination": {
+            "mode": "not_started",
+            "exit_status": None,
+            "signal": None,
+            "killed": False,
+            "timeout": False,
+            "qmp_quit_sent": False,
+            "qmp_quit_ack": False,
+            "reason": "skeleton placeholder; QEMU has not been collected",
+            "acceptable": False,
+        },
         "logs": [],
         "checks": {},
         "guest_facts": {},

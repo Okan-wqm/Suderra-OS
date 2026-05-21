@@ -96,10 +96,14 @@ grep -q 'collect-ci-check-evidence.py' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must convert exact source_sha CI checks into release security evidence" >&2
     exit 1
 }
-grep -q -- '--station-registry release-lab-input/station-registry.json' "${RELEASE_WORKFLOW}" || {
-    echo "ERROR: release workflow must validate lab evidence against an external station registry" >&2
+grep -q -- '--station-registry release-governance/${{ needs.validate.outputs.version }}/station-registry.json' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate lab evidence against a governance-owned station registry" >&2
     exit 1
 }
+if grep -q -- '--station-registry release-lab-input/station-registry.json' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not trust station registry from release-lab-input" >&2
+    exit 1
+fi
 grep -q 'check-runs?per_page=100' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must fetch source_sha GitHub check-runs for scanner evidence" >&2
     exit 1
@@ -188,6 +192,33 @@ grep -q -- '--attestation-json-dir machine-verification/attestations' "${RELEASE
     echo "ERROR: release workflow must compare DSSE subjects from attestation JSON" >&2
     exit 1
 }
+grep -q 'SOURCE_COMMIT="$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")"' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must bind machine verification to the tag target source commit" >&2
+    exit 1
+}
+if grep -q -- '--source-sha "${GITHUB_SHA}"' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not use event GITHUB_SHA as the source commit for tag-bound evidence" >&2
+    exit 1
+fi
+python3 - "${RELEASE_WORKFLOW}" <<'PY'
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+positions = {
+    "download_governance": None,
+    "validate_lab": None,
+}
+for idx, line in enumerate(lines):
+    if "name: Download governance evidence" in line and positions["download_governance"] is None:
+        positions["download_governance"] = idx
+    if "name: Validate full-matrix lab evidence input" in line:
+        positions["validate_lab"] = idx
+if positions["download_governance"] is None or positions["validate_lab"] is None:
+    raise SystemExit("release workflow must download governance evidence and validate lab input")
+if positions["download_governance"] > positions["validate_lab"]:
+    raise SystemExit("release workflow must download governance evidence before lab validation")
+PY
 python3 - "${RELEASE_WORKFLOW}" <<'PY'
 import sys
 from pathlib import Path
@@ -214,14 +245,14 @@ grep -q 'gh attestation verify "${f}"' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: published release verification must revalidate GitHub artifact attestations" >&2
     exit 1
 }
-grep -q 'draft: false' "${RELEASE_WORKFLOW}" || {
-    echo "ERROR: protected publish job must create the final release, not a draft that is manually finalized" >&2
+grep -q 'draft: true' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: protected publish job must create a draft release before post-publication closure" >&2
     exit 1
 }
-if grep -q 'draft: true' "${RELEASE_WORKFLOW}"; then
-    echo "ERROR: release workflow must not leave final publication as a manual draft transition" >&2
+grep -q -- '--draft=false' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must promote the draft only after post-publication closure evidence" >&2
     exit 1
-fi
+}
 if grep -q 'signed-release/release-evidence-generated' "${RELEASE_WORKFLOW}"; then
     echo "ERROR: GitHub Release assets must not publish generated evidence internals outside the archive" >&2
     exit 1
@@ -240,6 +271,14 @@ grep -q 'post-publication-verification.py create' "${RELEASE_WORKFLOW}" || {
 }
 grep -q 'post-publication-verification.py validate' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: publish job must replay-validate post-publication verification evidence" >&2
+    exit 1
+}
+grep -q 'release-publication-proof-manifest.py create' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must create a second-stage publication proof manifest" >&2
+    exit 1
+}
+grep -q 'gh release upload "${{ needs.validate.outputs.version }}"' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must upload post-publication proof bytes as release assets" >&2
     exit 1
 }
 grep -q 'post-publication-verification-' "${RELEASE_WORKFLOW}" || {

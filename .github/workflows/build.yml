@@ -10,8 +10,6 @@ on:
 permissions:
   actions: read
   contents: read
-  id-token: write
-  attestations: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -44,6 +42,11 @@ jobs:
     needs: matrix
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
     env:
       SUDERRA_CI_STORAGE: /mnt/suderra-os/${{ matrix.defconfig }}
       SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/output
@@ -307,6 +310,11 @@ jobs:
     needs: [matrix, build]
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
     env:
       SUDERRA_CI_STORAGE: /mnt/suderra-os/${{ matrix.defconfig }}
       SUDERRA_HOST_OUTPUT_DIR: /mnt/suderra-os/${{ matrix.defconfig }}/output
@@ -592,6 +600,11 @@ jobs:
     needs: matrix
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:

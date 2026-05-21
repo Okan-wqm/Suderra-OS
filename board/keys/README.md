@@ -84,6 +84,13 @@ signing yolundan gelen `prod` profilli keyring'i kabul eder.
 - AWS KMS (cloud)
 - Thales/Utimaco HSM (yüksek bütçe)
 
+RAUC üretim imzalama artık file-backed private key kabul etmez. Signing job şu
+girdiler olmadan fail-closed çalışır:
+
+- `SUDERRA_RAUC_PKCS11_URI`
+- `SUDERRA_RAUC_SIGNING_CERT`
+- `SUDERRA_HSM_SIGNING_EVIDENCE` (`suderra.hsm-signing-session.v1`)
+
 Detay: [../../docs/security/key-management.md](../../docs/security/key-management.md)
 
 ## Anahtar Kaybı / Sızıntı
@@ -105,6 +112,6 @@ Sızıntı:
 ## Yapılacaklar
 
 - [ ] `scripts/gen-dev-keys.sh` — yukarıdaki adımları otomatize et
-- [ ] HSM seçimi (Faz 4 öncesi)
+- [ ] HSM seçimi ve production ceremony kaydı
 - [ ] Cold ceremony runbook
 - [ ] Backup + recovery prosedürü

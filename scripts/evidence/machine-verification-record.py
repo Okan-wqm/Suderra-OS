@@ -16,7 +16,9 @@ import sys
 from typing import Any
 
 
-SCHEMA_VERSION = "suderra.machine-verification.v2"
+SCHEMA_VERSION = "suderra.machine-verification.v3"
+LEGACY_SCHEMA_VERSIONS = {"suderra.machine-verification.v2"}
+ALLOWED_PREDICATE_TYPES = {"https://slsa.dev/provenance/v1"}
 PLACEHOLDERS = {"", "not_collected", "NOT_COLLECTED", "TO_BE_COLLECTED", "pending", "PENDING"}
 SIDE_SUFFIXES = (".sig", ".cert")
 
@@ -180,7 +182,125 @@ def subjects_from_statement(statement: dict[str, Any]) -> list[dict[str, Any]]:
     return subjects
 
 
-def load_verified_attestation_subjects(attestation_paths: list[Path]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def canonical_text(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def contains_text(value: Any, expected: str | None) -> bool:
+    return bool(expected) and expected in canonical_text(value)
+
+
+def walk_values(value: Any):
+    yield value
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from walk_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from walk_values(item)
+
+
+def first_builder_id(statement: dict[str, Any]) -> str | None:
+    predicate = statement.get("predicate")
+    for value in walk_values(predicate):
+        if not isinstance(value, dict):
+            continue
+        builder = value.get("builder")
+        if isinstance(builder, dict) and isinstance(builder.get("id"), str) and builder["id"].strip():
+            return builder["id"]
+    return None
+
+
+def collect_materials(statement: dict[str, Any]) -> list[dict[str, Any]]:
+    materials: list[dict[str, Any]] = []
+    predicate = statement.get("predicate")
+    for value in walk_values(predicate):
+        if not isinstance(value, dict):
+            continue
+        for key in ("materials", "resolvedDependencies", "resolved_dependencies"):
+            raw = value.get(key)
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                uri = item.get("uri") or item.get("name") or item.get("downloadLocation")
+                digest = item.get("digest")
+                entry: dict[str, Any] = {}
+                if isinstance(uri, str) and uri:
+                    entry["uri"] = uri
+                if isinstance(digest, dict):
+                    filtered = {
+                        str(name): str(value)
+                        for name, value in digest.items()
+                        if isinstance(name, str) and isinstance(value, (str, int))
+                    }
+                    if filtered:
+                        entry["digest"] = filtered
+                if entry:
+                    materials.append(entry)
+    unique: dict[str, dict[str, Any]] = {}
+    for item in materials:
+        key = canonical_text(item)
+        unique[key] = item
+    return [unique[key] for key in sorted(unique)]
+
+
+def provenance_context(
+    statement: dict[str, Any],
+    *,
+    expected_repository: str,
+    expected_ref: str,
+    expected_run_id: str,
+    expected_run_attempt: str,
+    expected_source_sha: str,
+) -> tuple[dict[str, Any], list[str]]:
+    failures: list[str] = []
+    predicate_type = statement.get("predicateType")
+    predicate = statement.get("predicate")
+    if predicate_type not in ALLOWED_PREDICATE_TYPES:
+        failures.append(
+            "predicateType must be one of: " + ", ".join(sorted(ALLOWED_PREDICATE_TYPES))
+        )
+    builder_id = first_builder_id(statement)
+    if is_placeholder(builder_id):
+        failures.append("builder.id must be present in DSSE predicate")
+    materials = collect_materials(statement)
+    if not materials:
+        failures.append("DSSE predicate must include non-empty materials/resolvedDependencies")
+    for label, expected in (
+        ("repository", expected_repository),
+        ("ref", expected_ref),
+        ("run_id", expected_run_id),
+        ("run_attempt", expected_run_attempt),
+        ("source_sha", expected_source_sha),
+    ):
+        if not contains_text(predicate, expected):
+            failures.append(f"DSSE predicate must bind {label}={expected}")
+    return (
+        {
+            "predicate_type": predicate_type,
+            "builder_id": builder_id,
+            "source_repository": expected_repository,
+            "source_ref": expected_ref,
+            "source_run_id": expected_run_id,
+            "source_run_attempt": expected_run_attempt,
+            "source_sha": expected_source_sha,
+            "materials": materials,
+        },
+        failures,
+    )
+
+
+def load_verified_attestation_subjects(
+    attestation_paths: list[Path],
+    *,
+    expected_repository: str,
+    expected_ref: str,
+    expected_run_id: str,
+    expected_run_attempt: str,
+    expected_source_sha: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     verified: dict[tuple[str, str], dict[str, Any]] = {}
     materials: list[dict[str, Any]] = []
     for path in sorted(attestation_paths, key=lambda item: item.name):
@@ -191,8 +311,22 @@ def load_verified_attestation_subjects(attestation_paths: list[Path]) -> tuple[l
         except json.JSONDecodeError as exc:
             raise ValueError(f"invalid attestation JSON {path}: {exc}") from exc
         path_subjects: list[dict[str, Any]] = []
+        provenance: list[dict[str, Any]] = []
         for statement in iter_attestation_statements(payload):
-            path_subjects.extend(subjects_from_statement(statement))
+            statement_subjects = subjects_from_statement(statement)
+            path_subjects.extend(statement_subjects)
+            if statement_subjects:
+                context, failures = provenance_context(
+                    statement,
+                    expected_repository=expected_repository,
+                    expected_ref=expected_ref,
+                    expected_run_id=expected_run_id,
+                    expected_run_attempt=expected_run_attempt,
+                    expected_source_sha=expected_source_sha,
+                )
+                if failures:
+                    raise ValueError(f"attestation provenance mismatch in {path}: {'; '.join(failures)}")
+                provenance.append(context)
         if not path_subjects:
             raise ValueError(f"attestation JSON has no DSSE subjects: {path}")
         for subject in path_subjects:
@@ -203,6 +337,7 @@ def load_verified_attestation_subjects(attestation_paths: list[Path]) -> tuple[l
                 "sha256": sha256_file(path),
                 "bytes": path.stat().st_size,
                 "subjects": minimal_subjects(path_subjects),
+                "provenance": provenance,
             }
         )
     return [verified[key] for key in sorted(verified)], materials
@@ -229,6 +364,7 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
     workflow = args.workflow or os.environ.get("GITHUB_WORKFLOW")
     repository = args.repository or os.environ.get("GITHUB_REPOSITORY")
     ref = args.ref or os.environ.get("GITHUB_REF")
+    source_sha = args.source_sha or os.environ.get("GITHUB_SHA")
     for field, value in (
         ("identity", identity),
         ("issuer", issuer),
@@ -237,6 +373,7 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
         ("workflow", workflow),
         ("repository", repository),
         ("ref", ref),
+        ("source_sha", source_sha),
     ):
         if is_placeholder(value):
             raise ValueError(f"{field} must be collected before creating machine verification")
@@ -254,6 +391,7 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
             "run_id": str(run_id),
             "run_attempt": str(run_attempt),
             "ref": ref,
+            "source_sha": source_sha,
         },
         "log": {
             "path": log.name,
@@ -268,7 +406,14 @@ def create_record(args: argparse.Namespace) -> dict[str, Any]:
         attestation_paths = sorted(args.attestation_json_dir.glob("*.json"))
         if not attestation_paths:
             raise ValueError(f"no attestation JSON files found in {args.attestation_json_dir}")
-        verified_subjects, materials = load_verified_attestation_subjects(attestation_paths)
+        verified_subjects, materials = load_verified_attestation_subjects(
+            attestation_paths,
+            expected_repository=str(repository),
+            expected_ref=str(ref),
+            expected_run_id=str(run_id),
+            expected_run_attempt=str(run_attempt),
+            expected_source_sha=str(source_sha),
+        )
         if subject_set(minimal_subjects(subjects)) != subject_set(verified_subjects):
             expected = sorted(f"{name}@{sha}" for name, sha in subject_set(minimal_subjects(subjects)))
             actual = sorted(f"{name}@{sha}" for name, sha in subject_set(verified_subjects))
@@ -311,7 +456,8 @@ def validate_subjects(value: Any, path: str, failures: list[str], *, require_saf
 
 def validate_record(payload: dict[str, Any], *, expected_name: str | None = None) -> list[str]:
     failures: list[str] = []
-    if payload.get("schema_version") != SCHEMA_VERSION:
+    schema_version = payload.get("schema_version")
+    if schema_version not in LEGACY_SCHEMA_VERSIONS | {SCHEMA_VERSION}:
         failures.append(f"schema_version must be {SCHEMA_VERSION}")
     if expected_name is not None and payload.get("name") != expected_name:
         failures.append(f"name must be {expected_name}")
@@ -327,6 +473,8 @@ def validate_record(payload: dict[str, Any], *, expected_name: str | None = None
         for field in ("repository", "workflow", "run_id", "run_attempt", "ref"):
             if is_placeholder(source.get(field)):
                 failures.append(f"source.{field} must be non-placeholder")
+        if schema_version == SCHEMA_VERSION and is_placeholder(source.get("source_sha")):
+            failures.append("source.source_sha must be non-placeholder")
     log = payload.get("log")
     if not isinstance(log, dict):
         failures.append("log must be an object")
@@ -365,6 +513,41 @@ def validate_record(payload: dict[str, Any], *, expected_name: str | None = None
                     if not isinstance(item.get("bytes"), int) or item["bytes"] <= 0:
                         failures.append(f"{file_path}.bytes must be positive")
                     validate_subjects(item.get("subjects"), f"{file_path}.subjects", failures)
+                    if schema_version == SCHEMA_VERSION:
+                        provenance = item.get("provenance")
+                        if not isinstance(provenance, list) or not provenance:
+                            failures.append(f"{file_path}.provenance must be a non-empty list")
+                        else:
+                            for prov_idx, prov in enumerate(provenance):
+                                prov_path = f"{file_path}.provenance[{prov_idx}]"
+                                if not isinstance(prov, dict):
+                                    failures.append(f"{prov_path} must be an object")
+                                    continue
+                                if prov.get("predicate_type") not in ALLOWED_PREDICATE_TYPES:
+                                    failures.append(f"{prov_path}.predicate_type must be a supported predicate type")
+                                for field in (
+                                    "builder_id",
+                                    "source_repository",
+                                    "source_ref",
+                                    "source_run_id",
+                                    "source_run_attempt",
+                                    "source_sha",
+                                ):
+                                    if is_placeholder(prov.get(field)):
+                                        failures.append(f"{prov_path}.{field} must be non-placeholder")
+                                if not isinstance(prov.get("materials"), list) or not prov["materials"]:
+                                    failures.append(f"{prov_path}.materials must be a non-empty list")
+                                if isinstance(source, dict):
+                                    expected = {
+                                        "source_repository": source.get("repository"),
+                                        "source_ref": source.get("ref"),
+                                        "source_run_id": source.get("run_id"),
+                                        "source_run_attempt": source.get("run_attempt"),
+                                        "source_sha": source.get("source_sha"),
+                                    }
+                                    for field, expected_value in expected.items():
+                                        if expected_value is not None and str(prov.get(field)) != str(expected_value):
+                                            failures.append(f"{prov_path}.{field} must match record source")
     return failures
 
 
@@ -414,6 +597,7 @@ def main() -> int:
     create.add_argument("--run-id")
     create.add_argument("--run-attempt")
     create.add_argument("--ref")
+    create.add_argument("--source-sha")
     create.add_argument("--attestation-json-dir", type=Path)
     create.set_defaults(func=create_command)
 

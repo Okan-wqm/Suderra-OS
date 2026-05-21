@@ -140,14 +140,17 @@ python3 scripts/evidence/release-publication-manifest.py validate \
     release-publication-manifest.json \
     --release-dir . \
     --expected-version "${VERSION}" \
-    --require-self-sidecars
+    --require-self-sidecars \
+    --require-asset-sidecars
 ```
 
 Release workflow bu doğrulamayı CI workspace kopyası üzerinde bırakmaz; draft
-GitHub Release oluşturulduktan sonra asset'leri temiz bir dizine tekrar indirir
-ve aynı manifest validator'ını indirilen byte setine karşı çalıştırır. Harici
-doğrulamada da güven kaynağı CI çalışma dizini değil, yalnız GitHub Release
-asset'leri olmalıdır.
+GitHub Release oluşturulduktan sonra asset'leri temiz bir dizine tekrar indirir,
+aynı manifest validator'ını indirilen byte setine karşı çalıştırır, ardından
+`release-post-publication-verification.json` ve
+`release-publication-proof-manifest.json` proof asset'lerini yayınlayıp release'i
+public yapar. Harici doğrulamada güven kaynağı CI çalışma dizini değil, yalnız
+GitHub Release asset'leri olmalıdır.
 
 Minimal bağımsız doğrulama:
 

@@ -128,7 +128,9 @@ DOCKER_USER_ARGS=(
 )
 
 # Reproducible build için ortam değişkenleri
-SOURCE_DATE_EPOCH=$(git -C "${PROJECT_ROOT}" log -1 --format=%ct 2>/dev/null || echo "1704067200")
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH=$(git -C "${PROJECT_ROOT}" log -1 --format=%ct 2>/dev/null || echo "1704067200")
+fi
 EXTRA_ENV=()
 add_extra_env() {
     local name="$1"

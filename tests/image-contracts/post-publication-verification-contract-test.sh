@@ -5,10 +5,12 @@ IFS=$'\n\t'
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST_TOOL="${ROOT}/scripts/evidence/release-publication-manifest.py"
 POST_PUBLICATION_TOOL="${ROOT}/scripts/evidence/post-publication-verification.py"
+PROOF_MANIFEST_TOOL="${ROOT}/scripts/evidence/release-publication-proof-manifest.py"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
 VERSION="v9.9.9-alpha.1"
+SOURCE_SHA="0123456789abcdef0123456789abcdef01234567"
 RELEASE_DIR="${TMPDIR}/release"
 ATTESTATION_DIR="${TMPDIR}/attestations"
 mkdir -p "${RELEASE_DIR}" "${ATTESTATION_DIR}"
@@ -42,7 +44,24 @@ payload = {
     "_type": "https://in-toto.io/Statement/v1",
     "predicateType": "https://slsa.dev/provenance/v1",
     "subject": [{"name": name, "digest": {"sha256": sha}}],
-    "predicate": {"buildDefinition": {"externalParameters": {}}},
+    "predicate": {
+        "buildDefinition": {
+            "externalParameters": {
+                "repository": "Okan-wqm/Suderra-OS",
+                "ref": "refs/tags/v9.9.9-alpha.1",
+                "run_id": "123456789",
+                "run_attempt": "1",
+                "source_sha": "0123456789abcdef0123456789abcdef01234567",
+            },
+            "resolvedDependencies": [
+                {
+                    "uri": "git+https://github.com/Okan-wqm/Suderra-OS",
+                    "digest": {"gitCommit": "0123456789abcdef0123456789abcdef01234567"},
+                }
+            ],
+        },
+        "runDetails": {"builder": {"id": "https://github.com/actions/runner/github-hosted"}},
+    },
 }
 path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -59,6 +78,26 @@ python3 "${POST_PUBLICATION_TOOL}" create \
     --run-id 123456789 \
     --run-attempt 1 \
     --ref "refs/tags/${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    >/dev/null
+mkdir -p "${TMPDIR}/proof"
+cp "${TMPDIR}/post-publication.json" "${TMPDIR}/proof/release-post-publication-verification.json"
+printf 'post-publication signature\n' > "${TMPDIR}/proof/release-post-publication-verification.json.sig"
+printf 'post-publication certificate\n' > "${TMPDIR}/proof/release-post-publication-verification.json.cert"
+cp "${ATTESTATION_DIR}"/*.json "${TMPDIR}/proof/"
+
+python3 "${PROOF_MANIFEST_TOOL}" create \
+    --version "${VERSION}" \
+    --release-dir "${RELEASE_DIR}" \
+    --proof-dir "${TMPDIR}/proof" \
+    --output "${TMPDIR}/proof/release-publication-proof-manifest.json" \
+    >/dev/null
+
+python3 "${PROOF_MANIFEST_TOOL}" validate \
+    "${TMPDIR}/proof/release-publication-proof-manifest.json" \
+    --release-dir "${RELEASE_DIR}" \
+    --proof-dir "${TMPDIR}/proof" \
+    --expected-version "${VERSION}" \
     >/dev/null
 
 python3 "${POST_PUBLICATION_TOOL}" validate \

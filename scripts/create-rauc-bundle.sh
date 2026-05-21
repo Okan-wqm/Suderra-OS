@@ -11,10 +11,12 @@ Usage:
   create-rauc-bundle.sh x86 <BINARIES_DIR> <VERSION> <OUTPUT.raucb>
 
 Required environment:
-  SUDERRA_RAUC_SIGNING_KEY       RAUC bundle signing private key
   SUDERRA_RAUC_SIGNING_CERT      RAUC bundle signing certificate
 
 Optional environment:
+  SUDERRA_RAUC_SIGNING_KEY       Dev/lab RAUC bundle signing private key
+  SUDERRA_RAUC_PKCS11_URI        Production RAUC PKCS#11 private key URI
+  SUDERRA_HSM_SIGNING_EVIDENCE   Production HSM session/key evidence JSON
   SUDERRA_RAUC_KEYRING           Keyring used to verify the generated bundle
   SUDERRA_RAUC                   RAUC host tool path
   HOST_DIR                       Buildroot host dir containing bin/rauc
@@ -41,7 +43,8 @@ reject_prod_file_key() {
     fi
     case "${value}" in
         pkcs11:*)
-            die "production PKCS#11 RAUC signing provider is not implemented yet; refusing file fallback"
+            ;;
+        pkcs11:object=*|pkcs11:token=*)
             ;;
         "")
             die "SUDERRA_RAUC_PKCS11_URI must be set for production RAUC signing"
@@ -50,6 +53,22 @@ reject_prod_file_key() {
             die "production RAUC signing rejects file-backed private keys: ${value}"
             ;;
     esac
+}
+
+production_signing_evidence() {
+    local evidence="${SUDERRA_HSM_SIGNING_EVIDENCE:-}"
+    local uri="${SUDERRA_RAUC_PKCS11_URI:-}"
+    local script_dir
+
+    [ -n "${evidence}" ] || die "SUDERRA_HSM_SIGNING_EVIDENCE must be set for production RAUC signing"
+    need_file "${evidence}"
+    script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    python3 "${script_dir}/evidence/validate-hsm-signing-evidence.py" validate \
+        "${evidence}" \
+        --pkcs11-uri "${uri}" \
+        --certificate "${SUDERRA_RAUC_SIGNING_CERT}" \
+        --require-production \
+        >/dev/null || die "HSM signing evidence validation failed"
 }
 
 resolve_rauc() {
@@ -137,11 +156,19 @@ create_x86_bundle() {
             ;;
     esac
     if production_mode; then
-        reject_prod_file_key "${SUDERRA_RAUC_PKCS11_URI:-${signing_key}}"
+        if [ -n "${signing_key}" ]; then
+            reject_prod_file_key "${signing_key}"
+        fi
+        reject_prod_file_key "${SUDERRA_RAUC_PKCS11_URI:-}"
+        production_signing_evidence
+        signing_key="${SUDERRA_RAUC_PKCS11_URI}"
     fi
     [ -n "${signing_key}" ] || die "SUDERRA_RAUC_SIGNING_KEY must be set"
     [ -n "${signing_cert}" ] || die "SUDERRA_RAUC_SIGNING_CERT must be set"
-    need_file "${signing_key}"
+    case "${signing_key}" in
+        pkcs11:*) ;;
+        *) need_file "${signing_key}" ;;
+    esac
     need_file "${signing_cert}"
 
     rauc_tool="$(resolve_rauc)"

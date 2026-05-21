@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert bios.mode == "bios"
     assert module.firmware_qemu_args(bios) == ["-bios", str(monolithic)]
 
-    assert module.SCHEMA_VERSION == "suderra.qemu-acceptance.v3"
+    assert module.SCHEMA_VERSION == "suderra.qemu-acceptance.v4"
     assert module.required_pass_patterns("smoke") == ("banner", "provisioning-ready")
     assert module.required_pass_patterns("release-candidate") == ("banner", "provisioning-ready")
     checks = module.release_checks(
@@ -158,8 +158,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert stderr_entry["sha256"] == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 PY
 
-if grep -q 'suderra.qemu-acceptance.v2' "${HARNESS}"; then
-    echo "ERROR: QMP acceptance harness must emit qemu acceptance schema v3" >&2
+if grep -q 'suderra.qemu-acceptance.v3' "${HARNESS}"; then
+    echo "ERROR: QMP acceptance harness must emit qemu acceptance schema v4" >&2
     exit 1
 fi
 
@@ -171,7 +171,11 @@ for token in \
     'systemctl --failed --no-legend --plain' \
     'suderra-lockdown-status' \
     'ss -H -lntup' \
-    'nft list ruleset'
+    'nft list ruleset' \
+    '/sys/firmware/efi/efivars/SecureBoot-' \
+    'dmsetup table' \
+    'rauc status' \
+    '/etc/suderra/rollback-floor'
 do
     if ! grep -q -- "${token}" "${COLLECTOR}"; then
         echo "ERROR: QEMU semantic collector missing token: ${token}" >&2
@@ -243,7 +247,7 @@ checks = {
     )
 }
 payload = {
-    "schema_version": "suderra.qemu-acceptance.v3",
+    "schema_version": "suderra.qemu-acceptance.v4",
     "version": "v9.9.9-alpha.1",
     "target": "qemu-x86_64",
     "source_sha": "0123456789abcdef0123456789abcdef01234567",
@@ -254,6 +258,20 @@ payload = {
     "image_sha256": "a" * 64,
     "firmware_sha256": "b" * 64,
     "status": "passed",
+    "profile": "release-candidate",
+    "failure_class": "none",
+    "qemu_exit_status": 0,
+    "termination": {
+        "mode": "exited",
+        "exit_status": 0,
+        "signal": None,
+        "killed": False,
+        "timeout": False,
+        "qmp_quit_sent": True,
+        "qmp_quit_ack": True,
+        "reason": "contract fixture exited cleanly",
+        "acceptable": True,
+    },
     "logs": log_entries,
     "checks": checks,
     "guest_facts": semantic,
@@ -266,6 +284,21 @@ python3 "${PROJECT_ROOT}/scripts/evidence/validate-qemu-input.py" \
     --expected-artifact-sha256 "$(printf '%064d' 0 | tr '0' 'a')" \
     "${QEMU_INPUT}" \
     >/dev/null
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-qemu-input.py" \
+    --require-pass \
+    --profile production-runtime \
+    --check-files \
+    "${QEMU_INPUT}" \
+    2>"${TMPDIR}/qemu-production-runtime.err"; then
+    echo "ERROR: production-runtime QEMU validation accepted release-candidate-only evidence" >&2
+    exit 1
+fi
+grep -q "secure_boot" "${TMPDIR}/qemu-production-runtime.err" &&
+    grep -q "dm-verity-tamper-rejection" "${TMPDIR}/qemu-production-runtime.err" || {
+        echo "ERROR: production-runtime QEMU validation did not require production behavior evidence" >&2
+        cat "${TMPDIR}/qemu-production-runtime.err" >&2
+        exit 1
+    }
 if python3 "${PROJECT_ROOT}/scripts/evidence/validate-qemu-input.py" \
     --require-pass \
     --check-files \

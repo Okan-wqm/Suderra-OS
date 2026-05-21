@@ -97,6 +97,10 @@ for scan in matrix["security_scans"]:
         raise SystemExit(f"{scan}: status must be passed")
     if payload["evidence_sha256"] != evidence_sha:
         raise SystemExit(f"{scan}: evidence digest mismatch")
+    if payload.get("evidence_bytes") != checks_json.stat().st_size:
+        raise SystemExit(f"{scan}: evidence size mismatch")
+    if payload.get("evidence_path") != f"{version}/github-check-runs.json":
+        raise SystemExit(f"{scan}: evidence path mismatch")
     if not payload.get("check_runs"):
         raise SystemExit(f"{scan}: check_runs must not be empty")
     if any(item.get("conclusion") != "success" for item in payload["check_runs"]):

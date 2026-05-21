@@ -59,12 +59,15 @@ Seçenekler:
 - Anahtar erişimi: kim, ne zaman, hangi imza için
 - HSM audit log → cold storage
 - Anahtar kullanımı sadece imzalama (export edilmez)
+- Production signing scripts require `suderra.hsm-signing-session.v1`
+  evidence before using a PKCS#11 URI. The evidence binds provider, HSM serial,
+  key label/id, certificate digest, ceremony/operator, expiry, audit log
+  digests, and the exact `SUDERRA_RAUC_PKCS11_URI`.
 
 ## Yapılacaklar
 
-- [ ] Üretim HSM/PKCS#11 provider implementation. Production scripts now
-      reject file-backed private keys instead of silently signing with PEM
-      files.
+- [x] Üretim RAUC signing scripts reject file-backed private keys and require
+      PKCS#11 URI plus validated HSM session evidence.
 - [ ] Cold ceremony prosedürü (yazılı runbook)
 - [ ] CI'da kısa-ömürlü key delegation
 - [ ] Anahtar yedekleme + kurtarma planı

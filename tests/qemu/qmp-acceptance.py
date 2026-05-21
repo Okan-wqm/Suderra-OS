@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "suderra.qemu-acceptance.v3"
+SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
 SEMANTIC_MARKER_BEGIN = "SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
 SEMANTIC_MARKER_END = "SUDERRA_QEMU_SEMANTIC_JSON_END"
 PASS_PATTERNS = {
@@ -32,6 +33,7 @@ PASS_PATTERNS = {
 }
 SMOKE_REQUIRED_PASS_PATTERNS = ("banner", "provisioning-ready")
 RELEASE_CANDIDATE_REQUIRED_PASS_PATTERNS = ("banner", "provisioning-ready")
+STRICT_RUNTIME_PROFILES = {"release-candidate", "production-runtime"}
 RELEASE_CHECK_NAMES = (
     "boot",
     "systemd",
@@ -172,7 +174,7 @@ def evaluate(serial: str) -> tuple[dict[str, bool], dict[str, bool]]:
 
 
 def required_pass_patterns(profile: str) -> tuple[str, ...]:
-    if profile == "release-candidate":
+    if profile in STRICT_RUNTIME_PROFILES:
         return RELEASE_CANDIDATE_REQUIRED_PASS_PATTERNS
     return SMOKE_REQUIRED_PASS_PATTERNS
 
@@ -257,7 +259,7 @@ def release_checks(
     profile: str = "smoke",
     guest_facts: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, str]]:
-    uncollected_status = "failed" if profile == "release-candidate" else "not_applicable"
+    uncollected_status = "failed" if profile in STRICT_RUNTIME_PROFILES else "not_applicable"
     checks = {
         name: {
             "status": uncollected_status,
@@ -288,7 +290,7 @@ def release_checks(
             "evidence": f"systemctl --failed executed and reported {failed_count} failed unit(s)",
             "source": "guest: systemctl --failed --no-legend --plain",
         }
-    elif profile == "release-candidate":
+    elif profile in STRICT_RUNTIME_PROFILES:
         checks["systemd"] = {
             "status": "failed",
             "evidence": "systemd proof was not collected by serial text or semantic collector",
@@ -552,7 +554,12 @@ def launch_qemu(
     stdout_handle = stdout_log.open("wb")
     stderr_handle = stderr_log.open("wb")
     try:
-        process = subprocess.Popen(qemu_args, stdout=stdout_handle, stderr=stderr_handle)
+        process = subprocess.Popen(
+            qemu_args,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            start_new_session=True,
+        )
     except Exception:
         stdout_handle.close()
         stderr_handle.close()
@@ -564,7 +571,8 @@ def run(args: argparse.Namespace) -> int:
     log_dir = Path(args.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    prefix = Path(tempfile.mktemp(prefix=f"boot-test-{stamp}-", dir=log_dir))
+    run_dir = Path(tempfile.mkdtemp(prefix=f"boot-test-{stamp}-", dir=log_dir))
+    prefix = run_dir / "boot-test"
     serial_log = prefix.with_suffix(".serial.log")
     stdout_log = prefix.with_suffix(".qemu-stdout.log")
     stderr_log = prefix.with_suffix(".qemu-stderr.log")
@@ -572,13 +580,8 @@ def run(args: argparse.Namespace) -> int:
     qemu_semantic_log = prefix.with_suffix(".qemu-semantic.json")
     evidence_log = args.evidence_output or prefix.with_suffix(".acceptance.json")
     evidence_log.parent.mkdir(parents=True, exist_ok=True)
-    qmp_socket = Path(
-        tempfile.mktemp(
-            prefix="suderra-qmp-",
-            suffix=".sock",
-            dir=os.environ.get("TMPDIR", "/tmp"),
-        )
-    )
+    qmp_socket_dir = Path(tempfile.mkdtemp(prefix="suderra-qmp-", dir=os.environ.get("TMPDIR", "/tmp")))
+    qmp_socket = qmp_socket_dir / "qmp.sock"
 
     process = None
     stdout_handle = None
@@ -590,6 +593,17 @@ def run(args: argparse.Namespace) -> int:
     error: str | None = None
     firmware: FirmwareConfig | None = None
     serial = ""
+    termination: dict[str, Any] = {
+        "mode": "not_started",
+        "exit_status": None,
+        "signal": None,
+        "killed": False,
+        "timeout": False,
+        "qmp_quit_sent": False,
+        "qmp_quit_ack": False,
+        "reason": "harness did not start QEMU",
+        "acceptable": False,
+    }
 
     try:
         firmware = resolve_ovmf_firmware(args, prefix)
@@ -609,7 +623,7 @@ def run(args: argparse.Namespace) -> int:
             if any(failed.values()):
                 break
             required_observed = all(passed.get(name) for name in required_pass_patterns(args.profile))
-            if required_observed and (args.profile != "release-candidate" or semantic_ready):
+            if required_observed and (args.profile not in STRICT_RUNTIME_PROFILES or semantic_ready):
                 break
             if process.poll() is not None:
                 break
@@ -625,15 +639,32 @@ def run(args: argparse.Namespace) -> int:
             try:
                 qmp_drain(qmp_sock, qmp_events)
                 qmp_execute(qmp_sock, "quit")
+                termination["qmp_quit_sent"] = True
+                qmp_drain(qmp_sock, qmp_events)
+                termination["qmp_quit_ack"] = any("return" in event for event in qmp_events[-5:])
             except OSError:
                 pass
             qmp_sock.close()
         if process is not None:
             try:
                 process.wait(timeout=10)
+                termination["mode"] = "exited"
+                termination["reason"] = "QEMU exited after QMP quit"
             except subprocess.TimeoutExpired:
-                process.kill()
+                termination["mode"] = "forced_kill"
+                termination["timeout"] = True
+                termination["killed"] = True
+                termination["reason"] = "QEMU did not exit after QMP quit grace period"
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    process.kill()
                 process.wait(timeout=10)
+            termination["exit_status"] = process.returncode
+            if process.returncode is not None and process.returncode < 0:
+                termination["signal"] = -process.returncode
         if stdout_handle is not None:
             stdout_handle.close()
         if stderr_handle is not None:
@@ -642,14 +673,24 @@ def run(args: argparse.Namespace) -> int:
             qmp_socket.unlink()
         except FileNotFoundError:
             pass
+        try:
+            qmp_socket_dir.rmdir()
+        except OSError:
+            pass
 
     qemu_status = process.returncode if process is not None else None
+    termination["acceptable"] = (
+        process is not None
+        and qemu_status == 0
+        and termination.get("qmp_quit_sent") is True
+        and termination.get("killed") is False
+    )
     failed_checks = [name for name, hit in failed.items() if hit]
     missing_checks = [name for name in required_pass_patterns(args.profile) if not passed.get(name)]
     semantic_guest_facts = parse_semantic_guest_facts(serial)
     checks = release_checks(passed, failed, args.profile, semantic_guest_facts)
-    success = not failed_checks and not missing_checks and error is None
-    if args.profile == "release-candidate":
+    success = not failed_checks and not missing_checks and error is None and termination["acceptable"] is True
+    if args.profile in STRICT_RUNTIME_PROFILES:
         release_failures = [
             name for name, check in checks.items()
             if check.get("status") != "passed"
@@ -657,8 +698,9 @@ def run(args: argparse.Namespace) -> int:
         if release_failures:
             failed_checks.extend(f"release-check-{name}" for name in release_failures)
             success = False
-    if qemu_status not in (0, None) and not success:
+    if qemu_status not in (0, None):
         failed_checks.append(f"qemu-exit-{qemu_status}")
+        success = False
 
     qmp_log.write_text(json.dumps(qmp_events, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if semantic_guest_facts:
@@ -700,6 +742,8 @@ def run(args: argparse.Namespace) -> int:
         "qemu_version": qemu_version(),
         "timeout_seconds": args.timeout,
         "qemu_exit_status": qemu_status,
+        "termination": termination,
+        "failure_class": "none" if success else ("infra_error" if error or termination.get("killed") else "semantic_failure"),
         "qemu_args": qemu_args,
         "profile": args.profile,
         "source_sha": os.environ.get("SUDERRA_SOURCE_SHA"),
@@ -746,7 +790,7 @@ def main() -> int:
     parser.add_argument("--target", default=os.environ.get("SUDERRA_TARGET", "qemu-x86_64"))
     parser.add_argument("--memory", default="256M")
     parser.add_argument("--smp", default="2")
-    parser.add_argument("--profile", choices=("smoke", "release-candidate"), default="smoke")
+    parser.add_argument("--profile", choices=("smoke", "release-candidate", "production-runtime"), default="smoke")
     args = parser.parse_args()
 
     if not args.image.is_file():

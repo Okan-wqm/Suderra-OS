@@ -153,6 +153,63 @@ if command -v nft >/dev/null 2>&1; then
 fi
 ruleset_sha256="$(sha256_or_empty "${ruleset}")"
 
+secure_boot_enabled=0
+secure_boot_source="not_collected"
+for secure_boot_var in /sys/firmware/efi/efivars/SecureBoot-*; do
+    [ -r "${secure_boot_var}" ] || continue
+    secure_boot_source="${secure_boot_var}"
+    secure_boot_value="$(od -An -t u1 -j 4 -N 1 "${secure_boot_var}" 2>/dev/null | tr -d ' ' || true)"
+    if [ "${secure_boot_value}" = "1" ]; then
+        secure_boot_enabled=1
+    fi
+    break
+done
+
+dm_table="${WORK_DIR}/dmsetup-table.txt"
+: > "${dm_table}"
+dm_verity_active=0
+if command -v dmsetup >/dev/null 2>&1; then
+    dmsetup table > "${dm_table}" 2>&1 || true
+    if grep -q '[[:space:]]verity[[:space:]]' "${dm_table}" 2>/dev/null; then
+        dm_verity_active=1
+    fi
+fi
+
+rauc_status="${WORK_DIR}/rauc-status.txt"
+: > "${rauc_status}"
+rauc_available=0
+if command -v rauc >/dev/null 2>&1; then
+    rauc_available=1
+    rauc status > "${rauc_status}" 2>&1 || true
+fi
+
+data_source=""
+data_fstype=""
+data_options=""
+if [ -r /proc/mounts ]; then
+    while read -r source mount_point fstype options _rest; do
+        if [ "${mount_point}" = "/data" ]; then
+            data_source="${source}"
+            data_fstype="${fstype}"
+            data_options="${options}"
+            break
+        fi
+    done < /proc/mounts
+fi
+data_encrypted=0
+case "${data_source}" in
+    /dev/mapper/*|/dev/dm-*) data_encrypted=1 ;;
+esac
+
+rollback_floor="not_collected"
+for rollback_file in /etc/suderra/rollback-floor /usr/lib/suderra/rollback-floor /var/lib/suderra/rollback-floor; do
+    if [ -r "${rollback_file}" ]; then
+        rollback_floor="$(sed -n '1p' "${rollback_file}" 2>/dev/null || true)"
+        [ -n "${rollback_floor}" ] || rollback_floor="not_collected"
+        break
+    fi
+done
+
 firstboot_done=0
 if [ -f /var/lib/suderra/.firstboot-done ]; then
     firstboot_done=1
@@ -220,6 +277,27 @@ printf '"firewall":{'
 printf '"loaded":'; json_bool "${firewall_loaded}"; printf ','
 printf '"ruleset_sha256":'; json_string "${ruleset_sha256}"; printf ','
 printf '"ruleset":'; json_lines_from_file "${ruleset}" 120
+printf '},'
+printf '"secure_boot":{'
+printf '"enabled":'; json_bool "${secure_boot_enabled}"; printf ','
+printf '"source":'; json_string "${secure_boot_source}"
+printf '},'
+printf '"dm_verity":{'
+printf '"active":'; json_bool "${dm_verity_active}"; printf ','
+printf '"table":'; json_lines_from_file "${dm_table}" 120
+printf '},'
+printf '"rauc":{'
+printf '"available":'; json_bool "${rauc_available}"; printf ','
+printf '"status":'; json_lines_from_file "${rauc_status}" 120
+printf '},'
+printf '"data_encryption":{'
+printf '"encrypted":'; json_bool "${data_encrypted}"; printf ','
+printf '"mount_source":'; json_string "${data_source}"; printf ','
+printf '"fstype":'; json_string "${data_fstype}"; printf ','
+printf '"options":'; json_string "${data_options}"
+printf '},'
+printf '"anti_rollback":{'
+printf '"rollback_floor":'; json_string "${rollback_floor}"
 printf '}'
 printf '}\n'
 printf '%s\n' "${MARK_END}"

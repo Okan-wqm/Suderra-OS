@@ -79,6 +79,13 @@ else
     esac
 fi
 echo "    Variant: ${SUDERRA_OS_VARIANT}"
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+    if [ -n "${SUDERRA_SIGNING_MODE:-}" ] && [ "${SUDERRA_SIGNING_MODE}" != "prod" ]; then
+        echo "ERROR: production variant requires SUDERRA_SIGNING_MODE=prod, got '${SUDERRA_SIGNING_MODE}'"
+        exit 1
+    fi
+    export SUDERRA_SIGNING_MODE="prod"
+fi
 PRODUCTION_ARTIFACTS="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/production-artifacts.sh"
 CREATE_RAUC_BUNDLE="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/create-rauc-bundle.sh"
 RAUC_BUNDLE_PATH=""
@@ -212,6 +219,11 @@ PY
 }
 
 case "${DEFCONFIG_NAME}" in
+    suderra_qemu_x86_64_prod_ab*)
+        GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage.cfg"
+        IMAGE_OUTPUT_NAME="disk.img"
+        GRUB_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/grub.cfg"
+        ;;
     suderra_qemu_x86_64*)
         GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/x86_64/genimage-qemu.cfg"
         IMAGE_OUTPUT_NAME="disk.img"
@@ -260,9 +272,13 @@ if [ -n "${GRUB_CFG}" ]; then
     install -D -m 0644 "${GRUB_CFG}" "${BINARIES_DIR}/efi-part/EFI/BOOT/grub.cfg"
 fi
 
-if [ "${SUDERRA_OS_VARIANT}" = "prod" ] && [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
-    echo "==> x86 production boot/verity artifact üretimi"
-    "${PRODUCTION_ARTIFACTS}" x86-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+    case "${DEFCONFIG_NAME}" in
+        suderra_x86_64|suderra_qemu_x86_64_prod_ab)
+            echo "==> x86 production boot/verity artifact üretimi"
+            "${PRODUCTION_ARTIFACTS}" x86-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
+            ;;
+    esac
 fi
 
 # genimage host tool'u Buildroot'ta otomatik kurulur (BR2_PACKAGE_HOST_GENIMAGE)
@@ -300,7 +316,7 @@ fi
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
     "${PRODUCTION_ARTIFACTS}" sign-image "${BINARIES_DIR}" "${IMAGE_OUTPUT_NAME}"
-    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
+    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ] || [ "${DEFCONFIG_NAME}" = "suderra_qemu_x86_64_prod_ab" ]; then
         release_version="${SUDERRA_RELEASE_VERSION:-}"
         if [ -z "${release_version}" ]; then
             echo "ERROR: SUDERRA_RELEASE_VERSION is required for production RAUC bundle generation"
@@ -317,7 +333,7 @@ enforce_production_contract() {
     production_target="0"
 
     case "${DEFCONFIG_NAME}" in
-        suderra_x86_64*|suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
+        suderra_x86_64*|suderra_qemu_x86_64_prod_ab*|suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
             production_target="1"
             ;;
     esac

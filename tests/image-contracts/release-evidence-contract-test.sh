@@ -77,8 +77,10 @@ def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: in
             "bytes": data["artifacts"][0]["bytes"] or 1,
         }
     ]
+    source_sha = data["source"]["git_commit"]
+    source_ref = f"refs/tags/{data['version']}"
     record = {
-        "schema_version": "suderra.machine-verification.v2",
+        "schema_version": "suderra.machine-verification.v3",
         "name": name,
         "status": "passed",
         "generated_at": data["generated_at"],
@@ -89,7 +91,8 @@ def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: in
             "workflow": "Release",
             "run_id": data["source"]["ci"]["run_id"],
             "run_attempt": data["source"]["ci"]["run_attempt"],
-            "ref": f"refs/tags/{data['version']}",
+            "ref": source_ref,
+            "source_sha": source_sha,
         },
         "log": {
             "path": Path(log_rel).name,
@@ -98,21 +101,66 @@ def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: in
         },
         "subjects": subjects,
     }
+    material_refs = []
     if name == "attestations":
         record["verified_subjects"] = [{"name": item["name"], "sha256": item["sha256"]} for item in subjects]
+        attestation_payload = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "subject": [
+                {"name": item["name"], "digest": {"sha256": item["sha256"]}}
+                for item in subjects
+            ],
+            "predicate": {
+                "buildDefinition": {
+                    "externalParameters": {
+                        "repository": "Okan-wqm/Suderra-OS",
+                        "ref": source_ref,
+                        "run_id": data["source"]["ci"]["run_id"],
+                        "run_attempt": data["source"]["ci"]["run_attempt"],
+                        "source_sha": source_sha,
+                    },
+                    "resolvedDependencies": [
+                        {
+                            "uri": "git+https://github.com/Okan-wqm/Suderra-OS",
+                            "digest": {"gitCommit": source_sha},
+                        }
+                    ],
+                },
+                "runDetails": {"builder": {"id": "https://github.com/actions/runner/github-hosted"}},
+            },
+        }
+        material_rel = f"machine/attestations/{data['artifacts'][0]['name']}.json"
+        material_sha, material_bytes = write_text(material_rel, json.dumps(attestation_payload, sort_keys=True) + "\n")
+        material_refs.append({"path": material_rel, "sha256": material_sha, "bytes": material_bytes})
         record["verification_material"] = {
             "kind": "github-artifact-attestation-dsse",
             "files": [
                 {
                     "path": f"{data['artifacts'][0]['name']}.json",
-                    "sha256": "7" * 64,
-                    "bytes": 1,
+                    "sha256": material_sha,
+                    "bytes": material_bytes,
                     "subjects": record["verified_subjects"],
+                    "provenance": [
+                        {
+                            "predicate_type": "https://slsa.dev/provenance/v1",
+                            "builder_id": "https://github.com/actions/runner/github-hosted",
+                            "source_repository": "Okan-wqm/Suderra-OS",
+                            "source_ref": source_ref,
+                            "source_run_id": data["source"]["ci"]["run_id"],
+                            "source_run_attempt": data["source"]["ci"]["run_attempt"],
+                            "source_sha": source_sha,
+                            "materials": attestation_payload["predicate"]["buildDefinition"]["resolvedDependencies"],
+                        }
+                    ],
                 }
             ],
         }
     digest, size = write_text(record_rel, json.dumps(record, sort_keys=True) + "\n")
-    return {"path": record_rel, "sha256": digest, "bytes": size}
+    result = {"path": record_rel, "sha256": digest, "bytes": size}
+    if material_refs:
+        result["materials"] = material_refs
+    return result
 
 
 def reproducibility_payload(data: dict, comparison: str) -> dict:
@@ -321,8 +369,30 @@ qemu_semantic = {
     "lockdown": {"status": "locked"},
 }
 data["qemu"]["guest_facts"] = qemu_semantic
+termination = {
+    "mode": "exited",
+    "exit_status": 0,
+    "signal": None,
+    "killed": False,
+    "timeout": False,
+    "qmp_quit_sent": True,
+    "qmp_quit_ack": True,
+    "reason": "contract fixture exited cleanly",
+    "acceptable": True,
+}
+data["qemu"]["check_details"] = data["qemu"]["semantic_checks"]
+data["qemu"]["validation_profile"] = "release-candidate"
+data["qemu"]["failure_class"] = "none"
+data["qemu"]["execution"] = {
+    "schema_version": "suderra.qemu-acceptance.v4",
+    "profile": "release-candidate",
+    "qemu_exit_status": 0,
+    "termination": termination,
+    "failure_class": "none",
+    "result": "passed",
+}
 qemu_input = {
-    "schema_version": "suderra.qemu-acceptance.v3",
+    "schema_version": "suderra.qemu-acceptance.v4",
     "version": data["version"],
     "target": data["target"],
     "source_sha": data["source"]["git_commit"],
@@ -333,6 +403,10 @@ qemu_input = {
     "firmware": data["qemu"]["firmware"],
     "firmware_sha256": data["qemu"]["firmware_sha256"],
     "status": "passed",
+    "profile": "release-candidate",
+    "failure_class": "none",
+    "qemu_exit_status": 0,
+    "termination": termination,
     "logs": [],
     "checks": data["qemu"]["semantic_checks"],
     "guest_facts": data["qemu"]["guest_facts"],
@@ -394,6 +468,9 @@ for rel in data["reproducibility"]["logs"]:
     )
     data["preflight_inputs"]["reproducibility"] = {"path": rel, "sha256": digest, "bytes": size}
 for scan in data["security_scans"]:
+    raw_rel = f"preflight/security/raw/{scan['name']}.json"
+    raw_payload = scan["name"] + " passed\n"
+    raw_digest, raw_size = write_text(raw_rel, raw_payload)
     report_payload = {
         "schema_version": "suderra.release-security-report.v1",
         "version": data["version"],
@@ -405,17 +482,33 @@ for scan in data["security_scans"]:
         "tool": scan["name"],
         "tool_version": "contract",
         "evidence_type": "contract-log",
-        "evidence_sha256": hashlib.sha256((scan["name"] + " passed\n").encode("utf-8")).hexdigest(),
+        "evidence_path": raw_rel,
+        "evidence_sha256": raw_digest,
+        "evidence_bytes": raw_size,
         "severity_counts": {"critical": 0, "high": 0},
     }
     digest, size = write_text(scan["report"], json.dumps(report_payload, sort_keys=True) + "\n")
     data["preflight_inputs"]["security_reports"].append(
         {"name": scan["name"], "path": scan["report"], "sha256": digest, "bytes": size}
     )
+    data["preflight_inputs"].setdefault("security_raw_evidence", []).append(
+        {
+            "name": scan["name"],
+            "source_path": raw_rel,
+            "path": raw_rel,
+            "sha256": raw_digest,
+            "bytes": raw_size,
+            "report_sha256": raw_digest,
+            "report_bytes": raw_size,
+        }
+    )
 for name, check in data["machine_verification"].items():
     for rel in check["logs"]:
         digest, size = write_text(rel, "synthetic machine verification transcript\n")
-        check["record"] = write_machine_record(name, rel, digest, size)
+        record_ref = write_machine_record(name, rel, digest, size)
+        if "materials" in record_ref:
+            check["materials"] = record_ref.pop("materials")
+        check["record"] = record_ref
 for name, check in data["governance"]["checks"].items():
     payload = {"status": "passed"}
     if name == "policy_validation":
@@ -520,8 +613,10 @@ def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: in
             "bytes": data["artifacts"][0]["bytes"] or 1,
         }
     ]
+    source_sha = data["source"]["git_commit"]
+    source_ref = f"refs/tags/{data['version']}"
     record = {
-        "schema_version": "suderra.machine-verification.v2",
+        "schema_version": "suderra.machine-verification.v3",
         "name": name,
         "status": "passed",
         "generated_at": data["generated_at"],
@@ -532,7 +627,8 @@ def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: in
             "workflow": "Release",
             "run_id": data["source"]["ci"]["run_id"],
             "run_attempt": data["source"]["ci"]["run_attempt"],
-            "ref": f"refs/tags/{data['version']}",
+            "ref": source_ref,
+            "source_sha": source_sha,
         },
         "log": {
             "path": Path(log_rel).name,
@@ -541,21 +637,66 @@ def write_machine_record(name: str, log_rel: str, log_sha256: str, log_bytes: in
         },
         "subjects": subjects,
     }
+    material_refs = []
     if name == "attestations":
         record["verified_subjects"] = [{"name": item["name"], "sha256": item["sha256"]} for item in subjects]
+        attestation_payload = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "subject": [
+                {"name": item["name"], "digest": {"sha256": item["sha256"]}}
+                for item in subjects
+            ],
+            "predicate": {
+                "buildDefinition": {
+                    "externalParameters": {
+                        "repository": "Okan-wqm/Suderra-OS",
+                        "ref": source_ref,
+                        "run_id": data["source"]["ci"]["run_id"],
+                        "run_attempt": data["source"]["ci"]["run_attempt"],
+                        "source_sha": source_sha,
+                    },
+                    "resolvedDependencies": [
+                        {
+                            "uri": "git+https://github.com/Okan-wqm/Suderra-OS",
+                            "digest": {"gitCommit": source_sha},
+                        }
+                    ],
+                },
+                "runDetails": {"builder": {"id": "https://github.com/actions/runner/github-hosted"}},
+            },
+        }
+        material_rel = f"machine/attestations/{data['artifacts'][0]['name']}.json"
+        material_sha, material_bytes = write_text(material_rel, json.dumps(attestation_payload, sort_keys=True) + "\n")
+        material_refs.append({"path": material_rel, "sha256": material_sha, "bytes": material_bytes})
         record["verification_material"] = {
             "kind": "github-artifact-attestation-dsse",
             "files": [
                 {
                     "path": f"{data['artifacts'][0]['name']}.json",
-                    "sha256": "7" * 64,
-                    "bytes": 1,
+                    "sha256": material_sha,
+                    "bytes": material_bytes,
                     "subjects": record["verified_subjects"],
+                    "provenance": [
+                        {
+                            "predicate_type": "https://slsa.dev/provenance/v1",
+                            "builder_id": "https://github.com/actions/runner/github-hosted",
+                            "source_repository": "Okan-wqm/Suderra-OS",
+                            "source_ref": source_ref,
+                            "source_run_id": data["source"]["ci"]["run_id"],
+                            "source_run_attempt": data["source"]["ci"]["run_attempt"],
+                            "source_sha": source_sha,
+                            "materials": attestation_payload["predicate"]["buildDefinition"]["resolvedDependencies"],
+                        }
+                    ],
                 }
             ],
         }
     digest, size = write_text(record_rel, json.dumps(record, sort_keys=True) + "\n")
-    return {"path": record_rel, "sha256": digest, "bytes": size}
+    result = {"path": record_rel, "sha256": digest, "bytes": size}
+    if material_refs:
+        result["materials"] = material_refs
+    return result
 
 
 def reproducibility_payload(data: dict, comparison: str) -> dict:
@@ -755,8 +896,30 @@ qemu_semantic = {
     "lockdown": {"status": "locked"},
 }
 data["qemu"]["guest_facts"] = qemu_semantic
+termination = {
+    "mode": "exited",
+    "exit_status": 0,
+    "signal": None,
+    "killed": False,
+    "timeout": False,
+    "qmp_quit_sent": True,
+    "qmp_quit_ack": True,
+    "reason": "contract fixture exited cleanly",
+    "acceptable": True,
+}
+data["qemu"]["check_details"] = data["qemu"]["semantic_checks"]
+data["qemu"]["validation_profile"] = "release-candidate"
+data["qemu"]["failure_class"] = "none"
+data["qemu"]["execution"] = {
+    "schema_version": "suderra.qemu-acceptance.v4",
+    "profile": "release-candidate",
+    "qemu_exit_status": 0,
+    "termination": termination,
+    "failure_class": "none",
+    "result": "passed",
+}
 qemu_input = {
-    "schema_version": "suderra.qemu-acceptance.v3",
+    "schema_version": "suderra.qemu-acceptance.v4",
     "version": data["version"],
     "target": data["target"],
     "source_sha": data["source"]["git_commit"],
@@ -767,6 +930,10 @@ qemu_input = {
     "firmware": data["qemu"]["firmware"],
     "firmware_sha256": data["qemu"]["firmware_sha256"],
     "status": "passed",
+    "profile": "release-candidate",
+    "failure_class": "none",
+    "qemu_exit_status": 0,
+    "termination": termination,
     "logs": [],
     "checks": data["qemu"]["semantic_checks"],
     "guest_facts": data["qemu"]["guest_facts"],
@@ -843,6 +1010,9 @@ for rel in data["reproducibility"]["logs"]:
     )
     data["preflight_inputs"]["reproducibility"] = {"path": rel, "sha256": digest, "bytes": size}
 for scan in data["security_scans"]:
+    raw_rel = f"preflight/security/raw/{scan['name']}.json"
+    raw_payload = scan["name"] + " passed\n"
+    raw_digest, raw_size = write_text(raw_rel, raw_payload)
     report_payload = {
         "schema_version": "suderra.release-security-report.v1",
         "version": data["version"],
@@ -854,17 +1024,33 @@ for scan in data["security_scans"]:
         "tool": scan["name"],
         "tool_version": "contract",
         "evidence_type": "contract-log",
-        "evidence_sha256": hashlib.sha256((scan["name"] + " passed\n").encode("utf-8")).hexdigest(),
+        "evidence_path": raw_rel,
+        "evidence_sha256": raw_digest,
+        "evidence_bytes": raw_size,
         "severity_counts": {"critical": 0, "high": 0},
     }
     digest, size = write_text(scan["report"], json.dumps(report_payload, sort_keys=True) + "\n")
     data["preflight_inputs"]["security_reports"].append(
         {"name": scan["name"], "path": scan["report"], "sha256": digest, "bytes": size}
     )
+    data["preflight_inputs"].setdefault("security_raw_evidence", []).append(
+        {
+            "name": scan["name"],
+            "source_path": raw_rel,
+            "path": raw_rel,
+            "sha256": raw_digest,
+            "bytes": raw_size,
+            "report_sha256": raw_digest,
+            "report_bytes": raw_size,
+        }
+    )
 for name, check in data["machine_verification"].items():
     for rel in check["logs"]:
         digest, size = write_text(rel, "synthetic alpha machine verification transcript\n")
-        check["record"] = write_machine_record(name, rel, digest, size)
+        record_ref = write_machine_record(name, rel, digest, size)
+        if "materials" in record_ref:
+            check["materials"] = record_ref.pop("materials")
+        check["record"] = record_ref
 for name, check in data["governance"]["checks"].items():
     payload = {"status": "passed"}
     if name == "policy_validation":

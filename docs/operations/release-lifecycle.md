@@ -44,7 +44,8 @@ Required gates:
 - Full-matrix lab input exists under `release-lab-input/<version>/<target>/`
   for hardware targets and validates as `suderra.lab-evidence.v3`.
 - QEMU targets provide `release-lab-input/<version>/<target>/qemu.json` and
-  validate as `suderra.qemu-acceptance.v3`.
+  validate as `suderra.qemu-acceptance.v4` for promotion. Older v3 records are
+  archive-only.
 - The release workflow promotes the exact Build artifact bytes approved by
   preflight, stages release-named files without signing privileges, writes
   `release-assets.json`, then signs, attests, verifies, and assembles evidence
@@ -59,10 +60,12 @@ Required gates:
   This validation replays preserved preflight input files, not only flattened
   final evidence projections.
 - GitHub Release publication is a separate protected `publish` job under
-  `release-publish`. It creates the final release, downloads the public asset
-  set, validates the publication manifest, and re-runs cosign plus GitHub
-  attestation verification. The signing job has no `contents: write`
-  permission; the publish job has no OIDC signing or attestation permission.
+  `release-publish`. It creates a draft release, downloads the draft asset set,
+  validates the publication manifest, re-runs cosign plus GitHub attestation
+  verification, creates signed post-publication proof bytes and a second-stage
+  proof manifest, uploads those proof assets, then flips the release public.
+  The signing job has no `contents: write` permission; publish OIDC usage is
+  limited to signing the closure proof.
 - Production blockers remain explicit residual risk; no production-ready claim
   is made.
 
@@ -76,13 +79,18 @@ Required additional gates:
 
 - Production defconfigs use `BR2_PACKAGE_SUDERRA_VARIANT_PROD`.
 - Production trust roots come from prod/HSM-backed key material, not dev or CI
-  key profiles.
+  key profiles. RAUC production signing requires a PKCS#11 URI and validated
+  `suderra.hsm-signing-session.v1` evidence; file-backed private keys are
+  rejected.
 - x86 uses UEFI Secure Boot, signed UKI, immutable cmdline, and dm-verity.
 - ARM uses U-Boot verified boot, signed FIT, immutable cmdline, and dm-verity.
 - RAUC A/B slots, signed bundles, boot try counters, health checks, mark-good,
   rollback, and downgrade rejection are proven.
 - `/data` is the only mutable partition and is LUKS2 encrypted with a TPM-sealed
   unlock policy.
+- Production-runtime QEMU evidence must prove Secure Boot enforcement,
+  dm-verity tamper rejection, RAUC good update, bad-signature rejection, health
+  rollback, anti-rollback, and `/data` encryption behavior.
 - Signed SBOM and VEX are published and verified.
 - Hardware evidence covers every production-required board and intended carrier.
 

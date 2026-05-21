@@ -18,6 +18,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = "suderra.release-publication-manifest.v1"
+CLASSIFIER_VERSION = "suderra.release-asset-classifier.v2"
 MANIFEST_NAME = "release-publication-manifest.json"
 SELF_SIDECARS = {
     "release-publication-manifest.json.sig",
@@ -80,6 +81,7 @@ def create_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "version": args.version,
         "generated_at": now_utc(),
+        "classifier_version": CLASSIFIER_VERSION,
         "source": {
             "repository": args.repository or os.environ.get("GITHUB_REPOSITORY", "not_collected"),
             "workflow": args.workflow or os.environ.get("GITHUB_WORKFLOW", "not_collected"),
@@ -125,6 +127,8 @@ def validate_manifest(
         failures.append(f"schema_version must be {SCHEMA_VERSION}")
     if expected_version is not None and manifest.get("version") != expected_version:
         failures.append(f"version must be {expected_version}")
+    if manifest.get("classifier_version") != CLASSIFIER_VERSION:
+        failures.append(f"classifier_version must be {CLASSIFIER_VERSION}")
     source = manifest.get("source")
     if not isinstance(source, dict):
         failures.append("source must be an object")
