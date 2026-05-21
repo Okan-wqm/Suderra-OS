@@ -79,9 +79,9 @@ Required additional gates:
 
 - Production defconfigs use `BR2_PACKAGE_SUDERRA_VARIANT_PROD`.
 - Production trust roots come from prod/HSM-backed key material, not dev or CI
-  key profiles. RAUC production signing requires a PKCS#11 URI and validated
-  `suderra.hsm-signing-session.v1` evidence; file-backed private keys are
-  rejected.
+  key profiles. RAUC and production image signing require a PKCS#11 URI and
+  validated `suderra.hsm-signing-session.v2` evidence; file-backed private keys
+  are rejected.
 - x86 uses UEFI Secure Boot, signed UKI, immutable cmdline, and dm-verity.
 - ARM uses U-Boot verified boot, signed FIT, immutable cmdline, and dm-verity.
 - RAUC A/B slots, signed bundles, boot try counters, health checks, mark-good,

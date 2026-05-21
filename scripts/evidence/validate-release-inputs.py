@@ -534,7 +534,8 @@ def validate_security_report(
     if not isinstance(payload, dict):
         return [f"missing or invalid release security report: {path}"]
     failures = []
-    if payload.get("schema_version") != "suderra.release-security-report.v1":
+    schema_version = payload.get("schema_version")
+    if schema_version not in {"suderra.release-security-report.v1", "suderra.release-security-report.v2"}:
         failures.append(f"security report schema_version mismatch: {path}")
     if payload.get("version") != version:
         failures.append(f"security report version mismatch: {path}")
@@ -546,6 +547,20 @@ def validate_security_report(
         failures.append(f"security report scan mismatch: {path}")
     if payload.get("status") != "passed":
         failures.append(f"security report status must be passed: {path}")
+    if schema_version == "suderra.release-security-report.v2":
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "security_raw_replay",
+                ROOT / "scripts" / "evidence" / "security-raw-replay.py",
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError("cannot import security-raw-replay.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            failures.extend(module.validate_report(path, check_files=check_files))
+        except Exception as exc:
+            failures.append(f"cannot replay scanner raw evidence: {exc}")
+        return failures
     for field in ("generated_at", "tool", "tool_version", "evidence_type", "evidence_sha256", "evidence_path"):
         value = payload.get(field)
         if field == "evidence_sha256":
@@ -687,8 +702,43 @@ def main() -> int:
     if args.check_files:
         lab_args.append("--check-files")
     failures.extend(run(lab_args))
+    if args.profile == "production-candidate":
+        acquisition_root = args.root / "release-lab-input" / args.version
+        acquisition_count = 0
+        for target_dir in sorted(acquisition_root.iterdir()) if acquisition_root.is_dir() else []:
+            if not target_dir.is_dir():
+                continue
+            acquisition = target_dir / "station-acquisition.json"
+            acquisition_count += 1
+            acquisition_args = [
+                sys.executable,
+                "scripts/evidence/station-acquisition.py",
+                "validate",
+                str(acquisition),
+            ]
+            if args.check_files:
+                acquisition_args.append("--check-files")
+            failures.extend(run(acquisition_args))
+        if acquisition_count == 0:
+            failures.append("production-candidate profile requires station-acquisition adapter evidence")
 
     matrix = load_matrix(args.matrix)
+    if args.profile == "production-candidate":
+        signing_root = args.root / "release-signing" / args.version
+        signing_sessions = sorted(signing_root.glob("*/*.json")) if signing_root.is_dir() else []
+        if not signing_sessions:
+            failures.append("production-candidate profile requires release-signing HSM session evidence")
+        for session in signing_sessions:
+            payload = read_json(session)
+            if not isinstance(payload, dict):
+                failures.append(f"HSM signing session missing or invalid JSON: {session}")
+                continue
+            if payload.get("schema_version") != "suderra.hsm-signing-session.v2":
+                failures.append(f"HSM signing session must be suderra.hsm-signing-session.v2: {session}")
+            if payload.get("mode") != "production":
+                failures.append(f"HSM signing session mode must be production: {session}")
+            if not isinstance(payload.get("challenge"), dict) or not isinstance(payload.get("artifacts"), list):
+                failures.append(f"HSM signing session must bind challenge and artifacts: {session}")
     for row in matrix.get("defconfigs", []):
         if row.get("release") and row.get("qemu_test"):
             qemu = args.root / "release-lab-input" / args.version / str(row["target"]) / "qemu.json"
@@ -714,8 +764,29 @@ def main() -> int:
             repro = args.root / "release-reproducibility" / args.version / f"{target}.json"
             failures.extend(validate_approval(approval, args.version, target, bound_source_sha))
             failures.extend(validate_repro(repro, args.version, target, bound_source_sha, bound_source_run_id, args.check_files))
+        if args.profile == "production-candidate" and row.get("profile") == "production-runtime":
+            runtime = args.root / "release-runtime" / args.version / str(row["target"]) / "production-runtime.json"
+            runtime_args = [
+                sys.executable,
+                "scripts/evidence/validate-production-runtime-suite.py",
+                str(runtime),
+                "--require-pass",
+                "--expected-version",
+                args.version,
+                "--expected-target",
+                str(row["target"]),
+            ]
+            if bound_source_sha:
+                runtime_args.extend(["--expected-source-sha", bound_source_sha])
+            if args.check_files:
+                runtime_args.append("--check-files")
+            failures.extend(run(runtime_args))
     for scan in matrix.get("security_scans", []):
         report = args.root / "release-security" / args.version / f"{scan}.json"
+        if args.profile == "production-candidate":
+            report_payload = read_json(report)
+            if not isinstance(report_payload, dict) or report_payload.get("schema_version") != "suderra.release-security-report.v2":
+                failures.append(f"production-candidate requires scanner-native v2 security report for {scan}: {report}")
         failures.extend(validate_security_report(report, str(scan), args.version, bound_source_sha, bound_source_run_id, args.check_files))
 
     if failures:

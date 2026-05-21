@@ -30,8 +30,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.release-evidence.v4"
-LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2", "suderra.release-evidence.v3"}
+SCHEMA_VERSION = "suderra.release-evidence.v5"
+LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2", "suderra.release-evidence.v3", "suderra.release-evidence.v4"}
 ASSET_MANIFEST_SCHEMA_VERSION = "suderra.release-assets.v1"
 APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
 
@@ -53,7 +53,11 @@ TOP_LEVEL_FIELDS = {
     "preflight_inputs",
     "governance",
     "qemu",
+    "runtime_qemu",
     "hardware",
+    "station_acquisitions",
+    "hsm_signing_sessions",
+    "release_image_scan_reports",
     "runtime_checks",
     "approvals",
     "residual_risk",
@@ -428,11 +432,19 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "logs": [],
             "checks": [],
         },
+        "runtime_qemu": {
+            "required": production_required,
+            "status": "not_run" if production_required else "not_applicable",
+            "production_suites": [],
+        },
         "hardware": {
             "required": hardware_required,
             "status": "not_run" if hardware_required else "not_applicable",
             "devices": [],
         },
+        "station_acquisitions": [],
+        "hsm_signing_sessions": [],
+        "release_image_scan_reports": [],
         "runtime_checks": {
             name: {
                 "required": production_required,
@@ -1167,6 +1179,15 @@ def apply_release_inputs(
                 }
             )
             if isinstance(report_payload, dict):
+                if report_payload.get("schema_version") == "suderra.release-security-report.v2":
+                    evidence["release_image_scan_reports"].append(
+                        {
+                            "name": scan["name"],
+                            "path": rel_report,
+                            "sha256": sha256_file(bundle_dir / rel_report),
+                            "bytes": (bundle_dir / rel_report).stat().st_size,
+                        }
+                    )
                 evidence_path = report_payload.get("evidence_path")
                 evidence_sha = report_payload.get("evidence_sha256")
                 evidence_bytes = report_payload.get("evidence_bytes")
@@ -1197,6 +1218,109 @@ def apply_release_inputs(
                             for item in raw_items
                         ):
                             raw_items.append(raw_record)
+                raw = report_payload.get("raw")
+                if isinstance(raw, dict):
+                    raw_path_value = raw.get("path")
+                    raw_sha = raw.get("sha256")
+                    raw_bytes = raw.get("bytes")
+                    if isinstance(raw_path_value, str) and not Path(raw_path_value).is_absolute() and ".." not in Path(raw_path_value).parts:
+                        raw_source = input_root / "release-security" / raw_path_value
+                        if raw_source.is_file() and raw_source.stat().st_size > 0:
+                            raw_rel = copy_into_bundle(
+                                bundle_dir,
+                                raw_source,
+                                f"preflight/security/raw/{sha256_file(raw_source)}-{Path(raw_path_value).name}",
+                            )
+                            raw_record = {
+                                "name": scan["name"],
+                                "source_path": raw_path_value,
+                                "path": raw_rel,
+                                "sha256": sha256_file(bundle_dir / raw_rel),
+                                "bytes": (bundle_dir / raw_rel).stat().st_size,
+                            }
+                            if isinstance(raw_sha, str):
+                                raw_record["report_sha256"] = raw_sha
+                            if isinstance(raw_bytes, int):
+                                raw_record["report_bytes"] = raw_bytes
+                            raw_items = evidence["preflight_inputs"]["security_raw_evidence"]
+                            if not any(
+                                isinstance(item, dict)
+                                and item.get("sha256") == raw_record["sha256"]
+                                and item.get("source_path") == raw_record["source_path"]
+                                for item in raw_items
+                            ):
+                                raw_items.append(raw_record)
+    runtime_suite = input_root / "release-runtime" / version / target / "production-runtime.json"
+    if runtime_suite.is_file() and runtime_suite.stat().st_size > 0:
+        rel_runtime = copy_into_bundle(bundle_dir, runtime_suite, "preflight/runtime/production-runtime.json")
+        evidence["runtime_qemu"]["production_suites"].append(
+            {
+                "path": rel_runtime,
+                "sha256": sha256_file(bundle_dir / rel_runtime),
+                "bytes": (bundle_dir / rel_runtime).stat().st_size,
+            }
+        )
+        runtime_payload = read_json(runtime_suite)
+        if isinstance(runtime_payload, dict):
+            for scenario in runtime_payload.get("scenarios", []) if isinstance(runtime_payload.get("scenarios"), list) else []:
+                if not isinstance(scenario, dict):
+                    continue
+                for log in scenario.get("logs", []) if isinstance(scenario.get("logs"), list) else []:
+                    if not isinstance(log, dict) or not isinstance(log.get("path"), str):
+                        continue
+                    rel_log = Path(log["path"])
+                    if rel_log.is_absolute() or ".." in rel_log.parts:
+                        continue
+                    log_source = runtime_suite.parent / rel_log
+                    if log_source.is_file():
+                        copy_into_bundle(bundle_dir, log_source, str(Path("preflight/runtime") / rel_log))
+            scenarios = runtime_payload.get("scenarios")
+            if isinstance(scenarios, list) and all(isinstance(item, dict) and item.get("status") == "passed" for item in scenarios):
+                evidence["runtime_qemu"]["status"] = "passed"
+                scenario_to_runtime = {
+                    "signed-boot": "secure_boot",
+                    "dm-verity-rootfs-tamper-rejection": "dm_verity_tamper",
+                    "rauc-good-update": "rauc_good_update",
+                    "rauc-bad-signature-rejection": "rauc_bad_signature",
+                    "rauc-health-rollback": "rauc_health_rollback",
+                    "anti-rollback-downgrade-rejection": "anti_rollback",
+                    "data-luks-swtpm": "data_luks",
+                }
+                for scenario in scenarios:
+                    check_name = scenario_to_runtime.get(str(scenario.get("name")))
+                    if check_name in evidence["runtime_checks"]:
+                        evidence["runtime_checks"][check_name]["status"] = "passed"
+                        evidence["runtime_checks"][check_name]["evidence"] = rel_runtime
+    signing_root = input_root / "release-signing" / version / target
+    if signing_root.is_dir():
+        for session in sorted(signing_root.glob("*.json")):
+            rel_session = copy_into_bundle(bundle_dir, session, f"preflight/signing/{session.name}")
+            evidence["hsm_signing_sessions"].append(
+                {
+                    "path": rel_session,
+                    "sha256": sha256_file(bundle_dir / rel_session),
+                    "bytes": (bundle_dir / rel_session).stat().st_size,
+                }
+            )
+    acquisition = input_root / "release-lab-input" / version / target / "station-acquisition.json"
+    if acquisition.is_file() and acquisition.stat().st_size > 0:
+        rel_acquisition = copy_into_bundle(bundle_dir, acquisition, "hardware/input/station-acquisition.json")
+        acquisition_payload = read_json(acquisition)
+        if isinstance(acquisition_payload, dict) and isinstance(acquisition_payload.get("events_root"), str):
+            events_root = Path(acquisition_payload["events_root"])
+            if not events_root.is_absolute() and ".." not in events_root.parts:
+                source_events = acquisition.parent / events_root
+                if source_events.is_dir():
+                    for event_file in sorted(path for path in source_events.rglob("*") if path.is_file()):
+                        event_rel = event_file.relative_to(acquisition.parent).as_posix()
+                        copy_into_bundle(bundle_dir, event_file, str(Path("hardware/input") / event_rel))
+        evidence["station_acquisitions"].append(
+            {
+                "path": rel_acquisition,
+                "sha256": sha256_file(bundle_dir / rel_acquisition),
+                "bytes": (bundle_dir / rel_acquisition).stat().st_size,
+            }
+        )
     approval_path = input_root / "release-approvals" / version / f"{target}.json"
     approvals = read_json(approval_path)
     if isinstance(approvals, dict):
@@ -1788,6 +1912,7 @@ def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], 
                     str(evidence.get("version")),
                     source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
                     str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                    validation.check_files,
                 ):
                     validation.error(f"$.preflight_inputs.security_reports[{idx}].path", failure)
                 report_payload = read_json(report_path)
@@ -1993,6 +2118,138 @@ def validate_qemu(
         missing_checks = sorted(set(REQUIRED_QEMU_CHECKS) - set(checks or []))
         if missing_checks:
             validation.error("$.qemu.checks", f"missing required checks: {', '.join(missing_checks)}")
+
+
+def validate_runtime_qemu(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    runtime_qemu = evidence.get("runtime_qemu")
+    if not isinstance(runtime_qemu, dict):
+        validation.error("$.runtime_qemu", "must be an object")
+        return
+    check_bool(validation, "$.runtime_qemu.required", runtime_qemu.get("required"))
+    if isinstance(runtime_qemu.get("required"), bool) and runtime_qemu.get("required") != expected_required:
+        validation.error("$.runtime_qemu.required", f"must match matrix-derived requirement {expected_required}")
+    check_status(validation, "$.runtime_qemu.status", runtime_qemu.get("status"), STATUS_VALUES)
+    suites = runtime_qemu.get("production_suites")
+    if not isinstance(suites, list):
+        validation.error("$.runtime_qemu.production_suites", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not suites:
+        validation.error("$.runtime_qemu.production_suites", "must include production-runtime QEMU suite evidence")
+    source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+    expected_source_sha = source.get("git_commit") if isinstance(source.get("git_commit"), str) else None
+    for idx, item in enumerate(suites):
+        suite_path = validate_preserved_ref(validation, f"$.runtime_qemu.production_suites[{idx}]", item, require_pass)
+        if require_pass and suite_path is not None:
+            try:
+                module = load_script_module(
+                    "validate_production_runtime_suite",
+                    "scripts/evidence/validate-production-runtime-suite.py",
+                )
+                for failure in module.validate(
+                    suite_path,
+                    check_files=validation.check_files,
+                    require_pass=True,
+                    expected_version=str(evidence.get("version")),
+                    expected_target=None,
+                    expected_source_sha=expected_source_sha,
+                ):
+                    validation.error(f"$.runtime_qemu.production_suites[{idx}].path", failure)
+            except Exception as exc:
+                validation.error(
+                    f"$.runtime_qemu.production_suites[{idx}].path",
+                    f"cannot replay production-runtime suite validation: {exc}",
+                )
+    if require_pass and release_tier == "production" and expected_required and runtime_qemu.get("status") != "passed":
+        validation.error("$.runtime_qemu.status", "must be passed for production release evidence")
+
+
+def validate_hsm_signing_sessions(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    sessions = evidence.get("hsm_signing_sessions")
+    if not isinstance(sessions, list):
+        validation.error("$.hsm_signing_sessions", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not sessions:
+        validation.error("$.hsm_signing_sessions", "must preserve production HSM signing sessions")
+    for idx, item in enumerate(sessions):
+        session_path = validate_preserved_ref(validation, f"$.hsm_signing_sessions[{idx}]", item, require_pass)
+        if require_pass and session_path is not None:
+            payload = read_json(session_path)
+            if not isinstance(payload, dict):
+                validation.error(f"$.hsm_signing_sessions[{idx}].path", "must be HSM signing evidence JSON")
+                continue
+            if payload.get("schema_version") != "suderra.hsm-signing-session.v2":
+                validation.error(f"$.hsm_signing_sessions[{idx}].schema_version", "must be suderra.hsm-signing-session.v2")
+            if payload.get("mode") != "production":
+                validation.error(f"$.hsm_signing_sessions[{idx}].mode", "must be production")
+            for field in ("pkcs11_uri", "certificate_sha256", "hsm_serial", "ceremony_id"):
+                check_string(validation, f"$.hsm_signing_sessions[{idx}].{field}", payload.get(field))
+            if not isinstance(payload.get("challenge"), dict):
+                validation.error(f"$.hsm_signing_sessions[{idx}].challenge", "must preserve signed challenge")
+            artifacts = payload.get("artifacts")
+            if not isinstance(artifacts, list) or not artifacts:
+                validation.error(f"$.hsm_signing_sessions[{idx}].artifacts", "must bind signed artifacts")
+
+
+def validate_station_acquisitions(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    acquisitions = evidence.get("station_acquisitions")
+    if not isinstance(acquisitions, list):
+        validation.error("$.station_acquisitions", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not acquisitions:
+        validation.error("$.station_acquisitions", "must preserve adapter-acquired station evidence")
+    for idx, item in enumerate(acquisitions):
+        acquisition_path = validate_preserved_ref(validation, f"$.station_acquisitions[{idx}]", item, require_pass)
+        if require_pass and acquisition_path is not None:
+            payload = read_json(acquisition_path)
+            if not isinstance(payload, dict):
+                validation.error(f"$.station_acquisitions[{idx}].path", "must be station acquisition JSON")
+                continue
+            if payload.get("schema_version") != "suderra.station-acquisition.v1":
+                validation.error(f"$.station_acquisitions[{idx}].schema_version", "must be suderra.station-acquisition.v1")
+            events = payload.get("events")
+            if not isinstance(events, list) or not events:
+                validation.error(f"$.station_acquisitions[{idx}].events", "must include adapter events")
+            try:
+                module = load_script_module("station_acquisition", "scripts/evidence/station-acquisition.py")
+                for failure in module.validate_payload(payload, acquisition_path.parent, validation.check_files):
+                    validation.error(f"$.station_acquisitions[{idx}].path", failure)
+            except Exception as exc:
+                validation.error(f"$.station_acquisitions[{idx}].path", f"cannot replay station acquisition: {exc}")
+
+
+def validate_release_image_scan_reports(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    reports = evidence.get("release_image_scan_reports")
+    if not isinstance(reports, list):
+        validation.error("$.release_image_scan_reports", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not reports:
+        validation.error("$.release_image_scan_reports", "must include scanner-native release image reports")
+    for idx, item in enumerate(reports):
+        validate_preserved_ref(validation, f"$.release_image_scan_reports[{idx}]", item, require_pass)
 
 
 def validate_hardware(
@@ -2569,7 +2826,11 @@ def validate_evidence(
     validate_preflight_inputs(validation, evidence, require_pass)
     validate_governance(validation, evidence, require_pass)
     validate_qemu(validation, evidence, require_pass, qemu_required)
+    validate_runtime_qemu(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_hardware(validation, evidence, require_pass, hardware_required)
+    validate_station_acquisitions(validation, evidence, require_pass, effective_tier, hardware_required)
+    validate_hsm_signing_sessions(validation, evidence, require_pass, effective_tier, runtime_required)
+    validate_release_image_scan_reports(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_runtime_checks(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_approvals(validation, evidence, require_pass)
     validate_release_decision(validation, evidence, require_pass)
@@ -2593,6 +2854,9 @@ def schema_contract() -> dict[str, Any]:
         "approval_schema_version": APPROVAL_SCHEMA_VERSION,
         "machine_verification_schema_version": MACHINE_VERIFICATION_SCHEMA_VERSION,
         "machine_verification_checks": list(MACHINE_VERIFICATION_CHECKS),
+        "production_runtime_suite_schema_version": "suderra.qemu-production-runtime-suite.v1",
+        "hsm_signing_session_schema_version": "suderra.hsm-signing-session.v2",
+        "release_security_report_schema_version": "suderra.release-security-report.v2",
         "governance_checks": list(GOVERNANCE_CHECKS),
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
         "required_qemu_checks": list(REQUIRED_QEMU_CHECKS),

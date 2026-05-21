@@ -510,17 +510,29 @@ def init_command(args: argparse.Namespace) -> int:
         write_json(
             args.output_root / "release-security" / args.version / f"{scan}.json",
             {
-                "schema_version": "suderra.release-security-report.v1",
+                "schema_version": "suderra.release-security-report.v2",
                 "version": args.version,
                 "source_sha": args.source_sha,
                 "source_run_id": str(args.source_run_id),
                 "scan": scan,
                 "status": "not_run",
                 "generated_at": "TO_BE_COLLECTED",
-                "tool": "TO_BE_COLLECTED",
+                "tool": scan,
                 "tool_version": "TO_BE_COLLECTED",
-                "evidence_type": "TO_BE_COLLECTED",
-                "evidence_sha256": "0" * 64,
+                "scanner_db": {
+                    "type": "TO_BE_COLLECTED",
+                    "version": "TO_BE_COLLECTED",
+                    "created_at": "TO_BE_COLLECTED",
+                    "digest": "TO_BE_COLLECTED",
+                    "auto_update_disabled": False,
+                },
+                "subjects": [],
+                "raw": {
+                    "path": "TO_BE_COLLECTED",
+                    "sha256": "0" * 64,
+                    "bytes": 0,
+                },
+                "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0},
             },
         )
     if errors:

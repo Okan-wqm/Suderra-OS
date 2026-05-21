@@ -34,7 +34,7 @@ SCHEMA_ROLES = {
     "approval": "suderra.release-approval.v2",
     "qemu_input": "suderra.qemu-acceptance.v4",
     "lab_input": "suderra.lab-evidence.v3",
-    "release_evidence": "suderra.release-evidence.v4",
+    "release_evidence": "suderra.release-evidence.v5",
 }
 OPTIONAL_EMPTY_INPUT_ROLES = {"qemu-stderr"}
 PREFLIGHT_INPUT_DIRS = (

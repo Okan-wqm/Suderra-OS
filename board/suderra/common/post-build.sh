@@ -178,6 +178,12 @@ case "${DEFCONFIG_NAME}" in
     *)
         ln -sfn ../suderra-data.service \
             "${TARGET_DIR}/etc/systemd/system/sysinit.target.wants/suderra-data.service"
+        case "${DEFCONFIG_NAME}" in
+            suderra_qemu_x86_64*)
+                ln -sfn ../suderra-qemu-semantic-collector.service \
+                    "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-qemu-semantic-collector.service"
+                ;;
+        esac
         if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
             enable_unit_if_present "suderra-agent.service" "multi-user.target"
         else
@@ -188,12 +194,6 @@ case "${DEFCONFIG_NAME}" in
             enable_unit_if_present "suderra-agent.service" "multi-user.target"
             ln -sfn ../suderra-provision-worker.path \
                 "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path"
-            case "${DEFCONFIG_NAME}" in
-                suderra_qemu_x86_64*)
-                    ln -sfn ../suderra-qemu-semantic-collector.service \
-                        "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-qemu-semantic-collector.service"
-                    ;;
-            esac
         fi
         ;;
 esac

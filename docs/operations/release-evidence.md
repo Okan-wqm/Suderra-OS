@@ -74,7 +74,7 @@ Required top-level fields:
 
 | Field | Purpose |
 |---|---|
-| `schema_version` | Must be `suderra.release-evidence.v4` for promotion evidence; v2/v3 are archive-only. |
+| `schema_version` | Must be `suderra.release-evidence.v5` for promotion evidence; v2/v3/v4 are archive-only. |
 | `version`, `target` | Must match the bundle path components. |
 | `target_contract` | Snapshot from `ci/build-matrix.yml`. |
 | `source` | Repository, tag, commit, clean/dirty state, and CI run ID. |
@@ -88,7 +88,11 @@ Required top-level fields:
 | `preflight_inputs` | Preserved approval, reproducibility, security, QEMU, and lab input files replayed by final validation. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
+| `runtime_qemu` | Non-public production-runtime QEMU suite evidence for Secure Boot, dm-verity, RAUC, anti-rollback, and `/data` LUKS/swtpm scenarios. |
 | `hardware` | Board serial logs and hardware acceptance results. |
+| `station_acquisitions` | Adapter-executed lab acquisition records, including station registry binding and raw adapter transcript digests. |
+| `hsm_signing_sessions` | HSM/PKCS#11 signing sessions with token/key identity, challenge-response, audit transcript, and artifact-role bindings. |
+| `release_image_scan_reports` | Scanner-native rootfs/image/SBOM reports bound to release subjects and raw scanner bytes. |
 | `runtime_checks` | `secure_boot`, `dm_verity`, `dm_verity_tamper`, `rauc_good_update`, `rauc_bad_signature`, `rauc_health_rollback`, `anti_rollback`, `data_luks`, `lockdown`, `nmap`, and `systemd_security`. |
 | `approvals` | Release-owner or security approvals. |
 | `residual_risk` | Accepted or blocking residual risk records. |
@@ -132,16 +136,18 @@ reproducibility validators against those preserved files. It intentionally
 produces bundles that fail `--require-pass` until every required input is
 present. Legacy v2 evidence can be updated structurally with:
 
-Security reports must preserve their raw scanner/check-run input. Each
-`suderra.release-security-report.v1` includes `evidence_path`,
-`evidence_sha256`, and `evidence_bytes`; final evidence stores the matching raw
-file under `preflight_inputs.security_raw_evidence` and rejects release-ready
-evidence when a report cannot be replay-bound to that raw byte stream.
+Security reports must preserve raw evidence. Legacy
+`suderra.release-security-report.v1` records bind CI check-run input bytes.
+Scanner-native `suderra.release-security-report.v2` records additionally bind
+release subjects, scanner DB identity, raw JSON bytes, and replayed severity
+counts; final evidence stores matching raw files under
+`preflight_inputs.security_raw_evidence` and rejects release-ready evidence when
+a report cannot be replay-bound to its raw byte stream.
 
 ```bash
 python3 scripts/evidence/release-evidence.py migrate \
     release-evidence/v0.1.0-alpha.1/rpi4/evidence.json \
-    --output /tmp/evidence-v4.json
+    --output /tmp/evidence-v5.json
 ```
 
 Migration does not manufacture missing release evidence; it only updates the

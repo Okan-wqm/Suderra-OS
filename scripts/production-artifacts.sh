@@ -52,7 +52,6 @@ reject_prod_file_key() {
     fi
     case "${value}" in
         pkcs11:*)
-            die "${role} PKCS#11 provider is not implemented yet; refusing to fall back to file signing"
             ;;
         "")
             die "${role} PKCS#11 URI must be set for production signing"
@@ -61,6 +60,106 @@ reject_prod_file_key() {
             die "production ${role} signing rejects file-backed private keys: ${value}"
             ;;
     esac
+}
+
+is_pkcs11_uri() {
+    case "$1" in
+        pkcs11:*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+need_signing_key() {
+    local role="$1"
+    local key="$2"
+
+    reject_prod_file_key "${role}" "${key}"
+    if is_pkcs11_uri "${key}"; then
+        case "${key}" in
+            pkcs11:*object=*|pkcs11:*id=*) ;;
+            *) die "${role} PKCS#11 URI must identify a key with object= or id=" ;;
+        esac
+        return 0
+    fi
+    need_file "${key}"
+}
+
+pkcs11_engine() {
+    local engine="${SUDERRA_PKCS11_ENGINE:-${SUDERRA_OPENSSL_PKCS11_ENGINE:-}}"
+    [ -n "${engine}" ] || die "SUDERRA_PKCS11_ENGINE must be set for PKCS#11 production signing"
+    printf '%s\n' "${engine}"
+}
+
+hsm_evidence_file() {
+    local evidence="${SUDERRA_HSM_SIGNING_EVIDENCE:-}"
+    [ -n "${evidence}" ] || die "SUDERRA_HSM_SIGNING_EVIDENCE must be set for production signing"
+    need_file "${evidence}"
+    printf '%s\n' "${evidence}"
+}
+
+validate_hsm_role() {
+    local role="$1"
+    local key="$2"
+    local cert="$3"
+    local artifact="${4:-}"
+    local args=(
+        python3
+        "$(dirname -- "$0")/evidence/validate-hsm-signing-evidence.py"
+        validate
+        "$(hsm_evidence_file)"
+        --pkcs11-uri "${key}"
+        --certificate "${cert}"
+        --artifact-role "${role}"
+        --require-production
+    )
+    if [ -n "${artifact}" ] && [ -s "${artifact}" ]; then
+        args+=(--artifact-sha256 "$(sha256sum "${artifact}" | awk '{print $1}')")
+    fi
+    "${args[@]}" >/dev/null
+}
+
+sbsign_artifact() {
+    local role="$1"
+    local key="$2"
+    local cert="$3"
+    local input="$4"
+    local output="$5"
+
+    if is_pkcs11_uri "${key}"; then
+        validate_hsm_role "${role}" "${key}" "${cert}" "${input}"
+        sbsign \
+            --engine "$(pkcs11_engine)" \
+            --key "${key}" \
+            --cert "${cert}" \
+            --output "${output}" \
+            "${input}" >/dev/null
+    else
+        sbsign \
+            --key "${key}" \
+            --cert "${cert}" \
+            --output "${output}" \
+            "${input}" >/dev/null
+    fi
+}
+
+openssl_sign_artifact() {
+    local role="$1"
+    local key="$2"
+    local cert="$3"
+    local input="$4"
+    local output="$5"
+
+    if is_pkcs11_uri "${key}"; then
+        validate_hsm_role "${role}" "${key}" "${cert}" "${input}"
+        openssl dgst -sha256 \
+            -engine "$(pkcs11_engine)" \
+            -keyform engine \
+            -sign "${key}" \
+            -out "${output}" \
+            "${input}"
+    else
+        openssl dgst -sha256 -sign "${key}" -out "${output}" "${input}"
+    fi
 }
 
 resolve_grub_editenv() {
@@ -169,9 +268,8 @@ build_signed_slot_uki() {
     [ -n "${stub}" ] || die "SUDERRA_UKI_STUB must point to linuxx64.efi.stub or equivalent"
     [ -n "${sb_key}" ] || die "SUDERRA_SECUREBOOT_SIGNING_KEY must be set"
     [ -n "${sb_cert}" ] || die "SUDERRA_SECUREBOOT_SIGNING_CERT must be set"
-    reject_prod_file_key "Secure Boot" "${sb_key}"
+    need_signing_key "Secure Boot" "${sb_key}"
     need_file "${stub}"
-    need_file "${sb_key}"
     need_file "${sb_cert}"
     need_file "${binaries_dir}/bzImage"
     need_cmd objcopy
@@ -190,14 +288,10 @@ build_signed_slot_uki() {
         "${stub}" \
         "${unsigned}"
 
-    sbsign \
-        --key "${sb_key}" \
-        --cert "${sb_cert}" \
-        --output "${signed}" \
-        "${unsigned}" >/dev/null
+    sbsign_artifact "secureboot-uki" "${sb_key}" "${sb_cert}" "${unsigned}" "${signed}"
     sbverify --cert "${sb_cert}" "${signed}" >/dev/null
 
-    openssl dgst -sha256 -sign "${sb_key}" -out "${sig}" "${signed}"
+    openssl_sign_artifact "secureboot-uki-sidecar" "${sb_key}" "${sb_cert}" "${signed}" "${sig}"
     install -m 0644 "${sb_cert}" "${cert_out}"
 
     install -D -m 0644 "${signed}" "${esp_slot}"
@@ -216,9 +310,8 @@ build_signed_grub() {
 
     [ -n "${sb_key}" ] || die "SUDERRA_SECUREBOOT_SIGNING_KEY must be set"
     [ -n "${sb_cert}" ] || die "SUDERRA_SECUREBOOT_SIGNING_CERT must be set"
-    reject_prod_file_key "GRUB Secure Boot" "${sb_key}"
+    need_signing_key "GRUB Secure Boot" "${sb_key}"
     need_file "${input}"
-    need_file "${sb_key}"
     need_file "${sb_cert}"
     need_cmd sbsign
     need_cmd sbverify
@@ -229,14 +322,10 @@ build_signed_grub() {
     fi
 
     install -D -m 0644 "${input}" "${unsigned}"
-    sbsign \
-        --key "${sb_key}" \
-        --cert "${sb_cert}" \
-        --output "${signed}" \
-        "${unsigned}" >/dev/null
+    sbsign_artifact "secureboot-grub" "${sb_key}" "${sb_cert}" "${unsigned}" "${signed}"
     sbverify --cert "${sb_cert}" "${signed}" >/dev/null
 
-    openssl dgst -sha256 -sign "${sb_key}" -out "${sig}" "${signed}"
+    openssl_sign_artifact "secureboot-grub-sidecar" "${sb_key}" "${sb_cert}" "${signed}" "${sig}"
     install -m 0644 "${sb_cert}" "${cert_out}"
     install -D -m 0644 "${signed}" "${esp_loader}"
 
@@ -272,13 +361,12 @@ sign_image() {
 
     [ -n "${key}" ] || die "SUDERRA_IMAGE_SIGNING_KEY or SUDERRA_SECUREBOOT_SIGNING_KEY must be set"
     [ -n "${cert}" ] || die "SUDERRA_IMAGE_SIGNING_CERT or SUDERRA_SECUREBOOT_SIGNING_CERT must be set"
-    reject_prod_file_key "image" "${key}"
+    need_signing_key "image" "${key}"
     need_file "${image}"
-    need_file "${key}"
     need_file "${cert}"
     need_cmd openssl
 
-    openssl dgst -sha256 -sign "${key}" -out "${image}.sig" "${image}"
+    openssl_sign_artifact "image-sidecar" "${key}" "${cert}" "${image}" "${image}.sig"
     install -m 0644 "${cert}" "${image}.cert"
 }
 

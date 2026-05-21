@@ -1007,6 +1007,40 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --clobber \
             post-publication-verification/*
+          rm -rf downloaded-release-final
+          mkdir -p downloaded-release-final
+          gh release download "${{ needs.validate.outputs.version }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir downloaded-release-final
+          python3 scripts/evidence/release-publication-proof-manifest.py validate \
+            downloaded-release-final/release-publication-proof-manifest.json \
+            --release-dir downloaded-release-final \
+            --proof-dir downloaded-release-final \
+            --expected-version "${{ needs.validate.outputs.version }}"
+          python3 - downloaded-release-final <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          release_dir = Path(sys.argv[1])
+          base = json.loads((release_dir / "release-publication-manifest.json").read_text(encoding="utf-8"))
+          proof = json.loads((release_dir / "release-publication-proof-manifest.json").read_text(encoding="utf-8"))
+          allowed = {item["name"] for item in base["files"]}
+          allowed.update({"release-publication-manifest.json", "release-publication-manifest.json.sig", "release-publication-manifest.json.cert"})
+          proof_payload = proof["post_publication_proof"]
+          allowed.update(item["path"] for item in proof_payload["files"])
+          allowed.update(item["path"] for item in proof_payload.get("raw_attestations", []))
+          allowed.update({
+              "release-publication-proof-manifest.json",
+              "release-publication-proof-manifest.json.sig",
+              "release-publication-proof-manifest.json.cert",
+          })
+          actual = {path.name for path in release_dir.iterdir() if path.is_file()}
+          missing = sorted(allowed - actual)
+          unexpected = sorted(actual - allowed)
+          if missing or unexpected:
+              raise SystemExit(f"final public release byte set mismatch; missing={missing}; unexpected={unexpected}")
+          PY
           gh release edit "${{ needs.validate.outputs.version }}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false

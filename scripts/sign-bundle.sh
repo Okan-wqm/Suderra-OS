@@ -63,6 +63,8 @@ production_signing_evidence() {
         "${evidence}" \
         --pkcs11-uri "${SUDERRA_RAUC_PKCS11_URI}" \
         --certificate "${SUDERRA_RAUC_SIGNING_CERT}" \
+        --artifact-role "rauc-bundle" \
+        --artifact-sha256 "$(sha256sum "${BUNDLE}" | awk '{print $1}')" \
         --require-production \
         >/dev/null
 }
@@ -97,6 +99,10 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         echo "ERROR: production signing requires SUDERRA_RAUC_SIGNING_CERT" >&2
         exit 1
     fi
+    if [ -z "${SUDERRA_RAUC_KEYRING:-}" ] || [ ! -s "${SUDERRA_RAUC_KEYRING}" ]; then
+        echo "ERROR: production signing requires SUDERRA_RAUC_KEYRING to verify device trust" >&2
+        exit 1
+    fi
     RAUC_TOOL="$(resolve_rauc)" || {
         echo "ERROR: production signing requires rauc host tool" >&2
         exit 1
@@ -109,13 +115,7 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         "${BUNDLE}" \
         "${BUNDLE}.signed"
     mv "${BUNDLE}.signed" "${BUNDLE}"
-    if [ -n "${SUDERRA_RAUC_KEYRING:-}" ]; then
-        if [ ! -s "${SUDERRA_RAUC_KEYRING}" ]; then
-            echo "ERROR: SUDERRA_RAUC_KEYRING missing or empty: ${SUDERRA_RAUC_KEYRING}" >&2
-            exit 1
-        fi
-        "${RAUC_TOOL}" info --keyring="${SUDERRA_RAUC_KEYRING}" "${BUNDLE}" >/dev/null
-    fi
+    "${RAUC_TOOL}" info --keyring="${SUDERRA_RAUC_KEYRING}" "${BUNDLE}" >/dev/null
 fi
 
 # 1. RAUC re-sign (eğer bundle henüz imzasız ise)

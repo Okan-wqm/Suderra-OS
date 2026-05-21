@@ -68,6 +68,7 @@ production_signing_evidence() {
         "${evidence}" \
         --pkcs11-uri "${uri}" \
         --certificate "${SUDERRA_RAUC_SIGNING_CERT}" \
+        --artifact-role "rauc-bundle" \
         --require-production \
         >/dev/null || die "HSM signing evidence validation failed"
 }
@@ -161,6 +162,8 @@ create_x86_bundle() {
             reject_prod_file_key "${signing_key}"
         fi
         reject_prod_file_key "${SUDERRA_RAUC_PKCS11_URI:-}"
+        [ -n "${keyring}" ] || die "SUDERRA_RAUC_KEYRING must be set for production RAUC signing"
+        need_file "${keyring}"
         production_signing_evidence
         signing_key="${SUDERRA_RAUC_PKCS11_URI}"
     fi

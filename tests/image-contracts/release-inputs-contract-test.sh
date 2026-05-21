@@ -702,7 +702,7 @@ write_json(
             "binding_manifest": "suderra.release-input-binding.v2",
             "lab_input": "suderra.lab-evidence.v3",
             "qemu_input": "suderra.qemu-acceptance.v4",
-            "release_evidence": "suderra.release-evidence.v4",
+            "release_evidence": "suderra.release-evidence.v5",
         },
         "files": ingress_files,
     },

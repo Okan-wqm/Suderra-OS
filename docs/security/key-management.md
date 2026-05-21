@@ -59,10 +59,11 @@ Seçenekler:
 - Anahtar erişimi: kim, ne zaman, hangi imza için
 - HSM audit log → cold storage
 - Anahtar kullanımı sadece imzalama (export edilmez)
-- Production signing scripts require `suderra.hsm-signing-session.v1`
-  evidence before using a PKCS#11 URI. The evidence binds provider, HSM serial,
-  key label/id, certificate digest, ceremony/operator, expiry, audit log
-  digests, and the exact `SUDERRA_RAUC_PKCS11_URI`.
+- Production signing scripts require `suderra.hsm-signing-session.v2`
+  evidence before using a PKCS#11 URI. The evidence binds provider, token
+  serial/module identity, non-extractable key attributes, certificate digest,
+  ceremony/operator, expiry, signed challenge transcript, audit log digests,
+  artifact roles, and the exact requested PKCS#11 URI.
 
 ## Yapılacaklar
 

@@ -51,9 +51,11 @@ if grep -q 'PKCS#11 RAUC signing provider is not implemented' "${CREATE_RAUC_BUN
 fi
 
 python3 -m py_compile "${HSM_EVIDENCE}"
-grep -q 'suderra.hsm-signing-session.v1' "${HSM_EVIDENCE}"
+grep -q 'suderra.hsm-signing-session.v2' "${HSM_EVIDENCE}"
 grep -q 'hardware_backed' "${HSM_EVIDENCE}"
 grep -q 'certificate_sha256' "${HSM_EVIDENCE}"
+grep -q 'challenge' "${HSM_EVIDENCE}"
+grep -q 'SoftHSM' "${HSM_EVIDENCE}"
 
 python3 - "${TMPDIR}" <<'PY'
 import hashlib
@@ -65,7 +67,7 @@ root = Path(sys.argv[1])
 cert = root / "rauc-signing.crt"
 cert.write_text("contract certificate\n", encoding="utf-8")
 payload = {
-    "schema_version": "suderra.hsm-signing-session.v1",
+    "schema_version": "suderra.hsm-signing-session.v2",
     "mode": "production",
     "provider": "contract-hsm",
     "hardware_backed": True,
@@ -83,6 +85,37 @@ payload = {
         "log_sha256": "a" * 64,
         "transcript_sha256": "b" * 64,
     },
+    "token": {
+        "label": "Suderra Production Token",
+        "manufacturer": "contract-hsm-vendor",
+        "model": "contract-hsm-model",
+        "serial": "contract-serial",
+        "module_sha256": "c" * 64,
+    },
+    "key": {
+        "uri": "pkcs11:token=Suderra;object=rauc-prod;type=private",
+        "label": "rauc-prod",
+        "id": "01",
+        "type": "private",
+        "private": True,
+        "extractable": False,
+        "usages": ["sign"],
+    },
+    "challenge": {
+        "nonce": "contract-nonce",
+        "request_sha256": "d" * 64,
+        "signature_sha256": "e" * 64,
+        "transcript_sha256": "f" * 64,
+        "algorithm": "pkcs11-signature-challenge-v1",
+    },
+    "artifacts": [
+        {
+            "role": "rauc-bundle",
+            "name": "contract.raucb",
+            "sha256": "1" * 64,
+            "bytes": 1024,
+        }
+    ],
 }
 (root / "hsm-evidence.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -90,6 +123,7 @@ python3 "${HSM_EVIDENCE}" validate \
     "${TMPDIR}/hsm-evidence.json" \
     --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
     --certificate "${TMPDIR}/rauc-signing.crt" \
+    --artifact-role rauc-bundle \
     --require-production \
     >/dev/null
 if python3 "${HSM_EVIDENCE}" validate \
