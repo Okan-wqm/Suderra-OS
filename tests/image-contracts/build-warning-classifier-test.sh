@@ -19,6 +19,7 @@ gengtype-lex.cc:356:15: warning: this statement may fall through [-Wimplicit-fal
 plural.y:51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 :51.1-7: warning: POSIX Yacc does not support %define [-Wyacc]
 .1-7: warning: POSIX Yacc does not support %define [-Wyacc]
+plural.y:52.1-7: warning: POSIX Yacc does not support %expect [-Wyacc]mv -f /workspace/output/foo_defconfig/build/glibc-2.41/build/intl/stamp.oST /workspace/output/foo_defconfig/build/glibc-2.41/build/intl/stamp.oS
 libtool: install: warning: remember to run `libtool --finish /tmp/example'
 libtool: install: warning: remember to run `libtool --finish /workspace/output/foo_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.3.0'
 libtool: install: warning: remember to run `libtool --finish ../output/bar_defconfig/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/13.4.0'
@@ -79,9 +80,10 @@ import json
 import sys
 
 evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
-assert evidence["summary"] == {"known-upstream": 29, "owned": 0, "third-party": 0}
-assert evidence["unique_fingerprints"] == 19
+assert evidence["summary"] == {"known-upstream": 30, "owned": 0, "third-party": 0}
+assert evidence["unique_fingerprints"] == 20
 assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 3
+assert evidence["fingerprints"]["warning: POSIX Yacc does not support %expect [-Wyacc]"] == 1
 raw = {warning["raw_fingerprint"] for warning in evidence["warnings"]}
 assert ".1-7: warning: POSIX Yacc does not support %define [-Wyacc]" in raw
 assert evidence["fingerprints"]["libtool: install: warning: remember to run `libtool --finish $OUTPUT_DIR/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/$GCC_VERSION'"] == 2
@@ -156,6 +158,27 @@ assert warning["raw_fingerprint"] == "glibc: .1-7: warning: POSIX Yacc does not 
 assert evidence["fingerprints"] == {
     "glibc: warning: POSIX Yacc does not support %define [-Wyacc]": 1,
 }
+assert not evidence["policy_errors"]
+PY
+
+cat > "${TMP_DIR}/revpi-posix-yacc-glued-command.log" <<'LOG'
+>>> glibc 2.41 Building
+plural.y:52.1-7: warning: POSIX Yacc does not support %expect [-Wyacc]mv -f /workspace/output/suderra_aarch64_revpi4_defconfig/build/glibc-2.41/build/intl/stamp.oST /workspace/output/suderra_aarch64_revpi4_defconfig/build/glibc-2.41/build/intl/stamp.oS
+LOG
+
+python3 "${PROJECT_ROOT}/scripts/ci/classify-build-warnings.py" \
+    --policy "${PROJECT_ROOT}/ci/build-warning-policy.json" \
+    --json-output "${TMP_DIR}/revpi-posix-yacc-glued-command.json" \
+    "${TMP_DIR}/revpi-posix-yacc-glued-command.log" >/dev/null
+
+python3 - "${TMP_DIR}/revpi-posix-yacc-glued-command.json" <<'PY'
+import json
+import sys
+
+evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
+warning = evidence["warnings"][0]
+assert warning["fingerprint"] == "glibc: warning: POSIX Yacc does not support %expect [-Wyacc]"
+assert warning["raw_fingerprint"].endswith("stamp.oS")
 assert not evidence["policy_errors"]
 PY
 

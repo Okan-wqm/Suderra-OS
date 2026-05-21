@@ -49,8 +49,11 @@ KNOWN_UPSTREAM_PATTERNS = (
 LOCATION_RE = re.compile(
     r"^(?P<location>.*?):\d+(?:[.-]\d+)*(?::\d+(?:[.-]\d+)*)?: (?P<body>(?:warning|WARNING):.*)$"
 )
+POSIX_YACC_WARNING_RE = re.compile(
+    r"(?P<body>warning: POSIX Yacc does not support\b.*?\[-Wyacc\])"
+)
 FRAGMENTED_POSIX_YACC_RE = re.compile(
-    r"^(?:\.?\d+(?:[.-]\d+)+): (?P<body>warning: POSIX Yacc does not support\b.*)$"
+    r"^(?:\.?\d+(?:[.-]\d+)+): (?P<body>warning: POSIX Yacc does not support\b.*?\[-Wyacc\])"
 )
 BUILD_OUTPUT_PATH_RE = re.compile(r"(?:/workspace/|\.\./)?output/[^/\s'`]+/")
 DEFCONFIG_OUTPUT_PATH_RE = re.compile(r"(?:\.\./)+[^/\s'`]+_defconfig/")
@@ -163,6 +166,9 @@ def raw_fingerprint(text: str) -> str:
 
 def fingerprint(text: str) -> str:
     stable_text = stable_warning_text(text)
+    posix_yacc_warning = POSIX_YACC_WARNING_RE.search(stable_text)
+    if posix_yacc_warning:
+        return posix_yacc_warning.group("body")
     fragmented_yacc = FRAGMENTED_POSIX_YACC_RE.match(stable_text)
     if fragmented_yacc:
         return fragmented_yacc.group("body")
