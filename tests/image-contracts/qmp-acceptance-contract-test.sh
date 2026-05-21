@@ -68,6 +68,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert module.SCHEMA_VERSION == "suderra.qemu-acceptance.v4"
     assert module.required_pass_patterns("smoke") == ("banner", "provisioning-ready")
     assert module.required_pass_patterns("release-candidate") == ("banner", "provisioning-ready")
+    assert module.qmp_quit_ack_observed([{"return": {}}], 1) is False
+    assert module.qmp_quit_ack_observed(
+        [{"return": {}}, {"id": module.QMP_QUIT_COMMAND_ID, "return": {}}],
+        1,
+    ) is True
+    assert module.qmp_quit_ack_observed([{"event": "SHUTDOWN"}], 0) is True
     checks = module.release_checks(
         {"banner": True, "systemd": True, "provisioning-ready": True},
         {"kernel-panic": False, "oom-or-systemd-failure": False},
@@ -269,6 +275,7 @@ payload = {
         "timeout": False,
         "qmp_quit_sent": True,
         "qmp_quit_ack": True,
+        "qmp_quit_grace_seconds": 30,
         "reason": "contract fixture exited cleanly",
         "acceptable": True,
     },

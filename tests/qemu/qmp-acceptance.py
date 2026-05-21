@@ -26,6 +26,7 @@ from typing import Any
 SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
 SEMANTIC_MARKER_BEGIN = "SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
 SEMANTIC_MARKER_END = "SUDERRA_QEMU_SEMANTIC_JSON_END"
+QMP_QUIT_COMMAND_ID = "suderra-qmp-quit"
 PASS_PATTERNS = {
     "banner": re.compile(r"Suderra OS"),
     "systemd": re.compile(r"(Welcome to|Reached target|systemd\[1\])"),
@@ -155,9 +156,21 @@ def qmp_drain(sock: socket.socket, events: list[dict[str, Any]]) -> None:
             events.append({"unparsed": line.decode("utf-8", errors="replace")})
 
 
-def qmp_execute(sock: socket.socket, command: str) -> None:
-    payload = json.dumps({"execute": command}, separators=(",", ":")).encode("utf-8") + b"\r\n"
+def qmp_execute(sock: socket.socket, command: str, command_id: str | None = None) -> None:
+    message = {"execute": command}
+    if command_id is not None:
+        message["id"] = command_id
+    payload = json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\r\n"
     sock.sendall(payload)
+
+
+def qmp_quit_ack_observed(events: list[dict[str, Any]], start_index: int) -> bool:
+    for event in events[start_index:]:
+        if event.get("id") == QMP_QUIT_COMMAND_ID and "return" in event:
+            return True
+        if event.get("event") == "SHUTDOWN":
+            return True
+    return False
 
 
 def read_text(path: Path) -> str:
@@ -601,6 +614,7 @@ def run(args: argparse.Namespace) -> int:
         "timeout": False,
         "qmp_quit_sent": False,
         "qmp_quit_ack": False,
+        "qmp_quit_grace_seconds": args.qmp_quit_grace,
         "reason": "harness did not start QEMU",
         "acceptable": False,
     }
@@ -638,16 +652,26 @@ def run(args: argparse.Namespace) -> int:
         if qmp_sock is not None:
             try:
                 qmp_drain(qmp_sock, qmp_events)
-                qmp_execute(qmp_sock, "quit")
+                quit_event_start = len(qmp_events)
+                qmp_execute(qmp_sock, "quit", command_id=QMP_QUIT_COMMAND_ID)
                 termination["qmp_quit_sent"] = True
+                quit_deadline = time.monotonic() + args.qmp_quit_grace
+                while time.monotonic() < quit_deadline:
+                    qmp_drain(qmp_sock, qmp_events)
+                    if qmp_quit_ack_observed(qmp_events, quit_event_start):
+                        termination["qmp_quit_ack"] = True
+                    if process is not None and process.poll() is not None:
+                        break
+                    time.sleep(0.1)
                 qmp_drain(qmp_sock, qmp_events)
-                termination["qmp_quit_ack"] = any("return" in event for event in qmp_events[-5:])
+                if qmp_quit_ack_observed(qmp_events, quit_event_start):
+                    termination["qmp_quit_ack"] = True
             except OSError:
                 pass
             qmp_sock.close()
         if process is not None:
             try:
-                process.wait(timeout=10)
+                process.wait(timeout=1)
                 termination["mode"] = "exited"
                 termination["reason"] = "QEMU exited after QMP quit"
             except subprocess.TimeoutExpired:
@@ -790,6 +814,7 @@ def main() -> int:
     parser.add_argument("--target", default=os.environ.get("SUDERRA_TARGET", "qemu-x86_64"))
     parser.add_argument("--memory", default="256M")
     parser.add_argument("--smp", default="2")
+    parser.add_argument("--qmp-quit-grace", type=int, default=30)
     parser.add_argument("--profile", choices=("smoke", "release-candidate", "production-runtime"), default="smoke")
     args = parser.parse_args()
 
@@ -804,6 +829,9 @@ def main() -> int:
         return 2
     if args.timeout < 1:
         print("ERROR: timeout must be positive", file=sys.stderr)
+        return 2
+    if args.qmp_quit_grace < 1:
+        print("ERROR: --qmp-quit-grace must be positive", file=sys.stderr)
         return 2
     return run(args)
 

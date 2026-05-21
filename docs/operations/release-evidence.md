@@ -215,6 +215,10 @@ At minimum collect:
 - Exit status and termination details from the QEMU acceptance test. Passed
   evidence must exit cleanly; forced-kill or non-zero exit cannot satisfy
   release-ready validation.
+- QMP shutdown evidence. The harness sends `quit` with a dedicated command id,
+  drains QMP events during the configured grace window, and records only a
+  matching quit response or `SHUTDOWN` event as `qmp_quit_ack`; earlier QMP
+  command returns do not count as shutdown proof.
 
 Store logs under the target bundle, for example:
 
