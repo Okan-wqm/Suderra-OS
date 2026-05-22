@@ -122,6 +122,21 @@ jobs:
           SUDERRA_MIN_VCPU: ${{ matrix.min_vcpu }}
         run: ./scripts/ci/check-runner-resources.sh
 
+      - name: Cache Buildroot downloads
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: ${{ env.SUDERRA_HOST_DL_DIR }}
+          key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
+
+      - name: Cache ccache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: ${{ env.SUDERRA_HOST_CCACHE_DIR }}
+          key: ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-
+            ccache-${{ matrix.defconfig }}-
+
       - name: Verify submodule + paths
         run: |
           set -euo pipefail

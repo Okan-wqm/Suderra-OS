@@ -31,6 +31,7 @@ $(find "${PROJECT_ROOT}/configs/" -maxdepth 1 -type f -printf '  %f\n' | sort)
   SOURCE_DATE_EPOCH       # Reproducible build için (varsayılan: git commit time)
   SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT # Optional source identity JSON path inside the container
   SUDERRA_REQUIRE_CLEAN_EXTERNAL # 1 ise BR2_EXTERNAL snapshot için dirty tree reddedilir
+  SUDERRA_USB_INSTALLER_BASE_ONLY # 1 ise USB installer base-only image üretir
 EOF
     exit 0
 fi
@@ -164,6 +165,7 @@ for name in \
     SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE \
     SUDERRA_INSTALLER_PAYLOAD_EXPIRES_AT \
     SUDERRA_INSTALLER_KEY_EPOCH \
+    SUDERRA_USB_INSTALLER_BASE_ONLY \
     SUDERRA_EXPECTED_KEYS_PROFILE \
     SUDERRA_REQUIRE_INSTALLER_SIGNING \
     SUDERRA_VERSION \

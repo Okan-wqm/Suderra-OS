@@ -101,6 +101,11 @@ grep -q 'SUDERRA_INSTALLER_PAYLOAD_KEY_PROFILE' "${PROJECT_ROOT}/scripts/build-i
         echo "ERROR: build-in-docker must propagate installer payload key profile" >&2
         exit 1
     }
+grep -q 'SUDERRA_USB_INSTALLER_BASE_ONLY' "${PROJECT_ROOT}/scripts/build-in-docker.sh" ||
+    {
+        echo "ERROR: build-in-docker must propagate USB installer base-only mode into the container" >&2
+        exit 1
+    }
 if grep -q -- '-e SUDERRA_KEYS_DIR=' "${PROJECT_ROOT}/scripts/build-in-docker.sh"; then
     echo "ERROR: build-in-docker must not export SUDERRA_KEYS_DIR into Buildroot scope" >&2
     exit 1
@@ -223,6 +228,7 @@ SUDERRA_EXPECTED_KEYS_PROFILE=ci \
 SUDERRA_HOST_OUTPUT_DIR="${TMPDIR}/out" \
 SUDERRA_HOST_DL_DIR="${TMPDIR}/dl" \
 SUDERRA_HOST_CCACHE_DIR="${TMPDIR}/ccache" \
+SUDERRA_USB_INSTALLER_BASE_ONLY=1 \
     bash "${PROJECT_ROOT}/scripts/build-in-docker.sh" suderra_qemu_x86_64_defconfig >/dev/null
 
 grep -F -- "type=bind,source=${KEYS_DIR},target=/container/keys,readonly" "${FAKE_DOCKER_LOG}" >/dev/null ||
@@ -233,6 +239,11 @@ grep -F -- "type=bind,source=${KEYS_DIR},target=/container/keys,readonly" "${FAK
 grep -F -- "SUDERRA_TRUST_ROOTS_DIR=/container/keys" "${FAKE_DOCKER_LOG}" >/dev/null ||
     {
         echo "ERROR: fake docker run did not receive SUDERRA_TRUST_ROOTS_DIR" >&2
+        exit 1
+    }
+grep -F -- "SUDERRA_USB_INSTALLER_BASE_ONLY=1" "${FAKE_DOCKER_LOG}" >/dev/null ||
+    {
+        echo "ERROR: fake docker run did not receive USB installer base-only mode" >&2
         exit 1
     }
 if grep -F -- "SUDERRA_KEYS_DIR=/container/keys" "${FAKE_DOCKER_LOG}" >/dev/null; then

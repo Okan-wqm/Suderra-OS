@@ -24,6 +24,22 @@ grep -q 'payload_inputs_root="${SUDERRA_HOST_OUTPUT_DIR}/payload-inputs"' "${BUI
     exit 1
 }
 
+download_cache_count="$(grep -cF 'key: br-dl-${{ steps.br.outputs.sha }}' "${BUILD_WORKFLOW}")"
+if [ "${download_cache_count}" -lt 2 ]; then
+    echo "ERROR: both base image and installer base jobs must keep Buildroot download caching" >&2
+    exit 1
+fi
+
+grep -qF 'key: ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}' "${BUILD_WORKFLOW}" || {
+    echo "ERROR: base image builds must keep ccache restore/save coverage" >&2
+    exit 1
+}
+
+grep -qF 'key: ccache-payload-base-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}' "${BUILD_WORKFLOW}" || {
+    echo "ERROR: installer base builds must keep isolated ccache restore/save coverage" >&2
+    exit 1
+}
+
 grep -q '^  build-payload-base:' "${BUILD_WORKFLOW}" || {
     echo "ERROR: Build workflow must split installer base build from payload assembly" >&2
     exit 1
