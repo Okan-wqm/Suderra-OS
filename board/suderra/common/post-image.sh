@@ -104,6 +104,7 @@ GENIMAGE_CFG=""
 IMAGE_OUTPUT_NAME=""
 GRUB_CFG=""
 GENIMAGE_ROOTPATH="${TARGET_DIR:-${BINARIES_DIR}/../target}"
+SKIP_RELEASE_IMAGE="${SUDERRA_SKIP_RELEASE_IMAGE:-0}"
 
 prepare_rpi4_installer_payload() {
     # CI/release pipelines export these explicitly via MATRIX_PAYLOAD_IMAGE_EXPORTS.
@@ -236,9 +237,15 @@ case "${DEFCONFIG_NAME}" in
         ;;
     suderra_aarch64_rpi4*)
         if [ "${DEFCONFIG_NAME}" = "suderra_aarch64_rpi4_usb_installer" ]; then
-            prepare_rpi4_installer_payload
-            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4-usb-installer/genimage.cfg"
-            IMAGE_OUTPUT_NAME="suderra-pi-cm4-revpi-usb-installer.img"
+            if [ "${SUDERRA_USB_INSTALLER_BASE_ONLY:-0}" = "1" ]; then
+                GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4-usb-installer/genimage-base.cfg"
+                IMAGE_OUTPUT_NAME="boot.vfat"
+                SKIP_RELEASE_IMAGE="1"
+            else
+                prepare_rpi4_installer_payload
+                GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4-usb-installer/genimage.cfg"
+                IMAGE_OUTPUT_NAME="suderra-pi-cm4-revpi-usb-installer.img"
+            fi
         else
             GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/genimage.cfg"
             IMAGE_OUTPUT_NAME="suderra-rpi4-target.img"
@@ -298,7 +305,7 @@ echo "==> ${IMAGE_OUTPUT_NAME} üretildi: ${IMAGE_PATH}"
 ls -la "${IMAGE_PATH}" 2>/dev/null || true
 
 # Release artifact: xz sıkıştırma + SHA256 manifest (CI'da release.yml kullanır)
-if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ]; then
+if [ -f "${IMAGE_PATH}" ] && [ "${SUDERRA_SKIP_COMPRESS:-0}" != "1" ] && [ "${SKIP_RELEASE_IMAGE}" != "1" ]; then
     echo "==> ${IMAGE_OUTPUT_NAME}.xz üretiliyor"
     xz -k -T0 -9 -f "${IMAGE_PATH}"
 

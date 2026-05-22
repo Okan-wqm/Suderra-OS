@@ -60,6 +60,33 @@ Kontrol komutları:
 ./scripts/buildroot-source.sh status
 ```
 
+## CI Payload Build Evidence
+
+USB installer payload job'ı RPi4 ve RevPi4 image artifact'lerini source tree
+içine indirmez. CI, bu girdileri `${SUDERRA_HOST_OUTPUT_DIR}/payload-inputs/`
+altında stage eder ve `SUDERRA_REQUIRE_CLEAN_EXTERNAL=1` ile BR2_EXTERNAL
+tree'sinin temiz kalmasını zorunlu tutar.
+
+Installer rootfs/boot üretimi `build-payload-base` job'ında payload hedefleriyle
+paralel çalışır. Bu job `SUDERRA_USB_INSTALLER_BASE_ONLY=1` ile yalnız
+`boot.vfat` ve `rootfs.ext4` base artifact'ini üretir. Final `build-payload`
+job'ı bu base byte'larını, RPi4/RevPi4 target image artifact'lerini ve CI
+payload signing key'ini tüketerek `package-usb-installer-payload.py` ile
+`payload.ext4`, signed `manifest.json`/`manifest.sig`, final installer image ve
+`.xz` çıktısını üretir; Buildroot'u ikinci kez çalıştırmaz.
+
+Payload packaging başlamadan önce
+`build-logs/<defconfig>.payload-inputs.json` üretilir. Bu
+`suderra.payload-inputs.v1` manifest'i source commit, source run, payload
+artifact isimleri, byte sayıları, SHA-256 digest'leri ve canonical aggregate
+digest'i bağlar. Build sonrası
+`build-logs/<defconfig>.build-performance.json` ve raw
+`build-logs/<defconfig>.build-time.log` evidence olarak upload edilir ve push
+build'lerinde GitHub Artifact Attestation subject setine dahil edilir.
+
+Performans mimari planı:
+[`Payload Build Performance Enterprise Plan`](../assessments/2026-05-22-payload-build-performance-plan.md).
+
 ## Defconfig'ler
 
 | Defconfig | Hedef | Süre (ilk build) |

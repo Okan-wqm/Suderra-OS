@@ -27,6 +27,7 @@ içinde saklanır.
 | - `Build / Build qemu-x86_64` | ✓ (Faz 1+) | Build çalışır |
 | - `Build / Build rpi4` | ✓ | RPi4 image contract |
 | - `Build / Build revpi4` | ✓ | RevPi4 image contract |
+| - `Build / Build payload base pi-cm4-revpi-usb-installer` | ✓ | USB installer base Buildroot evidence |
 | - `Build / Build payload image pi-cm4-revpi-usb-installer` | ✓ | USB installer image contract |
 | - `Build / Build suderra-installer (x86_64)` | ✓ | Preflight-bound installer binary |
 | - `Build / Build suderra-installer (aarch64)` | ✓ | Preflight-bound installer binary |
