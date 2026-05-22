@@ -7,7 +7,7 @@ as `v1.0.0` are production releases.
 ## Current Enterprise Release Posture
 
 The release path is fail-closed. Alpha releases use a promotion model: release
-preflight binds one successful `Build` run, records those bytes in signed
+preflight binds one successful `Image Build` run, records those bytes in signed
 `suderra.release-ingress.v1`, and the tag workflow stages the preflight-bound
 image and installer artifacts instead of rebuilding them. Final evidence is
 published as a portable archive plus a signed publication manifest, but this
@@ -46,11 +46,11 @@ Required gates:
 - QEMU targets provide `release-lab-input/<version>/<target>/qemu.json` and
   validate as `suderra.qemu-acceptance.v4` for promotion. Older v3 records are
   archive-only.
-- The release workflow promotes the exact Build artifact bytes approved by
+- The release workflow promotes the exact Image Build artifact bytes approved by
   preflight, stages release-named files without signing privileges, writes
   `release-assets.json`, then signs, attests, verifies, and assembles evidence
   only inside the protected `release-sign` environment. Installer binaries are
-  Build workflow artifacts and must not be rebuilt by the tag workflow.
+  Image Build workflow artifacts and must not be rebuilt by the tag workflow.
 - The public asset set includes `release-evidence-<version>.tar.zst`, its
   `.sig` and `.cert`, `release-publication-manifest.json`, and the publication
   manifest `.sig` and `.cert`.
@@ -124,8 +124,8 @@ git tag -s v0.1.0-alpha.1 -m $'Suderra OS v0.1.0-alpha.1
 Suderra-Release-Binding: v1
 Suderra-Version: v0.1.0-alpha.1
 Suderra-Source-SHA: <40-char-source-sha>
-Suderra-Source-Build-Run-ID: <build-run-id>
-Suderra-Source-Build-Run-Attempt: <build-run-attempt>
+Suderra-Source-Build-Run-ID: <image-build-run-id>
+Suderra-Source-Build-Run-Attempt: <image-build-run-attempt>
 Suderra-Preflight-Run-ID: <preflight-run-id>
 Suderra-Preflight-Run-Attempt: <preflight-run-attempt>
 Suderra-Preflight-Artifact-ID: <preflight-artifact-id>

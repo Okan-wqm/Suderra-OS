@@ -4,8 +4,8 @@
 """Prepare and bind release-candidate input evidence.
 
 The output manifest is intentionally stricter than the final release evidence:
-it binds pre-tag/pre-publish evidence to one successful Build run and one exact
-source commit before any tag workflow is allowed to publish.
+it binds pre-tag/pre-publish evidence to one successful Image Build run and one
+exact source commit before any tag workflow is allowed to publish.
 """
 
 from __future__ import annotations
@@ -206,7 +206,7 @@ def artifact_entries(
             path = artifact_dir / artifact if artifact_dir is not None else None
             if path is None or not path.is_file():
                 if require_artifacts:
-                    errors.append(f"missing Build artifact for {defconfig}: {artifact}")
+                    errors.append(f"missing Image Build artifact for {defconfig}: {artifact}")
                 continue
             entries.append(
                 {
@@ -232,15 +232,29 @@ def build_evidence_entries(
         defconfig = str(row["name"])
         target = str(row["target"])
         artifact_dir = artifact_root / f"{defconfig}-build-logs" if artifact_root is not None else None
-        for role, artifact in (
+        roles = [
             ("build-log", f"build-logs/{defconfig}.log"),
             ("warning-classifier-evidence", f"build-logs/{defconfig}.warnings.json"),
             ("buildroot-source-identity", f"build-logs/{defconfig}.source-identity.json"),
-        ):
-            path = artifact_dir / artifact if artifact_dir is not None else None
+            ("build-time-log", f"build-logs/{defconfig}.build-time.log"),
+            ("build-performance", f"build-logs/{defconfig}.build-performance.json"),
+        ]
+        if row.get("prebuild_defconfigs"):
+            roles.extend(
+                [
+                    ("payload-inputs", f"build-logs/{defconfig}.payload-inputs.json"),
+                    ("payload-package", f"build-logs/{defconfig}.payload-package.json"),
+                    ("usb-installer-base", f"build-logs/{defconfig}.usb-installer-base.json"),
+                ]
+            )
+        for role, artifact in roles:
+            path = None
+            if artifact_dir is not None:
+                candidates = [artifact_dir / artifact, artifact_dir / Path(artifact).name]
+                path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
             if path is None or not path.is_file():
                 if require_artifacts:
-                    errors.append(f"missing Build evidence for {defconfig}: {artifact}")
+                    errors.append(f"missing Image Build evidence for {defconfig}: {artifact}")
                 continue
             entries.append(
                 {
@@ -284,6 +298,48 @@ def installer_entries(
                 }
             )
     return entries, errors
+
+
+def image_build_contract_entry(
+    contract: Path | None,
+    artifact_root: Path | None,
+    require_artifacts: bool,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    if contract is None:
+        if require_artifacts:
+            return None, ["missing image build contract"]
+        return None, []
+    errors: list[str] = []
+    if not contract.is_file() or contract.stat().st_size <= 0:
+        return None, [f"image build contract missing or empty: {contract}"]
+    try:
+        payload = read_json(contract)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, [f"image build contract invalid JSON: {exc}"]
+    if not isinstance(payload, dict) or payload.get("schema_version") != "suderra.image-build-contract.v1":
+        errors.append("image build contract schema_version must be suderra.image-build-contract.v1")
+    workflow = payload.get("workflow")
+    if not isinstance(workflow, dict) or workflow.get("path") != ".github/workflows/image-build.yml":
+        errors.append("image build contract must be produced by image-build.yml")
+    if artifact_root is not None:
+        try:
+            rel = contract.relative_to(artifact_root)
+        except ValueError:
+            errors.append("image build contract must live under artifact root")
+            rel_path = str(contract)
+        else:
+            rel_path = rel.as_posix()
+    else:
+        rel_path = str(contract)
+    return (
+        {
+            "role": "image-build-contract",
+            "path": rel_path,
+            "bytes": contract.stat().st_size,
+            "sha256": sha256_file(contract),
+        },
+        errors,
+    )
 
 
 def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]]:
@@ -333,6 +389,12 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
             buildroot_metadata = buildroot_metadata_for_binding(buildroot_metadata)
     installers, installer_errors = installer_entries(artifact_root, args.require_artifacts)
     errors.extend(installer_errors)
+    image_contract, image_contract_errors = image_build_contract_entry(
+        args.image_build_contract,
+        artifact_root,
+        args.require_artifacts,
+    )
+    errors.extend(image_contract_errors)
     matrix_sha256 = read_text_sha256(matrix_path)
     try:
         matrix_display = str(matrix_path.relative_to(ROOT))
@@ -346,6 +408,7 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "source_run_id": str(args.source_run_id),
         "source_run_attempt": str(args.source_run_attempt),
         "build_workflow_name": args.build_workflow_name,
+        "build_workflow_path": args.build_workflow_path,
         "matrix_path": matrix_display,
         "matrix_sha256": matrix_sha256,
         **buildroot_metadata,
@@ -353,6 +416,7 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "artifacts": sorted(artifacts, key=lambda item: (item["defconfig"], item["artifact"])),
         "build_evidence": sorted(build_evidence, key=lambda item: (item["defconfig"], item["artifact"])),
         "installers": sorted(installers, key=lambda item: (item["arch"], item["artifact"])),
+        "image_build_contract": image_contract,
         "userspace_cargo_lock_sha256": read_text_sha256(ROOT / "userspace" / "Cargo.lock"),
         "userspace_rust_toolchain_sha256": read_text_sha256(ROOT / "userspace" / "rust-toolchain.toml"),
         "release_targets": [
@@ -547,7 +611,8 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--source-run-id", required=True)
     parser.add_argument("--source-run-attempt", default="1")
     parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--build-workflow-name", default="Build")
+    parser.add_argument("--build-workflow-name", default="Image Build")
+    parser.add_argument("--build-workflow-path", default=".github/workflows/image-build.yml")
     parser.add_argument(
         "--profile",
         choices=("technical-dry-run", "release-candidate", "production-candidate"),
@@ -555,6 +620,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     parser.add_argument("--artifact-root", type=Path)
+    parser.add_argument("--image-build-contract", type=Path)
 
 
 def main() -> int:

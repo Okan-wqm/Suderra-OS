@@ -99,7 +99,7 @@ enough for enterprise evidence.
 - Release image adları `ci/build-matrix.yml` `release_artifact` değerleriyle
   uyumlu olmalı
 - `gh attestation verify` release image, installer binary ve `manifest.json` için geçmeli
-- Release security report JSON'ları `source_sha`, source Build run ID,
+- Release security report JSON'ları `source_sha`, source Image Build run ID,
   `status: passed`, severity counts, retained evidence digest, and scanner/DB
   identity içermeli
 

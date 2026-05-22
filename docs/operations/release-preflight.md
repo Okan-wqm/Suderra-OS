@@ -2,8 +2,8 @@
 
 Release publication is tag-triggered, but release readiness is proven before a
 tag workflow can publish. The `Release Preflight` workflow binds one exact
-successful `Build` run to one exact source commit and emits the evidence bundle
-that the tag workflow later consumes.
+successful `Image Build` run to one exact source commit and emits the evidence
+bundle that the tag workflow later consumes.
 
 ## Profiles
 
@@ -21,7 +21,7 @@ that the tag workflow later consumes.
 gh workflow run "Release Preflight" \
   -f version=v0.1.0-alpha.1 \
   -f source_sha=<exact-main-commit> \
-  -f source_run_id=<successful-build-run-id> \
+  -f source_run_id=<successful-image-build-run-id> \
   -f profile=technical-dry-run
 ```
 
@@ -32,14 +32,15 @@ trees are populated and validated:
 gh workflow run "Release Preflight" \
   -f version=v0.1.0-alpha.1 \
   -f source_sha=<exact-main-commit> \
-  -f source_run_id=<successful-build-run-id> \
+  -f source_run_id=<successful-image-build-run-id> \
   -f profile=release-candidate
 ```
 
-`release-candidate` accepts only a successful `Build` run whose `head_branch` is
-`main`; the workflow also verifies that `source_sha` is exactly `origin/main` at
-preflight time. Technical dry runs may be used against other branches for
-binding debugging, but they cannot feed the tag release workflow.
+`release-candidate` accepts only a successful `Image Build` run from
+`.github/workflows/image-build.yml` whose `head_branch` is `main`; the workflow
+also verifies that `source_sha` is exactly `origin/main` at preflight time.
+Technical dry runs may be used against other branches for binding debugging,
+but they cannot feed the tag release workflow.
 
 The workflow artifact name includes the profile so a later technical dry run
 cannot shadow an approved release-candidate bundle:
@@ -72,14 +73,14 @@ is not successful, the run is not from the correct workflow path on `main`, the
 artifact ID does not match, the artifact is expired, or the downloaded ingress
 manifest hash differs from the tag binding, publication stops before staging or
 signing release bytes. The tag workflow does not rebuild images or installer
-binaries; it promotes the Build artifact bytes carried by the approved
+binaries; it promotes the Image Build artifact bytes carried by the approved
 preflight artifact.
 
 Release tags must be signed by a trusted release key. The release workflow
 imports `SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY` from secrets, runs
 `git verify-tag --raw`, and requires the VALIDSIG fingerprint to appear in
 `SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS`. Unsigned tags, lightweight tags,
-untrusted signers, wrong Build run IDs, wrong run attempts, or mismatched
+untrusted signers, wrong Image Build run IDs, wrong run attempts, or mismatched
 tag/preflight/ingress metadata fail before any release bytes are staged.
 
 `release-candidate` preflight also validates live GitHub governance.
@@ -99,8 +100,14 @@ The candidate bundle must include and the signed ingress manifest must digest:
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.log`
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.warnings.json`
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.source-identity.json`
+- `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.build-time.log`
+- `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.build-performance.json`
+- `build-artifacts/<payload-defconfig>-build-logs/build-logs/<payload-defconfig>.payload-inputs.json`
+- `build-artifacts/<payload-defconfig>-build-logs/build-logs/<payload-defconfig>.payload-package.json`
+- `build-artifacts/<payload-defconfig>-build-logs/build-logs/<payload-defconfig>.usb-installer-base.json`
 - `build-artifacts/installer-x86_64/suderra-installer-x86_64`
 - `build-artifacts/installer-aarch64/suderra-installer-aarch64`
+- `build-artifacts/image-build-contract/image-build-contract.json`
 - `release-lab-input/<version>/qemu-x86_64/qemu.json`
 - `release-lab-input/<version>/<hardware-target>/lab.json`
 - `release-governance/<version>/governance-policy-validation.json`
@@ -111,13 +118,15 @@ The candidate bundle must include and the signed ingress manifest must digest:
   each report
 - `release-reproducibility/<version>/<target>.json`
 
-All evidence must reference the same source commit, Build run ID, Buildroot
+All evidence must reference the same source commit, Image Build run ID, Buildroot
 submodule SHA, Buildroot upstream ref, Buildroot source mode, Buildroot patchset
 digest, effective Buildroot source ID, matrix hash, Rust toolchain/Cargo.lock
 digests, and artifact digests. The binding
 manifest must cover the exact `ci/build-matrix.yml` release artifact set,
-installer binaries, build logs, warning classifier JSON, and Buildroot source
-identity JSON; extra, missing, all-zero, absolute-path, or placeholder artifact
+installer binaries, build logs, warning classifier JSON, Buildroot source
+identity JSON, build timing/performance evidence, the USB installer base
+manifest, payload package evidence, payload input manifest, and the Image Build
+contract; extra, missing, all-zero, absolute-path, or placeholder artifact
 entries fail closed.
 
 Current alpha builds use `clean-native` Buildroot source identity:
@@ -134,9 +143,10 @@ approval schema is consumed by preflight and by final release evidence assembly.
 
 ## Release Byte Binding
 
-Release-candidate preflight downloads only the expected image, installer, and
-build-log artifacts from one successful `Build` run, verifies their GitHub
-Artifact Attestations against `.github/workflows/build.yml` on `refs/heads/main`,
+Release-candidate preflight downloads only the expected image, installer,
+build-log, performance, USB installer base, payload, and Image Build contract
+artifacts from one successful `Image Build` run, verifies their GitHub Artifact
+Attestations against `.github/workflows/image-build.yml` on `refs/heads/main`,
 collects exact-commit GitHub check-run security evidence into
 `release-security/<version>/*.json`, and records the resulting input tree in
 signed `suderra.release-ingress.v1`. The tag workflow downloads the approved
@@ -153,8 +163,8 @@ preflight-bound source artifacts and compares SHA-256 digests:
 - `suderra-installer-<arch>` -> `suderra-installer-<version>-<arch>`
 
 Any staged image, manifest, or payload signature that does not match the bound
-Build run stops the release. The ingress manifest also records the version,
-profile, source SHA, Build run ID and attempt, matrix digest, Buildroot
+Image Build run stops the release. The ingress manifest also records the
+version, profile, source SHA, Image Build run ID and attempt, matrix digest, Buildroot
 submodule SHA, ordered Buildroot patch file digests, effective Buildroot source
 ID, producer identity, expiry, schema roles, file paths, sizes, and digests.
 Absolute paths, path traversal, placeholders, all-zero digests, wrong source
@@ -164,6 +174,6 @@ SHA, wrong signer identity, or tampered artifact bytes fail closed.
 
 Release QEMU input is validated against both `source_sha` and the bound raw
 QEMU image digest (`disk.img`). Hardware lab input is validated against
-`source_sha` and the bound Build run ID. Security reports must include the same
-version, source commit, source Build run, tool metadata, and a non-zero digest
+`source_sha` and the bound Image Build run ID. Security reports must include the same
+version, source commit, source Image Build run, tool metadata, and a non-zero digest
 for the retained scan evidence.

@@ -7,211 +7,288 @@ PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/../.." &>/dev/null && pwd)"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
-BUILD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
+FAST_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
+IMAGE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/image-build.yml"
 
-grep -q 'SUDERRA_REQUIRE_CLEAN_EXTERNAL: "1"' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: Build workflow must require a clean BR2_EXTERNAL tree" >&2
+grep -q '^name: Build$' "${FAST_WORKFLOW}" || {
+    echo "ERROR: fast required workflow must stay named Build" >&2
     exit 1
 }
-
-if grep -q 'payload-artifacts' "${BUILD_WORKFLOW}"; then
-    echo "ERROR: payload job must not stage downloaded image artifacts inside the repo tree" >&2
+if grep -q 'Build image (full Buildroot run)' "${FAST_WORKFLOW}" ||
+    grep -q '^  build-payload-base:' "${FAST_WORKFLOW}" ||
+    grep -q '^  build-payload:' "${FAST_WORKFLOW}" ||
+    grep -q '^  qemu-smoke-test:' "${FAST_WORKFLOW}"; then
+    echo "ERROR: fast Build workflow must not run full image, payload, or QEMU jobs" >&2
     exit 1
 fi
 
-grep -q 'payload_inputs_root="${SUDERRA_HOST_OUTPUT_DIR}/payload-inputs"' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: payload job must stage input artifacts under CI storage/output" >&2
+grep -q '^name: Image Build$' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: heavy workflow must be named Image Build" >&2
+    exit 1
+}
+grep -q '^  build-payload-base:' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build must split installer base build from payload assembly" >&2
+    exit 1
+}
+grep -q 'usb-installer-base-manifest.py create' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build must create a USB installer base manifest" >&2
+    exit 1
+}
+grep -q 'usb-installer-base-' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build must upload digest-bound USB installer base artifacts" >&2
+    exit 1
+}
+grep -q -- '--base-manifest' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload packager must consume the base manifest" >&2
+    exit 1
+}
+grep -q -- '--payload-inputs-manifest' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload packager must consume the payload-input manifest" >&2
+    exit 1
+}
+grep -q 'image-build-contract.py create' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build must publish an image build contract" >&2
+    exit 1
+}
+grep -q 'build-performance-budget.py validate-buildroot' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build must enforce Buildroot performance evidence budgets" >&2
+    exit 1
+}
+grep -q 'build-performance-budget.py validate-payload' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build must enforce payload packaging budget" >&2
     exit 1
 }
 
-download_cache_count="$(grep -cF 'key: br-dl-${{ steps.br.outputs.sha }}' "${BUILD_WORKFLOW}")"
-if [ "${download_cache_count}" -lt 2 ]; then
-    echo "ERROR: both base image and installer base jobs must keep Buildroot download caching" >&2
-    exit 1
-fi
+python3 -B -m py_compile \
+    "${PROJECT_ROOT}/scripts/ci/buildroot-build-evidence.py" \
+    "${PROJECT_ROOT}/scripts/ci/payload-inputs-manifest.py" \
+    "${PROJECT_ROOT}/scripts/ci/package-usb-installer-payload.py" \
+    "${PROJECT_ROOT}/scripts/ci/usb-installer-base-manifest.py" \
+    "${PROJECT_ROOT}/scripts/ci/image-build-contract.py" \
+    "${PROJECT_ROOT}/scripts/ci/build-performance-budget.py"
 
-grep -qF 'key: ccache-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: base image builds must keep ccache restore/save coverage" >&2
-    exit 1
-}
+python3 - "${PROJECT_ROOT}" "${TMPDIR}/image-contract-flat" <<'PY'
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
 
-grep -qF 'key: ccache-payload-base-${{ matrix.defconfig }}-${{ github.base_ref || github.ref_name }}-${{ github.run_id }}' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: installer base builds must keep isolated ccache restore/save coverage" >&2
-    exit 1
-}
+root = Path(sys.argv[1])
+tmp = Path(sys.argv[2])
+artifact_root = tmp / "artifacts"
+spec = importlib.util.spec_from_file_location(
+    "validate_build_matrix",
+    root / "scripts" / "ci" / "validate-build-matrix.py",
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+matrix = module.load_matrix(root / "ci" / "build-matrix.yml")
+for row in matrix["defconfigs"]:
+    if not row.get("release"):
+        continue
+    defconfig = row["name"]
+    for artifact in module.expected_artifacts(row):
+        path = artifact_root / f"{defconfig}-image" / artifact
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{defconfig}:{artifact}\n", encoding="utf-8")
+    evidence = [
+        f"{defconfig}.log",
+        f"{defconfig}.warnings.json",
+        f"{defconfig}.source-identity.json",
+        f"{defconfig}.build-time.log",
+        f"{defconfig}.build-performance.json",
+    ]
+    if row.get("prebuild_defconfigs"):
+        evidence.extend(
+            [
+                f"{defconfig}.payload-inputs.json",
+                f"{defconfig}.payload-package.json",
+                f"{defconfig}.usb-installer-base.json",
+            ]
+        )
+    for artifact in evidence:
+        path = artifact_root / f"{defconfig}-build-logs" / artifact
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{defconfig}:{artifact}\n", encoding="utf-8")
+for arch in ("x86_64", "aarch64"):
+    for artifact in (f"suderra-installer-{arch}", f"suderra-installer-{arch}.sha256"):
+        path = artifact_root / f"installer-{arch}" / artifact
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{arch}:{artifact}\n", encoding="utf-8")
+contract = tmp / "image-build-contract.json"
+subprocess.run(
+    [
+        sys.executable,
+        str(root / "scripts" / "ci" / "image-build-contract.py"),
+        "create",
+        "--source-sha",
+        "1111111111111111111111111111111111111111",
+        "--workflow-ref",
+        "refs/heads/main",
+        "--run-id",
+        "12345",
+        "--run-attempt",
+        "1",
+        "--artifact-root",
+        str(artifact_root),
+        "--output",
+        str(contract),
+    ],
+    check=True,
+)
+subprocess.run(
+    [
+        sys.executable,
+        str(root / "scripts" / "ci" / "image-build-contract.py"),
+        "validate",
+        str(contract),
+        "--artifact-root",
+        str(artifact_root),
+        "--workflow-path",
+        ".github/workflows/image-build.yml",
+        "--source-sha",
+        "1111111111111111111111111111111111111111",
+        "--source-run-id",
+        "12345",
+        "--source-run-attempt",
+        "1",
+    ],
+    check=True,
+)
+PY
 
-grep -q '^  build-payload-base:' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: Build workflow must split installer base build from payload assembly" >&2
-    exit 1
-}
+mkdir -p "${TMPDIR}/base" "${TMPDIR}/out" "${TMPDIR}/keys" "${TMPDIR}/bin" "${TMPDIR}/logs"
+printf 'boot base\n' >"${TMPDIR}/base/boot.vfat"
+printf 'rootfs base\n' >"${TMPDIR}/base/rootfs.ext4"
+printf 'rpi4 payload\n' | xz -c >"${TMPDIR}/rpi4.img.xz"
+printf 'revpi4 payload\n' | xz -c >"${TMPDIR}/revpi4.img.xz"
+openssl genpkey -algorithm ED25519 -out "${TMPDIR}/keys/installer-payload.key" >/dev/null 2>&1
+openssl pkey -in "${TMPDIR}/keys/installer-payload.key" -pubout \
+    -out "${TMPDIR}/keys/installer-payload.ed25519.pub" >/dev/null 2>&1
 
-grep -q 'SUDERRA_USB_INSTALLER_BASE_ONLY: "1"' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: installer base job must use USB installer base-only post-image mode" >&2
-    exit 1
-}
+cat >"${TMPDIR}/bin/genimage" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --outputpath)
+            output="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+test -n "${output}"
+cat "${output}/manifest.json" "${output}/manifest.sig" \
+    "${output}/suderra-rpi4-target.img.xz" \
+    "${output}/suderra-revpi4-target.img.xz" > "${output}/payload.ext4"
+cat "${output}/boot.vfat" "${output}/rootfs.ext4" "${output}/payload.ext4" \
+    > "${output}/suderra-pi-cm4-revpi-usb-installer.img"
+EOF
+chmod 0755 "${TMPDIR}/bin/genimage"
 
-grep -q 'package-usb-installer-payload.py' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: payload job must assemble final installer without rerunning Buildroot" >&2
-    exit 1
-}
+python3 "${PROJECT_ROOT}/scripts/ci/payload-inputs-manifest.py" create \
+    --defconfig suderra_aarch64_rpi4_usb_installer_defconfig \
+    --source-sha 1111111111111111111111111111111111111111 \
+    --run-id 12345 \
+    --run-attempt 1 \
+    --output "${TMPDIR}/logs/payload-inputs.json" \
+    --input "suderra_aarch64_rpi4_defconfig:suderra-rpi4-target.img.xz:${TMPDIR}/rpi4.img.xz" \
+    --input "suderra_aarch64_revpi4_defconfig:suderra-revpi4-target.img.xz:${TMPDIR}/revpi4.img.xz"
 
-grep -q 'genimage-payload-packager.cfg' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: payload-only assembly must use the dedicated genimage packager contract" >&2
-    exit 1
-}
+printf '{"schema_version":"suderra.buildroot-source-identity.v2"}\n' >"${TMPDIR}/logs/source-identity.json"
+printf '{"schema_version":"suderra.buildroot-build-performance.v1","build_time_log":{"present":true,"sha256":"%064d","bytes":1},"timing":{"status":"collected","completed_step_count":1},"ccache":{"present":true,"file_count":1,"total_bytes":1}}\n' 0 \
+    >"${TMPDIR}/logs/build-performance.json"
 
-grep -q 'payload-inputs-manifest.py create' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: payload job must emit a digest-bound payload input manifest" >&2
-    exit 1
-}
+python3 "${PROJECT_ROOT}/scripts/ci/usb-installer-base-manifest.py" create \
+    --defconfig suderra_aarch64_rpi4_usb_installer_defconfig \
+    --target pi-cm4-revpi-usb-installer \
+    --source-sha 1111111111111111111111111111111111111111 \
+    --workflow-ref refs/heads/main \
+    --run-id 12345 \
+    --run-attempt 1 \
+    --source-date-epoch 1704067200 \
+    --source-identity "${TMPDIR}/logs/source-identity.json" \
+    --genimage-cfg "${PROJECT_ROOT}/board/suderra/aarch64-rpi4-usb-installer/genimage-base.cfg" \
+    --public-key "${TMPDIR}/keys/installer-payload.ed25519.pub" \
+    --build-evidence "${TMPDIR}/logs/build-performance.json" \
+    --base-dir "${TMPDIR}/base" \
+    --output "${TMPDIR}/logs/usb-installer-base.json"
 
-grep -q 'buildroot-build-evidence.py collect' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: Build workflow must collect Buildroot timing/cache evidence" >&2
-    exit 1
-}
+PATH="${TMPDIR}/bin:${PATH}" python3 "${PROJECT_ROOT}/scripts/ci/package-usb-installer-payload.py" \
+    --base-dir "${TMPDIR}/base" \
+    --base-manifest "${TMPDIR}/logs/usb-installer-base.json" \
+    --payload-inputs-manifest "${TMPDIR}/logs/payload-inputs.json" \
+    --output-dir "${TMPDIR}/out" \
+    --genimage-cfg "${PROJECT_ROOT}/board/suderra/aarch64-rpi4-usb-installer/genimage-payload-packager.cfg" \
+    --rpi4-image "${TMPDIR}/rpi4.img.xz" \
+    --revpi4-image "${TMPDIR}/revpi4.img.xz" \
+    --sign-key "${TMPDIR}/keys/installer-payload.key" \
+    --public-key "${TMPDIR}/keys/installer-payload.ed25519.pub" \
+    --expires-at "2026-12-31T00:00:00Z" \
+    --key-epoch 1 \
+    --source-date-epoch 1704067200 \
+    --evidence-output "${TMPDIR}/logs/payload-package.json" >/dev/null
 
-for subject in \
-    '.build-time.log' \
-    '.build-performance.json' \
-    '.payload-inputs.json' \
-    '.payload-package.json'; do
-    grep -q "${subject}" "${BUILD_WORKFLOW}" || {
-        echo "ERROR: Build attestations must include ${subject}" >&2
+for artifact in \
+    manifest.json \
+    manifest.sig \
+    payload.ext4 \
+    suderra-pi-cm4-revpi-usb-installer.img \
+    suderra-pi-cm4-revpi-usb-installer.img.xz; do
+    test -s "${TMPDIR}/out/${artifact}" || {
+        echo "ERROR: packager did not create ${artifact}" >&2
         exit 1
     }
 done
 
-if grep -q 'Build image (payload packaging run)' "${BUILD_WORKFLOW}"; then
-    echo "ERROR: payload job must not keep the old full Buildroot packaging step" >&2
-    exit 1
-fi
-
-grep -q 'genimage-base.cfg' "${PROJECT_ROOT}/board/suderra/common/post-image.sh" || {
-    echo "ERROR: post-image must support base-only USB installer image generation" >&2
-    exit 1
-}
-
-grep -q 'image payload.ext4' "${PROJECT_ROOT}/board/suderra/aarch64-rpi4-usb-installer/genimage-payload-packager.cfg" || {
-    echo "ERROR: payload packager genimage config must create payload.ext4" >&2
-    exit 1
-}
-
-if git -C "${PROJECT_ROOT}" check-ignore -q payload-inputs/sample.img.xz; then
-    echo "ERROR: repo-local payload-inputs must not be ignored; CI should stage them outside the source tree" >&2
-    exit 1
-fi
-
-cat >"${TMPDIR}/build-time.log" <<'EOF'
-1.000000000:start:download            : host-example
-1.500000000:end  :download            : host-example
-2.000000000:start:build               : host-example
-5.250000000:end  :build               : host-example
-6.000000000:start:build               : linux
-9.000000000:end  :build               : linux
-EOF
-mkdir -p "${TMPDIR}/ccache"
-printf 'cache-object\n' >"${TMPDIR}/ccache/object"
-
-python3 "${PROJECT_ROOT}/scripts/ci/buildroot-build-evidence.py" collect \
-    --defconfig suderra_qemu_x86_64_defconfig \
-    --build-time-log "${TMPDIR}/build-time.log" \
-    --build-time-copy "${TMPDIR}/build-logs/suderra_qemu_x86_64_defconfig.build-time.log" \
-    --ccache-dir "${TMPDIR}/ccache" \
-    --output "${TMPDIR}/build-logs/suderra_qemu_x86_64_defconfig.build-performance.json"
-
-python3 "${PROJECT_ROOT}/scripts/ci/buildroot-build-evidence.py" validate \
-    "${TMPDIR}/build-logs/suderra_qemu_x86_64_defconfig.build-performance.json"
-
-python3 -m py_compile \
-    "${PROJECT_ROOT}/scripts/ci/buildroot-build-evidence.py" \
-    "${PROJECT_ROOT}/scripts/ci/payload-inputs-manifest.py" \
-    "${PROJECT_ROOT}/scripts/ci/package-usb-installer-payload.py"
-
-python3 - "${TMPDIR}/build-logs/suderra_qemu_x86_64_defconfig.build-performance.json" <<'PY'
+python3 - "${TMPDIR}/out/manifest.json" "${TMPDIR}/out/manifest.canonical" <<'PY'
 import json
 import sys
 from pathlib import Path
-
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert payload["schema_version"] == "suderra.buildroot-build-performance.v1"
-assert payload["build_time_log"]["present"] is True
-assert payload["timing"]["status"] == "collected"
-assert payload["timing"]["completed_step_count"] == 3
-assert payload["timing"]["top_packages"][0]["name"] == "host-example"
-assert payload["ccache"]["present"] is True
-assert payload["ccache"]["file_count"] == 1
+Path(sys.argv[2]).write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+assert payload["payloads"][0]["image_path"] == "suderra-rpi4-target.img.xz"
+assert payload["payloads"][1]["image_path"] == "suderra-revpi4-target.img.xz"
 PY
+openssl pkeyutl -verify -rawin -pubin \
+    -inkey "${TMPDIR}/keys/installer-payload.ed25519.pub" \
+    -sigfile "${TMPDIR}/out/manifest.sig" \
+    -in "${TMPDIR}/out/manifest.canonical" >/dev/null
 
-python3 - "${TMPDIR}/build-logs/suderra_qemu_x86_64_defconfig.build-performance.json" "${TMPDIR}/build-performance-malformed.json" <<'PY'
+python3 - "${TMPDIR}/logs/payload-package.json" <<'PY'
 import json
 import sys
 from pathlib import Path
-
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-payload["timing"]["status"] = "corrupt"
-Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+assert payload["schema_version"] == "suderra.usb-installer-payload-package.v1"
+assert len(payload["base_manifest_sha256"]) == 64
+assert len(payload["payload_inputs_sha256"]) == 64
+assert payload["partition_digest_map"]["payload.ext4"]
 PY
 
-if python3 "${PROJECT_ROOT}/scripts/ci/buildroot-build-evidence.py" validate \
-    "${TMPDIR}/build-performance-malformed.json" 2>"${TMPDIR}/build-performance-malformed.err"; then
-    echo "ERROR: Buildroot performance evidence accepted malformed timing status" >&2
+cp "${TMPDIR}/base/boot.vfat" "${TMPDIR}/base/boot.vfat.good"
+printf 'boot evil\n' >"${TMPDIR}/base/boot.vfat"
+if PATH="${TMPDIR}/bin:${PATH}" python3 "${PROJECT_ROOT}/scripts/ci/package-usb-installer-payload.py" \
+    --base-dir "${TMPDIR}/base" \
+    --base-manifest "${TMPDIR}/logs/usb-installer-base.json" \
+    --payload-inputs-manifest "${TMPDIR}/logs/payload-inputs.json" \
+    --output-dir "${TMPDIR}/out-negative" \
+    --genimage-cfg "${PROJECT_ROOT}/board/suderra/aarch64-rpi4-usb-installer/genimage-payload-packager.cfg" \
+    --rpi4-image "${TMPDIR}/rpi4.img.xz" \
+    --revpi4-image "${TMPDIR}/revpi4.img.xz" \
+    --sign-key "${TMPDIR}/keys/installer-payload.key" \
+    --public-key "${TMPDIR}/keys/installer-payload.ed25519.pub" \
+    --expires-at "2026-12-31T00:00:00Z" \
+    --key-epoch 1 >/dev/null 2>"${TMPDIR}/negative.err"; then
+    echo "ERROR: packager accepted tampered base bytes" >&2
     exit 1
 fi
-grep -q 'timing.status' "${TMPDIR}/build-performance-malformed.err" || {
-    echo "ERROR: malformed performance evidence failure did not identify timing.status" >&2
-    cat "${TMPDIR}/build-performance-malformed.err" >&2
-    exit 1
-}
-
-printf 'rpi4-payload\n' >"${TMPDIR}/rpi4.img.xz"
-printf 'revpi4-payload\n' >"${TMPDIR}/revpi4.img.xz"
-SOURCE_SHA="1111111111111111111111111111111111111111"
-python3 "${PROJECT_ROOT}/scripts/ci/payload-inputs-manifest.py" create \
-    --defconfig suderra_aarch64_rpi4_usb_installer_defconfig \
-    --source-sha "${SOURCE_SHA}" \
-    --run-id 12345 \
-    --run-attempt 1 \
-    --output "${TMPDIR}/payload-inputs.json" \
-    --input "suderra_aarch64_rpi4_defconfig:suderra-rpi4-target.img.xz:${TMPDIR}/rpi4.img.xz" \
-    --input "suderra_aarch64_revpi4_defconfig:suderra-revpi4-target.img.xz:${TMPDIR}/revpi4.img.xz"
-
-python3 "${PROJECT_ROOT}/scripts/ci/payload-inputs-manifest.py" validate \
-    "${TMPDIR}/payload-inputs.json"
-
-python3 - "${TMPDIR}/payload-inputs.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert payload["schema_version"] == "suderra.payload-inputs.v1"
-assert payload["source_sha"] == "1111111111111111111111111111111111111111"
-assert [item["artifact"] for item in payload["inputs"]] == [
-    "suderra-revpi4-target.img.xz",
-    "suderra-rpi4-target.img.xz",
-]
-for item in payload["inputs"]:
-    assert not item["artifact_path"].startswith("/")
-    assert ".." not in item["artifact_path"]
-PY
-
-python3 - "${TMPDIR}/payload-inputs.json" "${TMPDIR}/payload-inputs-tampered.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-payload["inputs"][0]["bytes"] += 1
-Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
-
-if python3 "${PROJECT_ROOT}/scripts/ci/payload-inputs-manifest.py" validate \
-    "${TMPDIR}/payload-inputs-tampered.json" 2>"${TMPDIR}/tampered.err"; then
-    echo "ERROR: payload input manifest accepted tampered canonical input content" >&2
-    exit 1
-fi
-grep -q 'inputs_sha256' "${TMPDIR}/tampered.err" || {
-    echo "ERROR: tampered payload input failure did not identify inputs_sha256" >&2
-    cat "${TMPDIR}/tampered.err" >&2
+grep -q 'base file sha mismatch' "${TMPDIR}/negative.err" || {
+    cat "${TMPDIR}/negative.err" >&2
     exit 1
 }

@@ -231,9 +231,14 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
             failures.append("main branch must require linear history")
         if branch.get("required_signatures", {}).get("enabled") is not True:
             failures.append("main branch must require signed commits")
-        missing_checks = sorted(set(policy.get("required_checks", [])) - status_check_contexts(branch))
+        policy_checks = set(policy.get("required_checks", []))
+        live_checks = status_check_contexts(branch)
+        missing_checks = sorted(policy_checks - live_checks)
         if missing_checks:
             failures.append(f"missing required status checks: {', '.join(missing_checks)}")
+        extra_checks = sorted(live_checks - policy_checks)
+        if extra_checks:
+            failures.append(f"unexpected required status checks: {', '.join(extra_checks)}")
 
     rule_policy = policy.get("ruleset", {})
     branch_ruleset = ruleset_named(rulesets, str(rule_policy.get("branch_name", "")), "branch")

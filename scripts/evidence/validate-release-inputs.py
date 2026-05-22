@@ -201,6 +201,8 @@ def validate_binding(
         failures.append("binding source_run_attempt must match --source-run-attempt")
     if binding.get("build_workflow_name") != args.build_workflow_name:
         failures.append(f"binding build_workflow_name must be {args.build_workflow_name}")
+    if binding.get("build_workflow_path") != args.build_workflow_path:
+        failures.append(f"binding build_workflow_path must be {args.build_workflow_path}")
     source_sha = binding.get("source_sha")
     if not isinstance(source_sha, str) or not SOURCE_SHA_RE.fullmatch(source_sha):
         failures.append("binding source_sha must be a lowercase git commit sha")
@@ -290,6 +292,12 @@ def validate_binding(
             expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.log"))
             expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.warnings.json"))
             expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.source-identity.json"))
+            expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.build-time.log"))
+            expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.build-performance.json"))
+            if row.get("prebuild_defconfigs"):
+                expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.payload-inputs.json"))
+                expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.payload-package.json"))
+                expected_build_evidence.add((defconfig, f"build-logs/{defconfig}.usb-installer-base.json"))
     build_evidence = binding.get("build_evidence")
     if not isinstance(build_evidence, list) or not build_evidence:
         failures.append("binding build_evidence must be a non-empty list")
@@ -307,7 +315,16 @@ def validate_binding(
                 failures.append(f"duplicate binding build evidence: {key[0]} {key[1]}")
             seen_evidence.add(key)
             role = evidence.get("role")
-            if role not in {"build-log", "warning-classifier-evidence", "buildroot-source-identity"}:
+            if role not in {
+                "build-log",
+                "warning-classifier-evidence",
+                "buildroot-source-identity",
+                "build-time-log",
+                "build-performance",
+                "payload-inputs",
+                "payload-package",
+                "usb-installer-base",
+            }:
                 failures.append(f"binding build evidence {key[0]} {key[1]} has invalid role")
             digest = evidence.get("sha256")
             if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
@@ -354,6 +371,31 @@ def validate_binding(
                             compare_buildroot_identity_to_binding(failures, payload, binding, str(path))
                         except Exception as exc:
                             failures.append(f"cannot validate Buildroot source identity {path}: {exc}")
+                elif role == "build-performance":
+                    payload = read_json(path)
+                    if not isinstance(payload, dict) or payload.get("schema_version") != "suderra.buildroot-build-performance.v1":
+                        failures.append(f"build performance evidence must be v1 JSON: {path}")
+                    else:
+                        timing = payload.get("timing")
+                        if not isinstance(timing, dict) or timing.get("status") != "collected":
+                            failures.append(f"build performance timing must be collected: {path}")
+                elif role == "payload-package":
+                    payload = read_json(path)
+                    if not isinstance(payload, dict) or payload.get("schema_version") != "suderra.usb-installer-payload-package.v1":
+                        failures.append(f"payload package evidence must be v1 JSON: {path}")
+                    else:
+                        for field in ("base_manifest_sha256", "payload_inputs_sha256"):
+                            value = payload.get(field)
+                            if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
+                                failures.append(f"payload package evidence {field} must be sha256: {path}")
+                elif role == "payload-inputs":
+                    payload = read_json(path)
+                    if not isinstance(payload, dict) or payload.get("schema_version") != "suderra.payload-inputs.v1":
+                        failures.append(f"payload inputs evidence must be v1 JSON: {path}")
+                elif role == "usb-installer-base":
+                    payload = read_json(path)
+                    if not isinstance(payload, dict) or payload.get("schema_version") != "suderra.usb-installer-base.v1":
+                        failures.append(f"USB installer base evidence must be v1 JSON: {path}")
         if expected_build_evidence:
             missing = sorted(expected_build_evidence - seen_evidence)
             if missing:
@@ -405,6 +447,26 @@ def validate_binding(
                 "binding installers missing required files: "
                 + ", ".join(f"{arch}:{artifact}" for arch, artifact in missing)
             )
+    image_contract = binding.get("image_build_contract")
+    if not isinstance(image_contract, dict):
+        failures.append("binding image_build_contract must be an object")
+    else:
+        digest = image_contract.get("sha256")
+        rel = image_contract.get("path")
+        if image_contract.get("role") != "image-build-contract":
+            failures.append("binding image_build_contract role must be image-build-contract")
+        if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) or digest == "0" * 64:
+            failures.append("binding image_build_contract must have a non-zero sha256")
+        if not isinstance(image_contract.get("bytes"), int) or image_contract.get("bytes", 0) <= 0:
+            failures.append("binding image_build_contract must have positive byte size")
+        if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
+            failures.append("binding image_build_contract path must be relative and non-placeholder")
+        if args.artifact_root is not None and isinstance(rel, str):
+            contract_path = args.artifact_root / rel
+            if not contract_path.is_file():
+                failures.append(f"image build contract file missing: {contract_path}")
+            elif isinstance(digest, str) and sha256_file(contract_path) != digest:
+                failures.append(f"image build contract sha mismatch: {contract_path}")
     return failures
 
 
@@ -619,7 +681,8 @@ def main() -> int:
     parser.add_argument("--source-run-id")
     parser.add_argument("--source-run-attempt")
     parser.add_argument("--station-registry", type=Path)
-    parser.add_argument("--build-workflow-name", default="Build")
+    parser.add_argument("--build-workflow-name", default="Image Build")
+    parser.add_argument("--build-workflow-path", default=".github/workflows/image-build.yml")
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--require-ingress-signature", action="store_true")
     parser.add_argument("--ingress-certificate-identity")

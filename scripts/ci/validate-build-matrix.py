@@ -31,6 +31,10 @@ TARGET_FIELDS = {
     "expected_artifacts",
     "qemu_test",
     "ci_build",
+    "fast_required",
+    "image_build",
+    "release_source",
+    "payload_base_required",
     "release",
     "timeout_minutes",
     "build_step_timeout_minutes",
@@ -57,10 +61,22 @@ TARGET_FIELDS = {
 
 VALID_ARCHES = {"x86_64", "aarch64"}
 VALID_TABLES = {"gpt", "mbr"}
-BOOLEAN_SELECTORS = {"ci_build", "qemu_test", "release", "production_required"}
+BOOLEAN_SELECTORS = {
+    "ci_build",
+    "fast_required",
+    "image_build",
+    "release_source",
+    "payload_base_required",
+    "qemu_test",
+    "release",
+    "production_required",
+}
 MATRIX_SELECTORS = BOOLEAN_SELECTORS | {
     "ci_build_base",
     "ci_build_payload",
+    "image_build_base",
+    "image_build_payload",
+    "image_build_qemu",
     "release_base",
     "release_payload",
 }
@@ -346,7 +362,17 @@ def validate(strict_production_variant: bool = False) -> int:
             if not isinstance(artifact, str) or not SAFE_ARTIFACT_RE.fullmatch(artifact):
                 errors.append(f"{name}: unsafe expected artifact name {artifact!r}")
 
-        for field in ("qemu_test", "ci_build", "release", "production_required", "production_ready"):
+        for field in (
+            "qemu_test",
+            "ci_build",
+            "fast_required",
+            "image_build",
+            "release_source",
+            "payload_base_required",
+            "release",
+            "production_required",
+            "production_ready",
+        ):
             try:
                 bool_field(target, field)
             except ValueError as exc:
@@ -476,8 +502,14 @@ def validate(strict_production_variant: bool = False) -> int:
         if target["ci_build"] and "BR2_PACKAGE_HOST_GENIMAGE=y" not in config:
             errors.append(f"{name}: ci_build target must select BR2_PACKAGE_HOST_GENIMAGE=y")
 
-        if target["release"] and not target["ci_build"]:
-            errors.append(f"{name}: release target must also be reachable by CI build")
+        if target["release"] and not target["release_source"]:
+            errors.append(f"{name}: release target must be marked release_source")
+
+        if target["release_source"] and not target["image_build"]:
+            errors.append(f"{name}: release_source target must be reachable by image_build")
+
+        if target["payload_base_required"] and not prebuild_defconfigs:
+            errors.append(f"{name}: payload_base_required is only valid for payload installer targets")
 
         if target["production_required"] and not target["production_ready"] and not target["blocker"]:
             errors.append(f"{name}: production blocker must be documented while production_ready=false")
@@ -520,6 +552,12 @@ def target_matches_selector(target: dict[str, Any], selector: str) -> bool:
         return bool(target.get("ci_build", False)) and not prebuilds
     if selector == "ci_build_payload":
         return bool(target.get("ci_build", False)) and bool(prebuilds)
+    if selector == "image_build_base":
+        return bool(target.get("image_build", False)) and not prebuilds
+    if selector == "image_build_payload":
+        return bool(target.get("image_build", False)) and bool(prebuilds)
+    if selector == "image_build_qemu":
+        return bool(target.get("image_build", False)) and bool(target.get("qemu_test", False))
     if selector == "release_base":
         return bool(target.get("release", False)) and not prebuilds
     if selector == "release_payload":
@@ -545,6 +583,10 @@ def github_matrix(selector: str) -> int:
                 "release": release_base,
                 "release_artifact": release_artifact,
                 "signing": target["signing"],
+                "fast_required": target["fast_required"],
+                "image_build": target["image_build"],
+                "release_source": target["release_source"],
+                "payload_base_required": target["payload_base_required"],
                 "timeout_minutes": target["timeout_minutes"],
                 "build_step_timeout_minutes": target["build_step_timeout_minutes"],
                 "min_disk_gib": target["min_disk_gib"],

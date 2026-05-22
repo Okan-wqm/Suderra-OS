@@ -43,6 +43,22 @@ make -C "${buildroot_source_dir}" \
     O="$(pwd)/output/qemu"
 ```
 
+## CI Katmanlari
+
+`Build` workflow'u PR ve `main` icin hizli required gate'tir. Full Buildroot
+image uretmez; matrix/governance contract, helper syntax, image contract
+testleri ve release defconfig parse smoke adimlariyla sinirli kalir.
+
+`Image Build` workflow'u full artifact ureticisidir. `workflow_dispatch`,
+nightly schedule ve `main` push uzerinden calisir; QEMU/RPi4/RevPi4 image'lari,
+USB installer base/payload image'ini, installer binary'lerini, attestation
+subject'lerini ve `suderra.image-build-contract.v1` artifact'ini yayinlar.
+Release preflight sadece bu workflow'un basarili run'ini kabul eder.
+
+Branch protection required checks fast `Build` gate'leriyle sinirlidir. Heavy
+image sonucari release/nightly evidence olarak izlenir ve release oncesi
+`Release Preflight` tarafindan fail-closed dogrulanir.
+
 ## Buildroot 2025.05.3 Native Rust Migration
 
 Buildroot `2025.05.3` native Rust `1.86.0` içerdiği için eski
@@ -67,13 +83,27 @@ içine indirmez. CI, bu girdileri `${SUDERRA_HOST_OUTPUT_DIR}/payload-inputs/`
 altında stage eder ve `SUDERRA_REQUIRE_CLEAN_EXTERNAL=1` ile BR2_EXTERNAL
 tree'sinin temiz kalmasını zorunlu tutar.
 
-Installer rootfs/boot üretimi `build-payload-base` job'ında payload hedefleriyle
-paralel çalışır. Bu job `SUDERRA_USB_INSTALLER_BASE_ONLY=1` ile yalnız
-`boot.vfat` ve `rootfs.ext4` base artifact'ini üretir. Final `build-payload`
-job'ı bu base byte'larını, RPi4/RevPi4 target image artifact'lerini ve CI
-payload signing key'ini tüketerek `package-usb-installer-payload.py` ile
-`payload.ext4`, signed `manifest.json`/`manifest.sig`, final installer image ve
-`.xz` çıktısını üretir; Buildroot'u ikinci kez çalıştırmaz.
+Installer rootfs/boot uretimi `Image Build` icindeki `build-payload-base`
+job'inda payload hedefleriyle paralel calisir. Bu job
+`SUDERRA_USB_INSTALLER_BASE_ONLY=1` ile yalniz `boot.vfat` ve `rootfs.ext4`
+base artifact'ini uretir ve `suderra.usb-installer-base.v1` manifest'iyle
+kimliklendirir. Manifest source SHA, Buildroot source identity, matrix digest,
+builder image, `SOURCE_DATE_EPOCH`, trust-root public key hash'i, build evidence
+digest'i ve base partition SHA-256 degerlerini baglar.
+
+Base artifact adi digest-bound'dur:
+
+```text
+usb-installer-base-<identity_digest>
+```
+
+Final `build-payload` job'i once base index'teki digest'e sahip artifact'i
+indirir, manifest'i ve `boot.vfat`/`rootfs.ext4` byte'larini dogrular, sonra
+RPi4/RevPi4 target image artifact'lerini ve ayni CI payload signing key'ini
+tuketerek `package-usb-installer-payload.py` ile `payload.ext4`, signed
+`manifest.json`/`manifest.sig`, final installer image ve `.xz` ciktisini
+uretir. Identity mismatch varsa sessiz rebuild veya cache fallback yapilmaz;
+heavy workflow yeni base uretmelidir.
 
 Payload packaging başlamadan önce
 `build-logs/<defconfig>.payload-inputs.json` üretilir. Bu
@@ -83,6 +113,8 @@ digest'i bağlar. Build sonrası
 `build-logs/<defconfig>.build-performance.json` ve raw
 `build-logs/<defconfig>.build-time.log` evidence olarak upload edilir ve push
 build'lerinde GitHub Artifact Attestation subject setine dahil edilir.
+`ci/build-performance-budget.yml` payload packaging icin 10 dakikalik fail gate
+uygular; full Buildroot sureleri ilk asamada evidence olarak raporlanir.
 
 Performans mimari planı:
 [`Payload Build Performance Enterprise Plan`](../assessments/2026-05-22-payload-build-performance-plan.md).

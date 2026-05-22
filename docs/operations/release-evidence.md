@@ -84,7 +84,7 @@ Required top-level fields:
 | `reproducibility` | Independent rebuild comparison and logs. |
 | `security_scans` | Reports listed by the build matrix. |
 | `machine_verification` | SHA256SUMS, cosign, and attestation verification records plus preserved logs. |
-| `build_evidence` | Retained Build logs, warning-classifier JSON, and Buildroot source identity bound by ingress. |
+| `build_evidence` | Retained Image Build logs, warning-classifier JSON, Buildroot source identity, build performance, USB installer base, and payload package evidence bound by ingress. |
 | `preflight_inputs` | Preserved approval, reproducibility, security, QEMU, and lab input files replayed by final validation. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
@@ -126,8 +126,9 @@ python3 scripts/evidence/release-evidence.py assemble-release \
 
 The command consumes staged release assets, `release-assets.json`,
 `suderra.machine-verification.v3` records, preserved machine verification logs,
-preserved raw attestation JSON, preflight-bound Build logs, warning JSON,
-Buildroot source identity JSON, lab input, governance snapshots,
+preserved raw attestation JSON, preflight-bound Image Build logs, warning JSON,
+Buildroot source identity JSON, build performance JSON, USB installer base
+manifest, payload package evidence, lab input, governance snapshots,
 security/reproducibility
 reports, QEMU logs, and approval records. It preserves the original preflight
 input JSON/log/report files in the target bundle and `--require-pass

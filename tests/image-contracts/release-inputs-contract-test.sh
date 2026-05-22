@@ -546,6 +546,8 @@ for defconfig, target, artifacts in (
     for artifact, role in (
         (f"build-logs/{defconfig}.log", "build-log"),
         (f"build-logs/{defconfig}.warnings.json", "warning-classifier-evidence"),
+        (f"build-logs/{defconfig}.build-time.log", "build-time-log"),
+        (f"build-logs/{defconfig}.build-performance.json", "build-performance"),
     ):
         build_evidence.append(
             {
@@ -558,6 +560,23 @@ for defconfig, target, artifacts in (
                 "sha256": hashlib.sha256(f"{defconfig}:{artifact}".encode("utf-8")).hexdigest(),
             }
         )
+    if defconfig == "suderra_aarch64_rpi4_usb_installer_defconfig":
+        for artifact, role in (
+            (f"build-logs/{defconfig}.payload-inputs.json", "payload-inputs"),
+            (f"build-logs/{defconfig}.payload-package.json", "payload-package"),
+            (f"build-logs/{defconfig}.usb-installer-base.json", "usb-installer-base"),
+        ):
+            build_evidence.append(
+                {
+                    "role": role,
+                    "defconfig": defconfig,
+                    "target": target,
+                    "artifact": artifact,
+                    "path": f"{defconfig}-build-logs/{artifact}",
+                    "bytes": 128,
+                    "sha256": hashlib.sha256(f"{defconfig}:{artifact}".encode("utf-8")).hexdigest(),
+                }
+            )
 installers = []
 for arch in ("x86_64", "aarch64"):
     for artifact, role in (
@@ -574,6 +593,12 @@ for arch in ("x86_64", "aarch64"):
                 "sha256": hashlib.sha256(f"{arch}:{artifact}".encode("utf-8")).hexdigest(),
             }
         )
+image_build_contract = {
+    "role": "image-build-contract",
+    "path": "image-build-contract/image-build-contract.json",
+    "bytes": 512,
+    "sha256": hashlib.sha256(b"image-build-contract").hexdigest(),
+}
 metadata = json.loads(
     subprocess.check_output(
         [
@@ -614,12 +639,14 @@ binding = {
     "source_sha": source_sha,
     "source_run_id": "123456789",
     "source_run_attempt": "1",
-    "build_workflow_name": "Build",
+    "build_workflow_name": "Image Build",
+    "build_workflow_path": ".github/workflows/image-build.yml",
     "matrix_path": "ci/build-matrix.yml",
     "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
     "artifacts": binding_artifacts,
     "build_evidence": build_evidence,
     "installers": installers,
+    "image_build_contract": image_build_contract,
     "userspace_cargo_lock_sha256": hashlib.sha256((project_root / "userspace" / "Cargo.lock").read_bytes()).hexdigest(),
     "userspace_rust_toolchain_sha256": hashlib.sha256((project_root / "userspace" / "rust-toolchain.toml").read_bytes()).hexdigest(),
     "release_targets": [],
@@ -661,6 +688,18 @@ for item in installers:
             "sha256": item["sha256"],
         }
     )
+ingress_files.append(
+    {
+        "source": "image-build-contract",
+        "role": image_build_contract["role"],
+        "defconfig": "image-build-contract",
+        "target": "image-build-contract",
+        "artifact": "image-build-contract.json",
+        "path": image_build_contract["path"],
+        "bytes": image_build_contract["bytes"],
+        "sha256": image_build_contract["sha256"],
+    }
+)
 write_json(
     root / "release-ingress" / version / "ingress-manifest.json",
     {
@@ -670,7 +709,8 @@ write_json(
         "source_sha": source_sha,
         "source_run_id": "123456789",
         "source_run_attempt": "1",
-        "build_workflow_name": "Build",
+        "build_workflow_name": "Image Build",
+        "build_workflow_path": ".github/workflows/image-build.yml",
         "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
         "buildroot_source_identity_schema_version": binding_metadata["buildroot_source_identity_schema_version"],
         "buildroot_index_sha": metadata["buildroot_index_sha"],

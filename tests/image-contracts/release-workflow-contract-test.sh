@@ -7,6 +7,7 @@ PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 RELEASE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release.yml"
 PREFLIGHT_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release-preflight.yml"
 BUILD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
+IMAGE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/image-build.yml"
 
 grep -q '^concurrency:' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must have a release-tag concurrency guard" >&2
@@ -120,16 +121,28 @@ grep -q -- '--require-ingress-signature' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must require ingress signature verification" >&2
     exit 1
 }
+grep -q 'Image Build' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must bind Image Build, not fast Build" >&2
+    exit 1
+}
+grep -q '.github/workflows/image-build.yml' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must pin image-build.yml as artifact producer" >&2
+    exit 1
+}
+grep -q 'image-build-contract.py validate' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must validate the image build contract" >&2
+    exit 1
+}
 grep -q 'build-artifacts/' "${PREFLIGHT_WORKFLOW}" || {
-    echo "ERROR: release preflight artifact must carry preflight-bound Build bytes" >&2
+    echo "ERROR: release preflight artifact must carry preflight-bound Image Build bytes" >&2
     exit 1
 }
 if grep -q -- 'gh run download.*--dir build-artifacts$' "${PREFLIGHT_WORKFLOW}"; then
-    echo "ERROR: release preflight must download explicit Build artifact names, not the whole run" >&2
+    echo "ERROR: release preflight must download explicit Image Build artifact names, not the whole run" >&2
     exit 1
 fi
 grep -q 'build-artifacts/' "${RELEASE_WORKFLOW}" || {
-    echo "ERROR: release workflow must stage from preflight-bound Build bytes" >&2
+    echo "ERROR: release workflow must stage from preflight-bound Image Build bytes" >&2
     exit 1
 }
 if grep -q 'build-in-docker.sh' "${RELEASE_WORKFLOW}"; then
@@ -144,8 +157,8 @@ if grep -q 'cargo install cross' "${RELEASE_WORKFLOW}" || grep -q 'cross build -
     echo "ERROR: release workflow must not rebuild installer binaries after preflight" >&2
     exit 1
 fi
-grep -Fq 'name: installer-${{ matrix.arch }}' "${BUILD_WORKFLOW}" || {
-    echo "ERROR: Build workflow must produce preflight-bound installer artifacts" >&2
+grep -Fq 'name: installer-${{ matrix.arch }}' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: Image Build workflow must produce preflight-bound installer artifacts" >&2
     exit 1
 }
 grep -q 'release-evidence-.*\.tar\.zst' "${RELEASE_WORKFLOW}" || {
@@ -286,8 +299,9 @@ grep -q 'post-publication-verification-' "${RELEASE_WORKFLOW}" || {
     exit 1
 }
 
-if grep -q "tags: \\['v\\*'\\]" "${BUILD_WORKFLOW}" || grep -q "tags:" "${BUILD_WORKFLOW}"; then
-    echo "ERROR: build workflow must not independently build v* release tags" >&2
+if grep -q "tags: \\['v\\*'\\]" "${BUILD_WORKFLOW}" || grep -q "tags:" "${BUILD_WORKFLOW}" ||
+    grep -q "tags: \\['v\\*'\\]" "${IMAGE_WORKFLOW}" || grep -q "tags:" "${IMAGE_WORKFLOW}"; then
+    echo "ERROR: build workflows must not independently build v* release tags" >&2
     exit 1
 fi
 

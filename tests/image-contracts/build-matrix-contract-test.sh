@@ -28,6 +28,10 @@ def matrix_defconfigs(selector: str) -> set[str]:
 
 base = matrix_defconfigs("ci_build_base")
 payload = matrix_defconfigs("ci_build_payload")
+fast = matrix_defconfigs("fast_required")
+image_base = matrix_defconfigs("image_build_base")
+image_payload = matrix_defconfigs("image_build_payload")
+image_qemu = matrix_defconfigs("image_build_qemu")
 release_base = matrix_defconfigs("release_base")
 release_payload = matrix_defconfigs("release_payload")
 
@@ -42,6 +46,14 @@ if base != expected_base:
     raise SystemExit(f"ci_build_base mismatch: {sorted(base)}")
 if payload != expected_payload:
     raise SystemExit(f"ci_build_payload mismatch: {sorted(payload)}")
+if fast != expected_base | expected_payload:
+    raise SystemExit(f"fast_required mismatch: {sorted(fast)}")
+if image_base != expected_base:
+    raise SystemExit(f"image_build_base mismatch: {sorted(image_base)}")
+if image_payload != expected_payload:
+    raise SystemExit(f"image_build_payload mismatch: {sorted(image_payload)}")
+if image_qemu != {"suderra_qemu_x86_64_defconfig"}:
+    raise SystemExit(f"image_build_qemu mismatch: {sorted(image_qemu)}")
 expected_release_base = {
     "suderra_qemu_x86_64_defconfig",
     "suderra_aarch64_rpi4_defconfig",
@@ -53,6 +65,8 @@ if release_payload != expected_payload:
     raise SystemExit(f"release_payload mismatch: {sorted(release_payload)}")
 if base & payload:
     raise SystemExit(f"base/payload matrix overlap: {sorted(base & payload)}")
+if image_base & image_payload:
+    raise SystemExit(f"image base/payload matrix overlap: {sorted(image_base & image_payload)}")
 if release_base & release_payload:
     raise SystemExit(f"release base/payload matrix overlap: {sorted(release_base & release_payload)}")
 

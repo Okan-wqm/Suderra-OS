@@ -148,27 +148,37 @@ grep -q 'SUDERRA_MIN_VCPU' "${RESOURCE_CHECK}" ||
         echo "ERROR: runner resource gate must expose explicit vCPU threshold" >&2
         exit 1
     }
-grep -q 'MATRIX_PREBUILD_DEFCONFIGS' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+grep -q 'Free runner disk for Buildroot' "${PROJECT_ROOT}/.github/workflows/image-build.yml" ||
+    {
+        echo "ERROR: Image Build must free hosted-runner disk before resource checks" >&2
+        exit 1
+    }
+grep -q '/usr/share/dotnet' "${PROJECT_ROOT}/scripts/ci/free-runner-disk.sh" ||
+    {
+        echo "ERROR: runner disk cleanup must remove unused hosted SDK payloads" >&2
+        exit 1
+    }
+grep -q 'MATRIX_PREBUILD_DEFCONFIGS' "${PROJECT_ROOT}/.github/workflows/image-build.yml" ||
     {
         echo "ERROR: build workflow must consume matrix prebuild contracts" >&2
         exit 1
     }
-grep -q 'MATRIX_PAYLOAD_IMAGE_EXPORTS' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+grep -q 'MATRIX_PAYLOAD_IMAGE_EXPORTS' "${PROJECT_ROOT}/.github/workflows/image-build.yml" ||
     {
         echo "ERROR: build workflow must consume matrix payload export contracts" >&2
         exit 1
     }
-grep -q 'prepare-ci-keyring.sh' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+grep -q 'prepare-ci-keyring.sh' "${PROJECT_ROOT}/.github/workflows/image-build.yml" ||
     {
         echo "ERROR: build workflow must prepare CI trust roots before Buildroot image builds" >&2
         exit 1
     }
-grep -q 'SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+grep -q 'SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current' "${PROJECT_ROOT}/.github/workflows/image-build.yml" ||
     {
         echo "ERROR: build workflow must use a container keyring path outside /home/builder" >&2
         exit 1
     }
-grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workflows/build.yml" ||
+grep -q 'Verify container trust-root visibility' "${PROJECT_ROOT}/.github/workflows/image-build.yml" ||
     {
         echo "ERROR: build workflow must validate trust-root visibility inside the build container" >&2
         exit 1
@@ -188,6 +198,7 @@ fi
 if grep -R '/home/builder/.suderra-keys/current' \
     "${PROJECT_ROOT}/scripts/build-in-docker.sh" \
     "${PROJECT_ROOT}/.github/workflows/build.yml" \
+    "${PROJECT_ROOT}/.github/workflows/image-build.yml" \
     "${PROJECT_ROOT}/.github/workflows/release.yml"; then
     echo "ERROR: CI keyring mounts must not target /home/builder" >&2
     exit 1

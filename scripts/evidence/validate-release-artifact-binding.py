@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Suderra OS contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Validate staged release bytes against the preflight Build artifact binding."""
+"""Validate staged release bytes against the preflight Image Build artifact binding."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
 BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v2"
+IMAGE_BUILD_WORKFLOW_NAME = "Image Build"
+IMAGE_BUILD_WORKFLOW_PATH = ".github/workflows/image-build.yml"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -94,6 +96,24 @@ def validate(binding_path: Path, release_dir: Path, matrix_path: Path) -> list[s
         return [f"binding manifest must be a JSON object: {binding_path}"]
     if binding.get("schema_version") != BINDING_SCHEMA_VERSION:
         failures.append(f"binding schema_version must be {BINDING_SCHEMA_VERSION}")
+    if binding.get("build_workflow_name") != IMAGE_BUILD_WORKFLOW_NAME:
+        failures.append(f"binding build_workflow_name must be {IMAGE_BUILD_WORKFLOW_NAME}")
+    if binding.get("build_workflow_path") != IMAGE_BUILD_WORKFLOW_PATH:
+        failures.append(f"binding build_workflow_path must be {IMAGE_BUILD_WORKFLOW_PATH}")
+    image_contract = binding.get("image_build_contract")
+    if not isinstance(image_contract, dict):
+        failures.append("binding image_build_contract must be an object")
+    else:
+        digest = image_contract.get("sha256")
+        rel = image_contract.get("path")
+        if image_contract.get("role") != "image-build-contract":
+            failures.append("binding image_build_contract role must be image-build-contract")
+        if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest) or digest == "0" * 64:
+            failures.append("binding image_build_contract must have a non-zero sha256")
+        if not isinstance(image_contract.get("bytes"), int) or image_contract.get("bytes", 0) <= 0:
+            failures.append("binding image_build_contract must have positive byte size")
+        if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts:
+            failures.append("binding image_build_contract path must be relative")
     artifacts = binding_index(binding)
     installers = installer_index(binding)
     matrix_module = load_matrix_module()

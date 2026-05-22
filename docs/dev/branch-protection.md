@@ -24,14 +24,11 @@ içinde saklanır.
 | - `Lint / YAML Lint` | ✓ | Config quality |
 | - `Lint / DCO (Signed-off-by) Check` | ✓ | DCO zorunlu |
 | - `Build / Build matrix contract` | ✓ | Matrix contract geçerli |
-| - `Build / Build qemu-x86_64` | ✓ (Faz 1+) | Build çalışır |
-| - `Build / Build rpi4` | ✓ | RPi4 image contract |
-| - `Build / Build revpi4` | ✓ | RevPi4 image contract |
-| - `Build / Build payload base pi-cm4-revpi-usb-installer` | ✓ | USB installer base Buildroot evidence |
-| - `Build / Build payload image pi-cm4-revpi-usb-installer` | ✓ | USB installer image contract |
-| - `Build / Build suderra-installer (x86_64)` | ✓ | Preflight-bound installer binary |
-| - `Build / Build suderra-installer (aarch64)` | ✓ | Preflight-bound installer binary |
-| - `Build / QEMU boot smoke test (qemu-x86_64)` | ✓ | Boot smoke |
+| - `Build / Syntax and workflow contracts` | ✓ | Fast CI helper/contract syntax |
+| - `Build / Buildroot defconfig parse smoke (qemu-x86_64)` | ✓ | QEMU defconfig parse |
+| - `Build / Buildroot defconfig parse smoke (rpi4)` | ✓ | RPi4 defconfig parse |
+| - `Build / Buildroot defconfig parse smoke (pi-cm4-revpi-usb-installer)` | ✓ | USB installer defconfig parse |
+| - `Build / Buildroot defconfig parse smoke (revpi4)` | ✓ | RevPi4 defconfig parse |
 | - `Security Scan / Trivy (filesystem)` | ✓ | CVE scan |
 | - `Security Scan / Trivy (config / Dockerfile)` | ✓ | Config security |
 | - `Security Scan / Gitleaks (secret scan)` | ✓ | Secrets |
@@ -88,6 +85,10 @@ Release workflow iki yetki alanına ayrılmıştır:
   yetkisi yoktur.
 - `publish` job'ı sadece `release-publish` protected environment altında çalışır
   ve tek `contents: write` yetkisine sahip job'dır.
+
+Full image builds, payload assembly, installer binaries and QEMU boot smoke are
+not required branch checks. They are produced by `Image Build` and enforced as
+release/nightly/manual evidence by Release Preflight.
 
 Manual `workflow_dispatch` release yoktur. Release workflow yalnızca
 `refs/tags/v*` push ile çalışır; branch ref'inden tag artifact'i imzalanmaz.

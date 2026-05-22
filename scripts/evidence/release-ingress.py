@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Create and validate release ingress manifests.
 
-The ingress manifest records the exact Build workflow artifact bytes that a
-release preflight accepted. The tag workflow promotes those bytes instead of
+The ingress manifest records the exact Image Build workflow artifact bytes that
+a release preflight accepted. The tag workflow promotes those bytes instead of
 rebuilding images.
 """
 
@@ -26,6 +26,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = "suderra.release-ingress.v1"
 BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v2"
 BUILDROOT_IDENTITY_SCHEMA_FIELD = "buildroot_source_identity_schema_version"
+IMAGE_BUILD_WORKFLOW_NAME = "Image Build"
+IMAGE_BUILD_WORKFLOW_PATH = ".github/workflows/image-build.yml"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDERS = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING", ""}
@@ -229,6 +231,12 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         return {}, [f"binding manifest must be a JSON object: {args.binding_manifest}"]
     if binding.get("schema_version") != BINDING_SCHEMA_VERSION:
         failures.append(f"binding schema_version must be {BINDING_SCHEMA_VERSION}")
+    if binding.get("build_workflow_name") != IMAGE_BUILD_WORKFLOW_NAME:
+        failures.append(f"binding build_workflow_name must be {IMAGE_BUILD_WORKFLOW_NAME}")
+    if binding.get("build_workflow_path") != IMAGE_BUILD_WORKFLOW_PATH:
+        failures.append(f"binding build_workflow_path must be {IMAGE_BUILD_WORKFLOW_PATH}")
+    if not isinstance(binding.get("image_build_contract"), dict):
+        failures.append("binding image_build_contract must be an object")
     validate_buildroot_identity(failures, "binding Buildroot source identity", binding)
     generated_at = now_utc()
     expires_at = generated_at + timedelta(days=args.expires_days)
@@ -246,6 +254,7 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         (binding.get("artifacts", []), "build-artifact"),
         (binding.get("build_evidence", []), "build-evidence"),
         (binding.get("installers", []), "installer-artifact"),
+        ([binding.get("image_build_contract")] if binding.get("image_build_contract") else [], "image-build-contract"),
     ):
         if not isinstance(collection, list):
             failures.append(f"binding {default_source} collection must be a list")
@@ -266,13 +275,21 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
             bound_digest = artifact.get("sha256")
             if digest != bound_digest:
                 failures.append(f"ingress artifact sha mismatch for {rel}: binding {bound_digest}, got {digest}")
+            if default_source == "image-build-contract":
+                record_defconfig = "image-build-contract"
+                record_target = "image-build-contract"
+                record_artifact = artifact.get("artifact") or rel_path.name
+            else:
+                record_defconfig = artifact.get("defconfig") or f"installer-{artifact.get('arch')}"
+                record_target = artifact.get("target") or artifact.get("arch")
+                record_artifact = artifact.get("artifact")
             append_file_record(
                 files,
                 source=default_source,
                 role=artifact.get("role") or role_for_artifact(str(artifact.get("artifact", ""))),
-                defconfig=artifact.get("defconfig") or f"installer-{artifact.get('arch')}",
-                target=artifact.get("target") or artifact.get("arch"),
-                artifact=artifact.get("artifact"),
+                defconfig=record_defconfig,
+                target=record_target,
+                artifact=record_artifact,
                 path=path,
                 rel_path=rel_path,
             )
@@ -307,6 +324,7 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "source_run_id": str(binding.get("source_run_id")),
         "source_run_attempt": str(binding.get("source_run_attempt")),
         "build_workflow_name": binding.get("build_workflow_name"),
+        "build_workflow_path": binding.get("build_workflow_path"),
         "matrix_sha256": binding.get("matrix_sha256"),
         "buildroot_source_identity_schema_version": binding.get("buildroot_source_identity_schema_version"),
         "buildroot_index_sha": binding.get("buildroot_index_sha"),
@@ -406,6 +424,7 @@ def validate_manifest(
         "source_run_id",
         "source_run_attempt",
         "build_workflow_name",
+        "build_workflow_path",
         "matrix_sha256",
         "buildroot_source_identity_schema_version",
         "buildroot_index_sha",
@@ -417,6 +436,10 @@ def validate_manifest(
         "buildroot_rust_bin_version",
     ):
         check_string(failures, f"$.{field}", manifest.get(field))
+    if manifest.get("build_workflow_name") != IMAGE_BUILD_WORKFLOW_NAME:
+        failures.append(f"$.build_workflow_name: must be {IMAGE_BUILD_WORKFLOW_NAME}")
+    if manifest.get("build_workflow_path") != IMAGE_BUILD_WORKFLOW_PATH:
+        failures.append(f"$.build_workflow_path: must be {IMAGE_BUILD_WORKFLOW_PATH}")
     if expected_version is not None and manifest.get("version") != expected_version:
         failures.append(f"$.version: must match {expected_version}")
     binding = None
@@ -434,6 +457,7 @@ def validate_manifest(
                 "source_run_id",
                 "source_run_attempt",
                 "build_workflow_name",
+                "build_workflow_path",
                 "matrix_sha256",
                 "buildroot_source_identity_schema_version",
                 "buildroot_index_sha",
@@ -529,6 +553,7 @@ def validate_manifest(
         failures.append("$.files: must be a non-empty list")
         files = []
     seen_paths: set[str] = set()
+    has_image_build_contract = False
     for idx, item in enumerate(files):
         path = f"$.files[{idx}]"
         if not isinstance(item, dict):
@@ -537,8 +562,13 @@ def validate_manifest(
         for field in ("role", "defconfig", "target", "artifact"):
             check_string(failures, f"{path}.{field}", item.get(field))
         source = item.get("source")
-        if source not in {"build-artifact", "build-evidence", "installer-artifact", "preflight-input"}:
-            failures.append(f"{path}.source: must be build-artifact, build-evidence, installer-artifact, or preflight-input")
+        if source not in {"build-artifact", "build-evidence", "installer-artifact", "image-build-contract", "preflight-input"}:
+            failures.append(
+                f"{path}.source: must be build-artifact, build-evidence, installer-artifact, "
+                "image-build-contract, or preflight-input"
+            )
+        if source == "image-build-contract" and item.get("role") == "image-build-contract":
+            has_image_build_contract = True
         rel_path = check_relative_path(failures, f"{path}.path", item.get("path"))
         check_sha256(failures, f"{path}.sha256", item.get("sha256"))
         allow_empty = source == "preflight-input" and item.get("role") in OPTIONAL_EMPTY_INPUT_ROLES
@@ -559,6 +589,8 @@ def validate_manifest(
                         failures.append(f"{path}.bytes: does not match referenced file size")
                     if sha256_file(actual) != item.get("sha256"):
                         failures.append(f"{path}.sha256: does not match referenced file sha256")
+    if not has_image_build_contract:
+        failures.append("$.files: must include image-build-contract evidence")
     if require_signature:
         failures.extend(verify_manifest_signature(manifest_path, certificate_identity, certificate_oidc_issuer))
     return failures

@@ -1,4 +1,4 @@
-# Payload Build Performance Enterprise Plan
+# Tiered CI + Immutable USB Installer Base Decision
 
 Date: 2026-05-22
 
@@ -10,28 +10,30 @@ Buildroot build. The expensive part is not artifact transfer; it is rebuilding
 the installer rootfs/toolchain/package graph before `post-image.sh` signs and
 embeds the payload images.
 
-## Architecture
+## Decision
 
-1. Preserve security first. Payload images remain digest-bound, signed, and
-   attested; performance work must not bypass the manifest/signature chain.
-2. Stage downloaded payload inputs outside the source tree under CI storage so
-   `SUDERRA_REQUIRE_CLEAN_EXTERNAL=1` can stay enabled for the payload job.
-3. Emit `suderra.payload-inputs.v1` before packaging. The manifest records the
-   source run, source commit, source Build artifact names, payload file names,
-   byte counts, SHA-256 digests, and a canonical aggregate digest.
-4. Emit `suderra.buildroot-build-performance.v1` for each Buildroot image
-   build. The
-   evidence preserves raw `build-time.log`, parsed package/step timing, and
-   cache directory statistics so later optimization is driven by measured data.
-5. Keep mutable Buildroot output cache out of the critical path until it has a
-   verified invalidation model. Downloads and ccache remain the only CI caches.
-6. Split the installer flow into `build-payload-base` and `build-payload`.
-   The base job runs the installer Buildroot defconfig in
-   `SUDERRA_USB_INSTALLER_BASE_ONLY=1` mode and publishes only `boot.vfat`,
-   `rootfs.ext4`, and Buildroot evidence. The payload job consumes those base
-   bytes, validates the downloaded target image contracts, signs the payload
-   manifest, creates `payload.ext4`, and emits the final installer image
-   without rerunning Buildroot.
+The original measurement-only plan is replaced by a two-tier CI and immutable
+base artifact model:
+
+1. `Build` is the fast required PR/`main` workflow. It validates matrix,
+   governance, syntax, contract tests, and Buildroot defconfig parsing only.
+   Full image jobs are not required branch checks.
+2. `Image Build` is the heavy image producer for nightly/manual/main-push
+   evidence and release preflight. It builds QEMU/RPi4/RevPi4 images, installer
+   binaries, the USB installer base, the final payload image, QEMU smoke
+   evidence, artifact attestations, and `suderra.image-build-contract.v1`.
+3. USB installer base reuse is immutable and digest-bound through
+   `suderra.usb-installer-base.v1`. The final payload job consumes a base only
+   when identity digest, manifest digest, partition digests, Buildroot source
+   identity, matrix digest, builder image, trust-root public key hash, and build
+   evidence digest match exactly.
+4. Silent fallback is forbidden. A base identity mismatch fails the payload job;
+   the heavy workflow must produce a new base artifact.
+5. Release preflight binds only `Image Build` artifacts and rejects old
+   `.github/workflows/build.yml` producers.
+6. Performance evidence is mandatory. Payload packaging over the budget in
+   `ci/build-performance-budget.yml` fails; Buildroot timing remains reporting
+   until enough successful baselines exist for regression gates.
 
 ## Acceptance
 
@@ -43,3 +45,9 @@ embeds the payload images.
   `build-in-docker.sh`, for the installer defconfig.
 - Contract tests must reject tampered payload input manifests and malformed
   performance evidence.
+- `Build` workflow must not contain full image, payload, or QEMU jobs.
+- `Image Build` must publish digest-bound USB installer base artifacts and an
+  image build contract.
+- Branch protection/governance policy must require only fast checks.
+- Release preflight must verify `.github/workflows/image-build.yml`
+  attestations and consume `package-usb-installer-payload.py` output.

@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       source_run_id:
-        description: "Successful Build workflow run ID for source_sha"
+        description: "Successful Image Build workflow run ID for source_sha"
         required: true
         type: string
       profile:
@@ -47,7 +47,7 @@ jobs:
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       PROFILE: ${{ inputs.profile }}
     steps:
-      - name: Validate source Build run
+      - name: Validate source Image Build run
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,23 +73,23 @@ jobs:
           if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
               raise SystemExit("source_sha must be a lowercase git commit sha")
           run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
-          if run.get("name") != "Build":
-              raise SystemExit(f"source_run_id must point to Build workflow, got {run.get('name')!r}")
-          if run.get("path") != ".github/workflows/build.yml":
-              raise SystemExit(f"source_run_id must point to .github/workflows/build.yml, got {run.get('path')!r}")
+          if run.get("name") != "Image Build":
+              raise SystemExit(f"source_run_id must point to Image Build workflow, got {run.get('name')!r}")
+          if run.get("path") != ".github/workflows/image-build.yml":
+              raise SystemExit(f"source_run_id must point to .github/workflows/image-build.yml, got {run.get('path')!r}")
           if run.get("head_sha") != source_sha:
               raise SystemExit(f"source_run_id head_sha {run.get('head_sha')} does not match {source_sha}")
           if run.get("status") != "completed" or run.get("conclusion") != "success":
-              raise SystemExit(f"source Build run is not successful: {run.get('status')} {run.get('conclusion')}")
+              raise SystemExit(f"source Image Build run is not successful: {run.get('status')} {run.get('conclusion')}")
           if profile in {"release-candidate", "production-candidate"} and run.get("event") != "push":
-              raise SystemExit(f"{profile} source Build run must be a protected main push, got {run.get('event')!r}")
+              raise SystemExit(f"{profile} source Image Build run must be a protected main push, got {run.get('event')!r}")
           repo = run.get("head_repository")
           if profile in {"release-candidate", "production-candidate"} and (
               not isinstance(repo, dict) or repo.get("full_name") != os.environ.get("GITHUB_REPOSITORY")
           ):
-              raise SystemExit(f"{profile} source Build run must come from this repository")
+              raise SystemExit(f"{profile} source Image Build run must come from this repository")
           if profile in {"release-candidate", "production-candidate"} and run.get("head_branch") != "main":
-              raise SystemExit(f"{profile} source Build run must come from main, got {run.get('head_branch')!r}")
+              raise SystemExit(f"{profile} source Image Build run must come from main, got {run.get('head_branch')!r}")
           if profile in {"release-candidate", "production-candidate"} and os.environ.get("GITHUB_REF") != "refs/heads/main":
               raise SystemExit(f"{profile} preflight must be dispatched from refs/heads/main")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
@@ -117,7 +117,7 @@ jobs:
           git fetch origin main:refs/remotes/origin/main
           test "$(git rev-parse origin/main)" = "${SOURCE_SHA}"
 
-      - name: Download source Build artifacts
+      - name: Download source Image Build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -141,6 +141,7 @@ jobs:
                   names.append(f"{row['name']}-image")
                   names.append(f"{row['name']}-build-logs")
           names.extend(["installer-x86_64", "installer-aarch64"])
+          names.append("image-build-contract")
           for name in sorted(set(names)):
               print(name)
           PY
@@ -153,7 +154,7 @@ jobs:
               --dir "build-artifacts/${artifact_name}"
           done < expected-build-artifacts.txt
 
-      - name: Verify source Build artifact attestations
+      - name: Verify source Image Build artifact attestations
         if: ${{ inputs.profile != 'technical-dry-run' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -162,11 +163,22 @@ jobs:
           find build-artifacts -type f -print0 | sort -z | while IFS= read -r -d '' artifact; do
             gh attestation verify "${artifact}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --cert-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build.yml@refs/heads/main" \
+              --cert-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/image-build.yml@refs/heads/main" \
               --cert-oidc-issuer "https://token.actions.githubusercontent.com"
           done
 
-      - name: Bind Build artifacts to release inputs
+      - name: Validate image build contract
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/image-build-contract.py validate \
+            build-artifacts/image-build-contract/image-build-contract.json \
+            --artifact-root build-artifacts \
+            --workflow-path ".github/workflows/image-build.yml" \
+            --source-sha "${SOURCE_SHA}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --source-run-attempt "${{ steps.source.outputs.run_attempt }}"
+
+      - name: Bind Image Build artifacts to release inputs
         run: |
           set -euo pipefail
           mkdir -p "release-inputs/${VERSION}"
@@ -176,6 +188,9 @@ jobs:
             --source-run-attempt "${{ steps.source.outputs.run_attempt }}" \
             --source-sha "${SOURCE_SHA}" \
             --profile "${PROFILE}" \
+            --build-workflow-name "Image Build" \
+            --build-workflow-path ".github/workflows/image-build.yml" \
+            --image-build-contract "build-artifacts/image-build-contract/image-build-contract.json" \
             --artifact-root build-artifacts \
             --require-artifacts \
             --output "release-inputs/${VERSION}/${PROFILE}.json"
@@ -223,6 +238,9 @@ jobs:
             --source-run-attempt "${{ steps.source.outputs.run_attempt }}" \
             --source-sha "${SOURCE_SHA}" \
             --profile "${PROFILE}" \
+            --build-workflow-name "Image Build" \
+            --build-workflow-path ".github/workflows/image-build.yml" \
+            --image-build-contract "build-artifacts/image-build-contract/image-build-contract.json" \
             --artifact-root build-artifacts \
             --output-root .
 

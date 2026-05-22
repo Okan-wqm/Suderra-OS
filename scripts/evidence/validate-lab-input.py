@@ -605,7 +605,7 @@ def validate_lab(
                 error(
                     errors,
                     "$.artifact_binding.source_run_id",
-                    f"must match bound source Build run {expected_source_run_id}",
+                    f"must match bound source Image Build run {expected_source_run_id}",
                 )
             check_sha256(errors, "$.artifact_binding.build_artifact_sha256", binding.get("build_artifact_sha256"))
             if not isinstance(binding.get("build_artifact_bytes"), int) or binding.get("build_artifact_bytes", 0) <= 0:

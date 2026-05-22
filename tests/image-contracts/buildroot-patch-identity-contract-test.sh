@@ -93,19 +93,19 @@ grep -q 'SUDERRA_BUILDROOT_SOURCE_IDENTITY_OUT' "${ROOT}/scripts/build-in-docker
     echo "ERROR: Docker build wrapper must pass Buildroot source identity output path" >&2
     exit 1
 }
-grep -q 'SUDERRA_REQUIRE_CLEAN_EXTERNAL' "${ROOT}/.github/workflows/build.yml" || {
-    echo "ERROR: CI builds must require a clean BR2_EXTERNAL tree before snapshotting" >&2
+grep -q 'SUDERRA_REQUIRE_CLEAN_EXTERNAL' "${ROOT}/.github/workflows/image-build.yml" || {
+    echo "ERROR: Image Build must require a clean BR2_EXTERNAL tree before snapshotting" >&2
     exit 1
 }
-if grep -q 'apply-buildroot-patches.sh buildroot' "${ROOT}/.github/workflows/build.yml"; then
+if grep -q 'apply-buildroot-patches.sh buildroot' "${ROOT}/.github/workflows/image-build.yml"; then
     echo "ERROR: build workflow must not apply patches to the tracked buildroot submodule" >&2
     exit 1
 fi
-if grep -q 'make -C buildroot' "${ROOT}/.github/workflows/build.yml"; then
+if grep -q 'make -C buildroot' "${ROOT}/.github/workflows/image-build.yml"; then
     echo "ERROR: build workflow must not build from the tracked buildroot submodule" >&2
     exit 1
 fi
-grep -q 'Verify Buildroot submodule stayed clean' "${ROOT}/.github/workflows/build.yml" || {
+grep -q 'Verify Buildroot submodule stayed clean' "${ROOT}/.github/workflows/image-build.yml" || {
     echo "ERROR: build workflow must verify buildroot stayed clean" >&2
     exit 1
 }

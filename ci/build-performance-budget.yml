@@ -1,0 +1,7 @@
+default:
+  buildroot_timing_budget_seconds: 21600
+  payload_package_budget_seconds: 600
+  require_cache_evidence: true
+targets:
+  suderra_aarch64_rpi4_usb_installer_defconfig:
+    payload_package_budget_seconds: 600

@@ -20,6 +20,8 @@ from typing import Any
 
 IMAGE_NAME = "suderra-pi-cm4-revpi-usb-installer.img"
 SCHEMA_VERSION = "suderra.usb-installer-payload-package.v1"
+BASE_SCHEMA_VERSION = "suderra.usb-installer-base.v1"
+PAYLOAD_INPUTS_SCHEMA_VERSION = "suderra.payload-inputs.v1"
 
 
 def sha256_file(path: Path) -> str:
@@ -52,6 +54,73 @@ def timestamp_from_epoch(epoch: str | None) -> str:
 
 def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def validate_iso8601_z(value: str, field: str) -> None:
+    if not value.endswith("Z"):
+        raise SystemExit(f"{field} must be an ISO-8601 UTC timestamp ending in Z")
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise SystemExit(f"{field} must be an ISO-8601 UTC timestamp") from exc
+
+
+def load_base_manifest(path: Path, base_dir: Path, public_key: Path) -> dict[str, Any]:
+    payload = read_json(path)
+    if not isinstance(payload, dict) or payload.get("schema_version") != BASE_SCHEMA_VERSION:
+        raise SystemExit(f"base manifest schema_version must be {BASE_SCHEMA_VERSION}: {path}")
+    files = payload.get("files")
+    if not isinstance(files, list):
+        raise SystemExit("base manifest files must be a list")
+    by_role = {item.get("role"): item for item in files if isinstance(item, dict)}
+    for role, name in (("boot-vfat", "boot.vfat"), ("rootfs-ext4", "rootfs.ext4")):
+        item = by_role.get(role)
+        if not isinstance(item, dict):
+            raise SystemExit(f"base manifest missing {role}")
+        candidate = base_dir / name
+        if not candidate.is_file() or candidate.stat().st_size <= 0:
+            raise SystemExit(f"base file missing or empty: {candidate}")
+        if item.get("bytes") != candidate.stat().st_size:
+            raise SystemExit(f"base file size mismatch: {candidate}")
+        if item.get("sha256") != sha256_file(candidate):
+            raise SystemExit(f"base file sha mismatch: {candidate}")
+    key = payload.get("installer_payload_public_key")
+    if not isinstance(key, dict) or key.get("sha256") != sha256_file(public_key):
+        raise SystemExit("base manifest public key digest does not match payload signing public key")
+    return payload
+
+
+def load_payload_inputs_manifest(path: Path, rpi4_image: Path, revpi4_image: Path) -> dict[str, Any]:
+    payload = read_json(path)
+    if not isinstance(payload, dict) or payload.get("schema_version") != PAYLOAD_INPUTS_SCHEMA_VERSION:
+        raise SystemExit(f"payload inputs schema_version must be {PAYLOAD_INPUTS_SCHEMA_VERSION}: {path}")
+    inputs = payload.get("inputs")
+    if not isinstance(inputs, list) or not inputs:
+        raise SystemExit("payload inputs manifest must contain inputs")
+    expected = {
+        "suderra-rpi4-target.img.xz": rpi4_image,
+        "suderra-revpi4-target.img.xz": revpi4_image,
+    }
+    by_artifact = {
+        item.get("artifact"): item
+        for item in inputs
+        if isinstance(item, dict) and isinstance(item.get("artifact"), str)
+    }
+    for artifact, source in expected.items():
+        item = by_artifact.get(artifact)
+        if not isinstance(item, dict):
+            raise SystemExit(f"payload inputs manifest missing {artifact}")
+        if not source.is_file() or source.stat().st_size <= 0:
+            raise SystemExit(f"payload input missing or empty: {source}")
+        if item.get("bytes") != source.stat().st_size:
+            raise SystemExit(f"payload input size mismatch: {source}")
+        if item.get("sha256") != sha256_file(source):
+            raise SystemExit(f"payload input sha mismatch: {source}")
+    return payload
 
 
 def install_or_link(source: Path, destination: Path) -> None:
@@ -107,6 +176,9 @@ def clean_known_outputs(output_dir: Path) -> None:
 
 def assemble(args: argparse.Namespace) -> None:
     start = time.monotonic()
+    if args.key_epoch <= 0:
+        raise SystemExit("--key-epoch must be positive")
+    validate_iso8601_z(args.expires_at, "--expires-at")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     clean_known_outputs(args.output_dir)
 
@@ -117,6 +189,8 @@ def assemble(args: argparse.Namespace) -> None:
             raise SystemExit(f"required input missing or empty: {required}")
     if not args.genimage_cfg.is_file():
         raise SystemExit(f"genimage config missing: {args.genimage_cfg}")
+    base_manifest = load_base_manifest(args.base_manifest, args.base_dir, args.public_key)
+    payload_inputs_manifest = load_payload_inputs_manifest(args.payload_inputs_manifest, args.rpi4_image, args.revpi4_image)
 
     shutil.copyfile(base_boot, args.output_dir / "boot.vfat")
     shutil.copyfile(base_rootfs, args.output_dir / "rootfs.ext4")
@@ -240,13 +314,24 @@ def assemble(args: argparse.Namespace) -> None:
             "sha256": sha256_file(xz_path),
             "bytes": xz_path.stat().st_size,
         },
+        "base_manifest_sha256": sha256_file(args.base_manifest),
+        "payload_inputs_sha256": payload_inputs_manifest["inputs_sha256"],
+        "payload_inputs_manifest_sha256": sha256_file(args.payload_inputs_manifest),
+        "installer_payload_public_key_sha256": sha256_file(args.public_key),
         "base": {
+            "manifest_identity_digest": base_manifest["identity_digest"],
             "boot_vfat_sha256": sha256_file(args.output_dir / "boot.vfat"),
             "rootfs_ext4_sha256": sha256_file(args.output_dir / "rootfs.ext4"),
         },
+        "payload_inputs": payload_inputs_manifest["inputs"],
         "payload_manifest": {
             "sha256": sha256_file(manifest_path),
             "signature_sha256": sha256_file(sig_path),
+        },
+        "partition_digest_map": {
+            "boot.vfat": sha256_file(args.output_dir / "boot.vfat"),
+            "rootfs.ext4": sha256_file(args.output_dir / "rootfs.ext4"),
+            "payload.ext4": sha256_file(args.output_dir / "payload.ext4"),
         },
         "duration_seconds": round(time.monotonic() - start, 3),
     }
@@ -259,6 +344,8 @@ def assemble(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-dir", type=Path, required=True)
+    parser.add_argument("--base-manifest", type=Path, required=True)
+    parser.add_argument("--payload-inputs-manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--genimage-cfg", type=Path, required=True)
     parser.add_argument("--rpi4-image", type=Path, required=True)

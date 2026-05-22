@@ -371,11 +371,11 @@ jobs:
                       continue
                   source = artifact_root / f"{defconfig}-image" / artifact
                   if not source.is_file():
-                      raise SystemExit(f"missing promoted Build artifact: {source}")
+                      raise SystemExit(f"missing promoted Image Build artifact: {source}")
                   shutil.copy2(source, release_dir / target)
                   copied.append(target)
           if not copied:
-              raise SystemExit("no promoted Build artifacts staged")
+              raise SystemExit("no promoted Image Build artifacts staged")
           PY
           cp "release-ingress/${{ needs.validate.outputs.version }}/ingress-manifest.json" \
             release/release-ingress-manifest.json

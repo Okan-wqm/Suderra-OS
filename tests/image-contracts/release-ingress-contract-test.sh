@@ -92,6 +92,8 @@ for arch in ("x86_64", "aarch64"):
             }
         )
 
+contract_payload = b'{"schema_version":"suderra.image-build-contract.v1"}\n'
+contract_size, contract_digest = write_artifact("image-build-contract/image-build-contract.json", contract_payload)
 metadata = json.loads(
     subprocess.check_output(
         [
@@ -114,12 +116,19 @@ binding = {
     "source_sha": source_sha,
     "source_run_id": "123456789",
     "source_run_attempt": "1",
-    "build_workflow_name": "Build",
+    "build_workflow_name": "Image Build",
+    "build_workflow_path": ".github/workflows/image-build.yml",
     "matrix_path": "ci/build-matrix.yml",
     "matrix_sha256": hashlib.sha256((project_root / "ci/build-matrix.yml").read_bytes()).hexdigest(),
     "artifacts": entries,
     "build_evidence": build_evidence,
     "installers": installers,
+    "image_build_contract": {
+        "role": "image-build-contract",
+        "path": "image-build-contract/image-build-contract.json",
+        "bytes": contract_size,
+        "sha256": contract_digest,
+    },
     "userspace_cargo_lock_sha256": hashlib.sha256((project_root / "userspace" / "Cargo.lock").read_bytes()).hexdigest(),
     "userspace_rust_toolchain_sha256": hashlib.sha256((project_root / "userspace" / "rust-toolchain.toml").read_bytes()).hexdigest(),
     "release_targets": [],

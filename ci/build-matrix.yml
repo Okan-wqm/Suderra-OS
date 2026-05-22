@@ -18,6 +18,10 @@ defconfigs:
       - MANIFEST.txt
     qemu_test: true
     ci_build: true
+    fast_required: true
+    image_build: true
+    release_source: true
+    payload_base_required: false
     release: true
     timeout_minutes: 300
     build_step_timeout_minutes: 285
@@ -52,6 +56,10 @@ defconfigs:
       - MANIFEST.txt
     qemu_test: false
     ci_build: false
+    fast_required: false
+    image_build: false
+    release_source: false
+    payload_base_required: false
     release: false
     timeout_minutes: 300
     build_step_timeout_minutes: 285
@@ -86,6 +94,10 @@ defconfigs:
       - MANIFEST.txt
     qemu_test: false
     ci_build: false
+    fast_required: false
+    image_build: false
+    release_source: false
+    payload_base_required: false
     release: false
     timeout_minutes: 300
     build_step_timeout_minutes: 285
@@ -120,6 +132,10 @@ defconfigs:
       - MANIFEST.txt
     qemu_test: false
     ci_build: false
+    fast_required: false
+    image_build: false
+    release_source: false
+    payload_base_required: false
     release: false
     timeout_minutes: 300
     build_step_timeout_minutes: 285
@@ -154,6 +170,10 @@ defconfigs:
       - MANIFEST.txt
     qemu_test: false
     ci_build: true
+    fast_required: true
+    image_build: true
+    release_source: true
+    payload_base_required: false
     release: true
     timeout_minutes: 300
     build_step_timeout_minutes: 285
@@ -190,6 +210,10 @@ defconfigs:
       - manifest.sig
     qemu_test: false
     ci_build: true
+    fast_required: true
+    image_build: true
+    release_source: true
+    payload_base_required: true
     release: true
     timeout_minutes: 360
     build_step_timeout_minutes: 340
@@ -228,6 +252,10 @@ defconfigs:
       - MANIFEST.txt
     qemu_test: false
     ci_build: true
+    fast_required: true
+    image_build: true
+    release_source: true
+    payload_base_required: false
     release: true
     timeout_minutes: 300
     build_step_timeout_minutes: 285
