@@ -926,6 +926,7 @@ jobs:
           rpi4_container_image="$(payload_image_arg SUDERRA_RPI4_TARGET_IMAGE_XZ)"
           revpi4_container_image="$(payload_image_arg SUDERRA_REVPI4_TARGET_IMAGE_XZ)"
           package_log="build-logs/${{ matrix.defconfig }}.payload-package.log"
+          mkdir -p output
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp \
