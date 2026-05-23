@@ -740,6 +740,7 @@ write_json(
         "schema_roles": {
             "approval": "suderra.release-approval.v2",
             "binding_manifest": "suderra.release-input-binding.v2",
+            "evidence_ingress": "suderra.operator-evidence-ingress.v1",
             "lab_input": "suderra.lab-evidence.v3",
             "qemu_input": "suderra.qemu-acceptance.v4",
             "release_evidence": "suderra.release-evidence.v5",

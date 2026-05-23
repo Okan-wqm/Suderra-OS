@@ -711,6 +711,8 @@ def main() -> int:
                 ingress_args.extend(["--binding-manifest", str(args.binding_manifest)])
             if args.artifact_root is not None:
                 ingress_args.extend(["--artifact-root", str(args.artifact_root)])
+            if args.root is not None:
+                ingress_args.extend(["--input-root", str(args.root)])
             if args.source_sha is not None:
                 ingress_args.extend(["--expected-source-sha", args.source_sha])
             if args.require_ingress_signature:

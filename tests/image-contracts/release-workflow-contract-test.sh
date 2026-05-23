@@ -6,6 +6,7 @@ SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 PROJECT_ROOT="$( cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 RELEASE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release.yml"
 PREFLIGHT_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release-preflight.yml"
+EVIDENCE_INGRESS_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release-evidence-ingress.yml"
 BUILD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
 IMAGE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/image-build.yml"
 
@@ -23,6 +24,35 @@ grep -q '^name: Release Preflight$' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight workflow must exist" >&2
     exit 1
 }
+grep -q '^name: Release Evidence Ingress$' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+    echo "ERROR: release evidence ingress workflow must exist" >&2
+    exit 1
+}
+grep -q 'source_image_build_run_id:' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+    echo "ERROR: evidence ingress must bind the source Image Build run id" >&2
+    exit 1
+}
+grep -q 'source_image_build_run_attempt:' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+    echo "ERROR: evidence ingress must bind the source Image Build run attempt" >&2
+    exit 1
+}
+grep -q 'operator_bundle_url:' "${EVIDENCE_INGRESS_WORKFLOW}" &&
+    grep -q 'operator_bundle_sha256:' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+        echo "ERROR: evidence ingress must download an operator bundle by URL and expected digest" >&2
+        exit 1
+    }
+grep -q 'operator-evidence-ingress.py stage' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+    echo "ERROR: evidence ingress workflow must stage and validate the operator evidence bundle" >&2
+    exit 1
+}
+grep -q 'cosign sign-blob' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+    echo "ERROR: evidence ingress workflow must sign the evidence ingress manifest" >&2
+    exit 1
+}
+grep -Fq 'release-evidence-ingress-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+    echo "ERROR: evidence ingress artifact name must bind version, source SHA, Image Build run, and attempt" >&2
+    exit 1
+}
 grep -q 'workflow_dispatch:' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight workflow must be manually dispatchable" >&2
     exit 1
@@ -33,6 +63,22 @@ grep -q 'source_sha:' "${PREFLIGHT_WORKFLOW}" || {
 }
 grep -q 'source_run_id:' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must bind an exact source_run_id input" >&2
+    exit 1
+}
+grep -q 'evidence_ingress_run_id:' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must require an immutable evidence ingress artifact run" >&2
+    exit 1
+}
+grep -q 'operator-evidence-ingress.py validate' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must validate the downloaded evidence ingress manifest" >&2
+    exit 1
+}
+grep -q 'release-evidence-ingress-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must download the exact source-bound evidence ingress artifact" >&2
+    exit 1
+}
+grep -q 'SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ inputs.version }}/audit-log.json' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must feed governance audit evidence from the ingress artifact" >&2
     exit 1
 }
 if grep -q 'contents: write' "${PREFLIGHT_WORKFLOW}"; then

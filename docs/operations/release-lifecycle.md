@@ -13,6 +13,12 @@ image and installer artifacts instead of rebuilding them. Final evidence is
 published as a portable archive plus a signed publication manifest, but this
 does not create a production claim.
 
+The RC lifecycle is:
+
+```text
+technical-dry-run -> evidence-ingress -> release-candidate preflight -> signed tag -> draft prerelease -> verified undraft -> stable promotion
+```
+
 Technical dry runs may be used to debug source/run/artifact binding. They do
 not prove release readiness, do not authorize tagging, and do not support a
 production-ready or enterprise-ready claim.
@@ -31,10 +37,14 @@ Required gates:
   Governance collection uses `GOVERNANCE_READ_TOKEN`; default workflow token
   snapshots are not sufficient for enterprise closure.
 - `candidate-readiness --tag <version>` passes.
-- Release input preflight passes before any build job starts. It validates
-  governance policy evidence, hardware lab input, QEMU acceptance input, release
-  approvals, reproducibility logs, and security reports for the exact tag and
-  exact preflight-bound source SHA.
+- Release evidence ingress passes for the exact source SHA and source Image
+  Build run/attempt. Release input preflight then downloads only that immutable
+  ingress artifact for operator lab, approval, reproducibility, audit, and
+  station-registry inputs.
+- Release input preflight passes before any tag workflow staging starts. It
+  validates governance policy evidence, hardware lab input, QEMU acceptance
+  input, release approvals, reproducibility logs, and security reports for the
+  exact tag and exact preflight-bound source SHA.
 - Build matrix comes from `ci/build-matrix.yml`; workflows must not duplicate
   target lists.
 - Base image builds and payload packaging are split so the USB installer
@@ -96,8 +106,10 @@ Required additional gates:
 
 ## Tagging
 
-Do not tag until governance is active and a successful `Release Preflight`
-`release-candidate` artifact exists for the exact commit that will be tagged.
+Do not tag until governance is active, a successful `Release Evidence Ingress`
+artifact exists for the exact source/Image Build run, and a successful
+`Release Preflight` `release-candidate` artifact exists for the exact commit
+that will be tagged.
 The release workflow runs only from `refs/tags/v*`; branch `workflow_dispatch`
 is intentionally not available for release publication. The normal CI build
 workflow does not run on release tags. Release tags only promote bytes already
@@ -119,10 +131,10 @@ artifact IDs, wrong source SHAs, and ingress manifests whose SHA-256 does not
 match the tag annotation.
 
 ```bash
-git tag -s v0.1.0-alpha.1 -m $'Suderra OS v0.1.0-alpha.1
+git tag -s v0.1.0-rc.1 -m $'Suderra OS v0.1.0-rc.1
 
 Suderra-Release-Binding: v1
-Suderra-Version: v0.1.0-alpha.1
+Suderra-Version: v0.1.0-rc.1
 Suderra-Source-SHA: <40-char-source-sha>
 Suderra-Source-Build-Run-ID: <image-build-run-id>
 Suderra-Source-Build-Run-Attempt: <image-build-run-attempt>
@@ -130,7 +142,7 @@ Suderra-Preflight-Run-ID: <preflight-run-id>
 Suderra-Preflight-Run-Attempt: <preflight-run-attempt>
 Suderra-Preflight-Artifact-ID: <preflight-artifact-id>
 Suderra-Ingress-Manifest-SHA256: <release-ingress-manifest-sha256>'
-git push origin v0.1.0-alpha.1
+git push origin v0.1.0-rc.1
 ```
 
 For pre-release tags the release workflow expects the bound preflight artifact
@@ -152,11 +164,15 @@ Preflight operation is documented in
 Release operation uses this state model:
 
 ```text
-prepared -> signed -> draft-published -> verified -> accepted|rejected|superseded
+technical-dry-run -> evidence-ingress -> preflight-passed -> signed -> draft-published -> verified -> accepted|rejected|superseded
 ```
 
-- `prepared`: release-candidate preflight passed and the signed tag annotation
-  names the approved preflight run.
+- `technical-dry-run`: source/run/artifact binding and skeleton generation
+  passed; this does not authorize tagging.
+- `evidence-ingress`: operator evidence was staged, signed, and retained as an
+  immutable GitHub artifact.
+- `preflight-passed`: release-candidate preflight passed and the signed tag
+  annotation names the approved preflight run.
 - `signed`: tag workflow staged, signed, attested, and machine-verified the
   preflight-bound byte set.
 - `draft-published`: the protected `publish` job created a draft GitHub
@@ -169,6 +185,18 @@ prepared -> signed -> draft-published -> verified -> accepted|rejected|supersede
   published bytes.
 - `superseded`: leave the old evidence available, publish a newer SemVer tag,
   and document the supersession in release notes.
+
+Abort a draft before public promotion only if post-publication closure fails or
+review rejects the candidate:
+
+```bash
+gh release view v0.1.0-rc.1 --json isDraft,isPrerelease,tagName
+gh release delete v0.1.0-rc.1 --cleanup-tag=false
+```
+
+Do not reuse the failed preflight artifact after changing any operator evidence
+or release bytes. Create a new evidence ingress run, a new release-candidate
+preflight, and a new signed tag binding.
 
 If signing or publish approval fails, rerun the tag workflow only while the
 referenced preflight artifact is still retained and unchanged. If the preflight

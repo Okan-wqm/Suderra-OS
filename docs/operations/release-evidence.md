@@ -154,6 +154,40 @@ python3 scripts/evidence/release-evidence.py migrate \
 Migration does not manufacture missing release evidence; it only updates the
 schema shape before normal validation.
 
+## Operator Evidence Ingress
+
+Operator-collected release inputs are not committed to the repository. The
+controlled ingress unit is the `Release Evidence Ingress` artifact:
+
+```text
+release-evidence-ingress-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
+```
+
+That artifact must contain `release-lab-input`, `release-approvals`,
+`release-reproducibility`, `release-governance`, and
+`release-ingress/<version>/evidence-ingress-manifest.json` with `.sig` and
+`.cert` sidecars. The manifest uses
+`suderra.operator-evidence-ingress.v1` and binds every file path, byte count,
+SHA-256 digest, version, source SHA, source Image Build run ID, and run attempt.
+Release preflight rejects the artifact if the manifest is missing, unsigned,
+malformed, expired, bound to the wrong source, or if any referenced file is
+missing or has a different digest.
+
+Required operator evidence for the first RC is:
+
+- `release-lab-input/<version>/qemu-x86_64/qemu.json`
+- `release-lab-input/<version>/rpi4/lab.json`
+- `release-lab-input/<version>/pi-cm4-revpi-usb-installer/lab.json`
+- `release-lab-input/<version>/revpi4/lab.json`
+- `release-governance/<version>/audit-log.json`
+- `release-governance/<version>/station-registry.json`
+- `release-approvals/<version>/<target>.json` for every release target
+- `release-reproducibility/<version>/<target>.json` for every release target
+
+`release-governance/<version>/audit-log.json` must use
+`suderra.audit-log-snapshot.v1`, have `status: collected`, include
+`events_sha256`, and assert that no unapproved governance changes were found.
+
 ## Governance Evidence
 
 GitHub governance is policy-driven. `ci/github-governance-policy.yml` is the
@@ -182,6 +216,11 @@ tag protection, workflow permission, CODEOWNERS, and audit snapshots. Both
 release environments must have selected tag deployment policy for
 `refs/tags/v*`, prevent self-review, and include the required release/security
 reviewer identities from `ci/github-governance-policy.yml`.
+
+In CI, `Release Preflight` sets `SUDERRA_GOVERNANCE_AUDIT_LOG` to the
+audit-log file supplied by the evidence ingress artifact before collecting live
+GitHub governance snapshots. If the audit log is absent or has
+`status: not_collected`, governance validation fails closed.
 
 ## QEMU Evidence
 

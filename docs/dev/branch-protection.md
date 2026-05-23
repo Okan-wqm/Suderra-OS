@@ -68,6 +68,9 @@ altında tanımlanır:
 - Governance read token: `GOVERNANCE_READ_TOKEN` branch protection, rulesets,
   environments, deployment branch policies, workflow permissions ve audit
   snapshot okumalıdır
+- Governance audit snapshot, `Release Evidence Ingress` artifact'i içinden
+  `release-governance/<version>/audit-log.json` olarak gelmelidir; boş veya
+  `not_collected` audit log release'i durdurur
 - Release tag trust controls: secret `SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY` ve
   variable `SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS` tag signer trust-root'u sağlar
 - Cosign ve provenance için long-lived signing secret gerekmez; GitHub OIDC ile
@@ -89,6 +92,11 @@ Release workflow iki yetki alanına ayrılmıştır:
 Full image builds, payload assembly, installer binaries and QEMU boot smoke are
 not required branch checks. They are produced by `Image Build` and enforced as
 release/nightly/manual evidence by Release Preflight.
+
+`Release Evidence Ingress` de required branch check değildir. Operatör/lab
+evidence'ını source checkout dışından immutable artifact'e çevirir; artifact
+manifesti `source_sha`, Image Build run/attempt, dosya boyutları ve SHA-256
+digestleriyle fail-closed doğrulanır.
 
 Manual `workflow_dispatch` release yoktur. Release workflow yalnızca
 `refs/tags/v*` push ile çalışır; branch ref'inden tag artifact'i imzalanmaz.

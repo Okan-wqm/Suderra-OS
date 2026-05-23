@@ -1,0 +1,174 @@
+name: Release Evidence Ingress
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer release version, for example v0.1.0-rc.1"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact protected main commit SHA to bind"
+        required: true
+        type: string
+      source_image_build_run_id:
+        description: "Successful Image Build workflow run ID for source_sha"
+        required: true
+        type: string
+      source_image_build_run_attempt:
+        description: "Image Build run attempt to bind"
+        required: true
+        type: string
+      operator_bundle_url:
+        description: "HTTPS URL for the operator evidence tar bundle"
+        required: true
+        type: string
+      operator_bundle_sha256:
+        description: "Expected SHA-256 digest of operator_bundle_url bytes"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-evidence-ingress-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  ingress:
+    name: Evidence ingress (${{ inputs.version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SOURCE_IMAGE_BUILD_RUN_ID: ${{ inputs.source_image_build_run_id }}
+      SOURCE_IMAGE_BUILD_RUN_ATTEMPT: ${{ inputs.source_image_build_run_attempt }}
+      OPERATOR_BUNDLE_URL: ${{ inputs.operator_bundle_url }}
+      OPERATOR_BUNDLE_SHA256: ${{ inputs.operator_bundle_sha256 }}
+    steps:
+      - name: Validate source Image Build run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_IMAGE_BUILD_RUN_ID}" > source-run.json
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          source_sha = os.environ["SOURCE_SHA"]
+          run_attempt = os.environ["SOURCE_IMAGE_BUILD_RUN_ATTEMPT"]
+          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?", version):
+              raise SystemExit(f"invalid SemVer version: {version}")
+          if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+              raise SystemExit("source_sha must be a lowercase git commit sha")
+          if not re.fullmatch(r"[0-9a-f]{64}", os.environ["OPERATOR_BUNDLE_SHA256"]):
+              raise SystemExit("operator_bundle_sha256 must be a lowercase sha256")
+          try:
+              if int(run_attempt) <= 0:
+                  raise ValueError
+          except ValueError:
+              raise SystemExit("source_image_build_run_attempt must be a positive integer")
+          run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
+          if run.get("name") != "Image Build":
+              raise SystemExit(f"source_image_build_run_id must point to Image Build, got {run.get('name')!r}")
+          if run.get("path") != ".github/workflows/image-build.yml":
+              raise SystemExit(f"source Image Build path mismatch: {run.get('path')!r}")
+          if run.get("head_sha") != source_sha:
+              raise SystemExit(f"source Image Build head_sha {run.get('head_sha')} does not match {source_sha}")
+          if str(run.get("run_attempt", 1)) != run_attempt:
+              raise SystemExit(f"source Image Build run_attempt {run.get('run_attempt')} does not match {run_attempt}")
+          if run.get("status") != "completed" or run.get("conclusion") != "success":
+              raise SystemExit(f"source Image Build run is not successful: {run.get('status')} {run.get('conclusion')}")
+          if run.get("event") != "push" or run.get("head_branch") != "main":
+              raise SystemExit("release evidence ingress requires a successful protected main push Image Build")
+          repo = run.get("head_repository")
+          if not isinstance(repo, dict) or repo.get("full_name") != os.environ.get("GITHUB_REPOSITORY"):
+              raise SystemExit("source Image Build run must come from this repository")
+          if os.environ.get("GITHUB_REF") != "refs/heads/main":
+              raise SystemExit("Release Evidence Ingress must be dispatched from refs/heads/main")
+          PY
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.source_sha }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify source commit is current protected main
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main
+          test "$(git rev-parse origin/main)" = "${SOURCE_SHA}"
+
+      - name: Validate build matrix
+        run: python3 scripts/ci/validate-build-matrix.py validate
+
+      - name: Download operator evidence bundle
+        run: |
+          set -euo pipefail
+          mkdir -p operator-bundle-download
+          curl -fsSL "${OPERATOR_BUNDLE_URL}" -o operator-bundle-download/operator-evidence.tar
+          printf '%s  %s\n' "${OPERATOR_BUNDLE_SHA256}" operator-bundle-download/operator-evidence.tar | sha256sum -c -
+
+      - name: Stage operator evidence ingress
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/operator-evidence-ingress.py stage \
+            --bundle operator-bundle-download/operator-evidence.tar \
+            --output-root . \
+            --version "${VERSION}" \
+            --source-sha "${SOURCE_SHA}" \
+            --source-image-build-run-id "${SOURCE_IMAGE_BUILD_RUN_ID}" \
+            --source-image-build-run-attempt "${SOURCE_IMAGE_BUILD_RUN_ATTEMPT}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --workflow "Release Evidence Ingress" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --actor "${GITHUB_ACTOR}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign evidence ingress manifest
+        run: |
+          set -euo pipefail
+          cosign sign-blob \
+            --yes \
+            --output-signature="release-ingress/${VERSION}/evidence-ingress-manifest.json.sig" \
+            --output-certificate="release-ingress/${VERSION}/evidence-ingress-manifest.json.cert" \
+            "release-ingress/${VERSION}/evidence-ingress-manifest.json"
+          python3 scripts/evidence/operator-evidence-ingress.py validate \
+            "release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+            --input-root . \
+            --expected-version "${VERSION}" \
+            --expected-source-sha "${SOURCE_SHA}" \
+            --expected-source-image-build-run-id "${SOURCE_IMAGE_BUILD_RUN_ID}" \
+            --expected-source-image-build-run-attempt "${SOURCE_IMAGE_BUILD_RUN_ATTEMPT}" \
+            --require-signature \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-evidence-ingress.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Upload immutable operator evidence ingress
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-evidence-ingress-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
+          path: |
+            release-lab-input/
+            release-governance/
+            release-approvals/
+            release-reproducibility/
+            release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json
+            release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json.sig
+            release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json.cert
+          retention-days: 30
+          if-no-files-found: error

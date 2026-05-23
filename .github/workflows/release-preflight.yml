@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "SemVer release version, for example v0.1.0-alpha.1"
+        description: "SemVer release version, for example v0.1.0-rc.1"
         required: true
         type: string
       source_sha:
@@ -14,6 +14,14 @@ on:
       source_run_id:
         description: "Successful Image Build workflow run ID for source_sha"
         required: true
+        type: string
+      evidence_ingress_run_id:
+        description: "Successful Release Evidence Ingress run ID for release-candidate evidence"
+        required: false
+        type: string
+      evidence_ingress_manifest_sha256:
+        description: "Expected SHA-256 of release-ingress/<version>/evidence-ingress-manifest.json"
+        required: false
         type: string
       profile:
         description: "Preflight profile"
@@ -45,6 +53,8 @@ jobs:
       VERSION: ${{ inputs.version }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      EVIDENCE_INGRESS_RUN_ID: ${{ inputs.evidence_ingress_run_id }}
+      EVIDENCE_INGRESS_MANIFEST_SHA256: ${{ inputs.evidence_ingress_manifest_sha256 }}
       PROFILE: ${{ inputs.profile }}
     steps:
       - name: Validate source Image Build run
@@ -116,6 +126,75 @@ jobs:
           set -euo pipefail
           git fetch origin main:refs/remotes/origin/main
           test "$(git rev-parse origin/main)" = "${SOURCE_SHA}"
+
+      - name: Download operator evidence ingress artifact
+        if: ${{ inputs.profile != 'technical-dry-run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
+        run: |
+          set -euo pipefail
+          test -n "${EVIDENCE_INGRESS_RUN_ID}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_INGRESS_RUN_ID}" > evidence-ingress-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_INGRESS_RUN_ID}/artifacts" > evidence-ingress-artifacts.json
+          artifact_name="release-evidence-ingress-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+          python3 - "${artifact_name}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          artifact_name = sys.argv[1]
+          run = json.loads(Path("evidence-ingress-run.json").read_text(encoding="utf-8"))
+          if run.get("name") != "Release Evidence Ingress":
+              raise SystemExit(f"evidence ingress run must be named Release Evidence Ingress, got {run.get('name')!r}")
+          if run.get("path") != ".github/workflows/release-evidence-ingress.yml":
+              raise SystemExit(f"evidence ingress run path mismatch: {run.get('path')!r}")
+          expected = {
+              "head_sha": os.environ["SOURCE_SHA"],
+              "head_branch": "main",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+          }
+          for key, value in expected.items():
+              if run.get(key) != value:
+                  raise SystemExit(f"evidence ingress run {key} must be {value!r}, got {run.get(key)!r}")
+          repo = run.get("head_repository")
+          if not isinstance(repo, dict) or repo.get("full_name") != os.environ.get("GITHUB_REPOSITORY"):
+              raise SystemExit("evidence ingress run must come from this repository")
+          artifacts = json.loads(Path("evidence-ingress-artifacts.json").read_text(encoding="utf-8"))
+          items = artifacts.get("artifacts") if isinstance(artifacts, dict) else None
+          if not isinstance(items, list):
+              raise SystemExit("evidence ingress artifacts response is malformed")
+          matches = [item for item in items if isinstance(item, dict) and item.get("name") == artifact_name]
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one evidence ingress artifact named {artifact_name}, got {len(matches)}")
+          artifact = matches[0]
+          if artifact.get("expired") is True:
+              raise SystemExit("evidence ingress artifact is expired")
+          if not isinstance(artifact.get("size_in_bytes"), int) or artifact["size_in_bytes"] <= 0:
+              raise SystemExit("evidence ingress artifact must have a positive size")
+          PY
+          gh run download "${EVIDENCE_INGRESS_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "${artifact_name}" \
+            --dir .
+          if [ -n "${EVIDENCE_INGRESS_MANIFEST_SHA256}" ]; then
+            printf '%s  %s\n' \
+              "${EVIDENCE_INGRESS_MANIFEST_SHA256}" \
+              "release-ingress/${VERSION}/evidence-ingress-manifest.json" | sha256sum -c -
+          fi
+          python3 scripts/evidence/operator-evidence-ingress.py validate \
+            "release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+            --input-root . \
+            --expected-version "${VERSION}" \
+            --expected-source-sha "${SOURCE_SHA}" \
+            --expected-source-image-build-run-id "${SOURCE_RUN_ID}" \
+            --expected-source-image-build-run-attempt "${SOURCE_RUN_ATTEMPT}" \
+            --require-signature \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-evidence-ingress.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: Download source Image Build artifacts
         env:
@@ -199,6 +278,7 @@ jobs:
         if: ${{ inputs.profile != 'technical-dry-run' }}
         env:
           GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
+          SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ inputs.version }}/audit-log.json
         run: |
           set -euo pipefail
           python3 scripts/evidence/collect-governance.py \

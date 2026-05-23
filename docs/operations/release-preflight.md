@@ -19,20 +19,65 @@ bundle that the tag workflow later consumes.
 
 ```bash
 gh workflow run "Release Preflight" \
-  -f version=v0.1.0-alpha.1 \
+  -f version=v0.1.0-rc.1 \
   -f source_sha=<exact-main-commit> \
   -f source_run_id=<successful-image-build-run-id> \
   -f profile=technical-dry-run
 ```
 
-For a release candidate, rerun with `profile=release-candidate` after the input
-trees are populated and validated:
+For a release candidate, do not populate ignored evidence directories in the
+source checkout. Package the operator evidence trees as a tar bundle, publish
+that bundle to a controlled HTTPS location, and ingress it first:
+
+```bash
+tar -czf operator-evidence-v0.1.0-rc.1.tar.gz \
+  release-lab-input/v0.1.0-rc.1 \
+  release-approvals/v0.1.0-rc.1 \
+  release-reproducibility/v0.1.0-rc.1 \
+  release-governance/v0.1.0-rc.1/audit-log.json \
+  release-governance/v0.1.0-rc.1/station-registry.json
+
+sha256sum operator-evidence-v0.1.0-rc.1.tar.gz
+
+gh workflow run "Release Evidence Ingress" \
+  -f version=v0.1.0-rc.1 \
+  -f source_sha=<exact-main-commit> \
+  -f source_image_build_run_id=<successful-image-build-run-id> \
+  -f source_image_build_run_attempt=<image-build-run-attempt> \
+  -f operator_bundle_url=<https-url> \
+  -f operator_bundle_sha256=<operator-bundle-sha256>
+```
+
+The ingress workflow safely extracts only `release-lab-input`,
+`release-approvals`, `release-reproducibility`, and `release-governance`,
+requires the audit log and station registry, writes and signs
+`release-ingress/<version>/evidence-ingress-manifest.json`, and uploads this
+immutable artifact:
+
+```text
+release-evidence-ingress-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
+```
+
+Capture the evidence ingress manifest digest:
+
+```bash
+gh run download <evidence-ingress-run-id> \
+  --repo Okan-wqm/Suderra-OS \
+  --name release-evidence-ingress-v0.1.0-rc.1-<source_sha>-<image-build-run-id>-<attempt> \
+  --dir /tmp/evidence-ingress
+
+sha256sum /tmp/evidence-ingress/release-ingress/v0.1.0-rc.1/evidence-ingress-manifest.json
+```
+
+Then run `profile=release-candidate`:
 
 ```bash
 gh workflow run "Release Preflight" \
-  -f version=v0.1.0-alpha.1 \
+  -f version=v0.1.0-rc.1 \
   -f source_sha=<exact-main-commit> \
   -f source_run_id=<successful-image-build-run-id> \
+  -f evidence_ingress_run_id=<successful-evidence-ingress-run-id> \
+  -f evidence_ingress_manifest_sha256=<evidence-ingress-manifest-sha256> \
   -f profile=release-candidate
 ```
 
@@ -42,12 +87,35 @@ also verifies that `source_sha` is exactly `origin/main` at preflight time.
 Technical dry runs may be used against other branches for binding debugging,
 but they cannot feed the tag release workflow.
 
+Missing evidence ingress run ID, missing artifact, wrong artifact name, wrong
+source SHA, wrong Image Build run/attempt, malformed evidence ingress manifest,
+bad evidence ingress signature, missing audit log, missing station registry, or
+incorrect manifest digest all fail closed before release input validation.
+
 The workflow artifact name includes the profile so a later technical dry run
 cannot shadow an approved release-candidate bundle:
 
 ```text
 release-preflight-<profile>-<version>-<source_sha>
 ```
+
+After a successful release-candidate preflight, capture the tag-binding metadata
+from the exact run:
+
+```bash
+gh api repos/Okan-wqm/Suderra-OS/actions/runs/<preflight-run-id> > /tmp/preflight-run.json
+gh api repos/Okan-wqm/Suderra-OS/actions/runs/<preflight-run-id>/artifacts > /tmp/preflight-artifacts.json
+gh run download <preflight-run-id> \
+  --repo Okan-wqm/Suderra-OS \
+  --name release-preflight-release-candidate-v0.1.0-rc.1-<source_sha> \
+  --dir /tmp/release-preflight
+
+sha256sum /tmp/release-preflight/release-ingress/v0.1.0-rc.1/ingress-manifest.json
+```
+
+Record the preflight run ID, preflight run attempt from `/tmp/preflight-run.json`,
+the artifact ID from `/tmp/preflight-artifacts.json`, and the ingress manifest
+SHA-256 in the signed annotated tag.
 
 The release tag workflow does not scan recent workflow runs. The annotated
 release tag must name the approved preflight run, run attempt, artifact ID, and
@@ -96,6 +164,8 @@ The candidate bundle must include and the signed ingress manifest must digest:
 
 - `release-inputs/<version>/release-candidate.json`
 - `release-ingress/<version>/ingress-manifest.json` plus `.sig` and `.cert`
+- `release-ingress/<version>/evidence-ingress-manifest.json` plus `.sig` and
+  `.cert`
 - `build-artifacts/<defconfig>-image/*`
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.log`
 - `build-artifacts/<defconfig>-build-logs/build-logs/<defconfig>.warnings.json`
@@ -110,6 +180,8 @@ The candidate bundle must include and the signed ingress manifest must digest:
 - `build-artifacts/image-build-contract/image-build-contract.json`
 - `release-lab-input/<version>/qemu-x86_64/qemu.json`
 - `release-lab-input/<version>/<hardware-target>/lab.json`
+- `release-governance/<version>/audit-log.json`
+- `release-governance/<version>/station-registry.json`
 - `release-governance/<version>/governance-policy-validation.json`
 - `release-approvals/<version>/<target>.json` using
   `suderra.release-approval.v2`
@@ -147,12 +219,14 @@ Release-candidate preflight downloads only the expected image, installer,
 build-log, performance, USB installer base, payload, and Image Build contract
 artifacts from one successful `Image Build` run, verifies their GitHub Artifact
 Attestations against `.github/workflows/image-build.yml` on `refs/heads/main`,
-collects exact-commit GitHub check-run security evidence into
+downloads the immutable `Release Evidence Ingress` artifact for operator lab,
+approval, reproducibility, audit, and station-registry inputs, collects
+exact-commit GitHub check-run security evidence into
 `release-security/<version>/*.json`, and records the resulting input tree in
-signed `suderra.release-ingress.v1`. The tag workflow downloads the approved
-preflight artifact, verifies the ingress cosign identity, stages release-named
-files from `build-artifacts/`, signs, attests, and publishes those bytes. Before
-signing,
+signed `suderra.release-ingress.v1`. Source checkout copies of ignored evidence
+directories are not trusted. The tag workflow downloads the approved preflight
+artifact, verifies the ingress cosign identity, stages release-named files from
+`build-artifacts/`, signs, attests, and publishes those bytes. Before signing,
 `validate-release-artifact-binding.py` maps staged release files back to their
 preflight-bound source artifacts and compares SHA-256 digests:
 

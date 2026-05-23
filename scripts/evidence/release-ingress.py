@@ -32,6 +32,7 @@ SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDERS = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING", ""}
 SCHEMA_ROLES = {
+    "evidence_ingress": "suderra.operator-evidence-ingress.v1",
     "binding_manifest": BINDING_SCHEMA_VERSION,
     "approval": "suderra.release-approval.v2",
     "qemu_input": "suderra.qemu-acceptance.v4",
@@ -46,6 +47,7 @@ PREFLIGHT_INPUT_DIRS = (
     "release-approvals",
     "release-security",
     "release-reproducibility",
+    "release-ingress",
 )
 
 
@@ -221,6 +223,13 @@ def input_role_for_path(rel_path: Path) -> str:
         return "security-report"
     if parts[0] == "release-reproducibility":
         return "reproducibility-report"
+    if parts[0] == "release-ingress" and rel_path.name == "evidence-ingress-manifest.json":
+        return "evidence-ingress"
+    if parts[0] == "release-ingress" and rel_path.name in {
+        "evidence-ingress-manifest.json.sig",
+        "evidence-ingress-manifest.json.cert",
+    }:
+        return "evidence-ingress-signature"
     return "preflight-input"
 
 

@@ -11,7 +11,9 @@ gh workflow run "Image Build" --ref main
 
 Use the resulting run ID as `source_run_id` when starting `Release Preflight`.
 Release-candidate preflight accepts only a successful protected `main` push
-`Image Build` run; manual runs are for diagnostics and technical dry runs.
+`Image Build` run; manual runs are for diagnostics and technical dry runs. The
+same run ID and run attempt must also be supplied to `Release Evidence Ingress`
+when operator evidence is staged for an RC.
 
 ## Nightly Failure Triage
 
@@ -43,3 +45,5 @@ attestation validation.
   `.github/workflows/image-build.yml@refs/heads/main`.
 - `Release Preflight` validates the image build contract and creates a signed
   `suderra.release-ingress.v1` manifest.
+- `Release Evidence Ingress` must have already produced the immutable operator
+  evidence artifact for the same source SHA, Image Build run ID, and attempt.

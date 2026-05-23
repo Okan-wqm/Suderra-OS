@@ -98,7 +98,7 @@ jobs:
 
   governance:
     name: Governance policy gate
-    needs: validate
+    needs: [validate, preflight-binding]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -108,9 +108,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ needs.validate.outputs.version }}
+      - name: Download preflight governance inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-governance-inputs-${{ needs.validate.outputs.version }}
+          path: .
       - name: Collect GitHub governance snapshots
         env:
           GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
+          SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ needs.validate.outputs.version }}/audit-log.json
         run: |
           set -euo pipefail
           python3 scripts/evidence/collect-governance.py \
@@ -226,6 +232,15 @@ jobs:
             --ingress-certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
             --ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
+      - name: Upload preflight governance inputs for tag governance gate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-governance-inputs-${{ needs.validate.outputs.version }}
+          path: |
+            release-governance/${{ needs.validate.outputs.version }}/audit-log.json
+            release-governance/${{ needs.validate.outputs.version }}/station-registry.json
+          retention-days: 30
+          if-no-files-found: error
       - name: Upload release input bundle for tag workflow
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -301,16 +316,16 @@ jobs:
           ref: ${{ needs.validate.outputs.version }}
           fetch-depth: 0
 
-      - name: Download preflight-bound release inputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: release-inputs-${{ needs.validate.outputs.version }}
-          path: .
-
       - name: Download governance evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-governance-${{ needs.validate.outputs.version }}
+          path: .
+
+      - name: Download preflight-bound release inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-inputs-${{ needs.validate.outputs.version }}
           path: .
 
       - name: Validate full-matrix lab evidence input

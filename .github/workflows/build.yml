@@ -51,6 +51,7 @@ jobs:
             scripts/ci/build-performance-budget.py \
             scripts/evidence/prepare-release-inputs.py \
             scripts/evidence/validate-release-inputs.py \
+            scripts/evidence/operator-evidence-ingress.py \
             scripts/evidence/release-ingress.py \
             scripts/evidence/validate-release-artifact-binding.py
       - name: Shell syntax checks
