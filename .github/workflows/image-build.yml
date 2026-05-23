@@ -764,6 +764,15 @@ jobs:
               --expected-profile ci \
               --require-installer-signing
 
+      - name: Verify payload packager tooling
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            suderra-builder:latest \
+            bash -lc 'command -v genimage && command -v genext2fs && command -v xz && command -v openssl'
+
       - name: Download installer base identity index
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

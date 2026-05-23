@@ -50,6 +50,10 @@ grep -q 'mkdir -p output' "${IMAGE_WORKFLOW}" || {
     echo "ERROR: payload packager docker run must pre-create /workspace/output mountpoint" >&2
     exit 1
 }
+grep -q 'command -v genext2fs' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload packager job must preflight genext2fs before the expensive packaging path" >&2
+    exit 1
+}
 grep -q 'image-build-contract.py create' "${IMAGE_WORKFLOW}" || {
     echo "ERROR: Image Build must publish an image build contract" >&2
     exit 1

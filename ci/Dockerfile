@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     # Image generation
     genimage \
+    genext2fs \
     parted \
     dosfstools \
     mtools \
