@@ -138,6 +138,22 @@ def environment_reviewer_identities(environment: dict[str, Any]) -> set[str]:
     return identities
 
 
+def environment_prevents_self_review(environment: dict[str, Any]) -> bool:
+    if environment.get("prevent_self_review") is True:
+        return True
+    protection_rules = environment.get("protection_rules")
+    if not isinstance(protection_rules, list):
+        return False
+    for rule in protection_rules:
+        if (
+            isinstance(rule, dict)
+            and rule.get("type") == "required_reviewers"
+            and rule.get("prevent_self_review") is True
+        ):
+            return True
+    return False
+
+
 def deployment_policy_patterns(snapshot: Any) -> set[str]:
     items = snapshot.get("branch_policies") if isinstance(snapshot, dict) else snapshot
     if not isinstance(items, list):
@@ -301,7 +317,7 @@ def validate_environment_policy(
                 f"{env_name} environment missing required reviewer identities: "
                 + ", ".join(missing_reviewers)
             )
-    if env_policy.get("prevent_self_review") is True and environment.get("prevent_self_review") is not True:
+    if env_policy.get("prevent_self_review") is True and not environment_prevents_self_review(environment):
         failures.append(f"{env_name} environment must prevent self review")
     deployment_policy = environment.get("deployment_branch_policy")
     if isinstance(deployment_policy, dict):
