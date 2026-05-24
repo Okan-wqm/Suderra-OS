@@ -18,10 +18,11 @@ import sys
 import tarfile
 import tempfile
 from typing import Any
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_VERSION = "suderra.operator-evidence-ingress.v1"
+SCHEMA_VERSION = "suderra.operator-evidence-ingress.v2"
 AUDIT_SCHEMA_VERSION = "suderra.audit-log-snapshot.v1"
 STATION_REGISTRY_SCHEMA_VERSION = "suderra.lab-station-registry.v1"
 QEMU_SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
@@ -52,6 +53,22 @@ def now_utc() -> datetime:
 
 def format_utc(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
+
+
+def parse_utc(value: Any, path: str, failures: list[str]) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        failures.append(f"{path}: must be an ISO-8601 UTC timestamp")
+        return None
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        failures.append(f"{path}: must be an ISO-8601 UTC timestamp")
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        failures.append(f"{path}: must be a UTC timestamp")
+        return None
+    return parsed.astimezone(timezone.utc).replace(microsecond=0)
 
 
 def sha256_file(path: Path) -> str:
@@ -86,6 +103,107 @@ def check_sha256(failures: list[str], path: str, value: Any) -> None:
         failures.append(f"{path}: must be a lowercase sha256 digest")
     elif value == "0" * 64:
         failures.append(f"{path}: must not be the all-zero sha256 digest")
+
+
+def check_https_url_host(failures: list[str], path: str, value: Any, allowed_host: str | None) -> None:
+    if not isinstance(value, str) or not value.strip():
+        failures.append(f"{path}: must be a non-empty HTTPS URL")
+        return
+    parsed = urlparse(value)
+    if parsed.scheme != "https":
+        failures.append(f"{path}: must use https")
+    if parsed.username or parsed.password:
+        failures.append(f"{path}: must not embed credentials")
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        failures.append(f"{path}: must include a host")
+    elif allowed_host is not None and hostname != allowed_host:
+        failures.append(f"{path}: host must match operator bundle allowlist")
+
+
+def validate_operator_bundle_provenance(failures: list[str], provenance: Any) -> None:
+    if not isinstance(provenance, dict):
+        failures.append("$.operator_bundle: must be an object")
+        return
+    allowed_host = provenance.get("allowed_host")
+    if not isinstance(allowed_host, str) or not allowed_host.strip() or "/" in allowed_host or ":" in allowed_host:
+        failures.append("$.operator_bundle.allowed_host: must be a bare hostname")
+        allowed = None
+    else:
+        allowed = allowed_host.lower()
+    check_https_url_host(failures, "$.operator_bundle.url", provenance.get("url"), allowed)
+    check_sha256(failures, "$.operator_bundle.sha256", provenance.get("sha256"))
+    check_sha256(failures, "$.operator_bundle.signature_sha256", provenance.get("signature_sha256"))
+    check_sha256(failures, "$.operator_bundle.certificate_sha256", provenance.get("certificate_sha256"))
+    identity = provenance.get("certificate_identity")
+    if not isinstance(identity, str) or not identity.strip():
+        failures.append("$.operator_bundle.certificate_identity: must be a non-empty string")
+    if provenance.get("certificate_oidc_issuer") != "https://token.actions.githubusercontent.com":
+        failures.append("$.operator_bundle.certificate_oidc_issuer: must be GitHub Actions OIDC")
+    if provenance.get("verified") is not True:
+        failures.append("$.operator_bundle.verified: must be true")
+
+
+def validate_audit_log(failures: list[str], audit_path: Path, audit: Any) -> None:
+    if not isinstance(audit, dict):
+        failures.append(f"{audit_path}: audit log must be a JSON object")
+        return
+    if audit.get("schema_version") != AUDIT_SCHEMA_VERSION:
+        failures.append(f"{audit_path}: schema_version must be {AUDIT_SCHEMA_VERSION}")
+    if audit.get("status") != "collected":
+        failures.append(f"{audit_path}: status must be collected")
+    check_sha256(failures, f"{audit_path}: events_sha256", audit.get("events_sha256"))
+    if audit.get("unapproved_governance_changes"):
+        failures.append(f"{audit_path}: unapproved governance changes must be false")
+    if audit.get("source_kind") not in {"organization", "enterprise", "manual-org-export", "manual-enterprise-export"}:
+        failures.append(f"{audit_path}: source_kind must identify an org/enterprise audit source")
+    if not isinstance(audit.get("repository"), str) or not audit.get("repository"):
+        failures.append(f"{audit_path}: repository must be a non-empty string")
+    if not isinstance(audit.get("query"), str) or not audit.get("query"):
+        failures.append(f"{audit_path}: query must be a non-empty string")
+    if not isinstance(audit.get("event_count"), int) or audit.get("event_count") < 0:
+        failures.append(f"{audit_path}: event_count must be a non-negative integer")
+    collector = audit.get("collector")
+    if not isinstance(collector, dict) or not isinstance(collector.get("identity"), str) or not collector.get("identity"):
+        failures.append(f"{audit_path}: collector.identity must be a non-empty string")
+    window = audit.get("lookback_window")
+    if not isinstance(window, dict):
+        failures.append(f"{audit_path}: lookback_window must be an object")
+    else:
+        if not isinstance(window.get("start"), str) or not window.get("start"):
+            failures.append(f"{audit_path}: lookback_window.start must be a timestamp")
+        if not isinstance(window.get("end"), str) or not window.get("end"):
+            failures.append(f"{audit_path}: lookback_window.end must be a timestamp")
+        if not isinstance(window.get("days"), int) or window.get("days") <= 0:
+            failures.append(f"{audit_path}: lookback_window.days must be a positive integer")
+    raw_export = audit.get("raw_export")
+    if not isinstance(raw_export, dict):
+        failures.append(f"{audit_path}: raw_export must be an object")
+    else:
+        if not isinstance(raw_export.get("path"), str) or not raw_export.get("path"):
+            failures.append(f"{audit_path}: raw_export.path must be a non-empty string")
+        if not isinstance(raw_export.get("bytes"), int) or raw_export.get("bytes") <= 0:
+            failures.append(f"{audit_path}: raw_export.bytes must be a positive integer")
+        check_sha256(failures, f"{audit_path}: raw_export.sha256", raw_export.get("sha256"))
+    replay = audit.get("replay")
+    if not isinstance(replay, dict):
+        failures.append(f"{audit_path}: replay must be an object")
+    else:
+        if replay.get("status") != "passed":
+            failures.append(f"{audit_path}: replay.status must be passed")
+        if replay.get("unapproved_events") not in ([], None):
+            failures.append(f"{audit_path}: replay.unapproved_events must be empty")
+
+
+def validate_manifest_window(failures: list[str], manifest: dict[str, Any]) -> None:
+    generated_at = parse_utc(manifest.get("generated_at"), "$.generated_at", failures)
+    expires_at = parse_utc(manifest.get("expires_at"), "$.expires_at", failures)
+    if generated_at is None or expires_at is None:
+        return
+    if expires_at <= generated_at:
+        failures.append("$.expires_at: must be after generated_at")
+    if expires_at <= now_utc():
+        failures.append("$.expires_at: evidence ingress manifest has expired")
 
 
 def safe_rel_path(value: Any) -> Path | None:
@@ -244,16 +362,7 @@ def validate_core_files(input_root: Path, version: str, matrix: Path, files: lis
     except (OSError, json.JSONDecodeError) as exc:
         failures.append(f"{audit_path}: missing or invalid audit log JSON: {exc}")
     else:
-        if not isinstance(audit, dict):
-            failures.append(f"{audit_path}: audit log must be a JSON object")
-        else:
-            if audit.get("schema_version") != AUDIT_SCHEMA_VERSION:
-                failures.append(f"{audit_path}: schema_version must be {AUDIT_SCHEMA_VERSION}")
-            if audit.get("status") != "collected":
-                failures.append(f"{audit_path}: status must be collected")
-            check_sha256(failures, f"{audit_path}: events_sha256", audit.get("events_sha256"))
-            if audit.get("unapproved_governance_changes"):
-                failures.append(f"{audit_path}: unapproved governance changes must be false")
+        validate_audit_log(failures, audit_path, audit)
 
     registry_path = input_root / "release-governance" / version / "station-registry.json"
     try:
@@ -300,6 +409,16 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "source_sha": source_sha,
         "source_image_build_run_id": str(args.source_image_build_run_id),
         "source_image_build_run_attempt": str(args.source_image_build_run_attempt),
+        "operator_bundle": {
+            "url": args.bundle_url,
+            "sha256": args.bundle_sha256,
+            "signature_sha256": args.bundle_signature_sha256,
+            "certificate_sha256": args.bundle_certificate_sha256,
+            "certificate_identity": args.bundle_certificate_identity,
+            "certificate_oidc_issuer": args.bundle_certificate_oidc_issuer,
+            "allowed_host": str(args.bundle_allowed_host).lower(),
+            "verified": True,
+        },
         "producer": {
             "provider": "github-actions",
             "repository": args.repository,
@@ -313,6 +432,7 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
         "required_paths": sorted(required_evidence_paths(version, args.matrix)),
         "files": files,
     }
+    validate_operator_bundle_provenance(failures, manifest["operator_bundle"])
     return manifest, failures
 
 
@@ -365,6 +485,7 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
         return [f"{args.manifest}: evidence ingress manifest must be a JSON object"]
     if manifest.get("schema_version") != SCHEMA_VERSION:
         failures.append(f"$.schema_version: must be {SCHEMA_VERSION}")
+    validate_manifest_window(failures, manifest)
     version = manifest.get("version")
     source_sha = manifest.get("source_sha")
     if isinstance(version, str) and isinstance(source_sha, str):
@@ -387,6 +508,7 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
         failures.append("$.source_image_build_run_attempt: must match expected Image Build run attempt")
     check_positive_int(failures, "$.source_image_build_run_id", manifest.get("source_image_build_run_id"))
     check_positive_int(failures, "$.source_image_build_run_attempt", manifest.get("source_image_build_run_attempt"))
+    validate_operator_bundle_provenance(failures, manifest.get("operator_bundle"))
     producer = manifest.get("producer")
     if not isinstance(producer, dict):
         failures.append("$.producer: must be an object")
@@ -541,6 +663,32 @@ def create_command(args: argparse.Namespace) -> int:
 
 
 def stage_command(args: argparse.Namespace) -> int:
+    digest_failures: list[str] = []
+    for label, path in (
+        ("operator bundle", args.bundle),
+        ("operator bundle signature", args.bundle_signature),
+        ("operator bundle certificate", args.bundle_certificate),
+    ):
+        if not path.is_file() or path.stat().st_size <= 0:
+            digest_failures.append(f"{label} must be a non-empty file: {path}")
+    if digest_failures:
+        for failure in digest_failures:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 1
+    actual_bundle_sha256 = sha256_file(args.bundle)
+    if actual_bundle_sha256 != args.bundle_sha256:
+        digest_failures.append("--bundle-sha256 does not match staged operator bundle bytes")
+    actual_signature_sha256 = sha256_file(args.bundle_signature)
+    if actual_signature_sha256 != args.bundle_signature_sha256:
+        digest_failures.append("--bundle-signature-sha256 does not match staged operator bundle signature bytes")
+    actual_certificate_sha256 = sha256_file(args.bundle_certificate)
+    if actual_certificate_sha256 != args.bundle_certificate_sha256:
+        digest_failures.append("--bundle-certificate-sha256 does not match staged operator bundle certificate bytes")
+    if digest_failures:
+        for failure in digest_failures:
+            print(f"ERROR: {failure}", file=sys.stderr)
+        return 1
+
     with tempfile.TemporaryDirectory(prefix="suderra-operator-evidence-") as tmp:
         extracted = Path(tmp) / "extracted"
         extracted.mkdir(parents=True)
@@ -558,6 +706,9 @@ def stage_command(args: argparse.Namespace) -> int:
     create_args = argparse.Namespace(**vars(args))
     create_args.input_root = args.output_root
     create_args.output = args.output_root / "release-ingress" / args.version / "evidence-ingress-manifest.json"
+    create_args.bundle_sha256 = actual_bundle_sha256
+    create_args.bundle_signature_sha256 = actual_signature_sha256
+    create_args.bundle_certificate_sha256 = actual_certificate_sha256
     return create_command(create_args)
 
 
@@ -583,6 +734,13 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--run-attempt", required=True)
     parser.add_argument("--actor", required=True)
     parser.add_argument("--expires-days", type=int, default=30)
+    parser.add_argument("--bundle-url", required=True)
+    parser.add_argument("--bundle-sha256", required=True)
+    parser.add_argument("--bundle-signature-sha256", required=True)
+    parser.add_argument("--bundle-certificate-sha256", required=True)
+    parser.add_argument("--bundle-certificate-identity", required=True)
+    parser.add_argument("--bundle-certificate-oidc-issuer", required=True)
+    parser.add_argument("--bundle-allowed-host", required=True)
 
 
 def main() -> int:
@@ -598,6 +756,8 @@ def main() -> int:
     stage = subparsers.add_parser("stage", help="safely extract an operator bundle and create a manifest")
     add_common(stage)
     stage.add_argument("--bundle", type=Path, required=True)
+    stage.add_argument("--bundle-signature", type=Path, required=True)
+    stage.add_argument("--bundle-certificate", type=Path, required=True)
     stage.add_argument("--output-root", type=Path, required=True)
     stage.set_defaults(func=stage_command)
 

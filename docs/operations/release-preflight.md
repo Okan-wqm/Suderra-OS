@@ -5,6 +5,11 @@ tag workflow can publish. The `Release Preflight` workflow binds one exact
 successful `Image Build` run to one exact source commit and emits the evidence
 bundle that the tag workflow later consumes.
 
+For the first RC use `VERSION=v0.1.0-rc.1`. The workflow term `alpha` means the
+pre-release evidence policy tier and applies to RC tags. Freeze `main` before
+operator evidence collection begins, or the current workflow will reject ingress
+and preflight when `origin/main` no longer equals `source_sha`.
+
 ## Profiles
 
 - `technical-dry-run`: validates source/run/artifact binding and creates input
@@ -37,7 +42,11 @@ tar -czf operator-evidence-v0.1.0-rc.1.tar.gz \
   release-governance/v0.1.0-rc.1/audit-log.json \
   release-governance/v0.1.0-rc.1/station-registry.json
 
-sha256sum operator-evidence-v0.1.0-rc.1.tar.gz
+# The bundle must be signed by the governed operator evidence identity
+# configured in SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY. Local ad-hoc
+# identities are not accepted by Release Evidence Ingress.
+
+OPERATOR_BUNDLE_SHA256="$(sha256sum operator-evidence-v0.1.0-rc.1.tar.gz | awk '{print $1}')"
 
 gh workflow run "Release Evidence Ingress" \
   -f version=v0.1.0-rc.1 \
@@ -45,12 +54,15 @@ gh workflow run "Release Evidence Ingress" \
   -f source_image_build_run_id=<successful-image-build-run-id> \
   -f source_image_build_run_attempt=<image-build-run-attempt> \
   -f operator_bundle_url=<https-url> \
-  -f operator_bundle_sha256=<operator-bundle-sha256>
+  -f operator_bundle_sha256="${OPERATOR_BUNDLE_SHA256}" \
+  -f operator_bundle_signature_url=<https-signature-url> \
+  -f operator_bundle_certificate_url=<https-certificate-url>
 ```
 
 The ingress workflow safely extracts only `release-lab-input`,
 `release-approvals`, `release-reproducibility`, and `release-governance`,
-requires the audit log and station registry, writes and signs
+requires the audit log and station registry, verifies the operator bundle
+signature before signing any GitHub-produced ingress evidence, writes and signs
 `release-ingress/<version>/evidence-ingress-manifest.json`, and uploads this
 immutable artifact:
 
@@ -58,7 +70,15 @@ immutable artifact:
 rei-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
 ```
 
-Capture the evidence ingress manifest digest:
+The operator bundle URL must be readable by the GitHub-hosted runner without
+custom headers, must use HTTPS, must not redirect, and must match
+`SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST`. Signer identity is fixed by
+`SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY`; the dispatcher cannot choose the
+accepted host or signer. Record URL, expiry, bundle digest, signature digest,
+certificate digest, signer identity, and upload owner in the audit record. Do
+not commit operator evidence bundles to the repository.
+
+Capture the evidence ingress manifest digest as a bare lowercase SHA-256:
 
 ```bash
 gh run download <evidence-ingress-run-id> \
@@ -66,7 +86,10 @@ gh run download <evidence-ingress-run-id> \
   --name rei-v0.1.0-rc.1-<source_sha>-<image-build-run-id>-<attempt> \
   --dir /tmp/evidence-ingress
 
-sha256sum /tmp/evidence-ingress/release-ingress/v0.1.0-rc.1/evidence-ingress-manifest.json
+EVIDENCE_INGRESS_MANIFEST_SHA256="$(
+  sha256sum /tmp/evidence-ingress/release-ingress/v0.1.0-rc.1/evidence-ingress-manifest.json |
+    awk '{print $1}'
+)"
 ```
 
 Then run `profile=release-candidate`:
@@ -77,7 +100,7 @@ gh workflow run "Release Preflight" \
   -f source_sha=<exact-main-commit> \
   -f source_run_id=<successful-image-build-run-id> \
   -f evidence_ingress_run_id=<successful-evidence-ingress-run-id> \
-  -f evidence_ingress_manifest_sha256=<evidence-ingress-manifest-sha256> \
+  -f evidence_ingress_manifest_sha256="${EVIDENCE_INGRESS_MANIFEST_SHA256}" \
   -f profile=release-candidate
 ```
 
@@ -103,19 +126,45 @@ After a successful release-candidate preflight, capture the tag-binding metadata
 from the exact run:
 
 ```bash
-gh api repos/Okan-wqm/Suderra-OS/actions/runs/<preflight-run-id> > /tmp/preflight-run.json
-gh api repos/Okan-wqm/Suderra-OS/actions/runs/<preflight-run-id>/artifacts > /tmp/preflight-artifacts.json
-gh run download <preflight-run-id> \
+VERSION=v0.1.0-rc.1
+SOURCE_SHA=<exact-main-commit>
+PREFLIGHT_RUN_ID=<successful-release-preflight-run-id>
+PREFLIGHT_ARTIFACT_NAME="release-preflight-release-candidate-${VERSION}-${SOURCE_SHA}"
+
+gh api "repos/Okan-wqm/Suderra-OS/actions/runs/${PREFLIGHT_RUN_ID}" \
+  > /tmp/preflight-run.json
+gh api "repos/Okan-wqm/Suderra-OS/actions/runs/${PREFLIGHT_RUN_ID}/artifacts" \
+  > /tmp/preflight-artifacts.json
+
+PREFLIGHT_RUN_ATTEMPT="$(jq -r '.run_attempt' /tmp/preflight-run.json)"
+PREFLIGHT_ARTIFACT_ID="$(
+  jq -er --arg name "${PREFLIGHT_ARTIFACT_NAME}" \
+    '.artifacts | map(select(.name == $name and .expired == false)) |
+      if length == 1 then .[0].id else error("expected one matching preflight artifact") end' \
+    /tmp/preflight-artifacts.json
+)"
+
+gh run download "${PREFLIGHT_RUN_ID}" \
   --repo Okan-wqm/Suderra-OS \
-  --name release-preflight-release-candidate-v0.1.0-rc.1-<source_sha> \
+  --name "${PREFLIGHT_ARTIFACT_NAME}" \
   --dir /tmp/release-preflight
 
-sha256sum /tmp/release-preflight/release-ingress/v0.1.0-rc.1/ingress-manifest.json
+INGRESS_MANIFEST_SHA256="$(
+  sha256sum "/tmp/release-preflight/release-ingress/${VERSION}/ingress-manifest.json" |
+    awk '{print $1}'
+)"
 ```
 
 Record the preflight run ID, preflight run attempt from `/tmp/preflight-run.json`,
 the artifact ID from `/tmp/preflight-artifacts.json`, and the ingress manifest
 SHA-256 in the signed annotated tag.
+
+`evidence_ingress_manifest_sha256` is only the SHA-256 of
+`release-ingress/<version>/evidence-ingress-manifest.json` used when dispatching
+`Release Preflight`. `Suderra-Ingress-Manifest-SHA256` in the signed tag is the
+SHA-256 of `release-ingress/<version>/ingress-manifest.json` downloaded from the
+successful preflight artifact. Never put the evidence-ingress manifest digest in
+the tag annotation.
 
 The release tag workflow does not scan recent workflow runs. The annotated
 release tag must name the approved preflight run, run attempt, artifact ID, and
@@ -251,3 +300,13 @@ QEMU image digest (`disk.img`). Hardware lab input is validated against
 `source_sha` and the bound Image Build run ID. Security reports must include the same
 version, source commit, source Image Build run, tool metadata, and a non-zero digest
 for the retained scan evidence.
+
+## Retention / Evidence Export
+
+GitHub Actions artifacts in this path retain for 30 days, while enterprise
+governance requires durable evidence retention. Before cleanup or draft
+deletion, export the original operator bundle and sidecars, bundle URL/expiry
+record, evidence ingress run JSON, ingress artifact, preflight run JSON,
+preflight artifact, tag annotation, release workflow run JSON, final release
+evidence archive, publication manifest, and post-publication proof assets to
+durable release evidence storage. Aborted RC attempts must also be retained.

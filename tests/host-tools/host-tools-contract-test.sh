@@ -36,6 +36,8 @@ require_grep 'directory: "/host-tools"' ".github/dependabot.yml"
 require_grep 'Host Tools (fmt + clippy + test)' ".github/workflows/rust.yml"
 require_grep 'host-tools/Cargo.lock' ".github/workflows/rust.yml"
 require_grep 'working-directory: ./host-tools' ".github/workflows/rust.yml"
+require_grep 'suderra.operator-evidence-ingress.v2' "host-tools/schema-compat/src/lib.rs"
+require_grep 'validate_operator_bundle' "host-tools/release-core/src/main.rs"
 
 if rg -n 'host-tools' "${PROJECT_ROOT}/userspace" "${PROJECT_ROOT}/external.mk" \
     "${PROJECT_ROOT}/package" "${PROJECT_ROOT}/configs" >/tmp/suderra-host-tools-refs.txt; then

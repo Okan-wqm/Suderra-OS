@@ -38,6 +38,30 @@ grep -q 'usb-installer-base-' "${IMAGE_WORKFLOW}" || {
     echo "ERROR: Image Build must upload digest-bound USB installer base artifacts" >&2
     exit 1
 }
+if grep -q 'installer-keyring' "${IMAGE_WORKFLOW}"; then
+    echo "ERROR: Image Build must not transfer installer private keys through artifacts" >&2
+    exit 1
+fi
+grep -q -- '--installer-public-only' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload base job must materialize public-only installer trust roots" >&2
+    exit 1
+}
+grep -q -- '--forbid-installer-signing' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload base job must forbid installer private signing keys" >&2
+    exit 1
+}
+grep -q -- '--installer-private-required' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload assembly job must import installer signing key from protected CI material" >&2
+    exit 1
+}
+grep -q 'github.event_name != .pull_request.' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload assembly job must not run with signing secrets on pull_request" >&2
+    exit 1
+}
+grep -q 'SUDERRA_CI_INSTALLER_PAYLOAD_PRIVATE_KEY_B64' "${IMAGE_WORKFLOW}" || {
+    echo "ERROR: payload assembly job must consume protected installer private-key secret" >&2
+    exit 1
+}
 grep -q -- '--base-manifest' "${IMAGE_WORKFLOW}" || {
     echo "ERROR: payload packager must consume the base manifest" >&2
     exit 1

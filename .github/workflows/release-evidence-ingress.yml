@@ -27,6 +27,14 @@ on:
         description: "Expected SHA-256 digest of operator_bundle_url bytes"
         required: true
         type: string
+      operator_bundle_signature_url:
+        description: "HTTPS URL for the cosign signature of the operator bundle"
+        required: true
+        type: string
+      operator_bundle_certificate_url:
+        description: "HTTPS URL for the cosign certificate of the operator bundle"
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -49,6 +57,11 @@ jobs:
       SOURCE_IMAGE_BUILD_RUN_ATTEMPT: ${{ inputs.source_image_build_run_attempt }}
       OPERATOR_BUNDLE_URL: ${{ inputs.operator_bundle_url }}
       OPERATOR_BUNDLE_SHA256: ${{ inputs.operator_bundle_sha256 }}
+      OPERATOR_BUNDLE_SIGNATURE_URL: ${{ inputs.operator_bundle_signature_url }}
+      OPERATOR_BUNDLE_CERTIFICATE_URL: ${{ inputs.operator_bundle_certificate_url }}
+      OPERATOR_BUNDLE_CERTIFICATE_IDENTITY: ${{ vars.SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY }}
+      OPERATOR_BUNDLE_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+      OPERATOR_BUNDLE_ALLOWED_HOST: ${{ vars.SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST }}
     steps:
       - name: Validate source Image Build run
         env:
@@ -71,6 +84,12 @@ jobs:
               raise SystemExit("source_sha must be a lowercase git commit sha")
           if not re.fullmatch(r"[0-9a-f]{64}", os.environ["OPERATOR_BUNDLE_SHA256"]):
               raise SystemExit("operator_bundle_sha256 must be a lowercase sha256")
+          if not os.environ["OPERATOR_BUNDLE_CERTIFICATE_IDENTITY"].strip():
+              raise SystemExit("SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY must be configured")
+          if os.environ["OPERATOR_BUNDLE_CERTIFICATE_OIDC_ISSUER"] != "https://token.actions.githubusercontent.com":
+              raise SystemExit("operator bundle OIDC issuer must be GitHub Actions OIDC")
+          if not os.environ["OPERATOR_BUNDLE_ALLOWED_HOST"].strip():
+              raise SystemExit("SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST must be configured")
           try:
               if int(run_attempt) <= 0:
                   raise ValueError
@@ -111,18 +130,70 @@ jobs:
       - name: Validate build matrix
         run: python3 scripts/ci/validate-build-matrix.py validate
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+        with:
+          cosign-release: 'v2.4.1'
+
       - name: Download operator evidence bundle
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          allowed_host = os.environ["OPERATOR_BUNDLE_ALLOWED_HOST"].strip().lower()
+          if not allowed_host or "/" in allowed_host or ":" in allowed_host:
+              raise SystemExit("SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST must be a bare hostname")
+          for name in (
+              "OPERATOR_BUNDLE_URL",
+              "OPERATOR_BUNDLE_SIGNATURE_URL",
+              "OPERATOR_BUNDLE_CERTIFICATE_URL",
+          ):
+              value = os.environ[name]
+              parsed = urlparse(value)
+              if parsed.scheme != "https":
+                  raise SystemExit(f"{name} must use https")
+              if parsed.username or parsed.password:
+                  raise SystemExit(f"{name} must not include embedded credentials")
+              if (parsed.hostname or "").lower() != allowed_host:
+                  raise SystemExit(f"{name} host must match SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST")
+          PY
+          curl_common=(
+            --fail
+            --show-error
+            --proto '=https'
+            --tlsv1.2
+            --retry 5
+            --retry-all-errors
+            --connect-timeout 10
+            --max-time 600
+            --max-filesize 1073741824
+          )
           mkdir -p operator-bundle-download
-          curl -fsSL "${OPERATOR_BUNDLE_URL}" -o operator-bundle-download/operator-evidence.tar
+          curl "${curl_common[@]}" "${OPERATOR_BUNDLE_URL}" \
+            -o operator-bundle-download/operator-evidence.tar
+          curl "${curl_common[@]}" "${OPERATOR_BUNDLE_SIGNATURE_URL}" \
+            -o operator-bundle-download/operator-evidence.tar.sig
+          curl "${curl_common[@]}" "${OPERATOR_BUNDLE_CERTIFICATE_URL}" \
+            -o operator-bundle-download/operator-evidence.tar.cert
           printf '%s  %s\n' "${OPERATOR_BUNDLE_SHA256}" operator-bundle-download/operator-evidence.tar | sha256sum -c -
+          cosign verify-blob \
+            --certificate operator-bundle-download/operator-evidence.tar.cert \
+            --certificate-identity "${OPERATOR_BUNDLE_CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "${OPERATOR_BUNDLE_CERTIFICATE_OIDC_ISSUER}" \
+            --signature operator-bundle-download/operator-evidence.tar.sig \
+            operator-bundle-download/operator-evidence.tar
 
       - name: Stage operator evidence ingress
         run: |
           set -euo pipefail
+          bundle_signature_sha256="$(sha256sum operator-bundle-download/operator-evidence.tar.sig | awk '{print $1}')"
+          bundle_certificate_sha256="$(sha256sum operator-bundle-download/operator-evidence.tar.cert | awk '{print $1}')"
           python3 scripts/evidence/operator-evidence-ingress.py stage \
             --bundle operator-bundle-download/operator-evidence.tar \
+            --bundle-signature operator-bundle-download/operator-evidence.tar.sig \
+            --bundle-certificate operator-bundle-download/operator-evidence.tar.cert \
             --output-root . \
             --version "${VERSION}" \
             --source-sha "${SOURCE_SHA}" \
@@ -132,12 +203,14 @@ jobs:
             --workflow "Release Evidence Ingress" \
             --run-id "${GITHUB_RUN_ID}" \
             --run-attempt "${GITHUB_RUN_ATTEMPT}" \
-            --actor "${GITHUB_ACTOR}"
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
-        with:
-          cosign-release: 'v2.4.1'
+            --actor "${GITHUB_ACTOR}" \
+            --bundle-url "${OPERATOR_BUNDLE_URL}" \
+            --bundle-sha256 "${OPERATOR_BUNDLE_SHA256}" \
+            --bundle-signature-sha256 "${bundle_signature_sha256}" \
+            --bundle-certificate-sha256 "${bundle_certificate_sha256}" \
+            --bundle-certificate-identity "${OPERATOR_BUNDLE_CERTIFICATE_IDENTITY}" \
+            --bundle-certificate-oidc-issuer "${OPERATOR_BUNDLE_CERTIFICATE_OIDC_ISSUER}" \
+            --bundle-allowed-host "${OPERATOR_BUNDLE_ALLOWED_HOST}"
 
       - name: Sign evidence ingress manifest
         run: |

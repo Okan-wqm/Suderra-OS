@@ -41,10 +41,41 @@ grep -q 'operator_bundle_url:' "${EVIDENCE_INGRESS_WORKFLOW}" &&
         echo "ERROR: evidence ingress must download an operator bundle by URL and expected digest" >&2
         exit 1
     }
+grep -q 'operator_bundle_signature_url:' "${EVIDENCE_INGRESS_WORKFLOW}" &&
+    grep -q 'operator_bundle_certificate_url:' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+        echo "ERROR: evidence ingress must require signed operator bundles" >&2
+        exit 1
+    }
+if grep -q 'operator_bundle_allowed_host:' "${EVIDENCE_INGRESS_WORKFLOW}" ||
+    grep -q 'operator_bundle_certificate_identity:' "${EVIDENCE_INGRESS_WORKFLOW}" ||
+    grep -q 'operator_bundle_certificate_oidc_issuer:' "${EVIDENCE_INGRESS_WORKFLOW}"; then
+    echo "ERROR: evidence ingress trust policy must not be workflow_dispatch caller input" >&2
+    exit 1
+fi
+grep -q 'SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST' "${EVIDENCE_INGRESS_WORKFLOW}" &&
+    grep -q 'SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+        echo "ERROR: evidence ingress trust policy must come from governed repo/org vars" >&2
+        exit 1
+    }
+if grep -q -- '--location' "${EVIDENCE_INGRESS_WORKFLOW}"; then
+    echo "ERROR: evidence ingress downloads must not follow redirects" >&2
+    exit 1
+fi
+grep -q -- "--proto '=https'" "${EVIDENCE_INGRESS_WORKFLOW}" &&
+    grep -q -- '--retry-all-errors' "${EVIDENCE_INGRESS_WORKFLOW}" &&
+    grep -q 'cosign verify-blob' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+        echo "ERROR: evidence ingress must verify signed HTTPS operator bundles with retry bounds" >&2
+        exit 1
+    }
 grep -q 'operator-evidence-ingress.py stage' "${EVIDENCE_INGRESS_WORKFLOW}" || {
     echo "ERROR: evidence ingress workflow must stage and validate the operator evidence bundle" >&2
     exit 1
 }
+grep -q -- '--bundle-signature operator-bundle-download/operator-evidence.tar.sig' "${EVIDENCE_INGRESS_WORKFLOW}" &&
+    grep -q -- '--bundle-certificate operator-bundle-download/operator-evidence.tar.cert' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+        echo "ERROR: evidence ingress stage must hash downloaded signature and certificate sidecars" >&2
+        exit 1
+    }
 grep -q 'cosign sign-blob' "${EVIDENCE_INGRESS_WORKFLOW}" || {
     echo "ERROR: evidence ingress workflow must sign the evidence ingress manifest" >&2
     exit 1
@@ -69,6 +100,10 @@ grep -q 'source_run_id:' "${PREFLIGHT_WORKFLOW}" || {
 }
 grep -q 'evidence_ingress_run_id:' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must require an immutable evidence ingress artifact run" >&2
+    exit 1
+}
+grep -q 'requires evidence_ingress_manifest_sha256 as a lowercase sha256' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: strict release preflight must fail closed when the evidence ingress manifest digest is missing" >&2
     exit 1
 }
 grep -q 'operator-evidence-ingress.py validate' "${PREFLIGHT_WORKFLOW}" || {
@@ -310,6 +345,10 @@ grep -q 'gh attestation verify "${f}"' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: published release verification must revalidate GitHub artifact attestations" >&2
     exit 1
 }
+grep -q 'attestations: read' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must grant attestations: read for final public asset replay" >&2
+    exit 1
+}
 grep -q 'draft: true' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: protected publish job must create a draft release before post-publication closure" >&2
     exit 1
@@ -344,6 +383,19 @@ grep -q 'release-publication-proof-manifest.py create' "${RELEASE_WORKFLOW}" || 
 }
 grep -q 'gh release upload "${{ needs.validate.outputs.version }}"' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: publish job must upload post-publication proof bytes as release assets" >&2
+    exit 1
+}
+grep -q 'final-base-assets' "${RELEASE_WORKFLOW}" &&
+    grep -q 'final-base-attestations' "${RELEASE_WORKFLOW}" || {
+        echo "ERROR: publish job must replay base asset cryptographic verification after proof upload" >&2
+        exit 1
+    }
+grep -q 'final-public-${proof_asset}.cosign.log' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must cosign-replay final public proof assets before undrafting" >&2
+    exit 1
+}
+grep -q 'final-release.json' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: publish job must retain the final public release API snapshot" >&2
     exit 1
 }
 grep -q 'post-publication-verification-' "${RELEASE_WORKFLOW}" || {

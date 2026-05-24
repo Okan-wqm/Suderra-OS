@@ -512,7 +512,7 @@ for name, check in data["machine_verification"].items():
 for name, check in data["governance"]["checks"].items():
     payload = {"status": "passed"}
     if name == "policy_validation":
-        payload["schema_version"] = "suderra.github-governance-validation.v1"
+        payload["schema_version"] = "suderra.github-governance-validation.v2"
     write_text(check["evidence"], json.dumps(payload, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU serial and journal evidence\n")
@@ -1054,7 +1054,7 @@ for name, check in data["machine_verification"].items():
 for name, check in data["governance"]["checks"].items():
     payload = {"status": "passed"}
     if name == "policy_validation":
-        payload["schema_version"] = "suderra.github-governance-validation.v1"
+        payload["schema_version"] = "suderra.github-governance-validation.v2"
     write_text(check["evidence"], json.dumps(payload, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU alpha evidence\n")

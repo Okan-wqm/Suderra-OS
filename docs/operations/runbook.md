@@ -1,6 +1,106 @@
-# Saha Operasyon Runbook
+# Operasyon Runbook
 
-> **Status:** Skeleton — Faz 7 (pilot saha) için detaylanacak.
+> **Status:** Release RC adımları aktiftir; saha pilot bölümü Faz 7'de
+> detaylanacaktır.
+
+## Enterprise RC Release Runbook
+
+Bu akış `v0.1.0-rc.1` için fail-closed sıradır. Eski Image Build run'ı, workflow
+ve validator patch'leri merge edildikten sonra tekrar kullanılamaz.
+
+1. Hardening branch'i PR ile merge et:
+
+   ```bash
+   git switch -c release/rc-evidence-hardening
+   ./scripts/run-tests.sh image-contracts
+   git diff --check
+   git add .
+   git commit -S -s -m "Harden enterprise release evidence gates"
+   git push -u origin release/rc-evidence-hardening
+   gh pr create --base main --head release/rc-evidence-hardening --fill
+   gh pr checks --watch
+   gh pr merge --squash --delete-branch
+   git switch main
+   git pull --ff-only origin main
+   ```
+
+2. GitHub governance bootstrap tamamlanmadan RC'ye geçme:
+
+   - repository Organization/Enterprise altında olmalı veya kabul edilmiş audit
+     export/replay evidence sağlanmalı,
+   - `main-protection`, `release-tag-protection`, `release-sign` ve
+     `release-publish` canlı policy ile uyumlu olmalı,
+   - `GOVERNANCE_READ_TOKEN`, release tag signing trust vars/secrets,
+     `SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST`,
+     `SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY`,
+     `SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64` ve
+     `SUDERRA_CI_INSTALLER_PAYLOAD_PRIVATE_KEY_B64` tanımlı olmalı.
+
+3. Yeni `origin/main` SHA için push kaynaklı Image Build'i yakala:
+
+   ```bash
+   REPO=Okan-wqm/Suderra-OS
+   VERSION=v0.1.0-rc.1
+   SOURCE_SHA="$(git rev-parse origin/main)"
+   IMAGE_BUILD_RUN_ID="$(gh run list --repo "$REPO" --workflow "Image Build" \
+     --branch main --event push --commit "$SOURCE_SHA" --limit 1 \
+     --json databaseId --jq '.[0].databaseId')"
+   gh run watch "$IMAGE_BUILD_RUN_ID" --repo "$REPO" --exit-status
+   gh api "repos/${REPO}/actions/runs/${IMAGE_BUILD_RUN_ID}" \
+     > /tmp/image-build-run.json
+   IMAGE_BUILD_RUN_ATTEMPT="$(jq -r '.run_attempt' /tmp/image-build-run.json)"
+   ```
+
+4. Operator bundle'ı trusted operator signing workflow veya kabul edilmiş
+   GitHub Actions OIDC identity ile imzala. Bundle URL'leri redirect
+   döndürmemeli ve host repo/org policy'deki allowlist ile eşleşmelidir.
+
+5. Evidence ingress'i dispatch et; host/signer policy input değildir:
+
+   ```bash
+   OPERATOR_BUNDLE_SHA256="$(sha256sum operator-evidence-${VERSION}.tar.gz | awk '{print $1}')"
+   gh workflow run "Release Evidence Ingress" --repo "$REPO" --ref main \
+     -f version="$VERSION" \
+     -f source_sha="$SOURCE_SHA" \
+     -f source_image_build_run_id="$IMAGE_BUILD_RUN_ID" \
+     -f source_image_build_run_attempt="$IMAGE_BUILD_RUN_ATTEMPT" \
+     -f operator_bundle_url="$OPERATOR_BUNDLE_URL" \
+     -f operator_bundle_sha256="$OPERATOR_BUNDLE_SHA256" \
+     -f operator_bundle_signature_url="$OPERATOR_BUNDLE_SIGNATURE_URL" \
+     -f operator_bundle_certificate_url="$OPERATOR_BUNDLE_CERTIFICATE_URL"
+   ```
+
+6. Ingress artifact digest'ini kaydet, sonra release-candidate preflight çalıştır:
+
+   ```bash
+   EVIDENCE_INGRESS_RUN_ID=<successful-run-id>
+   gh run watch "$EVIDENCE_INGRESS_RUN_ID" --repo "$REPO" --exit-status
+   gh run download "$EVIDENCE_INGRESS_RUN_ID" --repo "$REPO" \
+     --name "rei-${VERSION}-${SOURCE_SHA}-${IMAGE_BUILD_RUN_ID}-${IMAGE_BUILD_RUN_ATTEMPT}" \
+     --dir /tmp/evidence-ingress
+   EVIDENCE_INGRESS_MANIFEST_SHA256="$(sha256sum \
+     "/tmp/evidence-ingress/release-ingress/${VERSION}/evidence-ingress-manifest.json" | awk '{print $1}')"
+
+   gh workflow run "Release Preflight" --repo "$REPO" --ref main \
+     -f version="$VERSION" \
+     -f source_sha="$SOURCE_SHA" \
+     -f source_run_id="$IMAGE_BUILD_RUN_ID" \
+     -f evidence_ingress_run_id="$EVIDENCE_INGRESS_RUN_ID" \
+     -f evidence_ingress_manifest_sha256="$EVIDENCE_INGRESS_MANIFEST_SHA256" \
+     -f profile=release-candidate
+   ```
+
+7. Preflight success sonrası `PREFLIGHT_RUN_ID`, attempt, artifact ID ve final
+   `ingress-manifest.json` digest'ini tag annotation'a koy. Tag signed,
+   annotated ve trusted fingerprint ile doğrulanmış olmalıdır. Draft release
+   publish akışı final public proof asset'lerini tekrar indirip cosign ile
+   doğrulamadan undraft yapmaz.
+
+8. Abort durumunda tag ve draft release'i silmeden önce ingress, preflight,
+   tag-binding, draft asset listesi ve failure loglarını 7 yıl saklanacak
+   durable evidence store'a export et.
+
+## Saha Operasyon Runbook
 
 Bu doküman saha personeline yöneliktir. Teknik detay değil, **adım adım eylem** içerir.
 

@@ -8,7 +8,7 @@ use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
 pub const RELEASE_TAG_BINDING_SCHEMA: &str = "suderra.release-tag-binding.v1";
-pub const OPERATOR_EVIDENCE_INGRESS_SCHEMA: &str = "suderra.operator-evidence-ingress.v1";
+pub const OPERATOR_EVIDENCE_INGRESS_SCHEMA: &str = "suderra.operator-evidence-ingress.v2";
 pub const AUDIT_LOG_SCHEMA: &str = "suderra.audit-log-snapshot.v1";
 pub const STATION_REGISTRY_SCHEMA: &str = "suderra.lab-station-registry.v1";
 pub const QEMU_SCHEMA: &str = "suderra.qemu-acceptance.v4";

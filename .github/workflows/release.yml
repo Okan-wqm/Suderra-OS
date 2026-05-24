@@ -258,6 +258,10 @@ jobs:
             release-approvals/
             release-security/
             release-reproducibility/
+            release-tag-binding.json
+            tag-annotation.txt
+            preflight-run.json
+            preflight-artifacts.json
           retention-days: 30
 
   input-preflight:
@@ -853,6 +857,7 @@ jobs:
       actions: read
       contents: write
       id-token: write
+      attestations: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -863,6 +868,25 @@ jobs:
         with:
           name: signed-release-${{ needs.validate.outputs.version }}
           path: signed-release/
+
+      - name: Guard existing release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${{ needs.validate.outputs.version }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json isDraft \
+            > existing-release.json 2>/dev/null; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          release = json.loads(Path("existing-release.json").read_text(encoding="utf-8"))
+          if release.get("isDraft") is not True:
+              raise SystemExit("release already exists and is public; create a new SemVer tag")
+          PY
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
@@ -1042,11 +1066,75 @@ jobs:
           gh release download "${{ needs.validate.outputs.version }}" \
             --repo "${GITHUB_REPOSITORY}" \
             --dir downloaded-release-final
+          rm -rf final-base-assets final-base-attestations
+          mkdir -p final-base-assets final-base-attestations
+          python3 - downloaded-release-final final-base-assets <<'PY'
+          import json
+          import shutil
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          manifest = json.loads((source / "release-publication-manifest.json").read_text(encoding="utf-8"))
+          names = {item["name"] for item in manifest["files"]}
+          names.update({
+              "release-publication-manifest.json",
+              "release-publication-manifest.json.sig",
+              "release-publication-manifest.json.cert",
+          })
+          for name in sorted(names):
+              candidate = source / name
+              if not candidate.is_file():
+                  raise SystemExit(f"final draft is missing base release asset: {name}")
+              shutil.copy2(candidate, destination / name)
+          PY
+          python3 scripts/evidence/release-publication-manifest.py validate \
+            final-base-assets/release-publication-manifest.json \
+            --release-dir final-base-assets \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --require-self-sidecars \
+            --require-asset-sidecars
+          (
+            cd final-base-assets
+            find . -maxdepth 1 -type f \
+              ! -name '*.sig' \
+              ! -name '*.cert' \
+              -printf '%f\0' | sort -z | while IFS= read -r -d '' f; do
+                test -s "${f}.sig"
+                test -s "${f}.cert"
+                cosign verify-blob \
+                  --certificate "${f}.cert" \
+                  --certificate-identity "${COSIGN_IDENTITY}" \
+                  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                  --signature "${f}.sig" \
+                  "${f}"
+                gh attestation verify "${f}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --cert-identity "${COSIGN_IDENTITY}" \
+                  --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+                  --format json \
+                  > "../final-base-attestations/${f}.json"
+              done
+          )
           python3 scripts/evidence/release-publication-proof-manifest.py validate \
             downloaded-release-final/release-publication-proof-manifest.json \
             --release-dir downloaded-release-final \
             --proof-dir downloaded-release-final \
             --expected-version "${{ needs.validate.outputs.version }}"
+          for proof_asset in \
+            release-post-publication-verification.json \
+            release-publication-proof-manifest.json; do
+            test -s "downloaded-release-final/${proof_asset}.sig"
+            test -s "downloaded-release-final/${proof_asset}.cert"
+            cosign verify-blob \
+              --certificate "downloaded-release-final/${proof_asset}.cert" \
+              --certificate-identity "${COSIGN_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --signature "downloaded-release-final/${proof_asset}.sig" \
+              "downloaded-release-final/${proof_asset}" \
+              > "post-publication-verification/final-public-${proof_asset}.cosign.log"
+          done
           python3 - downloaded-release-final <<'PY'
           import json
           import sys
@@ -1074,6 +1162,12 @@ jobs:
           gh release edit "${{ needs.validate.outputs.version }}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false
+          mkdir -p post-publication-verification/final-base-attestations
+          cp final-base-attestations/*.json post-publication-verification/final-base-attestations/
+          gh release view "${{ needs.validate.outputs.version }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json tagName,isDraft,isPrerelease,url,publishedAt \
+            > post-publication-verification/final-release.json
 
       - name: Upload post-publication verification evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

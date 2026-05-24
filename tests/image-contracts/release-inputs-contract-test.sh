@@ -155,7 +155,7 @@ def sign_lab(lab_root: Path, payload: dict) -> None:
 write_json(
     root / "release-governance" / version / "governance-policy-validation.json",
     {
-        "schema_version": "suderra.github-governance-validation.v1",
+        "schema_version": "suderra.github-governance-validation.v2",
         "status": "passed",
         "failures": [],
         "warnings": [],
@@ -166,7 +166,24 @@ write_json(
     {
         "schema_version": "suderra.audit-log-snapshot.v1",
         "status": "collected",
+        "source_kind": "manual-org-export",
+        "organization": "Okan-wqm",
+        "repository": "Okan-wqm/Suderra-OS",
+        "collector": {"identity": "contract", "run_id": "123456789"},
+        "lookback_window": {
+            "start": "2026-04-24T00:00:00Z",
+            "end": "2026-05-24T00:00:00Z",
+            "days": 30
+        },
+        "query": "repo:Okan-wqm/Suderra-OS",
+        "event_count": 0,
         "events_sha256": "a" * 64,
+        "raw_export": {
+            "path": "audit-log.raw.json",
+            "bytes": 2,
+            "sha256": "e" * 64
+        },
+        "replay": {"status": "passed", "unapproved_events": []},
         "unapproved_governance_changes": False,
     },
 )
@@ -749,7 +766,7 @@ write_json(
         "schema_roles": {
             "approval": "suderra.release-approval.v2",
             "binding_manifest": "suderra.release-input-binding.v2",
-            "evidence_ingress": "suderra.operator-evidence-ingress.v1",
+            "evidence_ingress": "suderra.operator-evidence-ingress.v2",
             "lab_input": "suderra.lab-evidence.v3",
             "qemu_input": "suderra.qemu-acceptance.v4",
             "release_evidence": "suderra.release-evidence.v5",
@@ -771,6 +788,13 @@ python3 "${PROJECT_ROOT}/scripts/evidence/operator-evidence-ingress.py" create \
     --run-id "222222222" \
     --run-attempt "1" \
     --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence.tar.gz" \
+    --bundle-sha256 "b${SOURCE_SHA:1:39}bbbbbbbbbbbbbbbbbbbbbbbb" \
+    --bundle-signature-sha256 "c${SOURCE_SHA:1:39}cccccccccccccccccccccccc" \
+    --bundle-certificate-sha256 "d${SOURCE_SHA:1:39}dddddddddddddddddddddddd" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
     >/dev/null
 printf 'signature\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.sig"
 printf 'certificate\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.cert"
@@ -817,6 +841,35 @@ python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
     --source-sha "${SOURCE_SHA}" \
     --check-files \
     >/dev/null
+
+cp "${TMPDIR}/release-governance/${VERSION}/governance-policy-validation.json" \
+    "${TMPDIR}/release-governance/${VERSION}/governance-policy-validation.json.bak"
+python3 - "${TMPDIR}/release-governance/${VERSION}/governance-policy-validation.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["schema_version"] = "suderra.github-governance-validation.v1"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
+    --version "${VERSION}" \
+    --release-tier alpha \
+    --root "${TMPDIR}" \
+    --profile release-candidate \
+    --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    --source-sha "${SOURCE_SHA}" \
+    --check-files \
+    2>"${TMPDIR}/governance-v1.err"; then
+    echo "ERROR: release input preflight accepted legacy governance validation schema" >&2
+    exit 1
+fi
+grep -q "suderra.github-governance-validation.v2" "${TMPDIR}/governance-v1.err"
+mv "${TMPDIR}/release-governance/${VERSION}/governance-policy-validation.json.bak" \
+    "${TMPDIR}/release-governance/${VERSION}/governance-policy-validation.json"
 
 cp "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json"

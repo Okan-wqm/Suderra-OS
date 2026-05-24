@@ -356,6 +356,7 @@ jobs:
       SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
       SUDERRA_EXPECTED_KEYS_PROFILE: ci
       SUDERRA_REQUIRE_CLEAN_EXTERNAL: "1"
+      SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64: ${{ vars.SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.payload_matrix) }}
@@ -386,16 +387,8 @@ jobs:
       - name: Prepare CI trust roots
         run: |
           set -euo pipefail
-          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
-          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
-
-      - name: Upload installer keyring for payload assembly
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ matrix.defconfig }}-installer-keyring
-          path: ${{ env.SUDERRA_HOST_KEYS_DIR }}/
-          retention-days: 1
-          if-no-files-found: error
+          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}" ci --installer-public-only
+          scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --forbid-installer-signing
 
       - name: Verify submodule pin matches index SHA
         id: br
@@ -479,7 +472,7 @@ jobs:
             suderra-builder:latest \
             bash /workspace/scripts/ci/validate-trust-roots.sh "${SUDERRA_CONTAINER_KEYS_DIR}" \
               --expected-profile ci \
-              --require-installer-signing
+              --forbid-installer-signing
 
       - name: Buildroot defconfig parse (smoke test)
         run: |
@@ -637,6 +630,7 @@ jobs:
   build-payload:
     name: Build payload image ${{ matrix.name }}
     needs: [matrix, build, build-payload-base]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
     permissions:
@@ -653,6 +647,8 @@ jobs:
       SUDERRA_CONTAINER_KEYS_DIR: /tmp/suderra-keys/current
       SUDERRA_EXPECTED_KEYS_PROFILE: ci
       SUDERRA_REQUIRE_CLEAN_EXTERNAL: "1"
+      SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64: ${{ vars.SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64 }}
+      SUDERRA_CI_INSTALLER_PAYLOAD_PRIVATE_KEY_B64: ${{ secrets.SUDERRA_CI_INSTALLER_PAYLOAD_PRIVATE_KEY_B64 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.payload_matrix) }}
@@ -680,16 +676,10 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" "${SUDERRA_CI_STORAGE}"
           df -h "${SUDERRA_CI_STORAGE}"
 
-      - name: Download installer keyring from base build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ matrix.defconfig }}-installer-keyring
-          path: ${{ env.SUDERRA_HOST_KEYS_DIR }}
-
       - name: Prepare CI trust roots
         run: |
           set -euo pipefail
-          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}"
+          scripts/ci/prepare-ci-keyring.sh "${SUDERRA_HOST_KEYS_DIR}" ci --installer-private-required
           scripts/ci/validate-trust-roots.sh "${SUDERRA_HOST_KEYS_DIR}" --expected-profile ci --require-installer-signing
 
       - name: Verify submodule pin matches index SHA
