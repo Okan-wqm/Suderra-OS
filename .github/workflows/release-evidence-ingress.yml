@@ -34,7 +34,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: release-evidence-ingress-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
+  group: rei-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
   cancel-in-progress: false
 
 jobs:
@@ -161,7 +161,7 @@ jobs:
       - name: Upload immutable operator evidence ingress
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: release-evidence-ingress-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
+          name: rei-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
           path: |
             release-lab-input/
             release-governance/

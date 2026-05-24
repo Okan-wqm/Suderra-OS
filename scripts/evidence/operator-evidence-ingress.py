@@ -24,6 +24,10 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = "suderra.operator-evidence-ingress.v1"
 AUDIT_SCHEMA_VERSION = "suderra.audit-log-snapshot.v1"
 STATION_REGISTRY_SCHEMA_VERSION = "suderra.lab-station-registry.v1"
+QEMU_SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
+LAB_SCHEMA_VERSION = "suderra.lab-evidence.v3"
+APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
+REPRODUCIBILITY_SCHEMA_VERSION = "suderra.reproducibility.v1"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$")
@@ -166,6 +170,22 @@ def role_for_path(rel: Path) -> str:
     return "operator-evidence"
 
 
+def required_schema_version_for_path(rel: Path) -> str | None:
+    if len(rel.parts) >= 3 and rel.parts[0] == "release-governance" and rel.name == "audit-log.json":
+        return AUDIT_SCHEMA_VERSION
+    if len(rel.parts) >= 3 and rel.parts[0] == "release-governance" and rel.name == "station-registry.json":
+        return STATION_REGISTRY_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-lab-input" and rel.name == "qemu.json":
+        return QEMU_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-lab-input" and rel.name == "lab.json":
+        return LAB_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-approvals":
+        return APPROVAL_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-reproducibility":
+        return REPRODUCIBILITY_SCHEMA_VERSION
+    return None
+
+
 def validate_allowed_version_path(failures: list[str], rel: Path, version: str) -> None:
     if not rel.parts:
         failures.append("empty evidence path")
@@ -256,6 +276,10 @@ def validate_core_files(input_root: Path, version: str, matrix: Path, files: lis
             else:
                 if not isinstance(payload, dict):
                     failures.append(f"{path}: required evidence must be a JSON object")
+                else:
+                    expected_schema = required_schema_version_for_path(Path(required_path))
+                    if expected_schema is not None and payload.get("schema_version") != expected_schema:
+                        failures.append(f"{path}: schema_version must be {expected_schema}")
     return failures
 
 
@@ -412,6 +436,12 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
         actual_required = {str(item) for item in manifest["required_paths"] if isinstance(item, str)}
         if actual_required != expected_required:
             failures.append("$.required_paths: must match matrix-derived operator evidence contract")
+        missing_required_records = sorted(expected_required - seen_paths)
+        if missing_required_records:
+            failures.append(
+                "operator evidence manifest missing required file records: "
+                + ", ".join(missing_required_records)
+            )
     else:
         failures.append("$.required_paths: must be a list")
 
@@ -427,10 +457,10 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
             failures.append("operator evidence manifest lists files missing from artifact: " + ", ".join(missing_on_disk))
         for dirname in FORBIDDEN_INPUT_DIRS:
             forbidden = args.input_root / dirname
-            if forbidden.exists():
+            if forbidden.exists() and not getattr(args, "allow_preflight_context", False):
                 failures.append(f"{dirname}: must not be supplied through operator evidence ingress")
         final_ingress = args.input_root / "release-ingress" / str(manifest.get("version", "")) / "ingress-manifest.json"
-        if final_ingress.exists():
+        if final_ingress.exists() and not getattr(args, "allow_preflight_context", False):
             failures.append("release-ingress/<version>/ingress-manifest.json must be produced only by Release Preflight")
         failures.extend(validate_core_files(args.input_root, str(manifest.get("version", "")), args.matrix, list(files)))
 

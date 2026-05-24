@@ -55,7 +55,7 @@ requires the audit log and station registry, writes and signs
 immutable artifact:
 
 ```text
-release-evidence-ingress-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
+rei-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
 ```
 
 Capture the evidence ingress manifest digest:
@@ -63,7 +63,7 @@ Capture the evidence ingress manifest digest:
 ```bash
 gh run download <evidence-ingress-run-id> \
   --repo Okan-wqm/Suderra-OS \
-  --name release-evidence-ingress-v0.1.0-rc.1-<source_sha>-<image-build-run-id>-<attempt> \
+  --name rei-v0.1.0-rc.1-<source_sha>-<image-build-run-id>-<attempt> \
   --dir /tmp/evidence-ingress
 
 sha256sum /tmp/evidence-ingress/release-ingress/v0.1.0-rc.1/evidence-ingress-manifest.json

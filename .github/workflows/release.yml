@@ -217,6 +217,7 @@ jobs:
           case "${{ needs.validate.outputs.version }}" in
             *-*) tier="alpha" ;;
           esac
+          evidence_ingress_identity="https://github.com/${{ github.repository }}/.github/workflows/release-evidence-ingress.yml@refs/heads/main"
           python3 scripts/evidence/validate-release-inputs.py \
             --version "${{ needs.validate.outputs.version }}" \
             --release-tier "${tier}" \
@@ -231,6 +232,9 @@ jobs:
             --require-ingress-signature \
             --ingress-certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
             --ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --require-evidence-ingress-signature \
+            --evidence-ingress-certificate-identity "${evidence_ingress_identity}" \
+            --evidence-ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
       - name: Upload preflight governance inputs for tag governance gate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -286,6 +290,7 @@ jobs:
           case "${{ needs.validate.outputs.version }}" in
             *-*) tier="alpha" ;;
           esac
+          evidence_ingress_identity="https://github.com/${{ github.repository }}/.github/workflows/release-evidence-ingress.yml@refs/heads/main"
           python3 scripts/evidence/validate-release-inputs.py \
             --version "${{ needs.validate.outputs.version }}" \
             --release-tier "${tier}" \
@@ -297,6 +302,9 @@ jobs:
             --require-ingress-signature \
             --ingress-certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
             --ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --require-evidence-ingress-signature \
+            --evidence-ingress-certificate-identity "${evidence_ingress_identity}" \
+            --evidence-ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
 
   # =========================================================================
@@ -605,6 +613,7 @@ jobs:
       - name: Validate signed release completeness
         run: |
           set -euo pipefail
+          evidence_ingress_identity="https://github.com/${{ github.repository }}/.github/workflows/release-evidence-ingress.yml@refs/heads/main"
           python3 scripts/ci/validate-build-matrix.py release-files \
             --version "${{ needs.validate.outputs.version }}" \
             --release-dir release \
@@ -618,7 +627,10 @@ jobs:
             --expected-source-sha "$(git rev-list -n 1 "${{ needs.validate.outputs.version }}")" \
             --require-signature \
             --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release-preflight.yml@refs/heads/main" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --require-evidence-ingress-signature \
+            --evidence-ingress-certificate-identity "${evidence_ingress_identity}" \
+            --evidence-ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: SLSA build provenance attestation
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a

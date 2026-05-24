@@ -94,6 +94,49 @@ python3 "${TOOL}" validate \
     --expected-source-image-build-run-attempt "${RUN_ATTEMPT}" \
     >/dev/null
 
+cp "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    "${TMPDIR}/missing-required-record.json"
+python3 - "${TMPDIR}/missing-required-record.json" "${VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+version = sys.argv[2]
+payload = json.loads(path.read_text(encoding="utf-8"))
+missing = f"release-governance/{version}/station-registry.json"
+payload["files"] = [item for item in payload["files"] if item.get("path") != missing]
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${TMPDIR}/missing-required-record.json" \
+    2>"${TMPDIR}/missing-record.err"; then
+    echo "ERROR: operator evidence ingress accepted a missing required file record" >&2
+    exit 1
+fi
+grep -q "missing required file records" "${TMPDIR}/missing-record.err"
+
+SCHEMA_ROOT="${TMPDIR}/bad-schema-root"
+cp -a "${STAGED_ROOT}" "${SCHEMA_ROOT}"
+python3 - "${SCHEMA_ROOT}/release-lab-input/${VERSION}/qemu-x86_64/qemu.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["schema_version"] = "suderra.qemu-acceptance.v3"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${SCHEMA_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    --input-root "${SCHEMA_ROOT}" \
+    2>"${TMPDIR}/schema.err"; then
+    echo "ERROR: operator evidence ingress accepted malformed required schema versions" >&2
+    exit 1
+fi
+grep -q "schema_version" "${TMPDIR}/schema.err"
+
 if python3 "${TOOL}" validate \
     "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
     --input-root "${STAGED_ROOT}" \

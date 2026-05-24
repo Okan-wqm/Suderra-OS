@@ -160,7 +160,7 @@ Operator-collected release inputs are not committed to the repository. The
 controlled ingress unit is the `Release Evidence Ingress` artifact:
 
 ```text
-release-evidence-ingress-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
+rei-<version>-<source_sha>-<image-build-run-id>-<image-build-run-attempt>
 ```
 
 That artifact must contain `release-lab-input`, `release-approvals`,

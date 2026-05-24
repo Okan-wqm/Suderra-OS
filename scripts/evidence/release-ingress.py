@@ -49,6 +49,13 @@ PREFLIGHT_INPUT_DIRS = (
     "release-reproducibility",
     "release-ingress",
 )
+VALID_PREFLIGHT_PROFILES = {"technical-dry-run", "release-candidate", "production-candidate"}
+STRICT_PREFLIGHT_PROFILES = {"release-candidate", "production-candidate"}
+EVIDENCE_INGRESS_MANIFEST = "evidence-ingress-manifest.json"
+EVIDENCE_INGRESS_SIGNATURE_SIDECARS = (
+    "evidence-ingress-manifest.json.sig",
+    "evidence-ingress-manifest.json.cert",
+)
 
 
 def now_utc() -> datetime:
@@ -85,6 +92,16 @@ def read_json(path: Path) -> Any:
 def load_buildroot_identity_module() -> Any:
     script = ROOT / "scripts" / "ci" / "buildroot-patch-identity.py"
     spec = importlib.util.spec_from_file_location("buildroot_patch_identity", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_operator_evidence_ingress_module() -> Any:
+    script = ROOT / "scripts" / "evidence" / "operator-evidence-ingress.py"
+    spec = importlib.util.spec_from_file_location("operator_evidence_ingress", script)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot import {script}")
     module = importlib.util.module_from_spec(spec)
@@ -223,12 +240,9 @@ def input_role_for_path(rel_path: Path) -> str:
         return "security-report"
     if parts[0] == "release-reproducibility":
         return "reproducibility-report"
-    if parts[0] == "release-ingress" and rel_path.name == "evidence-ingress-manifest.json":
+    if parts[0] == "release-ingress" and rel_path.name == EVIDENCE_INGRESS_MANIFEST:
         return "evidence-ingress"
-    if parts[0] == "release-ingress" and rel_path.name in {
-        "evidence-ingress-manifest.json.sig",
-        "evidence-ingress-manifest.json.cert",
-    }:
+    if parts[0] == "release-ingress" and rel_path.name in EVIDENCE_INGRESS_SIGNATURE_SIDECARS:
         return "evidence-ingress-signature"
     return "preflight-input"
 
@@ -406,6 +420,36 @@ def verify_manifest_signature(
     return failures
 
 
+def validate_operator_evidence_ingress(
+    *,
+    manifest: dict[str, Any],
+    input_root: Path,
+    require_signature: bool,
+    certificate_identity: str | None,
+    certificate_oidc_issuer: str | None,
+) -> list[str]:
+    version = str(manifest.get("version", ""))
+    operator_manifest = input_root / "release-ingress" / version / EVIDENCE_INGRESS_MANIFEST
+    try:
+        module = load_operator_evidence_ingress_module()
+    except Exception as exc:
+        return [f"operator evidence ingress: cannot load validator: {exc}"]
+    args = argparse.Namespace(
+        manifest=operator_manifest,
+        input_root=input_root,
+        matrix=ROOT / "ci" / "build-matrix.yml",
+        expected_version=version,
+        expected_source_sha=str(manifest.get("source_sha", "")),
+        expected_source_image_build_run_id=str(manifest.get("source_run_id", "")),
+        expected_source_image_build_run_attempt=str(manifest.get("source_run_attempt", "")),
+        require_signature=require_signature,
+        certificate_identity=certificate_identity,
+        certificate_oidc_issuer=certificate_oidc_issuer,
+        allow_preflight_context=True,
+    )
+    return [f"operator evidence ingress: {failure}" for failure in module.validate_manifest(args)]
+
+
 def validate_manifest(
     manifest_path: Path,
     artifact_root: Path | None,
@@ -416,6 +460,9 @@ def validate_manifest(
     require_signature: bool = False,
     certificate_identity: str | None = None,
     certificate_oidc_issuer: str | None = None,
+    require_evidence_ingress_signature: bool = False,
+    evidence_ingress_certificate_identity: str | None = None,
+    evidence_ingress_certificate_oidc_issuer: str | None = None,
 ) -> list[str]:
     failures: list[str] = []
     try:
@@ -449,6 +496,8 @@ def validate_manifest(
         failures.append(f"$.build_workflow_name: must be {IMAGE_BUILD_WORKFLOW_NAME}")
     if manifest.get("build_workflow_path") != IMAGE_BUILD_WORKFLOW_PATH:
         failures.append(f"$.build_workflow_path: must be {IMAGE_BUILD_WORKFLOW_PATH}")
+    if manifest.get("profile") not in VALID_PREFLIGHT_PROFILES:
+        failures.append("$.profile: must be technical-dry-run, release-candidate, or production-candidate")
     if expected_version is not None and manifest.get("version") != expected_version:
         failures.append(f"$.version: must match {expected_version}")
     binding = None
@@ -562,6 +611,7 @@ def validate_manifest(
         failures.append("$.files: must be a non-empty list")
         files = []
     seen_paths: set[str] = set()
+    preflight_records_by_path: dict[str, list[int]] = {}
     has_image_build_contract = False
     for idx, item in enumerate(files):
         path = f"$.files[{idx}]"
@@ -588,6 +638,13 @@ def validate_manifest(
             if rel in seen_paths:
                 failures.append(f"{path}.path: must be unique")
             seen_paths.add(rel)
+            if source == "preflight-input":
+                if not rel_path.parts or rel_path.parts[0] not in PREFLIGHT_INPUT_DIRS:
+                    failures.append(f"{path}.path: preflight input must be under an allowed input tree")
+                expected_role = input_role_for_path(rel_path)
+                if item.get("role") != expected_role:
+                    failures.append(f"{path}.role: does not match preflight input path role {expected_role}")
+                preflight_records_by_path.setdefault(rel, []).append(idx)
             root = input_root if source == "preflight-input" else artifact_root
             if root is not None:
                 actual = root / rel_path
@@ -600,6 +657,41 @@ def validate_manifest(
                         failures.append(f"{path}.sha256: does not match referenced file sha256")
     if not has_image_build_contract:
         failures.append("$.files: must include image-build-contract evidence")
+    if manifest.get("profile") in STRICT_PREFLIGHT_PROFILES:
+        version = str(manifest.get("version", ""))
+        expected_manifest = f"release-ingress/{version}/{EVIDENCE_INGRESS_MANIFEST}"
+        expected_sidecars = [
+            f"release-ingress/{version}/{sidecar}"
+            for sidecar in EVIDENCE_INGRESS_SIGNATURE_SIDECARS
+        ]
+        manifest_records = preflight_records_by_path.get(expected_manifest, [])
+        if len(manifest_records) != 1:
+            failures.append(
+                "$.files: release-candidate and production-candidate profiles must include exactly one "
+                f"operator evidence ingress manifest record at {expected_manifest}"
+            )
+        for sidecar in expected_sidecars:
+            sidecar_records = preflight_records_by_path.get(sidecar, [])
+            if len(sidecar_records) != 1:
+                failures.append(
+                    "$.files: release-candidate and production-candidate profiles must include exactly one "
+                    f"operator evidence ingress signature sidecar record at {sidecar}"
+                )
+        if input_root is None:
+            failures.append(
+                "release-candidate and production-candidate profiles require --input-root to validate "
+                "operator evidence ingress"
+            )
+        elif len(manifest_records) == 1:
+            failures.extend(
+                validate_operator_evidence_ingress(
+                    manifest=manifest,
+                    input_root=input_root,
+                    require_signature=require_evidence_ingress_signature,
+                    certificate_identity=evidence_ingress_certificate_identity,
+                    certificate_oidc_issuer=evidence_ingress_certificate_oidc_issuer,
+                )
+            )
     if require_signature:
         failures.extend(verify_manifest_signature(manifest_path, certificate_identity, certificate_oidc_issuer))
     return failures
@@ -628,6 +720,9 @@ def validate_command(args: argparse.Namespace) -> int:
         args.require_signature,
         args.certificate_identity,
         args.certificate_oidc_issuer,
+        args.require_evidence_ingress_signature,
+        args.evidence_ingress_certificate_identity,
+        args.evidence_ingress_certificate_oidc_issuer,
     )
     if failures:
         for failure in failures:
@@ -664,6 +759,9 @@ def main() -> int:
     validate.add_argument("--require-signature", action="store_true")
     validate.add_argument("--certificate-identity")
     validate.add_argument("--certificate-oidc-issuer")
+    validate.add_argument("--require-evidence-ingress-signature", action="store_true")
+    validate.add_argument("--evidence-ingress-certificate-identity")
+    validate.add_argument("--evidence-ingress-certificate-oidc-issuer")
     validate.set_defaults(func=validate_command)
 
     args = parser.parse_args()

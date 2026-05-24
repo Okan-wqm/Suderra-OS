@@ -687,6 +687,9 @@ def main() -> int:
     parser.add_argument("--require-ingress-signature", action="store_true")
     parser.add_argument("--ingress-certificate-identity")
     parser.add_argument("--ingress-certificate-oidc-issuer")
+    parser.add_argument("--require-evidence-ingress-signature", action="store_true")
+    parser.add_argument("--evidence-ingress-certificate-identity")
+    parser.add_argument("--evidence-ingress-certificate-oidc-issuer")
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -721,6 +724,19 @@ def main() -> int:
                     ingress_args.extend(["--certificate-identity", args.ingress_certificate_identity])
                 if args.ingress_certificate_oidc_issuer:
                     ingress_args.extend(["--certificate-oidc-issuer", args.ingress_certificate_oidc_issuer])
+            if args.require_evidence_ingress_signature:
+                ingress_args.append("--require-evidence-ingress-signature")
+                if args.evidence_ingress_certificate_identity:
+                    ingress_args.extend(
+                        ["--evidence-ingress-certificate-identity", args.evidence_ingress_certificate_identity]
+                    )
+                if args.evidence_ingress_certificate_oidc_issuer:
+                    ingress_args.extend(
+                        [
+                            "--evidence-ingress-certificate-oidc-issuer",
+                            args.evidence_ingress_certificate_oidc_issuer,
+                        ]
+                    )
             failures.extend(run(ingress_args))
     bound_source_sha = args.source_sha
     if bound_source_sha is None and isinstance(binding, dict) and isinstance(binding.get("source_sha"), str):

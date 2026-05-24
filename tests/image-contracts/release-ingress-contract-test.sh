@@ -32,6 +32,12 @@ def write_artifact(rel: str, payload: bytes) -> tuple[int, str]:
     path.write_bytes(payload)
     return len(payload), hashlib.sha256(payload).hexdigest()
 
+
+def write_json(rel: str, payload: dict) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
 entries = []
 for artifact, payload in (
     ("disk.img.xz", b"qemu image\n"),
@@ -138,11 +144,66 @@ binding.update(binding_metadata)
 path = root / "release-inputs" / version / "release-candidate.json"
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+targets = ("qemu-x86_64", "rpi4", "pi-cm4-revpi-usb-installer", "revpi4")
+write_json(
+    f"release-governance/{version}/audit-log.json",
+    {
+        "schema_version": "suderra.audit-log-snapshot.v1",
+        "status": "collected",
+        "events_sha256": "a" * 64,
+        "unapproved_governance_changes": False,
+    },
+)
+write_json(
+    f"release-governance/{version}/station-registry.json",
+    {"schema_version": "suderra.lab-station-registry.v1", "stations": []},
+)
+write_json(f"release-lab-input/{version}/qemu-x86_64/qemu.json", {"schema_version": "suderra.qemu-acceptance.v4"})
+for target in ("rpi4", "pi-cm4-revpi-usb-installer", "revpi4"):
+    write_json(f"release-lab-input/{version}/{target}/lab.json", {"schema_version": "suderra.lab-evidence.v3"})
+for target in targets:
+    write_json(
+        f"release-approvals/{version}/{target}.json",
+        {
+            "schema_version": "suderra.release-approval.v2",
+            "version": version,
+            "target": target,
+            "source_sha": source_sha,
+        },
+    )
+    write_json(
+        f"release-reproducibility/{version}/{target}.json",
+        {
+            "schema_version": "suderra.reproducibility.v1",
+            "version": version,
+            "target": target,
+            "source_sha": source_sha,
+            "source_run_id": "123456789",
+        },
+    )
 PY
+
+python3 "${PROJECT_ROOT}/scripts/evidence/operator-evidence-ingress.py" create \
+    --input-root "${TMPDIR}" \
+    --output "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-image-build-run-id "123456789" \
+    --source-image-build-run-attempt "1" \
+    --repository "Okan-wqm/Suderra-OS" \
+    --workflow "Release Evidence Ingress" \
+    --run-id "222222222" \
+    --run-attempt "1" \
+    --actor "contract" \
+    >/dev/null
+printf 'signature\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.sig"
+printf 'certificate\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.cert"
 
 python3 "${TOOL}" create \
     --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
     --artifact-root "${TMPDIR}/build-artifacts" \
+    --input-root "${TMPDIR}" \
     --output "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     --repository "Okan-wqm/Suderra-OS" \
     --workflow "Release Preflight" \
@@ -154,14 +215,108 @@ python3 "${TOOL}" create \
 python3 "${TOOL}" validate \
     "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     --artifact-root "${TMPDIR}/build-artifacts" \
+    --input-root "${TMPDIR}" \
     --expected-version "${VERSION}" \
     --expected-source-sha "${SOURCE_SHA}" \
     >/dev/null
+
+cp "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json"
+python3 - "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json" "${VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+version = sys.argv[2]
+payload = json.loads(path.read_text(encoding="utf-8"))
+manifest_path = f"release-ingress/{version}/evidence-ingress-manifest.json"
+payload["files"] = [item for item in payload["files"] if item.get("path") != manifest_path]
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json" \
+    --artifact-root "${TMPDIR}/build-artifacts" \
+    --input-root "${TMPDIR}" \
+    --expected-version "${VERSION}" \
+    --expected-source-sha "${SOURCE_SHA}" \
+    2>"${TMPDIR}/missing-evidence-ingress.err"; then
+    echo "ERROR: ingress manifest accepted missing operator evidence ingress record" >&2
+    exit 1
+fi
+grep -q "operator evidence ingress manifest" "${TMPDIR}/missing-evidence-ingress.err" || {
+    echo "ERROR: missing evidence ingress failure did not cite operator evidence ingress" >&2
+    cat "${TMPDIR}/missing-evidence-ingress.err" >&2
+    exit 1
+}
+
+cp "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    "${TMPDIR}/release-ingress/${VERSION}/wrong-evidence-role.json"
+python3 - "${TMPDIR}/release-ingress/${VERSION}/wrong-evidence-role.json" "${VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+version = sys.argv[2]
+payload = json.loads(path.read_text(encoding="utf-8"))
+manifest_path = f"release-ingress/{version}/evidence-ingress-manifest.json"
+for item in payload["files"]:
+    if item.get("path") == manifest_path:
+        item["role"] = "preflight-input"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${TMPDIR}/release-ingress/${VERSION}/wrong-evidence-role.json" \
+    --artifact-root "${TMPDIR}/build-artifacts" \
+    --input-root "${TMPDIR}" \
+    --expected-version "${VERSION}" \
+    --expected-source-sha "${SOURCE_SHA}" \
+    2>"${TMPDIR}/wrong-evidence-role.err"; then
+    echo "ERROR: ingress manifest accepted a wrong operator evidence ingress role" >&2
+    exit 1
+fi
+grep -q "preflight input path role" "${TMPDIR}/wrong-evidence-role.err" || {
+    echo "ERROR: wrong evidence role failure did not cite role binding" >&2
+    cat "${TMPDIR}/wrong-evidence-role.err" >&2
+    exit 1
+}
+
+cp "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.bak"
+python3 - "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["source_sha"] = "f" * 40
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    --artifact-root "${TMPDIR}/build-artifacts" \
+    --input-root "${TMPDIR}" \
+    --expected-version "${VERSION}" \
+    --expected-source-sha "${SOURCE_SHA}" \
+    2>"${TMPDIR}/wrong-evidence-source.err"; then
+    echo "ERROR: ingress manifest accepted a mismatched operator evidence source SHA" >&2
+    exit 1
+fi
+grep -q "source_sha" "${TMPDIR}/wrong-evidence-source.err" || {
+    echo "ERROR: wrong evidence source failure did not cite source_sha" >&2
+    cat "${TMPDIR}/wrong-evidence-source.err" >&2
+    exit 1
+}
+mv "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.bak" \
+    "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json"
 
 printf 'tampered\n' >"${TMPDIR}/build-artifacts/suderra_qemu_x86_64_defconfig-image/disk.img.xz"
 if python3 "${TOOL}" validate \
     "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     --artifact-root "${TMPDIR}/build-artifacts" \
+    --input-root "${TMPDIR}" \
     --expected-version "${VERSION}" \
     --expected-source-sha "${SOURCE_SHA}" \
     2>"${TMPDIR}/tampered.err"; then

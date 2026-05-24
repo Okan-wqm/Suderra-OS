@@ -49,7 +49,9 @@ grep -q 'cosign sign-blob' "${EVIDENCE_INGRESS_WORKFLOW}" || {
     echo "ERROR: evidence ingress workflow must sign the evidence ingress manifest" >&2
     exit 1
 }
-grep -Fq 'release-evidence-ingress-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}' "${EVIDENCE_INGRESS_WORKFLOW}" || {
+expected_ingress_artifact='rei-${{ inputs.version }}-${{ inputs.source_sha }}'
+expected_ingress_artifact+='-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}'
+grep -Fq "${expected_ingress_artifact}" "${EVIDENCE_INGRESS_WORKFLOW}" || {
     echo "ERROR: evidence ingress artifact name must bind version, source SHA, Image Build run, and attempt" >&2
     exit 1
 }
@@ -73,7 +75,7 @@ grep -q 'operator-evidence-ingress.py validate' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must validate the downloaded evidence ingress manifest" >&2
     exit 1
 }
-grep -q 'release-evidence-ingress-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}' "${PREFLIGHT_WORKFLOW}" || {
+grep -q 'rei-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must download the exact source-bound evidence ingress artifact" >&2
     exit 1
 }

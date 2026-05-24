@@ -161,6 +161,15 @@ write_json(
         "warnings": [],
     },
 )
+write_json(
+    root / "release-governance" / version / "audit-log.json",
+    {
+        "schema_version": "suderra.audit-log-snapshot.v1",
+        "status": "collected",
+        "events_sha256": "a" * 64,
+        "unapproved_governance_changes": False,
+    },
+)
 
 qemu_root = root / "release-lab-input" / version / "qemu-x86_64"
 serial_sha = write_evidence(qemu_root / "serial.log", "serial boot evidence\n")
@@ -750,6 +759,54 @@ write_json(
 )
 PY
 
+python3 "${PROJECT_ROOT}/scripts/evidence/operator-evidence-ingress.py" create \
+    --input-root "${TMPDIR}" \
+    --output "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-image-build-run-id "123456789" \
+    --source-image-build-run-attempt "1" \
+    --repository "Okan-wqm/Suderra-OS" \
+    --workflow "Release Evidence Ingress" \
+    --run-id "222222222" \
+    --run-attempt "1" \
+    --actor "contract" \
+    >/dev/null
+printf 'signature\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.sig"
+printf 'certificate\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.cert"
+python3 - "${TMPDIR}" "${VERSION}" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+version = sys.argv[2]
+ingress_path = root / "release-ingress" / version / "ingress-manifest.json"
+payload = json.loads(ingress_path.read_text(encoding="utf-8"))
+for rel, role in (
+    (f"release-ingress/{version}/evidence-ingress-manifest.json", "evidence-ingress"),
+    (f"release-ingress/{version}/evidence-ingress-manifest.json.sig", "evidence-ingress-signature"),
+    (f"release-ingress/{version}/evidence-ingress-manifest.json.cert", "evidence-ingress-signature"),
+):
+    path = root / rel
+    data = path.read_bytes()
+    payload["files"].append(
+        {
+            "source": "preflight-input",
+            "role": role,
+            "defconfig": "release-input",
+            "target": "release-input",
+            "artifact": path.name,
+            "path": rel,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    )
+payload["files"].sort(key=lambda item: (str(item["defconfig"]), str(item["artifact"]), str(item["path"])))
+ingress_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
 python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
     --version "${VERSION}" \
     --release-tier alpha \
@@ -760,6 +817,107 @@ python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
     --source-sha "${SOURCE_SHA}" \
     --check-files \
     >/dev/null
+
+cp "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json"
+python3 - "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json" "${VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+version = sys.argv[2]
+payload = json.loads(path.read_text(encoding="utf-8"))
+manifest_path = f"release-ingress/{version}/evidence-ingress-manifest.json"
+payload["files"] = [item for item in payload["files"] if item.get("path") != manifest_path]
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
+    --version "${VERSION}" \
+    --release-tier alpha \
+    --root "${TMPDIR}" \
+    --profile release-candidate \
+    --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json" \
+    --source-sha "${SOURCE_SHA}" \
+    --check-files \
+    2>"${TMPDIR}/missing-evidence-ingress.err"; then
+    echo "ERROR: release input preflight accepted missing operator evidence ingress manifest" >&2
+    exit 1
+fi
+grep -q "operator evidence ingress manifest" "${TMPDIR}/missing-evidence-ingress.err" || {
+    echo "ERROR: release input preflight did not report missing operator evidence ingress" >&2
+    cat "${TMPDIR}/missing-evidence-ingress.err" >&2
+    exit 1
+}
+
+cp "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    "${TMPDIR}/release-ingress/${VERSION}/wrong-evidence-role.json"
+python3 - "${TMPDIR}/release-ingress/${VERSION}/wrong-evidence-role.json" "${VERSION}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+version = sys.argv[2]
+payload = json.loads(path.read_text(encoding="utf-8"))
+manifest_path = f"release-ingress/{version}/evidence-ingress-manifest.json"
+for item in payload["files"]:
+    if item.get("path") == manifest_path:
+        item["role"] = "preflight-input"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
+    --version "${VERSION}" \
+    --release-tier alpha \
+    --root "${TMPDIR}" \
+    --profile release-candidate \
+    --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/wrong-evidence-role.json" \
+    --source-sha "${SOURCE_SHA}" \
+    --check-files \
+    2>"${TMPDIR}/wrong-evidence-role.err"; then
+    echo "ERROR: release input preflight accepted a wrong operator evidence ingress role" >&2
+    exit 1
+fi
+grep -q "preflight input path role" "${TMPDIR}/wrong-evidence-role.err" || {
+    echo "ERROR: release input preflight did not report wrong operator evidence role" >&2
+    cat "${TMPDIR}/wrong-evidence-role.err" >&2
+    exit 1
+}
+
+cp "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.bak"
+python3 - "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["source_image_build_run_id"] = "222222222"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py" \
+    --version "${VERSION}" \
+    --release-tier alpha \
+    --root "${TMPDIR}" \
+    --profile release-candidate \
+    --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+    --ingress-manifest "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
+    --source-sha "${SOURCE_SHA}" \
+    --check-files \
+    2>"${TMPDIR}/wrong-evidence-run.err"; then
+    echo "ERROR: release input preflight accepted mismatched operator evidence Image Build run" >&2
+    exit 1
+fi
+grep -q "source_image_build_run_id" "${TMPDIR}/wrong-evidence-run.err" || {
+    echo "ERROR: release input preflight did not report operator evidence run mismatch" >&2
+    cat "${TMPDIR}/wrong-evidence-run.err" >&2
+    exit 1
+}
+mv "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.bak" \
+    "${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json"
 
 mv "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.json" \
     "${TMPDIR}/release-reproducibility/${VERSION}/qemu-x86_64.json.bak"

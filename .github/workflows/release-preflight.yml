@@ -137,7 +137,7 @@ jobs:
           test -n "${EVIDENCE_INGRESS_RUN_ID}"
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_INGRESS_RUN_ID}" > evidence-ingress-run.json
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_INGRESS_RUN_ID}/artifacts" > evidence-ingress-artifacts.json
-          artifact_name="release-evidence-ingress-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+          artifact_name="rei-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
           python3 - "${artifact_name}" <<'PY'
           import json
           import os
@@ -364,10 +364,14 @@ jobs:
             --artifact-root build-artifacts
           )
           if [ "${PROFILE}" != "technical-dry-run" ]; then
+            evidence_ingress_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-evidence-ingress.yml@refs/heads/main"
             args+=(--check-files)
             args+=(--require-ingress-signature)
             args+=(--ingress-certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-preflight.yml@refs/heads/main")
             args+=(--ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com")
+            args+=(--require-evidence-ingress-signature)
+            args+=(--evidence-ingress-certificate-identity "${evidence_ingress_identity}")
+            args+=(--evidence-ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com")
           fi
           python3 scripts/evidence/validate-release-inputs.py "${args[@]}"
 
