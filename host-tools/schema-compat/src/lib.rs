@@ -186,7 +186,17 @@ pub fn sha256_file(path: &Path) -> io::Result<String> {
         }
         digest.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(hex_bytes(digest.finalize().as_ref()))
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 pub fn sorted_json_string(value: &Value) -> Result<String, serde_json::Error> {
@@ -277,5 +287,10 @@ mod tests {
             digest,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn encodes_hex_without_digest_format_traits() {
+        assert_eq!(hex_bytes(&[0x00, 0xab, 0xff]), "00abff");
     }
 }
