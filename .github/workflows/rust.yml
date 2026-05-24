@@ -69,6 +69,50 @@ jobs:
         run: cargo test --locked --workspace --target x86_64-unknown-linux-gnu
 
   # -----------------------------------------------------------------
+  # Host Tools (release/evidence validators, not image contents)
+  # -----------------------------------------------------------------
+  host-tools:
+    name: Host Tools (fmt + clippy + test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Cache cargo
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            host-tools/target
+          key: rust-host-tools-${{ runner.os }}-${{ hashFiles('host-tools/Cargo.lock', 'host-tools/rust-toolchain.toml') }}
+          restore-keys: |
+            rust-host-tools-${{ runner.os }}-
+
+      - name: rust-toolchain (pinned)
+        working-directory: ./host-tools
+        run: rustup show
+
+      - name: Cargo.lock contract
+        working-directory: ./host-tools
+        run: |
+          set -euo pipefail
+          git -C "$GITHUB_WORKSPACE" ls-files --error-unmatch host-tools/Cargo.lock
+          cargo metadata --locked --no-deps --format-version 1 >/tmp/suderra-host-tools-cargo-metadata.json
+
+      - name: cargo fmt --check
+        working-directory: ./host-tools
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (host tools)
+        working-directory: ./host-tools
+        run: cargo clippy --locked --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+
+      - name: cargo test (host tools)
+        working-directory: ./host-tools
+        run: cargo test --locked --workspace --target x86_64-unknown-linux-gnu
+
+  # -----------------------------------------------------------------
   # Cross-compile (musl static, production target)
   # -----------------------------------------------------------------
   build-musl:
@@ -156,6 +200,10 @@ jobs:
           tool: cargo-deny
 
       - name: cargo deny check (advisories + bans + licenses + sources)
+        run: cargo deny check
+
+      - name: cargo deny check host tools
+        working-directory: ./host-tools
         run: cargo deny check
 
   # -----------------------------------------------------------------

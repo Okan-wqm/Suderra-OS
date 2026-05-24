@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "schema-compat"
+description = "Shared strict schema helpers for host-side release tooling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+sha2 = { workspace = true }

@@ -61,6 +61,27 @@ updates:
       - dependency-name: "rustls"
         update-types: ["version-update:semver-major"]
 
+  # Rust host-side release validators. These are CI/operator tools only and
+  # must stay separate from userspace/ and Buildroot image contents.
+  - package-ecosystem: "cargo"
+    directory: "/host-tools"
+    schedule:
+      interval: "daily"
+    labels:
+      - "dependencies"
+      - "rust"
+      - "security"
+      - "host-tools"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    open-pull-requests-limit: 5
+    groups:
+      rust-host-tools-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   # Faz 2'de eklenince: suderra-edge-agent kendi repo'sundan vendored
   # - package-ecosystem: "cargo"
   #   directory: "/package/suderra-edge-agent"

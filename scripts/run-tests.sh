@@ -8,6 +8,7 @@
 #   ./scripts/run-tests.sh security          # Sadece security
 #   ./scripts/run-tests.sh installer         # Sadece USB installer
 #   ./scripts/run-tests.sh image-contracts   # Build matrix/image contracts
+#   ./scripts/run-tests.sh host-tools        # Rust host tooling contracts
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -68,13 +69,14 @@ case "${CATEGORY}" in
         run_category installer
         run_category security
         run_category ota
+        run_category host-tools
         ;;
-    qemu|installer|security|ota|image-contracts)
+    qemu|installer|security|ota|image-contracts|host-tools)
         run_category "${CATEGORY}"
         ;;
     *)
         echo "ERROR: Bilinmeyen kategori: ${CATEGORY}"
-        echo "Kullanım: $0 [all|qemu|installer|security|ota|image-contracts]"
+        echo "Kullanım: $0 [all|qemu|installer|security|ota|image-contracts|host-tools]"
         exit 1
         ;;
 esac

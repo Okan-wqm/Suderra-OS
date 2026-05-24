@@ -66,6 +66,7 @@ target/
 # cargo --locked and must fail closed if dependency resolution drifts.
 Cargo.lock
 !userspace/Cargo.lock
+!host-tools/Cargo.lock
 
 # Docker
 .docker-build-cache/

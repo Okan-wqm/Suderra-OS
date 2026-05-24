@@ -66,6 +66,7 @@ docs/
 - [qemu-test.md](dev/qemu-test.md) — QEMU'da test
 - [coding-standards.md](dev/coding-standards.md) — kod standartları
 - [rust-workspace.md](dev/rust-workspace.md) — Rust userspace workspace rehberi
+- [release-core-host-tools.md](dev/release-core-host-tools.md) — release/evidence Python'dan Rust host-tools'a geçiş planı
 - [branch-protection.md](dev/branch-protection.md) — GitHub branch protection rules
 
 ### Uyumluluk

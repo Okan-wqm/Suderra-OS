@@ -521,8 +521,11 @@ jobs:
           cat manifest.json
 
       - name: Validate release manifest schema
-        working-directory: userspace
-        run: cargo run --locked -p suderra-installer --target x86_64-unknown-linux-gnu -- validate-manifest ../release/manifest.json
+        run: |
+          set -euo pipefail
+          installer="release/suderra-installer-${{ needs.validate.outputs.version }}-x86_64"
+          chmod +x "${installer}"
+          "${installer}" validate-manifest release/manifest.json
 
       - name: Generate immutable release asset manifest
         run: |

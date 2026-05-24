@@ -205,6 +205,10 @@ if grep -q 'cargo install cross' "${RELEASE_WORKFLOW}" || grep -q 'cross build -
     echo "ERROR: release workflow must not rebuild installer binaries after preflight" >&2
     exit 1
 fi
+if grep -Eq 'cargo (run|build|install)|cross build|rustup' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not build/install Rust tooling after preflight" >&2
+    exit 1
+fi
 grep -Fq 'name: installer-${{ matrix.arch }}' "${IMAGE_WORKFLOW}" || {
     echo "ERROR: Image Build workflow must produce preflight-bound installer artifacts" >&2
     exit 1

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "release-core"
+description = "Shadow Rust validators for Suderra release evidence contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "release-core"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+schema-compat = { path = "../schema-compat" }
+serde_json = { workspace = true }

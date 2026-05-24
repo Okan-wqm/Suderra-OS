@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[toolchain]
+channel = "1.86.0"
+components = [
+    "rustfmt",
+    "clippy",
+]
+profile = "minimal"

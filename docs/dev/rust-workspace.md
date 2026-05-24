@@ -1,6 +1,8 @@
 # Rust Userspace Workspace — Geliştirici Rehberi
 
-Suderra-OS-spesifik tüm Rust araçları `userspace/` workspace içinde geliştirilir.
+Suderra-OS-spesifik hedef imaj araçları `userspace/` workspace içinde geliştirilir.
+Release/evidence gibi host-only araçlar ayrı tutulur; bu workspace'in RC
+güvenlik modeli için bkz. [release-core-host-tools.md](release-core-host-tools.md).
 
 > **TL;DR:** `cd userspace/ && cargo cl && cargo t` (host'ta lint + test, dakika
 > mertebesinde). Production build için `cargo bm` (musl static, ~5dk).
