@@ -151,7 +151,24 @@ write_json(
     {
         "schema_version": "suderra.audit-log-snapshot.v1",
         "status": "collected",
+        "source_kind": "manual-org-export",
+        "organization": "Okan-wqm",
+        "repository": "Okan-wqm/Suderra-OS",
+        "collector": {"identity": "contract", "run_id": "123456789"},
+        "lookback_window": {
+            "start": "2026-04-24T00:00:00Z",
+            "end": "2026-05-24T00:00:00Z",
+            "days": 30
+        },
+        "query": "repo:Okan-wqm/Suderra-OS",
+        "event_count": 0,
         "events_sha256": "a" * 64,
+        "raw_export": {
+            "path": "audit-log.raw.json",
+            "bytes": 2,
+            "sha256": "e" * 64
+        },
+        "replay": {"status": "passed", "unapproved_events": []},
         "unapproved_governance_changes": False,
     },
 )
@@ -196,6 +213,13 @@ python3 "${PROJECT_ROOT}/scripts/evidence/operator-evidence-ingress.py" create \
     --run-id "222222222" \
     --run-attempt "1" \
     --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence.tar.gz" \
+    --bundle-sha256 "b${SOURCE_SHA:1:39}bbbbbbbbbbbbbbbbbbbbbbbb" \
+    --bundle-signature-sha256 "c${SOURCE_SHA:1:39}cccccccccccccccccccccccc" \
+    --bundle-certificate-sha256 "d${SOURCE_SHA:1:39}dddddddddddddddddddddddd" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
     >/dev/null
 printf 'signature\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.sig"
 printf 'certificate\n' >"${TMPDIR}/release-ingress/${VERSION}/evidence-ingress-manifest.json.cert"

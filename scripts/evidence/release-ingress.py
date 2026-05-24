@@ -32,7 +32,7 @@ SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PLACEHOLDERS = {"TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING", ""}
 SCHEMA_ROLES = {
-    "evidence_ingress": "suderra.operator-evidence-ingress.v1",
+    "evidence_ingress": "suderra.operator-evidence-ingress.v2",
     "binding_manifest": BINDING_SCHEMA_VERSION,
     "approval": "suderra.release-approval.v2",
     "qemu_input": "suderra.qemu-acceptance.v4",

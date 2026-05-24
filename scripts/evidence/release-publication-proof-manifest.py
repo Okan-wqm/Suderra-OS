@@ -149,6 +149,10 @@ def validate_manifest(path: Path, *, release_dir: Path, proof_dir: Path, expecte
     if not isinstance(files, list) or not files:
         failures.append("post_publication_proof.files must be a non-empty list")
         files = []
+    proof_paths = {item.get("path") for item in files if isinstance(item, dict)}
+    expected_proof_paths = {PROOF_RECORD, PROOF_SIGNATURE, PROOF_CERTIFICATE}
+    if proof_paths != expected_proof_paths:
+        failures.append("post_publication_proof.files must contain the proof record, signature, and certificate")
     for idx, item in enumerate(files):
         validate_file_ref(proof_dir, item, f"post_publication_proof.files[{idx}]", failures)
     raw = proof.get("raw_attestations")
@@ -165,6 +169,10 @@ def validate_manifest(path: Path, *, release_dir: Path, proof_dir: Path, expecte
     expected_set = hashlib.sha256(material.encode("utf-8")).hexdigest()
     if proof.get("proof_set_sha256") != expected_set:
         failures.append("post_publication_proof.proof_set_sha256 does not match proof files")
+    for sidecar in (f"{SELF_NAME}.sig", f"{SELF_NAME}.cert"):
+        sidecar_path = proof_dir / sidecar
+        if not sidecar_path.is_file() or sidecar_path.stat().st_size <= 0:
+            failures.append(f"{sidecar}: proof manifest self sidecar is missing or empty")
     return failures
 
 

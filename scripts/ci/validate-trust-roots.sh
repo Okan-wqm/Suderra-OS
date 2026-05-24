@@ -7,7 +7,7 @@ IFS=$'\n\t'
 
 usage() {
     cat >&2 <<EOF
-Usage: $0 <keyring-dir> [--expected-profile <ci|dev|prod>] [--require-installer-signing] [--check-installer-env]
+Usage: $0 <keyring-dir> [--expected-profile <ci|dev|prod>] [--require-installer-signing] [--forbid-installer-signing] [--check-installer-env]
 EOF
 }
 
@@ -20,6 +20,7 @@ shift
 
 EXPECTED_PROFILE=""
 REQUIRE_INSTALLER_SIGNING=0
+FORBID_INSTALLER_SIGNING=0
 CHECK_INSTALLER_ENV=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -34,6 +35,9 @@ while [ "$#" -gt 0 ]; do
         --require-installer-signing)
             REQUIRE_INSTALLER_SIGNING=1
             ;;
+        --forbid-installer-signing)
+            FORBID_INSTALLER_SIGNING=1
+            ;;
         --check-installer-env)
             CHECK_INSTALLER_ENV=1
             ;;
@@ -44,6 +48,11 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+if [ "${REQUIRE_INSTALLER_SIGNING}" -eq 1 ] && [ "${FORBID_INSTALLER_SIGNING}" -eq 1 ]; then
+    usage
+    exit 2
+fi
 
 die() {
     echo "ERROR: $*" >&2
@@ -95,6 +104,15 @@ if [ "${REQUIRE_INSTALLER_SIGNING}" -eq 1 ]; then
     if command -v openssl >/dev/null 2>&1; then
         openssl pkey -in "${KEYS_DIR}/installer-payload.key" -noout >/dev/null 2>&1 ||
             die "invalid Ed25519 private key: ${KEYS_DIR}/installer-payload.key"
+    fi
+fi
+
+if [ "${FORBID_INSTALLER_SIGNING}" -eq 1 ]; then
+    if [ -e "${KEYS_DIR}/installer-payload.key" ]; then
+        die "installer payload private key is forbidden in this trust-root set: ${KEYS_DIR}/installer-payload.key"
+    fi
+    if find "${KEYS_DIR}" -maxdepth 1 -type f -name '*.key' | grep -q .; then
+        die "private key files are forbidden in this trust-root set"
     fi
 fi
 

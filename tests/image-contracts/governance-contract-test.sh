@@ -12,6 +12,7 @@ mkdir -p "${SNAPSHOT}"
 
 python3 - "${PROJECT_ROOT}" "${SNAPSHOT}" <<'PY'
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -33,6 +34,7 @@ branch = {
     "required_signatures": {"enabled": True},
     "allow_force_pushes": {"enabled": False},
     "allow_deletions": {"enabled": False},
+    "enforce_admins": {"enabled": True},
 }
 rulesets = [
     {
@@ -89,6 +91,7 @@ codeowners = {
     "patterns": policy["required_codeowners_patterns"],
 }
 files = {
+    "repo.json": {"full_name": policy["repository"]},
     "main-branch-protection.json": branch,
     "rulesets.json": rulesets,
     "release-sign-environment.json": release_sign_environment,
@@ -104,12 +107,41 @@ files = {
     "audit-log.json": {
         "schema_version": "suderra.audit-log-snapshot.v1",
         "status": "collected",
+        "source_kind": "manual-org-export",
+        "organization": "Okan-wqm",
+        "repository": policy["repository"],
+        "collector": {"identity": "contract", "run_id": "123456789"},
+        "lookback_window": {
+            "start": "2026-04-24T00:00:00Z",
+            "end": "2026-05-24T00:00:00Z",
+            "days": 30
+        },
+        "query": f"repo:{policy['repository']}",
+        "event_count": 0,
         "unapproved_governance_changes": False,
         "events_sha256": "a" * 64,
+        "raw_export": {
+            "path": "audit-log.raw.json",
+            "bytes": 2,
+            "sha256": "e" * 64
+        },
+        "replay": {"status": "passed", "unapproved_events": []},
     },
 }
 for name, payload in files.items():
     (snapshot / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+manifest_files = []
+for name in files:
+    data = (snapshot / name).read_bytes()
+    manifest_files.append({"name": name, "sha256": hashlib.sha256(data).hexdigest()})
+(snapshot / "snapshot-manifest.json").write_text(json.dumps({
+    "schema_version": "suderra.github-governance-snapshot-manifest.v1",
+    "version": snapshot.name,
+    "repository": policy["repository"],
+    "collected_at": "2026-05-24T00:00:00Z",
+    "files": sorted(manifest_files, key=lambda item: item["name"]),
+    "failures": [],
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
 python3 "${PROJECT_ROOT}/scripts/evidence/validate-governance.py" \

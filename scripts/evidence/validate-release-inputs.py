@@ -755,6 +755,8 @@ def main() -> int:
     governance = read_json(governance_report)
     if not isinstance(governance, dict) or governance.get("status") != "passed":
         failures.append(f"governance policy validation missing or failed: {governance_report}")
+    elif governance.get("schema_version") != "suderra.github-governance-validation.v2":
+        failures.append(f"governance policy validation must be suderra.github-governance-validation.v2: {governance_report}")
 
     lab_args = [
         sys.executable,

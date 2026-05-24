@@ -57,7 +57,7 @@ python3 scripts/evidence/release-evidence.py validate \
     --release-tier alpha \
     --require-pass \
     --check-files \
-    release-evidence/v0.1.0-alpha.1/rpi4/evidence.json
+    release-evidence/v0.1.0-rc.1/rpi4/evidence.json
 ```
 
 Alpha evidence keeps build, security, signatures, attestations,
@@ -115,7 +115,7 @@ The release workflow assembles final bundles with:
 
 ```bash
 python3 scripts/evidence/release-evidence.py assemble-release \
-    --version v0.1.0-alpha.1 \
+    --version v0.1.0-rc.1 \
     --release-dir release \
     --output-root release-evidence-generated \
     --input-root . \
@@ -147,7 +147,7 @@ a report cannot be replay-bound to its raw byte stream.
 
 ```bash
 python3 scripts/evidence/release-evidence.py migrate \
-    release-evidence/v0.1.0-alpha.1/rpi4/evidence.json \
+    release-evidence/v0.1.0-rc.1/rpi4/evidence.json \
     --output /tmp/evidence-v5.json
 ```
 
@@ -167,11 +167,15 @@ That artifact must contain `release-lab-input`, `release-approvals`,
 `release-reproducibility`, `release-governance`, and
 `release-ingress/<version>/evidence-ingress-manifest.json` with `.sig` and
 `.cert` sidecars. The manifest uses
-`suderra.operator-evidence-ingress.v1` and binds every file path, byte count,
-SHA-256 digest, version, source SHA, source Image Build run ID, and run attempt.
-Release preflight rejects the artifact if the manifest is missing, unsigned,
-malformed, expired, bound to the wrong source, or if any referenced file is
-missing or has a different digest.
+`suderra.operator-evidence-ingress.v2` and binds every file path, byte count,
+SHA-256 digest, version, source SHA, source Image Build run ID, run attempt,
+operator bundle URL, bundle digest, bundle signature/certificate digests, signer
+identity, OIDC issuer, governed HTTPS host, `generated_at`, and `expires_at`.
+Release preflight rejects the
+artifact if the manifest is missing, unsigned, malformed, expired, bound to the
+wrong source, or if any referenced file is missing or has a different digest.
+The operator bundle itself must be signed by the governed operator identity and
+verified before the GitHub ingress workflow signs the staged manifest.
 
 Required operator evidence for the first RC is:
 
@@ -187,6 +191,11 @@ Required operator evidence for the first RC is:
 `release-governance/<version>/audit-log.json` must use
 `suderra.audit-log-snapshot.v1`, have `status: collected`, include
 `events_sha256`, and assert that no unapproved governance changes were found.
+Enterprise RC evidence must also preserve `source_kind`, repository/org or
+enterprise source, collector identity/run, lookback window, query, event count,
+raw GitHub audit export path/byte count/SHA-256, replay status, and an explicit
+empty unapproved-event list. A self-asserted boolean without raw replay evidence
+is not sufficient for release acceptance.
 
 ## Governance Evidence
 
@@ -198,14 +207,14 @@ workflow collects GitHub API snapshots and validates them before build fan-out:
 ```bash
 python3 scripts/evidence/collect-governance.py \
     --repo Okan-wqm/Suderra-OS \
-    --version v0.1.0-alpha.1 \
+    --version v0.1.0-rc.1 \
     --output-root release-governance \
     --repo-root .
 
 python3 scripts/evidence/validate-governance.py \
     --policy ci/github-governance-policy.yml \
-    --snapshot-root release-governance/v0.1.0-alpha.1 \
-    --output release-governance/v0.1.0-alpha.1/governance-policy-validation.json
+    --snapshot-root release-governance/v0.1.0-rc.1 \
+    --output release-governance/v0.1.0-rc.1/governance-policy-validation.json
 ```
 
 `governance-policy-validation.json` must use
@@ -237,7 +246,7 @@ Validate it before tagging:
 python3 scripts/evidence/validate-qemu-input.py \
     --require-pass \
     --check-files \
-    release-lab-input/v0.1.0-alpha.1/qemu-x86_64/qemu.json
+    release-lab-input/v0.1.0-rc.1/qemu-x86_64/qemu.json
 ```
 
 The file uses `suderra.qemu-acceptance.v4` for promotion evidence and must
@@ -327,7 +336,7 @@ this manifest, not from CI workspace state.
 python3 scripts/evidence/release-publication-manifest.py validate \
   release-publication-manifest.json \
   --release-dir . \
-  --expected-version v0.1.0-alpha.1 \
+  --expected-version v0.1.0-rc.1 \
   --require-self-sidecars
 ```
 

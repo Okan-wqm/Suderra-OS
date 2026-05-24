@@ -79,8 +79,9 @@ aşaması içindir.
 
 ## Migration Contract
 
-Rust CLI bu fazda birincil release gate değildir. Bir komutun Python eşdeğeri
-yerine geçmesi için şu şartlar gereklidir:
+Rust CLI bu fazda birincil release gate değildir; `v0.1.0-rc.1` için
+authoritative gate Python validator'larıdır. Bir komutun Python eşdeğeri yerine
+geçmesi için şu şartlar gereklidir:
 
 1. Aynı fixture seti üzerinde Python ve Rust aynı exit code'u üretir.
 2. Başarılı örneklerde normalized JSON output byte-for-byte eşleşir veya
@@ -89,6 +90,13 @@ yerine geçmesi için şu şartlar gereklidir:
 4. Cutover PR'ı ilgili GitHub workflow'u ve contract testini beraber günceller.
 5. Cutover sonrası Python fallback eklenmez; başarısız Rust validator release'i
    durdurur.
+
+`release-core operator-evidence validate` özellikle `ci/build-matrix.yml`
+kaynaklı required path üretimi, audit log semantics, station registry
+zorunluluğu, `operator_bundle`, `generated_at`/`expires_at`, release-input
+binding v2, Buildroot source identity v2 ve missing-required-path negatif
+fixture'larında Python ile parity kanıtlamadan RC gate'i olamaz. Python
+validator'lar RC gate olarak kalır; Rust bu fazda shadow-only çalışır.
 
 ## Taşınacak Python Yüzeyi
 
@@ -137,6 +145,12 @@ Sonraki PR'da fixture-driven parity suite eklenmelidir:
 - eksik annotation field,
 - SHA mismatch,
 - expired artifact,
+- expired operator evidence ingress manifest,
+- malformed or missing `operator_bundle`,
+- audit-log replay fields missing,
+- matrix-derived required paths mismatch,
+- release-input-binding v2 mismatch,
+- Buildroot source identity v2 mismatch,
 - missing station registry,
 - missing audit log,
 - path traversal,

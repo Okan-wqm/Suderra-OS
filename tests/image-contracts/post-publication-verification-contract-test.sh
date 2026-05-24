@@ -92,6 +92,8 @@ python3 "${PROOF_MANIFEST_TOOL}" create \
     --proof-dir "${TMPDIR}/proof" \
     --output "${TMPDIR}/proof/release-publication-proof-manifest.json" \
     >/dev/null
+printf 'proof manifest signature\n' > "${TMPDIR}/proof/release-publication-proof-manifest.json.sig"
+printf 'proof manifest certificate\n' > "${TMPDIR}/proof/release-publication-proof-manifest.json.cert"
 
 python3 "${PROOF_MANIFEST_TOOL}" validate \
     "${TMPDIR}/proof/release-publication-proof-manifest.json" \

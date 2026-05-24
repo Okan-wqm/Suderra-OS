@@ -64,13 +64,19 @@ altında tanımlanır:
 
 - Required reviewers: release manager ve maintainer/security-compliance rolünden
   iki farklı GitHub kullanıcısı
+- GitHub environment required reviewers tek onayla deployment başlatabildiği
+  için enterprise RC'de bu liste tek başına iki kişilik onay kanıtı sayılmaz.
+  `release-owner` ve `security-owner` kararları custom deployment protection
+  rule ile veya iki seri protected environment ile ayrı ayrı doğrulanmalıdır.
 - Deployment branches/tags: selected refs `refs/tags/v*`
 - Governance read token: `GOVERNANCE_READ_TOKEN` branch protection, rulesets,
   environments, deployment branch policies, workflow permissions ve audit
   snapshot okumalıdır
 - Governance audit snapshot, `Release Evidence Ingress` artifact'i içinden
   `release-governance/<version>/audit-log.json` olarak gelmelidir; boş veya
-  `not_collected` audit log release'i durdurur
+  `not_collected` audit log release'i durdurur. Audit snapshot raw GitHub audit
+  export digest'i, lookback window'u, collector identity'si ve replay sonucunu
+  içermelidir; sadece self-asserted boolean yeterli değildir.
 - Release tag trust controls: secret `SUDERRA_RELEASE_TAG_SIGNING_PUBLIC_KEY` ve
   variable `SUDERRA_RELEASE_TAG_SIGNING_FINGERPRINTS` tag signer trust-root'u sağlar
 - Cosign ve provenance için long-lived signing secret gerekmez; GitHub OIDC ile

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -27,6 +28,23 @@ def read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(ch.isdigit() or "a" <= ch <= "f" for ch in value)
+        and value != "0" * 64
+    )
 
 
 def status_check_contexts(branch: dict[str, Any]) -> set[str]:
@@ -142,6 +160,115 @@ def codeowners_patterns(snapshot: Any) -> set[str]:
     return set()
 
 
+def validate_snapshot_manifest(
+    failures: list[str],
+    snapshot_root: Path,
+    policy: dict[str, Any],
+) -> None:
+    manifest = read_json(snapshot_root / "snapshot-manifest.json")
+    repo = read_json(snapshot_root / "repo.json")
+    expected_repo = policy.get("repository")
+    if not isinstance(manifest, dict):
+        failures.append("snapshot-manifest.json must be collected")
+        return
+    if manifest.get("schema_version") != "suderra.github-governance-snapshot-manifest.v1":
+        failures.append("snapshot-manifest.json schema_version is invalid")
+    if expected_repo and manifest.get("repository") != expected_repo:
+        failures.append("snapshot manifest repository must match governance policy")
+    if isinstance(repo, dict) and expected_repo and repo.get("full_name") != expected_repo:
+        failures.append("repo.json full_name must match governance policy repository")
+    if manifest.get("failures"):
+        failures.append("governance snapshot manifest must not contain collection failures")
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        failures.append("snapshot-manifest.json files must be a non-empty list")
+        return
+    seen: set[str] = set()
+    for item in files:
+        if not isinstance(item, dict):
+            failures.append("snapshot-manifest.json files entries must be objects")
+            continue
+        name = item.get("name")
+        digest = item.get("sha256")
+        if not isinstance(name, str) or not name or "/" in name or name == "snapshot-manifest.json":
+            failures.append("snapshot-manifest.json file names must be single relative filenames")
+            continue
+        seen.add(name)
+        if not is_sha256(digest):
+            failures.append(f"snapshot manifest file {name} must include a sha256")
+            continue
+        path = snapshot_root / name
+        if not path.is_file() or path.stat().st_size <= 0:
+            failures.append(f"snapshot manifest file missing: {name}")
+            continue
+        if sha256_file(path) != digest:
+            failures.append(f"snapshot manifest sha mismatch: {name}")
+    for required in (
+        "repo.json",
+        "rulesets.json",
+        "main-branch-protection.json",
+        "release-sign-environment.json",
+        "release-publish-environment.json",
+        "workflow-permissions.json",
+        "codeowners.json",
+        "audit-log.json",
+    ):
+        if required not in seen:
+            failures.append(f"snapshot manifest missing required file: {required}")
+
+
+def validate_audit_log(failures: list[str], audit_log: Any) -> None:
+    if not isinstance(audit_log, dict):
+        failures.append("audit-log.json must be collected")
+        return
+    if audit_log.get("schema_version") != "suderra.audit-log-snapshot.v1":
+        failures.append("audit-log.json schema_version is invalid")
+    if audit_log.get("status") != "collected":
+        failures.append("audit log must be collected")
+    if audit_log.get("unapproved_governance_changes"):
+        failures.append("audit log contains unapproved governance changes")
+    if not is_sha256(audit_log.get("events_sha256")):
+        failures.append("audit log must include events_sha256")
+    if audit_log.get("source_kind") not in {"organization", "enterprise", "manual-org-export", "manual-enterprise-export"}:
+        failures.append("audit log must identify an org/enterprise source")
+    for field in ("repository", "query"):
+        if not isinstance(audit_log.get(field), str) or not audit_log.get(field):
+            failures.append(f"audit log must include {field}")
+    if not isinstance(audit_log.get("event_count"), int) or audit_log.get("event_count") < 0:
+        failures.append("audit log must include non-negative event_count")
+    collector = audit_log.get("collector")
+    if not isinstance(collector, dict) or not isinstance(collector.get("identity"), str) or not collector.get("identity"):
+        failures.append("audit log must include collector.identity")
+    window = audit_log.get("lookback_window")
+    if not isinstance(window, dict):
+        failures.append("audit log must include lookback_window")
+    else:
+        if not isinstance(window.get("start"), str) or not window.get("start"):
+            failures.append("audit log must include lookback_window.start")
+        if not isinstance(window.get("end"), str) or not window.get("end"):
+            failures.append("audit log must include lookback_window.end")
+        if not isinstance(window.get("days"), int) or window.get("days") <= 0:
+            failures.append("audit log must include positive lookback_window.days")
+    raw_export = audit_log.get("raw_export")
+    if not isinstance(raw_export, dict):
+        failures.append("audit log must include raw_export")
+    else:
+        if not isinstance(raw_export.get("path"), str) or not raw_export.get("path"):
+            failures.append("audit log must include raw_export.path")
+        if not isinstance(raw_export.get("bytes"), int) or raw_export.get("bytes") <= 0:
+            failures.append("audit log must include positive raw_export.bytes")
+        if not is_sha256(raw_export.get("sha256")):
+            failures.append("audit log must include raw_export.sha256")
+    replay = audit_log.get("replay")
+    if not isinstance(replay, dict):
+        failures.append("audit log must include replay")
+    else:
+        if replay.get("status") != "passed":
+            failures.append("audit log replay.status must be passed")
+        if replay.get("unapproved_events") not in ([], None):
+            failures.append("audit log replay.unapproved_events must be empty")
+
+
 def validate_environment_policy(
     failures: list[str],
     snapshot_root: Path,
@@ -197,6 +324,7 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     warnings: list[str] = []
     if policy.get("schema_version") not in {POLICY_SCHEMA_VERSION} | LEGACY_POLICY_SCHEMA_VERSIONS:
         failures.append(f"policy schema_version must be {POLICY_SCHEMA_VERSION}")
+    validate_snapshot_manifest(failures, snapshot_root, policy)
 
     branch = read_json(snapshot_root / "main-branch-protection.json")
     rulesets = read_json(snapshot_root / "rulesets.json")
@@ -223,6 +351,11 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
             approvals = reviews.get("required_approving_review_count")
             if not isinstance(approvals, int) or approvals < minimum_approvals:
                 failures.append(f"main branch must require at least {minimum_approvals} approvals")
+        checks = branch.get("required_status_checks")
+        if not isinstance(checks, dict) or checks.get("strict") is not True:
+            failures.append("main branch required status checks must require up-to-date branches")
+        if branch.get("enforce_admins", {}).get("enabled") is not True:
+            failures.append("main branch protection must enforce admins")
         if branch.get("allow_force_pushes", {}).get("enabled") is True:
             failures.append("main branch must not allow force pushes")
         if branch.get("allow_deletions", {}).get("enabled") is True:
@@ -306,15 +439,7 @@ def validate(policy: dict[str, Any], snapshot_root: Path) -> dict[str, Any]:
     if missing_codeowners:
         failures.append(f"missing CODEOWNERS patterns: {', '.join(missing_codeowners)}")
 
-    if not isinstance(audit_log, dict):
-        failures.append("audit-log.json must be collected")
-    else:
-        if audit_log.get("status") != "collected":
-            failures.append("audit log must be collected")
-        if audit_log.get("unapproved_governance_changes"):
-            failures.append("audit log contains unapproved governance changes")
-        if not isinstance(audit_log.get("events_sha256"), str):
-            failures.append("audit log must include events_sha256")
+    validate_audit_log(failures, audit_log)
 
     return {
         "schema_version": SCHEMA_VERSION,

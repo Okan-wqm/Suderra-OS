@@ -1,8 +1,9 @@
 # Release Lifecycle
 
 Suderra OS has two release tiers. The tier is derived from the SemVer tag:
-pre-release tags such as `v0.1.0-alpha.1` are candidate releases; GA tags such
-as `v1.0.0` are production releases.
+pre-release tags such as `v0.1.0-rc.1` are candidate releases; GA tags such as
+`v1.0.0` are production releases. In workflow output, `alpha` means the
+pre-release policy tier and includes RC tags.
 
 ## Current Enterprise Release Posture
 
@@ -18,6 +19,11 @@ The RC lifecycle is:
 ```text
 technical-dry-run -> evidence-ingress -> release-candidate preflight -> signed tag -> draft prerelease -> verified undraft -> stable promotion
 ```
+
+Before evidence collection starts, freeze `main` for the RC window or create an
+equivalent protected release ref policy. The current ingress and preflight
+workflows require the bound `source_sha` to equal `origin/main`; any merge to
+`main` invalidates an otherwise successful Image Build for this RC attempt.
 
 Technical dry runs may be used to debug source/run/artifact binding. They do
 not prove release readiness, do not authorize tagging, and do not support a
@@ -49,6 +55,11 @@ Required gates:
   target lists.
 - Base image builds and payload packaging are split so the USB installer
   consumes signed target-image artifacts.
+- Image Build must not transfer installer payload private keys through
+  artifacts. The USB installer base job is public-key-only; payload assembly
+  imports the private installer payload key only from protected CI signing
+  material and verifies that its derived public key matches the base manifest
+  and runtime installer key.
 - Security scans, Rust checks, lint, Buildroot artifact contracts, warning
   policy, and QEMU smoke tests pass.
 - Full-matrix lab input exists under `release-lab-input/<version>/<target>/`
@@ -73,9 +84,11 @@ Required gates:
   `release-publish`. It creates a draft release, downloads the draft asset set,
   validates the publication manifest, re-runs cosign plus GitHub attestation
   verification, creates signed post-publication proof bytes and a second-stage
-  proof manifest, uploads those proof assets, then flips the release public.
-  The signing job has no `contents: write` permission; publish OIDC usage is
-  limited to signing the closure proof.
+  proof manifest, uploads those proof assets, re-downloads the final draft byte
+  set, replays publication manifest/cosign/attestation verification for the
+  base assets again, validates the proof manifest and allowlist, then flips the
+  release public. The signing job has no `contents: write` permission; publish
+  OIDC usage is limited to signing the closure proof.
 - Production blockers remain explicit residual risk; no production-ready claim
   is made.
 
@@ -191,14 +204,18 @@ review rejects the candidate:
 
 ```bash
 gh release view v0.1.0-rc.1 --json isDraft,isPrerelease,tagName
-gh release delete v0.1.0-rc.1 --cleanup-tag=false
+test "$(gh release view v0.1.0-rc.1 --json isDraft --jq '.isDraft')" = "true"
+gh release download v0.1.0-rc.1 --dir rejected-v0.1.0-rc.1
+gh release delete v0.1.0-rc.1 --cleanup-tag=false --yes
 ```
 
 Do not reuse the failed preflight artifact after changing any operator evidence
 or release bytes. Create a new evidence ingress run, a new release-candidate
 preflight, and a new signed tag binding.
 
-If signing or publish approval fails, rerun the tag workflow only while the
-referenced preflight artifact is still retained and unchanged. If the preflight
-artifact expired, rerun `Release Preflight` for the same source SHA and create a
-new annotated tag or signed replacement tag according to repository policy.
+If failure occurs before any upload or publish boundary, rerun is allowed while
+the referenced preflight artifact is still retained and unchanged. If failure
+occurs after draft creation but before undraft, export draft evidence first,
+then delete the whole draft with `--cleanup-tag=false` or remove partial proof
+assets before a new attempt. If a release is already public, never mutate
+assets; supersede it with a new SemVer tag and document the supersession.

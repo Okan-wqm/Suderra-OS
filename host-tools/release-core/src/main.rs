@@ -502,6 +502,8 @@ fn validate_operator_evidence(args: ValidateOperatorEvidenceArgs) -> Result<()> 
         args.expected_source_image_build_run_attempt.as_deref(),
     );
     validate_producer(&mut failures, manifest);
+    validate_operator_bundle(&mut failures, manifest);
+    validate_operator_window(&mut failures, manifest);
 
     let mut manifest_paths = BTreeSet::new();
     validate_operator_files(
@@ -760,6 +762,117 @@ fn validate_producer(failures: &mut Vec<String>, manifest: &Map<String, Value>) 
         {
             failures.push(format!("$.producer.{field}: must be a non-empty string"));
         }
+    }
+}
+
+fn validate_operator_bundle(failures: &mut Vec<String>, manifest: &Map<String, Value>) {
+    let Some(bundle) = manifest.get("operator_bundle").and_then(Value::as_object) else {
+        failures.push("$.operator_bundle: must be an object".to_string());
+        return;
+    };
+    let allowed_host = match bundle.get("allowed_host").and_then(Value::as_str) {
+        Some(value) if !value.is_empty() && !value.contains('/') && !value.contains(':') => value,
+        _ => {
+            failures.push("$.operator_bundle.allowed_host: must be a bare hostname".to_string());
+            ""
+        }
+    };
+    validate_operator_https_url(
+        failures,
+        "$.operator_bundle.url",
+        bundle.get("url").and_then(Value::as_str),
+        allowed_host,
+    );
+    for field in ["sha256", "signature_sha256", "certificate_sha256"] {
+        match bundle.get(field).and_then(Value::as_str) {
+            Some(value) => push_err(
+                failures,
+                validate_sha256(value, &format!("$.operator_bundle.{field}")),
+            ),
+            None => failures.push(format!(
+                "$.operator_bundle.{field}: must be a lowercase sha256 digest"
+            )),
+        }
+    }
+    if bundle
+        .get("certificate_identity")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        failures
+            .push("$.operator_bundle.certificate_identity: must be a non-empty string".to_string());
+    }
+    if bundle
+        .get("certificate_oidc_issuer")
+        .and_then(Value::as_str)
+        != Some("https://token.actions.githubusercontent.com")
+    {
+        failures.push(
+            "$.operator_bundle.certificate_oidc_issuer: must be GitHub Actions OIDC".to_string(),
+        );
+    }
+    if bundle.get("verified").and_then(Value::as_bool) != Some(true) {
+        failures.push("$.operator_bundle.verified: must be true".to_string());
+    }
+}
+
+fn validate_operator_https_url(
+    failures: &mut Vec<String>,
+    field: &str,
+    value: Option<&str>,
+    allowed_host: &str,
+) {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        failures.push(format!("{field}: must be a non-empty HTTPS URL"));
+        return;
+    };
+    let Some(rest) = value.strip_prefix("https://") else {
+        failures.push(format!("{field}: must use https"));
+        return;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        failures.push(format!("{field}: must include a host"));
+        return;
+    }
+    if authority.contains('@') {
+        failures.push(format!("{field}: must not embed credentials"));
+    }
+    let host = authority
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !allowed_host.is_empty() && host != allowed_host {
+        failures.push(format!(
+            "{field}: host must match operator bundle allowlist"
+        ));
+    }
+}
+
+fn validate_operator_window(failures: &mut Vec<String>, manifest: &Map<String, Value>) {
+    let generated = match require_string(manifest, "generated_at") {
+        Ok(value) => value,
+        Err(error) => {
+            failures.push(error);
+            ""
+        }
+    };
+    let expires = match require_string(manifest, "expires_at") {
+        Ok(value) => value,
+        Err(error) => {
+            failures.push(error);
+            ""
+        }
+    };
+    for (field, value) in [("generated_at", generated), ("expires_at", expires)] {
+        if !(value.is_empty() || value.ends_with('Z') && value.contains('T')) {
+            failures.push(format!("$.{field}: must be an ISO-8601 UTC timestamp"));
+        }
+    }
+    if !generated.is_empty() && !expires.is_empty() && expires <= generated {
+        failures.push("$.expires_at: must be after generated_at".to_string());
     }
 }
 

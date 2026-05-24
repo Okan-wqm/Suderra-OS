@@ -36,7 +36,24 @@ write(
     {
         "schema_version": "suderra.audit-log-snapshot.v1",
         "status": "collected",
+        "source_kind": "manual-org-export",
+        "organization": "Okan-wqm",
+        "repository": "Okan-wqm/Suderra-OS",
+        "collector": {"identity": "contract", "run_id": run_id},
+        "lookback_window": {
+            "start": "2026-04-24T00:00:00Z",
+            "end": "2026-05-24T00:00:00Z",
+            "days": 30
+        },
+        "query": "repo:Okan-wqm/Suderra-OS",
+        "event_count": 0,
         "events_sha256": "a" * 64,
+        "raw_export": {
+            "path": "audit-log.raw.json",
+            "bytes": 2,
+            "sha256": "e" * 64
+        },
+        "replay": {"status": "passed", "unapproved_events": []},
         "unapproved_governance_changes": False,
     },
 )
@@ -71,8 +88,15 @@ PY
 
 mkdir -p "${STAGED_ROOT}"
 ( cd "${BUNDLE_ROOT}" && tar -czf "${TMPDIR}/operator-evidence.tar.gz" . )
+printf 'contract signature\n' >"${TMPDIR}/operator-evidence.tar.gz.sig"
+printf 'contract certificate\n' >"${TMPDIR}/operator-evidence.tar.gz.cert"
+BUNDLE_SHA256="$(sha256sum "${TMPDIR}/operator-evidence.tar.gz" | awk '{print $1}')"
+BUNDLE_SIGNATURE_SHA256="$(sha256sum "${TMPDIR}/operator-evidence.tar.gz.sig" | awk '{print $1}')"
+BUNDLE_CERTIFICATE_SHA256="$(sha256sum "${TMPDIR}/operator-evidence.tar.gz.cert" | awk '{print $1}')"
 python3 "${TOOL}" stage \
     --bundle "${TMPDIR}/operator-evidence.tar.gz" \
+    --bundle-signature "${TMPDIR}/operator-evidence.tar.gz.sig" \
+    --bundle-certificate "${TMPDIR}/operator-evidence.tar.gz.cert" \
     --output-root "${STAGED_ROOT}" \
     --version "${VERSION}" \
     --source-sha "${SOURCE_SHA}" \
@@ -83,7 +107,41 @@ python3 "${TOOL}" stage \
     --run-id "987654321" \
     --run-attempt "1" \
     --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence.tar.gz" \
+    --bundle-sha256 "${BUNDLE_SHA256}" \
+    --bundle-signature-sha256 "${BUNDLE_SIGNATURE_SHA256}" \
+    --bundle-certificate-sha256 "${BUNDLE_CERTIFICATE_SHA256}" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
     >/dev/null
+
+if python3 "${TOOL}" stage \
+    --bundle "${TMPDIR}/operator-evidence.tar.gz" \
+    --bundle-signature "${TMPDIR}/operator-evidence.tar.gz.sig" \
+    --bundle-certificate "${TMPDIR}/operator-evidence.tar.gz.cert" \
+    --output-root "${TMPDIR}/bad-digest-root" \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-image-build-run-id "${RUN_ID}" \
+    --source-image-build-run-attempt "${RUN_ATTEMPT}" \
+    --repository "Okan-wqm/Suderra-OS" \
+    --workflow "Release Evidence Ingress" \
+    --run-id "987654321" \
+    --run-attempt "1" \
+    --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence.tar.gz" \
+    --bundle-sha256 "$(printf '0%.0s' {1..64})" \
+    --bundle-signature-sha256 "${BUNDLE_SIGNATURE_SHA256}" \
+    --bundle-certificate-sha256 "${BUNDLE_CERTIFICATE_SHA256}" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
+    >/dev/null 2>"${TMPDIR}/bad-bundle-digest.err"; then
+    echo "ERROR: operator evidence ingress accepted a mismatched bundle digest" >&2
+    exit 1
+fi
+grep -q "bundle-sha256" "${TMPDIR}/bad-bundle-digest.err"
 
 python3 "${TOOL}" validate \
     "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
@@ -93,6 +151,57 @@ python3 "${TOOL}" validate \
     --expected-source-image-build-run-id "${RUN_ID}" \
     --expected-source-image-build-run-attempt "${RUN_ATTEMPT}" \
     >/dev/null
+
+python3 - "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+assert payload["schema_version"] == "suderra.operator-evidence-ingress.v2"
+PY
+
+cp "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    "${TMPDIR}/expired-ingress.json"
+python3 - "${TMPDIR}/expired-ingress.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["generated_at"] = "2000-01-01T00:00:00Z"
+payload["expires_at"] = "2000-01-02T00:00:00Z"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${TMPDIR}/expired-ingress.json" \
+    2>"${TMPDIR}/expired-ingress.err"; then
+    echo "ERROR: operator evidence ingress accepted an expired manifest" >&2
+    exit 1
+fi
+grep -q "expired" "${TMPDIR}/expired-ingress.err"
+
+cp "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
+    "${TMPDIR}/missing-bundle-provenance.json"
+python3 - "${TMPDIR}/missing-bundle-provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload.pop("operator_bundle", None)
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate \
+    "${TMPDIR}/missing-bundle-provenance.json" \
+    2>"${TMPDIR}/missing-bundle-provenance.err"; then
+    echo "ERROR: operator evidence ingress accepted missing bundle provenance" >&2
+    exit 1
+fi
+grep -q "operator_bundle" "${TMPDIR}/missing-bundle-provenance.err"
 
 cp "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
     "${TMPDIR}/missing-required-record.json"

@@ -82,6 +82,10 @@ jobs:
               raise SystemExit("production-candidate profile requires a GA version")
           if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
               raise SystemExit("source_sha must be a lowercase git commit sha")
+          manifest_sha = os.environ.get("EVIDENCE_INGRESS_MANIFEST_SHA256", "")
+          if profile in {"release-candidate", "production-candidate"}:
+              if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha):
+                  raise SystemExit(f"{profile} requires evidence_ingress_manifest_sha256 as a lowercase sha256")
           run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
           if run.get("name") != "Image Build":
               raise SystemExit(f"source_run_id must point to Image Build workflow, got {run.get('name')!r}")

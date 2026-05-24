@@ -130,10 +130,30 @@ must be able to prove the target bytes did not change.
 
 ## Lab Input JSON
 
-Create one structured lab input file using `suderra.lab-evidence.v3`:
+Create one structured lab input file using `suderra.lab-evidence.v3`. Prefer the
+collector CLI so source SHA, Image Build run ID, station registry, signatures,
+and file digests are captured consistently:
 
 ```text
 release-lab-input/<version>/pi-cm4-revpi-usb-installer/lab.json
+```
+
+```bash
+VERSION=v0.1.0-rc.1
+SOURCE_SHA=<exact-main-commit>
+IMAGE_BUILD_RUN_ID=<successful-image-build-run-id>
+
+python3 scripts/evidence/suderra-lab.py collect \
+  --version "${VERSION}" \
+  --target pi-cm4-revpi-usb-installer \
+  --source-sha "${SOURCE_SHA}" \
+  --source-run-id "${IMAGE_BUILD_RUN_ID}" \
+  --artifact <installer-image-or-flash-artifact> \
+  --spec <station-spec.json> \
+  --signing-key <station-key> \
+  --station-registry "release-governance/${VERSION}/station-registry.json" \
+  --output-root release-lab-input \
+  --profile release-candidate
 ```
 
 Validate it before tagging:

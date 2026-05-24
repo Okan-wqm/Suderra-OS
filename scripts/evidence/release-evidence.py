@@ -91,13 +91,14 @@ MACHINE_VERIFICATION_SCHEMA_VERSION = "suderra.machine-verification.v3"
 LEGACY_MACHINE_VERIFICATION_SCHEMA_VERSIONS = {"suderra.machine-verification.v2"}
 GOVERNANCE_CHECKS = (
     "policy_validation",
+    "snapshot_manifest",
+    "repo",
     "branch_protection",
     "rulesets",
     "release_sign_environment",
     "release_sign_environment_deployment_policy",
     "release_environment",
     "release_environment_deployment_policy",
-    "tag_protection",
     "workflow_permissions",
     "codeowners",
     "audit_log",
@@ -876,13 +877,14 @@ def apply_build_evidence(bundle_dir: Path, input_root: Path, version: str, targe
 def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evidence: dict[str, Any]) -> None:
     mapping = {
         "policy_validation": "governance-policy-validation.json",
+        "snapshot_manifest": "snapshot-manifest.json",
+        "repo": "repo.json",
         "branch_protection": "main-branch-protection.json",
         "rulesets": "rulesets.json",
         "release_sign_environment": "release-sign-environment.json",
         "release_sign_environment_deployment_policy": "release-sign-deployment-branch-policies.json",
         "release_environment": "release-publish-environment.json",
         "release_environment_deployment_policy": "release-publish-deployment-branch-policies.json",
-        "tag_protection": "tag-protection.json",
         "workflow_permissions": "workflow-permissions.json",
         "codeowners": "codeowners.json",
         "audit_log": "audit-log.json",
@@ -1971,7 +1973,13 @@ def validate_governance(validation: Validation, evidence: dict[str, Any], requir
             if not isinstance(payload, dict):
                 validation.error(f"{path}.evidence", "must be a governance validation JSON object")
                 continue
-            if payload.get("schema_version") not in {
+            if require_pass:
+                if payload.get("schema_version") != "suderra.github-governance-validation.v2":
+                    validation.error(
+                        f"{path}.evidence",
+                        "schema_version must be suderra.github-governance-validation.v2",
+                    )
+            elif payload.get("schema_version") not in {
                 "suderra.github-governance-validation.v1",
                 "suderra.github-governance-validation.v2",
             }:
