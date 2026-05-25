@@ -31,6 +31,7 @@ configure: WARNING: Continuing even with errors mentioned immediately above this
 >>> host-fakeroot 1.36 Building
 awk: ./wrapawk: warning: regexp escape sequence `\#' is not a known regexp operator
 ./wrapawk:27: warning: regexp escape sequence `\#' is not a known regexp operator
+27: warning: regexp escape sequence `\#' is not a known regexp operator
 awk: warning: regexp escape sequence `\#' is not a known regexp operator
 warning: regexp escape sequence `\#' is not a known regexp operator
 >>> host-flex 2.6.4 Building
@@ -80,7 +81,7 @@ import json
 import sys
 
 evidence = json.loads(open(sys.argv[1], encoding="utf-8").read())
-assert evidence["summary"] == {"known-upstream": 30, "owned": 0, "third-party": 0}
+assert evidence["summary"] == {"known-upstream": 31, "owned": 0, "third-party": 0}
 assert evidence["unique_fingerprints"] == 20
 assert evidence["fingerprints"]["warning: POSIX Yacc does not support %define [-Wyacc]"] == 3
 assert evidence["fingerprints"]["warning: POSIX Yacc does not support %expect [-Wyacc]"] == 1
@@ -89,7 +90,7 @@ assert ".1-7: warning: POSIX Yacc does not support %define [-Wyacc]" in raw
 assert evidence["fingerprints"]["libtool: install: warning: remember to run `libtool --finish $OUTPUT_DIR/per-package/host-gcc-final/host/libexec/gcc/aarch64-buildroot-linux-gnu/$GCC_VERSION'"] == 2
 assert evidence["fingerprints"]["libtool: link: warning: `-version-info/-version-number' is ignored for convenience libraries"] == 2
 assert evidence["fingerprints"]["configure: WARNING: Continuing even with errors mentioned immediately above this line."] == 2
-assert evidence["fingerprints"]["host-fakeroot: ./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"] == 4
+assert evidence["fingerprints"]["host-fakeroot: ./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"] == 5
 assert evidence["fingerprints"]["host-gcc-final: Makefile: warning: overriding recipe for target 'all-multi'"] == 2
 assert evidence["fingerprints"]["host-gcc-final: libsanitizer/ubsan/ubsan_handlers.cpp: warning: 'Loc.__ubsan::Location::SymbolizedLoc' may be used uninitialized [-Wmaybe-uninitialized]"] == 1
 assert evidence["fingerprints"]["busybox: .config: warning: trying to assign nonexistent symbol ASH_SLEEP"] == 1

@@ -85,6 +85,10 @@ KCONFIG_ASSIGNMENT_WARNING_RE = re.compile(
 FAKEROOT_WRAPAWK_REGEXP_WARNING = (
     "./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator"
 )
+FAKEROOT_REGEXP_WARNING_RE = re.compile(
+    r"^(?:awk: )?(?:(?:\./wrapawk(?::\d+(?:[.-]\d+)*)?|\d+(?:[.-]\d+)*): )?"
+    r"warning: regexp escape sequence `\\#' is not a known regexp operator$"
+)
 
 
 @dataclass(frozen=True)
@@ -179,11 +183,7 @@ def fingerprint(text: str) -> str:
 
 
 def canonical_package_fingerprint(package: str | None, raw_fingerprint: str) -> str:
-    if package == "host-fakeroot" and raw_fingerprint in {
-        "warning: regexp escape sequence `\\#' is not a known regexp operator",
-        "awk: warning: regexp escape sequence `\\#' is not a known regexp operator",
-        FAKEROOT_WRAPAWK_REGEXP_WARNING,
-    }:
+    if package == "host-fakeroot" and FAKEROOT_REGEXP_WARNING_RE.match(raw_fingerprint):
         return FAKEROOT_WRAPAWK_REGEXP_WARNING
     return raw_fingerprint
 
