@@ -62,7 +62,6 @@ rulesets = [
 def environment(name: str) -> dict:
     return {
         "name": name,
-        "prevent_self_review": True,
         "deployment_branch_policy": {
             "protected_branches": False,
             "custom_branch_policies": True,
@@ -70,6 +69,7 @@ def environment(name: str) -> dict:
         "protection_rules": [
             {
                 "type": "required_reviewers",
+                "prevent_self_review": True,
                 "reviewers": [
                     {"type": "User", "reviewer": {"login": "release-owner"}},
                     {"type": "User", "reviewer": {"login": "security-owner"}},
