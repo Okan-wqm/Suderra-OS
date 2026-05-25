@@ -768,6 +768,8 @@ write_json(
             "binding_manifest": "suderra.release-input-binding.v2",
             "evidence_ingress": "suderra.operator-evidence-ingress.v2",
             "lab_input": "suderra.lab-evidence.v3",
+            "production_runtime_suite": "suderra.qemu-production-runtime-suite.v1",
+            "hsm_signing_session": "suderra.hsm-signing-session.v2",
             "qemu_input": "suderra.qemu-acceptance.v4",
             "release_evidence": "suderra.release-evidence.v5",
         },

@@ -822,6 +822,18 @@ def main() -> int:
                 failures.append(f"HSM signing session mode must be production: {session}")
             if not isinstance(payload.get("challenge"), dict) or not isinstance(payload.get("artifacts"), list):
                 failures.append(f"HSM signing session must bind challenge and artifacts: {session}")
+            for field in ("pkcs11_uri", "certificate_sha256", "hsm_serial", "key_id", "ceremony_id"):
+                if not isinstance(payload.get(field), str) or not payload.get(field, "").strip():
+                    failures.append(f"HSM signing session must bind {field}: {session}")
+            audit = payload.get("audit")
+            if not isinstance(audit, dict) or not isinstance(audit.get("transcript_sha256"), str):
+                failures.append(f"HSM signing session must preserve audit transcript digest: {session}")
+            token = payload.get("token")
+            if not isinstance(token, dict) or token.get("serial") != payload.get("hsm_serial"):
+                failures.append(f"HSM signing session token serial must bind hsm_serial: {session}")
+            key = payload.get("key")
+            if not isinstance(key, dict) or key.get("uri") != payload.get("pkcs11_uri"):
+                failures.append(f"HSM signing session key URI must bind pkcs11_uri: {session}")
     for row in matrix.get("defconfigs", []):
         if row.get("release") and row.get("qemu_test"):
             qemu = args.root / "release-lab-input" / args.version / str(row["target"]) / "qemu.json"

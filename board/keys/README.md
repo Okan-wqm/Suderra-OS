@@ -89,7 +89,7 @@ girdiler olmadan fail-closed çalışır:
 
 - `SUDERRA_RAUC_PKCS11_URI`
 - `SUDERRA_RAUC_SIGNING_CERT`
-- `SUDERRA_HSM_SIGNING_EVIDENCE` (`suderra.hsm-signing-session.v1`)
+- `SUDERRA_HSM_SIGNING_EVIDENCE` (`suderra.hsm-signing-session.v2`)
 
 Detay: [../../docs/security/key-management.md](../../docs/security/key-management.md)
 

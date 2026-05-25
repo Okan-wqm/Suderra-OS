@@ -43,16 +43,16 @@ else
 fi
 
 if [ -z "${DISK_IMG}" ] || [ ! -f "${DISK_IMG}" ]; then
-    echo "SKIP: imaj bulunamadı"
+    echo "ERROR: imaj bulunamadı"
     echo "  Aranılan: ${PROJECT_ROOT}/output/${DEFCONFIG}/images/disk.img"
     echo "  Önce: ./scripts/build-in-docker.sh ${DEFCONFIG}"
-    exit 77
+    exit 1
 fi
 
 # QEMU varlığı kontrol
 if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
-    echo "SKIP: qemu-system-x86_64 yok (apt install qemu-system-x86)"
-    exit 77
+    echo "ERROR: qemu-system-x86_64 yok (apt install qemu-system-x86)"
+    exit 1
 fi
 
 find_ovmf_code() {
@@ -65,8 +65,8 @@ find_ovmf_code() {
             printf '%s\n' "${OVMF_CODE}"
             return 0
         fi
-        echo "SKIP: OVMF_CODE bulundu değil: ${OVMF_CODE}" >&2
-        return 77
+        echo "ERROR: OVMF_CODE bulundu değil: ${OVMF_CODE}" >&2
+        return 1
     fi
 
     candidates=(
@@ -112,8 +112,8 @@ find_ovmf_code() {
         } | sort
     )
 
-    echo "SKIP: OVMF firmware bulunamadı. OVMF_CODE=/path/to/OVMF_CODE.fd ayarlayın." >&2
-    return 77
+    echo "ERROR: OVMF firmware bulunamadı. OVMF_CODE=/path/to/OVMF_CODE.fd ayarlayın." >&2
+    return 1
 }
 
 OVMF_CODE_PATH="$(find_ovmf_code)" || exit "$?"

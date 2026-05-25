@@ -37,6 +37,8 @@ SCHEMA_ROLES = {
     "approval": "suderra.release-approval.v2",
     "qemu_input": "suderra.qemu-acceptance.v4",
     "lab_input": "suderra.lab-evidence.v3",
+    "production_runtime_suite": "suderra.qemu-production-runtime-suite.v1",
+    "hsm_signing_session": "suderra.hsm-signing-session.v2",
     "release_evidence": "suderra.release-evidence.v5",
 }
 OPTIONAL_EMPTY_INPUT_ROLES = {"qemu-stderr"}
@@ -47,6 +49,8 @@ PREFLIGHT_INPUT_DIRS = (
     "release-approvals",
     "release-security",
     "release-reproducibility",
+    "release-runtime",
+    "release-signing",
     "release-ingress",
 )
 VALID_PREFLIGHT_PROFILES = {"technical-dry-run", "release-candidate", "production-candidate"}
@@ -240,6 +244,10 @@ def input_role_for_path(rel_path: Path) -> str:
         return "security-report"
     if parts[0] == "release-reproducibility":
         return "reproducibility-report"
+    if parts[0] == "release-runtime" and rel_path.name == "production-runtime.json":
+        return "production-runtime-suite"
+    if parts[0] == "release-signing" and rel_path.suffix == ".json":
+        return "hsm-signing-session"
     if parts[0] == "release-ingress" and rel_path.name == EVIDENCE_INGRESS_MANIFEST:
         return "evidence-ingress"
     if parts[0] == "release-ingress" and rel_path.name in EVIDENCE_INGRESS_SIGNATURE_SIDECARS:

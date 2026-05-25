@@ -18,6 +18,8 @@ RAUC_MOUNT_UNIT="${ROOT}/package/suderra-rauc-config/boot.mount"
 RAUC_MARK_GOOD="${ROOT}/package/suderra-rauc-config/suderra-rauc-mark-good"
 RAUC_BOOT_STATE="${ROOT}/package/suderra-rauc-config/suderra-rauc-boot-state"
 INSTALLER="${ROOT}/userspace/suderra-installer/src/cmd/install.rs"
+OTA_MAIN="${ROOT}/userspace/suderra-ota/src/main.rs"
+OTA_PACKAGE_MK="${ROOT}/package/suderra-ota/suderra-ota.mk"
 EDGE_INSTALL="${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-edge-install"
 MANIFEST="${ROOT}/userspace/suderra-installer/src/manifest.rs"
 PRODUCTION_ARTIFACTS="${ROOT}/scripts/production-artifacts.sh"
@@ -35,6 +37,15 @@ if grep -Eq '^Before=.*sysinit\.target' "${DATA_UNIT}" "${OVERLAY_FIRSTBOOT_UNIT
     echo "ERROR: data/firstboot units must not force themselves before sysinit.target" >&2
     exit 1
 fi
+grep -q '/usr/sbin/suderra-data-unlock' "${DATA_UNIT}" || {
+    echo "ERROR: /data service must delegate production LUKS/TPM unlock to suderra-data-unlock" >&2
+    exit 1
+}
+grep -q 'cryptsetup isLuks' "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock" &&
+    grep -q 'systemd-cryptsetup attach' "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock" || {
+    echo "ERROR: production /data path must require LUKS2 and TPM2-backed unlock" >&2
+    exit 1
+}
 grep -q '^After=.*suderra-data.service' "${NFTABLES_UNIT}" || {
     echo "ERROR: nftables must load after suderra-data so lockdown state is visible" >&2
     exit 1
@@ -77,6 +88,10 @@ grep -q 'production defconfig must install Suderra RAUC slot configuration' "${P
     echo "ERROR: production post-image gate must require Suderra RAUC slot config" >&2
     exit 1
 }
+grep -q 'suderra_qemu_x86_64_prod_ab' "${POST_IMAGE}" || {
+    echo "ERROR: qemu-x86_64-prod-ab must receive the same production artifact gate as x86_64" >&2
+    exit 1
+}
 grep -q 'x86 production boot/verity artifact' "${POST_IMAGE}" || {
     echo "ERROR: post-image must generate x86 production boot/verity artifacts before genimage" >&2
     exit 1
@@ -117,6 +132,10 @@ for token in \
     'BR2_PACKAGE_RAUC_JSON=y' \
     'BR2_PACKAGE_HOST_RAUC=y' \
     'BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y' \
+    'BR2_PACKAGE_SUDERRA_OTA=y' \
+    'BR2_PACKAGE_CRYPTSETUP=y' \
+    'BR2_PACKAGE_TPM2_TSS=y' \
+    'BR2_PACKAGE_TPM2_TOOLS=y' \
     'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=' \
     'BR2_TARGET_GRUB2_INSTALL_TOOLS=y' \
     'loadenv' \
@@ -129,7 +148,7 @@ do
 done
 
 grep -q 'CONFIG_DM_INIT=y' "${KERNEL_FRAGMENT}" || {
-    echo "ERROR: kernel hardening fragment must enable dm-mod.create boot-time verity mapping" >&2
+    echo "ERROR: kernel hardening fragment must keep dm-init built in for verity boot coverage" >&2
     exit 1
 }
 grep -q 'partition rootfs-a-verity' "${X86_GENIMAGE}" || {
@@ -140,8 +159,9 @@ grep -q 'partition rootfs-b-verity' "${X86_GENIMAGE}" || {
     echo "ERROR: x86 genimage must reserve a rootfs-b verity partition" >&2
     exit 1
 }
-grep -q 'label = "SUDERRA-DATA"' "${X86_GENIMAGE}" || {
-    echo "ERROR: x86 genimage must create a labelled /data filesystem" >&2
+grep -q 'partition data' "${X86_GENIMAGE}" &&
+    ! grep -q 'image = "data.ext4"' "${X86_GENIMAGE}" || {
+    echo "ERROR: x86 production genimage must reserve blank /data for LUKS2 provisioning, not ship plain ext4" >&2
     exit 1
 }
 grep -q 'file EFI' "${X86_GENIMAGE}" || {
@@ -187,7 +207,9 @@ done
 for token in \
     'veritysetup format' \
     'veritysetup verify' \
-    'dm-mod.create=' \
+    'build_x86_verity_initramfs' \
+    'suderra.verity.root_partlabel' \
+    '.initrd=' \
     'objcopy' \
     'sbsign' \
     'sbverify' \
@@ -307,6 +329,26 @@ grep -q 'std::fs::rename' "${MANIFEST}" || {
 }
 grep -q 'WORK_DIR=/run/suderra-installer/edge' "${EDGE_INSTALL}" || {
     echo "ERROR: edge install workdir must be root-owned runtime state, not agent-writable /var/lib/suderra" >&2
+    exit 1
+}
+
+for token in \
+    'suderra.os-update-manifest.v1' \
+    'verify_manifest_signature' \
+    'min_current_version' \
+    'rollback_floor' \
+    'run_rauc(&["install"' \
+    'run_rauc(&["status", "mark-bad"])' \
+    'run_rauc(&["status", "mark-good"])' \
+    'persist_rollback_floor'
+do
+    grep -Fq "${token}" "${OTA_MAIN}" || {
+        echo "ERROR: suderra-ota missing production OTA token: ${token}" >&2
+        exit 1
+    }
+done
+grep -q 'SUDERRA_RUST_WORKSPACE_BUILD,suderra-ota' "${OTA_PACKAGE_MK}" || {
+    echo "ERROR: suderra-ota package must use the shared Rust workspace build contract" >&2
     exit 1
 }
 grep -q -- "--proto '=https'" "${EDGE_INSTALL}" || {

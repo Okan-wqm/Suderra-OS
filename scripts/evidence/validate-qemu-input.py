@@ -248,6 +248,8 @@ def validate_production_facts(errors: list[str], facts: dict[str, Any], checks: 
     listeners = facts.get("listeners")
     if not isinstance(listeners, list):
         error(errors, "$.guest_facts.listeners", "must be a list for production-runtime")
+    elif listeners:
+        error(errors, "$.guest_facts.listeners", "must be empty for production-runtime")
     firewall = facts.get("firewall")
     if not isinstance(firewall, dict) or firewall.get("loaded") is not True:
         error(errors, "$.guest_facts.firewall.loaded", "must be true for production-runtime")

@@ -1,0 +1,15 @@
+config BR2_PACKAGE_SUDERRA_OTA
+	bool "suderra-ota"
+	depends on BR2_INIT_SYSTEMD
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_HOST_RUSTC
+	select BR2_PACKAGE_RAUC
+	help
+	  Production OS update orchestrator. It verifies signed
+	  suderra.os-update-manifest.v1 manifests, enforces target and
+	  anti-rollback policy, delegates inactive-slot installation to RAUC,
+	  and persists typed update evidence under /data.
+
+comment "suderra-ota needs systemd, threads, and a Rust-supported target"
+	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

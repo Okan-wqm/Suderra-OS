@@ -1,0 +1,18 @@
+[Unit]
+Description=Suderra OTA mark-good rollback-floor persistence
+Documentation=https://github.com/Okan-wqm/Suderra-OS
+After=suderra-rauc-mark-good.service
+Requires=suderra-rauc-mark-good.service
+ConditionPathExists=/data/suderra/ota/state.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/suderra-ota mark-good --skip-rauc
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/data /boot
+
+[Install]
+WantedBy=multi-user.target

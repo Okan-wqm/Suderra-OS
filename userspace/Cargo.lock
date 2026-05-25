@@ -1568,7 +1568,10 @@ name = "suderra-ota"
 version = "0.1.0-alpha"
 dependencies = [
  "anyhow",
+ "chrono",
+ "clap",
  "ed25519-dalek",
+ "hex",
  "nix",
  "reqwest",
  "sd-notify",

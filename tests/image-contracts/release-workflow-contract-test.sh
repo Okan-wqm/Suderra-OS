@@ -9,6 +9,7 @@ PREFLIGHT_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release-preflight.yml"
 EVIDENCE_INGRESS_WORKFLOW="${PROJECT_ROOT}/.github/workflows/release-evidence-ingress.yml"
 BUILD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
 IMAGE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/image-build.yml"
+PRODUCTION_RUNTIME_WORKFLOW="${PROJECT_ROOT}/.github/workflows/production-runtime-qemu.yml"
 
 grep -q '^concurrency:' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must have a release-tag concurrency guard" >&2
@@ -28,6 +29,23 @@ grep -q '^name: Release Evidence Ingress$' "${EVIDENCE_INGRESS_WORKFLOW}" || {
     echo "ERROR: release evidence ingress workflow must exist" >&2
     exit 1
 }
+grep -q '^name: QEMU x86_64 Production Runtime Evidence$' "${PRODUCTION_RUNTIME_WORKFLOW}" || {
+    echo "ERROR: qemu-x86_64-prod-ab production runtime evidence workflow must exist" >&2
+    exit 1
+}
+for token in \
+    'suderra_qemu_x86_64_prod_ab_defconfig' \
+    'runtime-inputs/OVMF_CODE.secboot.fd' \
+    'swtpm socket' \
+    'tests/qemu/production-runtime.py create' \
+    'validate-production-runtime-suite.py' \
+    'release-runtime/${{ inputs.version }}/qemu-x86_64-prod-ab/production-runtime.json'
+do
+    grep -Fq "${token}" "${PRODUCTION_RUNTIME_WORKFLOW}" || {
+        echo "ERROR: production runtime workflow missing token: ${token}" >&2
+        exit 1
+    }
+done
 grep -q 'source_image_build_run_id:' "${EVIDENCE_INGRESS_WORKFLOW}" || {
     echo "ERROR: evidence ingress must bind the source Image Build run id" >&2
     exit 1

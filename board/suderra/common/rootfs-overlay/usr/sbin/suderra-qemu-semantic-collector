@@ -202,7 +202,7 @@ case "${data_source}" in
 esac
 
 rollback_floor="not_collected"
-for rollback_file in /etc/suderra/rollback-floor /usr/lib/suderra/rollback-floor /var/lib/suderra/rollback-floor; do
+for rollback_file in /data/suderra/ota/rollback-floor /etc/suderra/rollback-floor /usr/lib/suderra/rollback-floor /var/lib/suderra/rollback-floor; do
     if [ -r "${rollback_file}" ]; then
         rollback_floor="$(sed -n '1p' "${rollback_file}" 2>/dev/null || true)"
         [ -n "${rollback_floor}" ] || rollback_floor="not_collected"

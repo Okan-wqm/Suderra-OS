@@ -2201,10 +2201,29 @@ def validate_hsm_signing_sessions(
                 validation.error(f"$.hsm_signing_sessions[{idx}].schema_version", "must be suderra.hsm-signing-session.v2")
             if payload.get("mode") != "production":
                 validation.error(f"$.hsm_signing_sessions[{idx}].mode", "must be production")
-            for field in ("pkcs11_uri", "certificate_sha256", "hsm_serial", "ceremony_id"):
+            for field in ("pkcs11_uri", "certificate_sha256", "hsm_serial", "key_id", "ceremony_id"):
                 check_string(validation, f"$.hsm_signing_sessions[{idx}].{field}", payload.get(field))
             if not isinstance(payload.get("challenge"), dict):
                 validation.error(f"$.hsm_signing_sessions[{idx}].challenge", "must preserve signed challenge")
+            else:
+                for field in ("request_sha256", "signature_sha256", "transcript_sha256"):
+                    check_string(validation, f"$.hsm_signing_sessions[{idx}].challenge.{field}", payload["challenge"].get(field))
+            audit = payload.get("audit")
+            if not isinstance(audit, dict):
+                validation.error(f"$.hsm_signing_sessions[{idx}].audit", "must preserve audit digests")
+            else:
+                for field in ("log_sha256", "transcript_sha256"):
+                    check_string(validation, f"$.hsm_signing_sessions[{idx}].audit.{field}", audit.get(field))
+            token = payload.get("token")
+            if not isinstance(token, dict):
+                validation.error(f"$.hsm_signing_sessions[{idx}].token", "must preserve token inventory")
+            elif token.get("serial") != payload.get("hsm_serial"):
+                validation.error(f"$.hsm_signing_sessions[{idx}].token.serial", "must match hsm_serial")
+            key = payload.get("key")
+            if not isinstance(key, dict):
+                validation.error(f"$.hsm_signing_sessions[{idx}].key", "must preserve key metadata")
+            elif key.get("uri") != payload.get("pkcs11_uri"):
+                validation.error(f"$.hsm_signing_sessions[{idx}].key.uri", "must match pkcs11_uri")
             artifacts = payload.get("artifacts")
             if not isinstance(artifacts, list) or not artifacts:
                 validation.error(f"$.hsm_signing_sessions[{idx}].artifacts", "must bind signed artifacts")

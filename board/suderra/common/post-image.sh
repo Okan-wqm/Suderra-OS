@@ -69,7 +69,7 @@ elif [ -n "${ENV_VARIANT}" ]; then
     SUDERRA_OS_VARIANT="${ENV_VARIANT}"
 else
     case "${DEFCONFIG_NAME}" in
-        suderra_x86_64*)
+        suderra_x86_64*|suderra_qemu_x86_64_prod_ab*)
             echo "ERROR: production-capable ${DEFCONFIG_NAME} requires BR2_CONFIG or SUDERRA_VARIANT"
             exit 1
             ;;
@@ -485,7 +485,7 @@ enforce_production_contract() {
         echo "ERROR: production defconfig must install Suderra RAUC slot configuration"
         exit 1
     fi
-    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ]; then
+    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ] || [ "${DEFCONFIG_NAME}" = "suderra_qemu_x86_64_prod_ab" ]; then
         verify_signed_pe_artifact() {
             local name="$1"
             local artifact="${BINARIES_DIR}/${name}"
