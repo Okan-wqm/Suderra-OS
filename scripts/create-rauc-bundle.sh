@@ -57,20 +57,27 @@ reject_prod_file_key() {
 }
 
 production_signing_evidence() {
+    local artifact_sha="${1:-}"
     local evidence="${SUDERRA_HSM_SIGNING_EVIDENCE:-}"
     local uri="${SUDERRA_RAUC_PKCS11_URI:-}"
     local script_dir
+    local -a args
 
     [ -n "${evidence}" ] || die "SUDERRA_HSM_SIGNING_EVIDENCE must be set for production RAUC signing"
     need_file "${evidence}"
     script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-    python3 "${script_dir}/evidence/validate-hsm-signing-evidence.py" validate \
+    args=(
+        python3 "${script_dir}/evidence/validate-hsm-signing-evidence.py" validate
         "${evidence}" \
         --pkcs11-uri "${uri}" \
         --certificate "${SUDERRA_RAUC_SIGNING_CERT}" \
         --artifact-role "rauc-bundle" \
-        --require-production \
-        >/dev/null || die "HSM signing evidence validation failed"
+        --require-production
+    )
+    if [ -n "${artifact_sha}" ]; then
+        args+=(--artifact-sha256 "${artifact_sha}")
+    fi
+    "${args[@]}" >/dev/null || die "HSM signing evidence validation failed"
 }
 
 resolve_rauc() {
@@ -164,7 +171,6 @@ create_x86_bundle() {
         reject_prod_file_key "${SUDERRA_RAUC_PKCS11_URI:-}"
         [ -n "${keyring}" ] || die "SUDERRA_RAUC_KEYRING must be set for production RAUC signing"
         need_file "${keyring}"
-        production_signing_evidence
         signing_key="${SUDERRA_RAUC_PKCS11_URI}"
     fi
     [ -n "${signing_key}" ] || die "SUDERRA_RAUC_SIGNING_KEY must be set"
@@ -198,6 +204,9 @@ create_x86_bundle() {
         "${stage_dir}" \
         "${output}"
     need_file "${output}"
+    if production_mode; then
+        production_signing_evidence "$(sha256_of "${output}")"
+    fi
 
     if [ -n "${keyring}" ]; then
         need_file "${keyring}"

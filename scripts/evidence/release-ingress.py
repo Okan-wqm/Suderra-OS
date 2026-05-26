@@ -37,7 +37,7 @@ SCHEMA_ROLES = {
     "approval": "suderra.release-approval.v2",
     "qemu_input": "suderra.qemu-acceptance.v4",
     "lab_input": "suderra.lab-evidence.v3",
-    "production_runtime_suite": "suderra.qemu-production-runtime-suite.v1",
+    "production_runtime_suite": "suderra.qemu-production-runtime-suite.v2",
     "hsm_signing_session": "suderra.hsm-signing-session.v2",
     "release_evidence": "suderra.release-evidence.v5",
 }

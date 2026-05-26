@@ -136,3 +136,24 @@ if python3 "${HSM_EVIDENCE}" validate \
     exit 1
 fi
 grep -q "pkcs11_uri" "${TMPDIR}/hsm-uri.err"
+
+python3 - "${TMPDIR}/hsm-evidence.json" "${TMPDIR}/hsm-key-id-mismatch.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload["key"]["id"] = "02"
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${HSM_EVIDENCE}" validate \
+    "${TMPDIR}/hsm-key-id-mismatch.json" \
+    --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
+    --certificate "${TMPDIR}/rauc-signing.crt" \
+    --artifact-role rauc-bundle \
+    --require-production \
+    2>"${TMPDIR}/hsm-key-id.err"; then
+    echo "ERROR: HSM signing evidence validator accepted key.id/key_id mismatch" >&2
+    exit 1
+fi
+grep -q "key.id" "${TMPDIR}/hsm-key-id.err"

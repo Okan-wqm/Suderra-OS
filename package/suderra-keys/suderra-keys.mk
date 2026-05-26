@@ -32,6 +32,7 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 	@for required in \
 		rauc-signing.crt \
 		verity-signing.crt \
+		os-update-manifest.ed25519.pub \
 		installer-payload.ed25519.pub \
 		edge-artifact.ed25519.pub; do \
 		if [ ! -s "$(SUDERRA_TRUST_ROOTS_DIR)/$$required" ]; then \
@@ -75,6 +76,8 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/etc/dm-verity/pubkey.pem
 	$(INSTALL) -D -m 0644 $(SUDERRA_TRUST_ROOTS_DIR)/installer-payload.ed25519.pub \
 		$(TARGET_DIR)/etc/suderra/os-installer-payload.ed25519.pub
+	$(INSTALL) -D -m 0644 $(SUDERRA_TRUST_ROOTS_DIR)/os-update-manifest.ed25519.pub \
+		$(TARGET_DIR)/etc/suderra/os-update-manifest.ed25519.pub
 	$(INSTALL) -D -m 0644 $(SUDERRA_TRUST_ROOTS_DIR)/edge-artifact.ed25519.pub \
 		$(TARGET_DIR)/etc/suderra/edge-artifact.ed25519.pub
 endef

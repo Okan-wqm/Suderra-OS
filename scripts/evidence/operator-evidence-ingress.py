@@ -29,6 +29,8 @@ QEMU_SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
 LAB_SCHEMA_VERSION = "suderra.lab-evidence.v3"
 APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
 REPRODUCIBILITY_SCHEMA_VERSION = "suderra.reproducibility.v1"
+PRODUCTION_RUNTIME_SUITE_SCHEMA_VERSION = "suderra.qemu-production-runtime-suite.v2"
+HSM_SIGNING_SESSION_SCHEMA_VERSION = "suderra.hsm-signing-session.v2"
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$")
@@ -37,6 +39,8 @@ ALLOWED_INPUT_DIRS = (
     "release-approvals",
     "release-reproducibility",
     "release-governance",
+    "release-runtime",
+    "release-signing",
 )
 FORBIDDEN_INPUT_DIRS = (
     "build-artifacts",
@@ -285,6 +289,14 @@ def role_for_path(rel: Path) -> str:
         return "lab-station-public-key"
     if parts and parts[0] == "release-lab-input":
         return "lab-supporting-evidence"
+    if parts and parts[0] == "release-runtime" and rel.name == "production-runtime.json":
+        return "production-runtime-suite"
+    if parts and parts[0] == "release-runtime":
+        return "production-runtime-supporting-evidence"
+    if parts and parts[0] == "release-signing" and rel.suffix == ".json":
+        return "hsm-signing-session"
+    if parts and parts[0] == "release-signing":
+        return "hsm-signing-supporting-evidence"
     return "operator-evidence"
 
 
@@ -301,6 +313,10 @@ def required_schema_version_for_path(rel: Path) -> str | None:
         return APPROVAL_SCHEMA_VERSION
     if rel.parts and rel.parts[0] == "release-reproducibility":
         return REPRODUCIBILITY_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-runtime" and rel.name == "production-runtime.json":
+        return PRODUCTION_RUNTIME_SUITE_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-signing" and rel.suffix == ".json":
+        return HSM_SIGNING_SESSION_SCHEMA_VERSION
     return None
 
 
@@ -543,6 +559,7 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
         if not isinstance(item.get("bytes"), int) or item.get("bytes", 0) <= 0:
             failures.append(f"{item_path}.bytes: must be a positive integer")
         check_sha256(failures, f"{item_path}.sha256", item.get("sha256"))
+        expected_schema = required_schema_version_for_path(rel_path)
         if args.input_root is not None:
             actual = args.input_root / rel_path
             if not actual.is_file() or actual.stat().st_size <= 0:
@@ -552,6 +569,14 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
                     failures.append(f"{item_path}.bytes: does not match referenced file")
                 if sha256_file(actual) != item.get("sha256"):
                     failures.append(f"{item_path}.sha256: does not match referenced file")
+                if expected_schema is not None:
+                    try:
+                        payload = read_json(actual)
+                    except (OSError, json.JSONDecodeError) as exc:
+                        failures.append(f"{item_path}.path: must be valid JSON for schema replay: {exc}")
+                    else:
+                        if not isinstance(payload, dict) or payload.get("schema_version") != expected_schema:
+                            failures.append(f"{item_path}.schema_version: must be {expected_schema}")
 
     if isinstance(manifest.get("required_paths"), list):
         expected_required = required_evidence_paths(str(manifest.get("version", "")), args.matrix)

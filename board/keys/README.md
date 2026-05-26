@@ -90,6 +90,8 @@ girdiler olmadan fail-closed çalışır:
 - `SUDERRA_RAUC_PKCS11_URI`
 - `SUDERRA_RAUC_SIGNING_CERT`
 - `SUDERRA_HSM_SIGNING_EVIDENCE` (`suderra.hsm-signing-session.v2`)
+- OS update manifest public key:
+  `/etc/suderra/os-update-manifest.ed25519.pub`
 
 Detay: [../../docs/security/key-management.md](../../docs/security/key-management.md)
 

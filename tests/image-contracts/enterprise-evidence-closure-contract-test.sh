@@ -115,6 +115,15 @@ python3 "${RUNTIME_VALIDATOR}" "${RUNTIME_ROOT}/production-runtime.json" \
     --expected-artifact-sha256 "${EXPECTED_IMAGE_SHA}" \
     >/dev/null
 
+if python3 "${RUNTIME_VALIDATOR}" "${RUNTIME_ROOT}/production-runtime.json" \
+    --require-pass \
+    --profile production-candidate \
+    2>"${TMPDIR}/runtime-v1.err"; then
+    echo "ERROR: production-candidate accepted legacy production-runtime suite v1" >&2
+    exit 1
+fi
+grep -q 'suderra.qemu-production-runtime-suite.v2' "${TMPDIR}/runtime-v1.err"
+
 python3 - "${RUNTIME_ROOT}/production-runtime.json" "${TMPDIR}/missing-runtime.json" <<'PY'
 import json
 import sys
@@ -207,15 +216,19 @@ cat >"${ACQ_PLAN}" <<JSON
   "source_run_id": "123456789",
   "station_id": "station-1",
   "registry_sha256": "${REGISTRY_SHA}",
-  "artifact_sha256": "${ARTIFACT_SHA}",
-  "artifact_bytes": 8,
-  "events": [
-    {"role": "flash", "adapter_id": "flash-1", "adapter_version": "1", "adapter_binary_sha256": "1$(printf %063d 0)", "command": ["true"], "measured": {"target": "/dev/disk/by-id/test"}},
-    {"role": "readback", "adapter_id": "readback-1", "adapter_version": "1", "adapter_binary_sha256": "2$(printf %063d 0)", "command": ["true"], "measured": {"bytes_read": 8}},
-    {"role": "uart", "adapter_id": "uart-1", "adapter_version": "1", "adapter_binary_sha256": "3$(printf %063d 0)", "command": ["true"], "measured": {"boot_seen": true}},
-    {"role": "power", "adapter_id": "power-1", "adapter_version": "1", "adapter_binary_sha256": "4$(printf %063d 0)", "command": ["true"], "measured": {"cycled": true}},
-    {"role": "storage", "adapter_id": "storage-1", "adapter_version": "1", "adapter_binary_sha256": "5$(printf %063d 0)", "command": ["true"], "measured": {"by_id": "/dev/disk/by-id/test"}}
-  ]
+    "artifact_sha256": "${ARTIFACT_SHA}",
+    "artifact_bytes": 8,
+    "events": [
+        {"role": "flash", "adapter_id": "flash-1", "adapter_version": "1", "adapter_binary_sha256": "1$(printf %063d 0)", "command": ["true"], "measured": {"target": "/dev/disk/by-id/test"}},
+        {"role": "readback", "adapter_id": "readback-1", "adapter_version": "1", "adapter_binary_sha256": "2$(printf %063d 0)", "command": ["true"], "measured": {"bytes_read": 8, "sha256": "${ARTIFACT_SHA}"}},
+        {"role": "uart", "adapter_id": "uart-1", "adapter_version": "1", "adapter_binary_sha256": "3$(printf %063d 0)", "command": ["true"], "measured": {"boot_seen": true}},
+        {"role": "power", "adapter_id": "power-1", "adapter_version": "1", "adapter_binary_sha256": "4$(printf %063d 0)", "command": ["true"], "measured": {"cycled": true, "transcript_sha256": "5$(printf %063d 0)"}},
+        {"role": "storage", "adapter_id": "storage-1", "adapter_version": "1", "adapter_binary_sha256": "6$(printf %063d 0)", "command": ["true"], "measured": {"by_id": "/dev/disk/by-id/test"}},
+        {"role": "tpm", "adapter_id": "tpm-1", "adapter_version": "1", "adapter_binary_sha256": "7$(printf %063d 0)", "command": ["true"], "measured": {"present": true, "manufacturer": "contract"}},
+        {"role": "secure-boot", "adapter_id": "secure-boot-1", "adapter_version": "1", "adapter_binary_sha256": "8$(printf %063d 0)", "command": ["true"], "measured": {"enabled": true, "enforced": true}},
+        {"role": "rauc", "adapter_id": "rauc-1", "adapter_version": "1", "adapter_binary_sha256": "9$(printf %063d 0)", "command": ["true"], "measured": {"rollback_verified": true, "mark_good_verified": true}},
+        {"role": "tamper", "adapter_id": "tamper-1", "adapter_version": "1", "adapter_binary_sha256": "a$(printf %063d 0)", "command": ["true"], "measured": {"dm_verity_rejected": true, "boot_tamper_rejected": true}}
+    ]
 }
 JSON
 python3 "${STATION_ACQUISITION}" create \

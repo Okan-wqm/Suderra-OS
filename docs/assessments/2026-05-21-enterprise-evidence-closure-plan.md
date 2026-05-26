@@ -92,7 +92,7 @@ future gate.
   `release_image_scan_reports` as top-level evidence, while v4 remains
   archive-only legacy input.
 - Production-runtime QEMU now has
-  `suderra.qemu-production-runtime-suite.v1` and a scenario runner entrypoint.
+  `suderra.qemu-production-runtime-suite.v2` and a scenario runner entrypoint.
   The suite requires signed boot, Secure Boot rejection, cmdline tamper,
   dm-verity tamper, RAUC good/bad/rollback, anti-rollback, and `/data`
   LUKS/swtpm scenarios with per-scenario raw log digests.

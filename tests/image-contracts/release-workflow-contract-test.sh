@@ -194,6 +194,13 @@ grep -q 'release-ingress.py create' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must create a release ingress manifest" >&2
     exit 1
 }
+for workflow in "${PREFLIGHT_WORKFLOW}" "${EVIDENCE_INGRESS_WORKFLOW}" "${RELEASE_WORKFLOW}"; do
+    grep -q 'release-runtime/' "${workflow}" &&
+        grep -q 'release-signing/' "${workflow}" || {
+            echo "ERROR: release workflows must preserve release-runtime and release-signing trees: ${workflow}" >&2
+            exit 1
+        }
+done
 grep -q 'collect-ci-check-evidence.py' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must convert exact source_sha CI checks into release security evidence" >&2
     exit 1

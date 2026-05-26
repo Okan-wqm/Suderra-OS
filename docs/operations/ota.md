@@ -1,6 +1,7 @@
 # OTA (Over-the-Air) Update
 
-> **Status:** Skeleton — Faz 4 (OTA sistemi) içinde detaylanır.
+> **Status:** Production contract is implemented, but production readiness
+> remains closed until runtime QEMU and x86 hardware evidence are collected.
 
 ## Genel Bakış
 
@@ -29,10 +30,26 @@ Geliştirici makinesi              Update sunucu                Cihaz
 # Build sonrası, post-image.sh otomatik üretir:
 ls output/suderra_x86_64_defconfig/images/suderra-os-v0.2.0.raucb
 
-# Manuel imzalama (CI'da otomatik):
-./scripts/sign-bundle.sh \
-    output/suderra_x86_64_defconfig/images/suderra-os-v0.2.0.raucb \
-    ~/.suderra-keys/prod/rauc-signing.key
+# Production signing uses PKCS#11 plus exact HSM evidence:
+SUDERRA_SIGNING_MODE=prod \
+SUDERRA_RAUC_PKCS11_URI='pkcs11:token=Suderra;object=rauc-prod;type=private' \
+SUDERRA_RAUC_SIGNING_CERT=/secure/rauc-prod.crt \
+SUDERRA_RAUC_KEYRING=/secure/rauc-keyring.pem \
+SUDERRA_HSM_SIGNING_EVIDENCE=/secure/hsm-session.json \
+./scripts/create-rauc-bundle.sh x86 output/.../images v0.2.0 suderra-os-v0.2.0.raucb
+
+python3 scripts/create-os-update-manifest.py create \
+  --bundle suderra-os-v0.2.0.raucb \
+  --version v0.2.0 \
+  --target x86_64 \
+  --min-current-version v0.1.0 \
+  --rollback-floor v0.2.0 \
+  --key-epoch 1 \
+  --key-id os-update-prod-1 \
+  --expires-at 2026-12-31T00:00:00Z \
+  --signing-key /secure/os-update-manifest.key \
+  --public-key /secure/os-update-manifest.ed25519.pub \
+  --output suderra-os-v0.2.0.manifest.json
 ```
 
 ## Bundle Manifest
@@ -64,20 +81,20 @@ filename=hook
 > 3. Manuel: serial console (sadece dev mode)
 
 ```bash
-# Cihazda (dev mode):
-rauc install https://updates.suderra.example/bundles/v0.2.0.raucb
-systemctl reboot
+# Cihazda (dev mode veya controlled operator session):
+suderra-ota install suderra-os-v0.2.0.manifest.json suderra-os-v0.2.0.raucb
 ```
 
 ## Health Check ve Rollback
 
-`suderra-firstboot.service` ilk boot'tan sonra 5 dk timer ile:
+`suderra-rauc-mark-good.service` slot boot ettikten sonra:
 
 1. Edge agent active mi? (`systemctl is-active`)
 2. Network connection ok? (cloud broker'a ulaşılabiliyor mu?)
 3. Health check başarılı mı? (HTTP /ready endpoint)
-4. **Hepsi OK** → `rauc status mark-good`
-5. **Fail** → reboot → bootloader otomatik eski slot'a döner
+4. **Hepsi OK** → `rauc status mark-good` ve `suderra-ota mark-good`
+5. **Fail** → `suderra-ota rollback --reason health-gate` ve reboot
+   isteği; bootloader eski slot'a döner.
 
 Failure threshold: 3 deneme → kalıcı rollback.
 
@@ -93,10 +110,9 @@ Faz 5+: bundle metadata API, fleet management, canary rollouts.
 
 ## Yapılacaklar
 
-- [ ] `scripts/sign-bundle.sh` implementasyonu (Faz 4)
-- [ ] Update sunucusu setup runbook (Faz 4)
-- [ ] Canary release stratejisi (Faz 5)
-- [ ] Delta updates (Faz 6+, opsiyonel)
+- [ ] Update sunucusu setup runbook
+- [ ] Canary release stratejisi
+- [ ] Delta updates (opsiyonel)
 
 ## Test
 

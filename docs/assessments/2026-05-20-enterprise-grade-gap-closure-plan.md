@@ -461,7 +461,7 @@ without changing the `production_ready=false` posture:
 - `qemu-x86_64-prod-ab` has a protected internal workflow that builds the
   production-runtime image, provisions OVMF/swtpm inputs, runs the
   production-runtime scenario runner, validates
-  `suderra.qemu-production-runtime-suite.v1`, and uploads
+  `suderra.qemu-production-runtime-suite.v2`, and uploads
   `release-runtime/<version>/qemu-x86_64-prod-ab/production-runtime.json`.
 - Release ingress now archives `release-runtime` and `release-signing` inputs,
   and release input/evidence validators check HSM session bindings for token

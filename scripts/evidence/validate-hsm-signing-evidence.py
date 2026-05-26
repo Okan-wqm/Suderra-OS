@@ -126,6 +126,8 @@ def validate(
         else:
             if key.get("uri") != pkcs11_uri:
                 failures.append("key.uri must match requested signing key URI")
+            if key.get("id") != payload.get("key_id"):
+                failures.append("key.id must match key_id")
             for field in ("label", "id", "type"):
                 if is_placeholder(key.get(field)):
                     failures.append(f"key.{field} must be non-placeholder")
@@ -153,6 +155,7 @@ def validate(
         else:
             matching_role = False
             matching_sha = artifact_sha256 is None
+            matching_artifact = artifact_role is None or artifact_sha256 is None
             for idx, artifact in enumerate(artifacts):
                 if not isinstance(artifact, dict):
                     failures.append(f"artifacts[{idx}] must be an object")
@@ -160,6 +163,9 @@ def validate(
                 role = artifact.get("role")
                 if artifact_role is not None and role == artifact_role:
                     matching_role = True
+                sha = artifact.get("sha256")
+                if artifact_role is not None and artifact_sha256 is not None and role == artifact_role and sha == artifact_sha256:
+                    matching_artifact = True
                 for field in ("role", "name", "sha256"):
                     value = artifact.get(field)
                     if field == "sha256":
@@ -175,6 +181,8 @@ def validate(
                 failures.append(f"artifacts must include requested role {artifact_role}")
             if artifact_sha256 is not None and not matching_sha:
                 failures.append("artifacts must include requested artifact sha256")
+            if artifact_role is not None and artifact_sha256 is not None and not matching_artifact:
+                failures.append("artifacts must bind requested role to requested artifact sha256 in the same record")
     return failures
 
 

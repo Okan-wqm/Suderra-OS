@@ -39,6 +39,8 @@ tar -czf operator-evidence-v0.1.0-rc.1.tar.gz \
   release-lab-input/v0.1.0-rc.1 \
   release-approvals/v0.1.0-rc.1 \
   release-reproducibility/v0.1.0-rc.1 \
+  release-runtime/v0.1.0-rc.1 \
+  release-signing/v0.1.0-rc.1 \
   release-governance/v0.1.0-rc.1/audit-log.json \
   release-governance/v0.1.0-rc.1/station-registry.json
 
@@ -60,7 +62,8 @@ gh workflow run "Release Evidence Ingress" \
 ```
 
 The ingress workflow safely extracts only `release-lab-input`,
-`release-approvals`, `release-reproducibility`, and `release-governance`,
+`release-approvals`, `release-reproducibility`, `release-runtime`,
+`release-signing`, and `release-governance`,
 requires the audit log and station registry, verifies the operator bundle
 signature before signing any GitHub-produced ingress evidence, writes and signs
 `release-ingress/<version>/evidence-ingress-manifest.json`, and uploads this

@@ -18,7 +18,17 @@ from typing import Any
 
 
 SCHEMA_VERSION = "suderra.station-acquisition.v1"
-REQUIRED_ADAPTER_ROLES = {"flash", "readback", "uart", "power", "storage"}
+REQUIRED_ADAPTER_ROLES = {
+    "flash",
+    "readback",
+    "uart",
+    "power",
+    "storage",
+    "tpm",
+    "secure-boot",
+    "rauc",
+    "tamper",
+}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -159,6 +169,41 @@ def validate_payload(payload: dict[str, Any], root: Path, check_files: bool) -> 
         roles.add(event.get("role"))
         if event.get("status") != "passed":
             errors.append(f"events[{idx}].status must be passed")
+        measured = event.get("measured")
+        if not isinstance(measured, dict):
+            errors.append(f"events[{idx}].measured must be an object")
+            measured = {}
+        role = event.get("role")
+        if role == "readback":
+            expected = payload.get("artifact_sha256")
+            actual = measured.get("sha256") or measured.get("actual_sha256") or measured.get("readback_sha256")
+            if actual != expected:
+                errors.append(f"events[{idx}].measured.sha256 must match artifact_sha256")
+            if not isinstance(measured.get("bytes_read"), int) or measured.get("bytes_read", 0) != payload.get("artifact_bytes"):
+                errors.append(f"events[{idx}].measured.bytes_read must match artifact_bytes")
+        if role == "power":
+            if measured.get("cycled") is not True:
+                errors.append(f"events[{idx}].measured.cycled must be true")
+            transcript = measured.get("transcript_sha256")
+            if not isinstance(transcript, str) or not SHA256_RE.fullmatch(transcript) or transcript == "0" * 64:
+                errors.append(f"events[{idx}].measured.transcript_sha256 must be a non-zero sha256")
+        if role == "tpm" and measured.get("present") is not True:
+            errors.append(f"events[{idx}].measured.present must be true")
+        if role == "secure-boot":
+            if measured.get("enabled") is not True:
+                errors.append(f"events[{idx}].measured.enabled must be true")
+            if measured.get("enforced") is not True:
+                errors.append(f"events[{idx}].measured.enforced must be true")
+        if role == "rauc":
+            if measured.get("rollback_verified") is not True:
+                errors.append(f"events[{idx}].measured.rollback_verified must be true")
+            if measured.get("mark_good_verified") is not True:
+                errors.append(f"events[{idx}].measured.mark_good_verified must be true")
+        if role == "tamper":
+            if measured.get("dm_verity_rejected") is not True:
+                errors.append(f"events[{idx}].measured.dm_verity_rejected must be true")
+            if measured.get("boot_tamper_rejected") is not True:
+                errors.append(f"events[{idx}].measured.boot_tamper_rejected must be true")
         adapter_sha = event.get("adapter_binary_sha256")
         if not isinstance(adapter_sha, str) or not SHA256_RE.fullmatch(adapter_sha) or adapter_sha == "0" * 64:
             errors.append(f"events[{idx}].adapter_binary_sha256 must be a non-zero sha256")

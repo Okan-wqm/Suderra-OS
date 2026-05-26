@@ -63,7 +63,15 @@ Seçenekler:
   evidence before using a PKCS#11 URI. The evidence binds provider, token
   serial/module identity, non-extractable key attributes, certificate digest,
   ceremony/operator, expiry, signed challenge transcript, audit log digests,
-  artifact roles, and the exact requested PKCS#11 URI.
+  artifact roles, exact artifact digests, nested `key.id == key_id`, and the
+  exact requested PKCS#11 URI. Release validation replays the HSM validator
+  against the preserved certificate and rejects SoftHSM/software-token/file-key
+  production evidence.
+- OS update manifests use `suderra.os-update-manifest.v1` Ed25519 keys. The
+  device public key is installed as
+  `/etc/suderra/os-update-manifest.ed25519.pub`; dev key generation writes this
+  public key as lowercase raw-key hex because `suderra-ota` verifies raw
+  Ed25519 bytes.
 
 ## Yapılacaklar
 

@@ -116,6 +116,9 @@ REQUIRED_RUNTIME_CHECKS = (
     "nmap",
     "systemd_security",
 )
+PRODUCTION_RUNTIME_SUITE_TARGETS = {
+    "x86_64": "qemu-x86_64-prod-ab",
+}
 REQUIRED_QEMU_CHECKS = (
     "boot",
     "systemd",
@@ -729,6 +732,10 @@ def copy_into_bundle(bundle_dir: Path, source: Path, rel: str) -> str:
     return rel
 
 
+def runtime_suite_target_for(target: str) -> str:
+    return PRODUCTION_RUNTIME_SUITE_TARGETS.get(target, target)
+
+
 def copy_input_relative(bundle_dir: Path, source_root: Path, rel: str, dest_root: str) -> str | None:
     rel_path = Path(rel)
     if rel_path.is_absolute() or ".." in rel_path.parts:
@@ -1252,11 +1259,13 @@ def apply_release_inputs(
                                 for item in raw_items
                             ):
                                 raw_items.append(raw_record)
-    runtime_suite = input_root / "release-runtime" / version / target / "production-runtime.json"
+    runtime_target = runtime_suite_target_for(target)
+    runtime_suite = input_root / "release-runtime" / version / runtime_target / "production-runtime.json"
     if runtime_suite.is_file() and runtime_suite.stat().st_size > 0:
         rel_runtime = copy_into_bundle(bundle_dir, runtime_suite, "preflight/runtime/production-runtime.json")
         evidence["runtime_qemu"]["production_suites"].append(
             {
+                "target": runtime_target,
                 "path": rel_runtime,
                 "sha256": sha256_file(bundle_dir / rel_runtime),
                 "bytes": (bundle_dir / rel_runtime).stat().st_size,
@@ -1297,6 +1306,27 @@ def apply_release_inputs(
     if signing_root.is_dir():
         for session in sorted(signing_root.glob("*.json")):
             rel_session = copy_into_bundle(bundle_dir, session, f"preflight/signing/{session.name}")
+            session_payload = read_json(session)
+            if isinstance(session_payload, dict):
+                cert_ref = session_payload.get("certificate_path")
+                cert = session_payload.get("certificate")
+                if isinstance(cert, dict) and isinstance(cert.get("path"), str):
+                    cert_ref = cert["path"]
+                certificate_source: Path | None = None
+                if isinstance(cert_ref, str) and cert_ref.strip():
+                    candidate = Path(cert_ref)
+                    if not candidate.is_absolute():
+                        candidate = session.parent / candidate
+                    if candidate.is_file():
+                        certificate_source = candidate
+                if certificate_source is None and isinstance(session_payload.get("certificate_sha256"), str):
+                    for candidate in sorted(session.parent.glob("*")):
+                        if candidate.is_file() and candidate.suffix.lower() in {".crt", ".cer", ".pem"}:
+                            if sha256_file(candidate) == session_payload["certificate_sha256"]:
+                                certificate_source = candidate
+                                break
+                if certificate_source is not None:
+                    copy_into_bundle(bundle_dir, certificate_source, f"preflight/signing/{certificate_source.name}")
             evidence["hsm_signing_sessions"].append(
                 {
                     "path": rel_session,
@@ -2151,7 +2181,16 @@ def validate_runtime_qemu(
         validation.error("$.runtime_qemu.production_suites", "must include production-runtime QEMU suite evidence")
     source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
     expected_source_sha = source.get("git_commit") if isinstance(source.get("git_commit"), str) else None
+    evidence_target = str(evidence.get("target", ""))
+    expected_runtime_target = runtime_suite_target_for(evidence_target)
     for idx, item in enumerate(suites):
+        if isinstance(item, dict):
+            suite_target = item.get("target")
+            if isinstance(suite_target, str) and suite_target != expected_runtime_target:
+                validation.error(
+                    f"$.runtime_qemu.production_suites[{idx}].target",
+                    f"must be {expected_runtime_target}",
+                )
         suite_path = validate_preserved_ref(validation, f"$.runtime_qemu.production_suites[{idx}]", item, require_pass)
         if require_pass and suite_path is not None:
             try:
@@ -2164,8 +2203,9 @@ def validate_runtime_qemu(
                     check_files=validation.check_files,
                     require_pass=True,
                     expected_version=str(evidence.get("version")),
-                    expected_target=None,
+                    expected_target=expected_runtime_target,
                     expected_source_sha=expected_source_sha,
+                    profile="production-candidate",
                 ):
                     validation.error(f"$.runtime_qemu.production_suites[{idx}].path", failure)
             except Exception as exc:
@@ -2184,6 +2224,25 @@ def validate_hsm_signing_sessions(
     release_tier: str,
     expected_required: bool,
 ) -> None:
+    def find_certificate(session_path: Path, payload: dict[str, Any]) -> Path | None:
+        cert_ref = payload.get("certificate_path")
+        cert = payload.get("certificate")
+        if isinstance(cert, dict) and isinstance(cert.get("path"), str):
+            cert_ref = cert["path"]
+        if isinstance(cert_ref, str) and cert_ref.strip():
+            candidate = Path(cert_ref)
+            if not candidate.is_absolute():
+                candidate = session_path.parent / candidate
+            if candidate.is_file():
+                return candidate
+        expected_sha = payload.get("certificate_sha256")
+        if isinstance(expected_sha, str):
+            for candidate in sorted(session_path.parent.glob("*")):
+                if candidate.is_file() and candidate.suffix.lower() in {".crt", ".cer", ".pem"}:
+                    if sha256_file(candidate) == expected_sha:
+                        return candidate
+        return None
+
     sessions = evidence.get("hsm_signing_sessions")
     if not isinstance(sessions, list):
         validation.error("$.hsm_signing_sessions", "must be a list")
@@ -2197,36 +2256,46 @@ def validate_hsm_signing_sessions(
             if not isinstance(payload, dict):
                 validation.error(f"$.hsm_signing_sessions[{idx}].path", "must be HSM signing evidence JSON")
                 continue
-            if payload.get("schema_version") != "suderra.hsm-signing-session.v2":
-                validation.error(f"$.hsm_signing_sessions[{idx}].schema_version", "must be suderra.hsm-signing-session.v2")
-            if payload.get("mode") != "production":
-                validation.error(f"$.hsm_signing_sessions[{idx}].mode", "must be production")
-            for field in ("pkcs11_uri", "certificate_sha256", "hsm_serial", "key_id", "ceremony_id"):
-                check_string(validation, f"$.hsm_signing_sessions[{idx}].{field}", payload.get(field))
-            if not isinstance(payload.get("challenge"), dict):
-                validation.error(f"$.hsm_signing_sessions[{idx}].challenge", "must preserve signed challenge")
-            else:
-                for field in ("request_sha256", "signature_sha256", "transcript_sha256"):
-                    check_string(validation, f"$.hsm_signing_sessions[{idx}].challenge.{field}", payload["challenge"].get(field))
-            audit = payload.get("audit")
-            if not isinstance(audit, dict):
-                validation.error(f"$.hsm_signing_sessions[{idx}].audit", "must preserve audit digests")
-            else:
-                for field in ("log_sha256", "transcript_sha256"):
-                    check_string(validation, f"$.hsm_signing_sessions[{idx}].audit.{field}", audit.get(field))
-            token = payload.get("token")
-            if not isinstance(token, dict):
-                validation.error(f"$.hsm_signing_sessions[{idx}].token", "must preserve token inventory")
-            elif token.get("serial") != payload.get("hsm_serial"):
-                validation.error(f"$.hsm_signing_sessions[{idx}].token.serial", "must match hsm_serial")
-            key = payload.get("key")
-            if not isinstance(key, dict):
-                validation.error(f"$.hsm_signing_sessions[{idx}].key", "must preserve key metadata")
-            elif key.get("uri") != payload.get("pkcs11_uri"):
-                validation.error(f"$.hsm_signing_sessions[{idx}].key.uri", "must match pkcs11_uri")
+            cert = find_certificate(session_path, payload)
+            if cert is None:
+                validation.error(f"$.hsm_signing_sessions[{idx}].certificate", "must preserve certificate file")
+                continue
+            pkcs11_uri = payload.get("pkcs11_uri")
+            if not isinstance(pkcs11_uri, str) or not pkcs11_uri.strip():
+                validation.error(f"$.hsm_signing_sessions[{idx}].pkcs11_uri", "must be preserved")
+                continue
             artifacts = payload.get("artifacts")
-            if not isinstance(artifacts, list) or not artifacts:
-                validation.error(f"$.hsm_signing_sessions[{idx}].artifacts", "must bind signed artifacts")
+            replay_items = artifacts if isinstance(artifacts, list) and artifacts else [None]
+            for artifact in replay_items:
+                replay_args = [
+                    sys.executable,
+                    "scripts/evidence/validate-hsm-signing-evidence.py",
+                    "validate",
+                    str(session_path),
+                    "--pkcs11-uri",
+                    pkcs11_uri,
+                    "--certificate",
+                    str(cert),
+                    "--require-production",
+                ]
+                if isinstance(artifact, dict):
+                    role = artifact.get("role")
+                    digest = artifact.get("sha256")
+                    if isinstance(role, str) and role.strip():
+                        replay_args.extend(["--artifact-role", role])
+                    if isinstance(digest, str) and digest.strip():
+                        replay_args.extend(["--artifact-sha256", digest])
+                result = subprocess.run(
+                    replay_args,
+                    cwd=ROOT,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    message = result.stderr.strip() or result.stdout.strip() or "HSM validator replay failed"
+                    validation.error(f"$.hsm_signing_sessions[{idx}].path", message)
 
 
 def validate_station_acquisitions(
@@ -2881,7 +2950,7 @@ def schema_contract() -> dict[str, Any]:
         "approval_schema_version": APPROVAL_SCHEMA_VERSION,
         "machine_verification_schema_version": MACHINE_VERIFICATION_SCHEMA_VERSION,
         "machine_verification_checks": list(MACHINE_VERIFICATION_CHECKS),
-        "production_runtime_suite_schema_version": "suderra.qemu-production-runtime-suite.v1",
+        "production_runtime_suite_schema_version": "suderra.qemu-production-runtime-suite.v2",
         "hsm_signing_session_schema_version": "suderra.hsm-signing-session.v2",
         "release_security_report_schema_version": "suderra.release-security-report.v2",
         "governance_checks": list(GOVERNANCE_CHECKS),

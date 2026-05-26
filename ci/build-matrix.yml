@@ -80,8 +80,8 @@ defconfigs:
     post_image_arg: suderra_x86_64
     signing: production-required
     acceptance: hardware-lab
-    blocker: x86-production-secureboot-verity-rauc-and-hardware-evidence-missing
-    description: Industrial x86_64 production target.
+    blocker: x86-production-secureboot-verity-rauc-hsm-runtime-v2-and-hardware-evidence-missing
+    description: Industrial x86_64 production target; production_ready stays false until HSM, runtime-v2, and x86 hardware lab evidence are preserved.
 
   - name: suderra_qemu_x86_64_prod_ab_defconfig
     target: qemu-x86_64-prod-ab
@@ -118,8 +118,8 @@ defconfigs:
     post_image_arg: suderra_qemu_x86_64_prod_ab
     signing: production-required
     acceptance: qemu-system-x86_64-production-runtime-blocked
-    blocker: production-runtime-qemu-secureboot-verity-rauc-hsm-evidence-missing
-    description: Non-public QEMU production-runtime A/B evidence lane.
+    blocker: production-runtime-qemu-v2-secureboot-verity-rauc-hsm-evidence-missing
+    description: Non-public QEMU production-runtime A/B evidence lane; emits runtime suite v2 after real measurements pass.
 
   - name: suderra_aarch64_defconfig
     target: generic-aarch64-template
