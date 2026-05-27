@@ -10,6 +10,7 @@ config BR2_PACKAGE_SUDERRA_KEYS
 	  - /etc/ssl/certs/suderra-ca.pem (Cloud broker mTLS CA)
 	  - /etc/dm-verity/pubkey.pem    (verity root hash doğrulama)
 	  - /etc/suderra/os-installer-payload.ed25519.pub
+	  - /etc/suderra/os-update-manifest.ed25519.pub
 	  - /etc/suderra/edge-artifact.ed25519.pub
 
 	  Anahtarlar SUDERRA_TRUST_ROOTS_DIR env var ile belirtilir.

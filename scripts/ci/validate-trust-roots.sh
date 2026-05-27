@@ -67,6 +67,21 @@ require_file() {
     [ -s "${path}" ] || die "required Suderra trust-root file is empty: ${path}"
 }
 
+validate_raw_ed25519_public_key() {
+    local path="$1"
+    local bytes
+
+    require_file "${path}"
+    bytes="$(wc -c < "${path}" | tr -d ' ')"
+    if [ "${bytes}" = "32" ]; then
+        return 0
+    fi
+    if [ "${bytes}" = "64" ] && LC_ALL=C grep -Eq '^[0-9a-fA-F]{64}$' "${path}"; then
+        return 0
+    fi
+    die "invalid raw/hex Ed25519 public key: ${path}"
+}
+
 [ -d "${KEYS_DIR}" ] || die "Suderra trust-root directory does not exist: ${KEYS_DIR}"
 [ -x "${KEYS_DIR}" ] || die "Suderra trust-root directory is not traversable: ${KEYS_DIR}"
 
@@ -75,6 +90,7 @@ for required in \
     rauc-signing.crt \
     verity-signing.crt \
     installer-payload.ed25519.pub \
+    os-update-manifest.ed25519.pub \
     edge-artifact.ed25519.pub; do
     require_file "${KEYS_DIR}/${required}"
 done
@@ -98,6 +114,7 @@ if command -v openssl >/dev/null 2>&1; then
     openssl pkey -pubin -in "${KEYS_DIR}/edge-artifact.ed25519.pub" -noout >/dev/null 2>&1 ||
         die "invalid Ed25519 public key: ${KEYS_DIR}/edge-artifact.ed25519.pub"
 fi
+validate_raw_ed25519_public_key "${KEYS_DIR}/os-update-manifest.ed25519.pub"
 
 if [ "${REQUIRE_INSTALLER_SIGNING}" -eq 1 ]; then
     require_file "${KEYS_DIR}/installer-payload.key"

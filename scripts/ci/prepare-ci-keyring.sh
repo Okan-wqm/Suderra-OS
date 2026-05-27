@@ -116,6 +116,19 @@ generate_ed25519() {
     openssl pkey -in "${key_path}" -pubout -out "${pub_path}" >/dev/null 2>&1
 }
 
+generate_raw_ed25519_public_hex() {
+    local key_path="$1"
+    local pub_path="$2"
+
+    if [ ! -s "${key_path}" ]; then
+        openssl genpkey -algorithm ED25519 -out "${key_path}" >/dev/null 2>&1
+    fi
+    openssl pkey -in "${key_path}" -pubout -outform DER 2>/dev/null |
+        tail -c 32 |
+        od -An -tx1 -v |
+        tr -d ' \n' > "${pub_path}"
+}
+
 canonicalize_public_key() {
     local input="$1"
     local output="$2"
@@ -188,6 +201,10 @@ generate_ed25519 \
     "${KEYS_DIR}/edge-artifact.key" \
     "${KEYS_DIR}/edge-artifact.ed25519.pub"
 
+generate_raw_ed25519_public_hex \
+    "${KEYS_DIR}/os-update-manifest.key" \
+    "${KEYS_DIR}/os-update-manifest.ed25519.pub"
+
 if [ "${INSTALLER_MODE}" = "public-only" ]; then
     find "${KEYS_DIR}" -maxdepth 1 -type f -name '*.key' -delete
 elif compgen -G "${KEYS_DIR}/*.key" >/dev/null; then
@@ -199,6 +216,7 @@ for required in \
     rauc-signing.crt \
     verity-signing.crt \
     installer-payload.ed25519.pub \
+    os-update-manifest.ed25519.pub \
     edge-artifact.ed25519.pub; do
     if [ ! -s "${KEYS_DIR}/${required}" ]; then
         echo "ERROR: failed to create ${KEYS_DIR}/${required}" >&2
