@@ -785,10 +785,7 @@ fn parse_prerelease(value: &str) -> Result<Vec<PrereleaseIdentifier>> {
                 }
                 return Ok(PrereleaseIdentifier::Numeric(part.parse::<u64>()?));
             }
-            if !part
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            {
+            if !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                 bail!("unsupported SemVer prerelease: {value}");
             }
             Ok(PrereleaseIdentifier::Text(part.to_string()))
