@@ -153,10 +153,48 @@ def create_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def validate_payload(payload: dict[str, Any], root: Path, check_files: bool) -> list[str]:
+def validate_payload(
+    payload: dict[str, Any],
+    root: Path,
+    check_files: bool,
+    *,
+    expected_version: str | None = None,
+    expected_target: str | None = None,
+    expected_source_sha: str | None = None,
+    expected_source_run_id: str | None = None,
+    expected_artifact_sha256: str | None = None,
+    expected_artifact_bytes: int | None = None,
+    expected_registry_sha256: str | None = None,
+) -> list[str]:
     errors: list[str] = []
     if payload.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"schema_version must be {SCHEMA_VERSION}")
+    if expected_version is not None and payload.get("version") != expected_version:
+        errors.append(f"version must match expected version {expected_version}")
+    if expected_target is not None and payload.get("target") != expected_target:
+        errors.append(f"target must match expected target {expected_target}")
+    source_sha = payload.get("source_sha")
+    if not isinstance(source_sha, str) or not re.fullmatch(r"^[0-9a-f]{40}$", source_sha):
+        errors.append("source_sha must be a lowercase git commit sha")
+    elif expected_source_sha is not None and source_sha != expected_source_sha:
+        errors.append(f"source_sha must match expected source sha {expected_source_sha}")
+    if expected_source_run_id is not None and str(payload.get("source_run_id")) != str(expected_source_run_id):
+        errors.append(f"source_run_id must match expected source run {expected_source_run_id}")
+    artifact_sha = payload.get("artifact_sha256")
+    if not isinstance(artifact_sha, str) or not SHA256_RE.fullmatch(artifact_sha) or artifact_sha == "0" * 64:
+        errors.append("artifact_sha256 must be a non-zero sha256")
+    elif expected_artifact_sha256 is not None and artifact_sha != expected_artifact_sha256:
+        errors.append(f"artifact_sha256 must match expected artifact sha256 {expected_artifact_sha256}")
+    artifact_bytes = payload.get("artifact_bytes")
+    if not isinstance(artifact_bytes, int) or artifact_bytes <= 0:
+        errors.append("artifact_bytes must be positive")
+    elif expected_artifact_bytes is not None and artifact_bytes != expected_artifact_bytes:
+        errors.append(f"artifact_bytes must match expected artifact bytes {expected_artifact_bytes}")
+    registry_sha = payload.get("registry_sha256")
+    if not isinstance(registry_sha, str) or not SHA256_RE.fullmatch(registry_sha) or registry_sha == "0" * 64:
+        errors.append("registry_sha256 must be a non-zero sha256")
+    elif expected_registry_sha256 is not None and registry_sha != expected_registry_sha256:
+        errors.append(f"registry_sha256 must match expected registry sha256 {expected_registry_sha256}")
     events = payload.get("events")
     if not isinstance(events, list) or not events:
         errors.append("events must be a non-empty list")
@@ -233,7 +271,18 @@ def validate_command(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         print("ERROR: station acquisition must be a JSON object", file=sys.stderr)
         return 1
-    failures = validate_payload(payload, args.input.parent, args.check_files)
+    failures = validate_payload(
+        payload,
+        args.input.parent,
+        args.check_files,
+        expected_version=args.expected_version,
+        expected_target=args.expected_target,
+        expected_source_sha=args.expected_source_sha,
+        expected_source_run_id=args.expected_source_run_id,
+        expected_artifact_sha256=args.expected_artifact_sha256,
+        expected_artifact_bytes=args.expected_artifact_bytes,
+        expected_registry_sha256=args.expected_registry_sha256,
+    )
     if failures:
         for failure in failures:
             print(f"ERROR: {failure}", file=sys.stderr)
@@ -252,6 +301,13 @@ def main() -> int:
     validate = subparsers.add_parser("validate")
     validate.add_argument("input", type=Path)
     validate.add_argument("--check-files", action="store_true")
+    validate.add_argument("--expected-version")
+    validate.add_argument("--expected-target")
+    validate.add_argument("--expected-source-sha")
+    validate.add_argument("--expected-source-run-id")
+    validate.add_argument("--expected-artifact-sha256")
+    validate.add_argument("--expected-artifact-bytes", type=int)
+    validate.add_argument("--expected-registry-sha256")
     validate.set_defaults(func=validate_command)
     args = parser.parse_args()
     try:

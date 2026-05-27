@@ -124,6 +124,7 @@ python3 "${HSM_EVIDENCE}" validate \
     --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
     --certificate "${TMPDIR}/rauc-signing.crt" \
     --artifact-role rauc-bundle \
+    --artifact-sha256 "$(printf '1%.0s' {1..64})" \
     --require-production \
     >/dev/null
 if python3 "${HSM_EVIDENCE}" validate \
@@ -157,3 +158,95 @@ if python3 "${HSM_EVIDENCE}" validate \
     exit 1
 fi
 grep -q "key.id" "${TMPDIR}/hsm-key-id.err"
+
+python3 - "${TMPDIR}/hsm-evidence.json" "${TMPDIR}/hsm-split-artifact.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload["artifacts"] = [
+    {"role": "rauc-bundle", "name": "contract.raucb", "sha256": "2" * 64, "bytes": 1024},
+    {"role": "sbom", "name": "contract.sbom", "sha256": "1" * 64, "bytes": 1024},
+]
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${HSM_EVIDENCE}" validate \
+    "${TMPDIR}/hsm-split-artifact.json" \
+    --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
+    --certificate "${TMPDIR}/rauc-signing.crt" \
+    --artifact-role rauc-bundle \
+    --artifact-sha256 "$(printf '1%.0s' {1..64})" \
+    --require-production \
+    2>"${TMPDIR}/hsm-split.err"; then
+    echo "ERROR: HSM validator accepted role/SHA split across artifacts" >&2
+    exit 1
+fi
+grep -q "same record" "${TMPDIR}/hsm-split.err"
+
+python3 - "${TMPDIR}/hsm-evidence.json" "${TMPDIR}/hsm-zero-digest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload["audit"]["log_sha256"] = "0" * 64
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${HSM_EVIDENCE}" validate \
+    "${TMPDIR}/hsm-zero-digest.json" \
+    --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
+    --certificate "${TMPDIR}/rauc-signing.crt" \
+    --require-production \
+    2>"${TMPDIR}/hsm-zero.err"; then
+    echo "ERROR: HSM validator accepted all-zero audit digest" >&2
+    exit 1
+fi
+grep -q "audit.log_sha256" "${TMPDIR}/hsm-zero.err"
+
+python3 - "${TMPDIR}/hsm-evidence.json" "${TMPDIR}/hsm-soft-token.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload["token"]["manufacturer"] = "SoftHSM project"
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${HSM_EVIDENCE}" validate \
+    "${TMPDIR}/hsm-soft-token.json" \
+    --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
+    --certificate "${TMPDIR}/rauc-signing.crt" \
+    --require-production \
+    2>"${TMPDIR}/hsm-soft.err"; then
+    echo "ERROR: HSM validator accepted SoftHSM token metadata" >&2
+    exit 1
+fi
+grep -q "SoftHSM" "${TMPDIR}/hsm-soft.err"
+
+python3 - "${PROJECT_ROOT}" "${TMPDIR}/hsm-evidence.json" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+session = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "validate_release_inputs",
+    root / "scripts" / "evidence" / "validate-release-inputs.py",
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+payload = json.loads(session.read_text(encoding="utf-8"))
+failures = []
+module.validate_hsm_session_replay(
+    session,
+    payload,
+    failures,
+    expected_artifact_sha256s={"2" * 64},
+)
+if not failures or not any("does not bind a release artifact digest" in item for item in failures):
+    raise SystemExit("release input HSM replay accepted an unrelated artifact digest")
+PY

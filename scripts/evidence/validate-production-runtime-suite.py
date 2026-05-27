@@ -47,6 +47,12 @@ REQUIRED_V2_GUEST_FACTS = (
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PLACEHOLDERS = {"", "TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
+SEMANTIC_BEGIN = "SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
+SEMANTIC_END = "SUDERRA_QEMU_SEMANTIC_JSON_END"
+OUTCOME_PREFIXES = (
+    "SUDERRA_PRODUCTION_RUNTIME_OUTCOME=",
+    "observed_outcome=",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -115,6 +121,66 @@ def check_relative_file(
         return
     if expected_sha256 is not None and actual.is_file() and sha256_file(actual) != expected_sha256:
         error(errors, path, "referenced file sha256 mismatch")
+
+
+def relative_file(root: Path, value: Any) -> Path | None:
+    if not isinstance(value, str):
+        return None
+    rel = Path(value)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    return root / rel
+
+
+def read_text(root: Path, value: Any) -> str:
+    path = relative_file(root, value)
+    if path is None or not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_json(root: Path, value: Any) -> Any:
+    path = relative_file(root, value)
+    if path is None or not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def observed_outcome_from_serial(serial: str) -> str | None:
+    for line in serial.splitlines():
+        stripped = line.strip()
+        for prefix in OUTCOME_PREFIXES:
+            if stripped.startswith(prefix):
+                value = stripped[len(prefix) :].strip()
+                return value if value in EXPECTED_OUTCOMES else None
+    lowered = serial.lower()
+    if "rollback-completed" in lowered or "rollback completed" in lowered:
+        return "rollback-completed"
+    if "security violation" in lowered or "access denied" in lowered or ("secure boot" in lowered and "denied" in lowered):
+        return "firmware-rejected"
+    if "dm-verity" in lowered and any(token in lowered for token in ("corrupt", "verification failed", "root hash")):
+        return "kernel-rejected"
+    if "rauc" in lowered and any(token in lowered for token in ("signature", "downgrade", "rollback floor", "rejected")):
+        return "userspace-rejected"
+    if SEMANTIC_BEGIN in serial and SEMANTIC_END in serial:
+        return "booted"
+    return None
+
+
+def qmp_quit_ack_observed(events: Any) -> bool:
+    if not isinstance(events, list):
+        return False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") == "SHUTDOWN":
+            return True
+        if event.get("id") == "suderra-production-runtime-quit" and "return" in event:
+            return True
+    return False
 
 
 def validate_top_level_v2(errors: list[str], payload: dict[str, Any]) -> None:
@@ -225,8 +291,12 @@ def validate_scenario_v2(
     if termination:
         check_string(errors, f"{scenario_path}.termination.class", termination.get("class"))
         check_string(errors, f"{scenario_path}.termination.reason", termination.get("reason"))
-        if "qmp_quit_sent" in termination and termination.get("qmp_quit_sent") is not True:
-            error(errors, f"{scenario_path}.termination.qmp_quit_sent", "must be true when present")
+        if termination.get("qmp_quit_sent") is not True:
+            error(errors, f"{scenario_path}.termination.qmp_quit_sent", "must be true")
+        if termination.get("qmp_quit_ack") is not True:
+            error(errors, f"{scenario_path}.termination.qmp_quit_ack", "must be true")
+        if termination.get("timeout") is True:
+            error(errors, f"{scenario_path}.termination.timeout", "must not be true")
 
     swtpm = check_object(errors, f"{scenario_path}.swtpm_state", scenario.get("swtpm_state"))
     if swtpm:
@@ -246,6 +316,17 @@ def validate_scenario_v2(
     missing_logs = sorted(REQUIRED_V2_LOG_ROLES - set(logs_by_role))
     if missing_logs:
         error(errors, f"{scenario_path}.logs", f"missing required raw log roles: {', '.join(missing_logs)}")
+    if check_files:
+        serial_log = logs_by_role.get("serial")
+        if isinstance(serial_log, dict):
+            replayed = observed_outcome_from_serial(read_text(root, serial_log.get("path")))
+            if replayed is None:
+                error(errors, f"{scenario_path}.logs", "serial log must support observed_outcome")
+            elif replayed != scenario.get("observed_outcome"):
+                error(errors, f"{scenario_path}.observed_outcome", "must match replayed serial evidence")
+        qmp_log = logs_by_role.get("qmp-events")
+        if isinstance(qmp_log, dict) and not qmp_quit_ack_observed(read_json(root, qmp_log.get("path"))):
+            error(errors, f"{scenario_path}.logs", "QMP log must prove quit acknowledgement or shutdown")
 
     validate_guest_facts_v2(errors, scenario_path, name, scenario.get("guest_facts"))
 
@@ -259,12 +340,15 @@ def validate_scenario_v2(
                 check_sha256(errors, f"{scenario_path}.mutation.artifact.{field}", artifact.get(field))
             if artifact.get("before_sha256") == artifact.get("after_sha256"):
                 error(errors, f"{scenario_path}.mutation.artifact.after_sha256", "must differ from before_sha256")
+            if artifact.get("path") == str(Path("production-runtime-logs") / str(name) / "scenario-result.json"):
+                error(errors, f"{scenario_path}.mutation.artifact.path", "must not use fallback scenario result JSON")
             check_relative_file(
                 errors,
                 root,
                 f"{scenario_path}.mutation.artifact.path",
                 artifact.get("path"),
                 check_files,
+                artifact.get("after_sha256") if isinstance(artifact.get("after_sha256"), str) else None,
             )
         else:
             error(errors, f"{scenario_path}.mutation.artifact", "must bind mutation artifact before/after hashes")

@@ -1,6 +1,8 @@
 # Anahtar Yönetimi — Suderra OS
 
-> **Status:** Skeleton. Üretim anahtar saklama altyapısı Faz 4 öncesi netleşmeli.
+> **Status:** Active production-candidate contract. Hardware ceremony,
+> delegation, recovery, and compromise-drill runbooks remain required before
+> any `production_ready=true` change.
 
 ## Anahtar Envanteri
 
@@ -81,6 +83,7 @@ Seçenekler:
 - [ ] CI'da kısa-ömürlü key delegation
 - [ ] Anahtar yedekleme + kurtarma planı
 - [ ] Compromise drill testi
+- [ ] Approved production HSM provider/model allowlist
 
 ## Referanslar
 

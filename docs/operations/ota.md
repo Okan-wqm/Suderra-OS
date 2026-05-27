@@ -89,14 +89,18 @@ suderra-ota install suderra-os-v0.2.0.manifest.json suderra-os-v0.2.0.raucb
 
 `suderra-rauc-mark-good.service` slot boot ettikten sonra:
 
-1. Edge agent active mi? (`systemctl is-active`)
-2. Network connection ok? (cloud broker'a ulaşılabiliyor mu?)
-3. Health check başarılı mı? (HTTP /ready endpoint)
+1. RAUC boot-state JSON üretilir; active slot ve GRUB A/B counters kaydedilir.
+2. `/data` ve `/boot` mount'ları hazır mı kontrol edilir.
+3. RAUC status alınır; agent varsa `systemctl is-active` sonucu kontrol edilir.
 4. **Hepsi OK** → `rauc status mark-good` ve `suderra-ota mark-good`
 5. **Fail** → `suderra-ota rollback --reason health-gate` ve reboot
    isteği; bootloader eski slot'a döner.
 
-Failure threshold: 3 deneme → kalıcı rollback.
+`suderra-ota mark-good` pending version ile işaretlenen version'ın aynı
+olmasını ve kaydedilmiş pending boot slot varsa aktif slot'un onunla
+eşleşmesini zorunlu kılar. Network/readiness endpoint ve 3-deneme threshold
+henüz production blocker olarak kalır; dokümante edilmeden `production_ready`
+açılamaz.
 
 ## Update Sunucusu
 

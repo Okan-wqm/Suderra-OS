@@ -138,6 +138,15 @@ def qmp_drain(sock: socket.socket | None, events: list[dict[str, Any]]) -> None:
         sock.settimeout(previous)
 
 
+def qmp_quit_ack_observed(events: list[dict[str, Any]], start_index: int) -> bool:
+    for event in events[start_index:]:
+        if event.get("event") == "SHUTDOWN":
+            return True
+        if event.get("id") == "suderra-production-runtime-quit" and "return" in event:
+            return True
+    return False
+
+
 def parse_semantic(serial: str) -> dict[str, Any]:
     start = serial.find(SEMANTIC_BEGIN)
     end = serial.find(SEMANTIC_END, start + len(SEMANTIC_BEGIN))
@@ -353,8 +362,16 @@ def run_scenario(args: argparse.Namespace) -> int:
         qmp_drain(qmp_sock, qmp_events)
         if qmp_sock is not None:
             try:
+                quit_event_start = len(qmp_events)
                 qmp_execute(qmp_sock, "quit", "suderra-production-runtime-quit")
                 termination["qmp_quit_sent"] = True
+                quit_deadline = time.monotonic() + args.qmp_quit_grace
+                while time.monotonic() < quit_deadline:
+                    qmp_drain(qmp_sock, qmp_events)
+                    if qmp_quit_ack_observed(qmp_events, quit_event_start):
+                        termination["qmp_quit_ack"] = True
+                        break
+                    time.sleep(0.1)
             except OSError:
                 pass
         if qemu_process is not None:
@@ -373,6 +390,11 @@ def run_scenario(args: argparse.Namespace) -> int:
                 termination["class"] = "qmp-quit" if termination["qmp_quit_sent"] else "process-exit"
                 termination["reason"] = "QEMU exited after measured scenario"
             termination["exit_status"] = qemu_process.returncode
+        termination["acceptable"] = (
+            termination.get("timeout") is False
+            and termination.get("qmp_quit_sent") is True
+            and termination.get("qmp_quit_ack") is True
+        )
         serial = read_text(serial_log)
         semantic = parse_semantic(serial)
         outcome = observed_outcome(serial, semantic, qemu_process.returncode if qemu_process else None)
@@ -396,7 +418,7 @@ def run_scenario(args: argparse.Namespace) -> int:
             termination["reason"] = "negative scenario did not provide SUDERRA_MUTATION_ARTIFACT"
             status = "failed"
         else:
-            status = "passed" if outcome == expected and not termination.get("timeout") else "failed"
+            status = "passed" if outcome == expected and termination.get("acceptable") is True else "failed"
         qmp_log.write_text(json.dumps(qmp_events, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         result = {
             "schema_version": "suderra.production-runtime-scenario-result.v1",

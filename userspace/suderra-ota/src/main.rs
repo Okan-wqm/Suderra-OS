@@ -134,6 +134,8 @@ struct OtaState {
     current_version: String,
     rollback_floor: String,
     pending_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_boot_slot: Option<String>,
     reboot_required: bool,
     last_event: Option<Value>,
     last_error: Option<String>,
@@ -188,6 +190,7 @@ fn install(args: InstallArgs) -> Result<()> {
     run_rauc(&["install", path_str(&args.bundle)?]).context("rauc install failed")?;
 
     state.pending_version = Some(manifest.version.clone());
+    state.pending_boot_slot = configured_pending_boot_slot();
     state.reboot_required = !args.no_reboot;
     state.last_error = None;
     let event = event_json(
@@ -239,6 +242,7 @@ fn rollback(args: RollbackArgs) -> Result<()> {
     run_rauc(&["status", "mark-bad"]).context("rauc mark-bad failed")?;
     let mut state = load_state()?;
     state.pending_version = None;
+    state.pending_boot_slot = None;
     state.reboot_required = !args.no_reboot;
     state.last_error = Some(args.reason.clone());
     let event = event_json(
@@ -261,10 +265,23 @@ fn rollback(args: RollbackArgs) -> Result<()> {
 
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
     let mut state = load_state()?;
-    let version = args
-        .version
+    let requested_version = args.version;
+    let version = requested_version
         .or_else(|| state.pending_version.clone())
         .ok_or_else(|| anyhow!("no pending version to mark good"))?;
+    if let Some(pending) = state.pending_version.as_deref() {
+        if pending != version {
+            bail!("mark-good version {version} does not match pending version {pending}");
+        }
+    }
+    if let Some(expected_slot) = state.pending_boot_slot.as_deref() {
+        let active_slot = active_boot_slot().ok_or_else(|| {
+            anyhow!("cannot prove active boot slot for pending slot {expected_slot}")
+        })?;
+        if active_slot != expected_slot {
+            bail!("active boot slot {active_slot} does not match pending slot {expected_slot}");
+        }
+    }
     if compare_versions(&version, &state.rollback_floor)? == Ordering::Less {
         bail!(
             "refusing to mark version {version} good below rollback floor {}",
@@ -279,6 +296,7 @@ fn mark_good(args: MarkGoodArgs) -> Result<()> {
         state.rollback_floor = version.clone();
     }
     state.pending_version = None;
+    state.pending_boot_slot = None;
     state.reboot_required = false;
     state.last_error = None;
     let event = event_json(
@@ -287,6 +305,7 @@ fn mark_good(args: MarkGoodArgs) -> Result<()> {
         Some(json!({
             "version": version,
             "rollback_floor": state.rollback_floor,
+            "boot_slot": active_boot_slot(),
         })),
         None,
     );
@@ -521,6 +540,7 @@ fn load_state() -> Result<OtaState> {
                 .unwrap_or_else(|_| fallback_floor.clone()),
             rollback_floor: read_rollback_floor().unwrap_or(fallback_floor),
             pending_version: None,
+            pending_boot_slot: None,
             reboot_required: false,
             last_event: None,
             last_error: None,
@@ -602,6 +622,31 @@ fn device_target() -> String {
     std::env::var("SUDERRA_OTA_TARGET").unwrap_or_else(|_| "x86_64".to_string())
 }
 
+fn configured_pending_boot_slot() -> Option<String> {
+    std::env::var("SUDERRA_OTA_PENDING_BOOT_SLOT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| matches!(value.as_str(), "A" | "B"))
+}
+
+fn active_boot_slot() -> Option<String> {
+    if let Ok(value) = std::env::var("SUDERRA_OTA_ACTIVE_BOOT_SLOT") {
+        let slot = value.trim();
+        if matches!(slot, "A" | "B") {
+            return Some(slot.to_string());
+        }
+    }
+    let cmdline = fs::read_to_string("/proc/cmdline").ok()?;
+    for token in cmdline.split_whitespace() {
+        match token {
+            "rauc.slot=A" => return Some("A".to_string()),
+            "rauc.slot=B" => return Some("B".to_string()),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn path_str(path: &Path) -> Result<&str> {
     path.to_str()
         .ok_or_else(|| anyhow!("path is not valid UTF-8: {}", path.display()))
@@ -651,7 +696,7 @@ struct ParsedVersion {
     major: u64,
     minor: u64,
     patch: u64,
-    pre: Option<String>,
+    pre: Option<Vec<PrereleaseIdentifier>>,
 }
 
 impl ParsedVersion {
@@ -659,9 +704,7 @@ impl ParsedVersion {
         let value = value.trim().strip_prefix('v').unwrap_or(value.trim());
         let (numbers, pre) = value
             .split_once('-')
-            .map_or((value, None), |(left, right)| {
-                (left, Some(right.to_string()))
-            });
+            .map_or((value, None), |(left, right)| (left, Some(right)));
         let mut parts = numbers.split('.');
         let major = parse_version_part(parts.next(), value)?;
         let minor = parse_version_part(parts.next(), value)?;
@@ -673,8 +716,31 @@ impl ParsedVersion {
             major,
             minor,
             patch,
-            pre,
+            pre: pre.map(parse_prerelease).transpose()?,
         })
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PrereleaseIdentifier {
+    Numeric(u64),
+    Text(String),
+}
+
+impl Ord for PrereleaseIdentifier {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Numeric(left), Self::Numeric(right)) => left.cmp(right),
+            (Self::Numeric(_), Self::Text(_)) => Ordering::Less,
+            (Self::Text(_), Self::Numeric(_)) => Ordering::Greater,
+            (Self::Text(left), Self::Text(right)) => left.cmp(right),
+        }
+    }
+}
+
+impl PartialOrd for PrereleaseIdentifier {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -686,7 +752,7 @@ impl Ord for ParsedVersion {
                 (None, None) => Ordering::Equal,
                 (None, Some(_)) => Ordering::Greater,
                 (Some(_), None) => Ordering::Less,
-                (Some(left), Some(right)) => left.cmp(right),
+                (Some(left), Some(right)) => compare_prerelease(left, right),
             })
     }
 }
@@ -703,6 +769,43 @@ fn parse_version_part(part: Option<&str>, original: &str) -> Result<u64> {
         .with_context(|| format!("unsupported SemVer version: {original}"))
 }
 
+fn parse_prerelease(value: &str) -> Result<Vec<PrereleaseIdentifier>> {
+    if value.trim().is_empty() {
+        bail!("unsupported SemVer prerelease: {value}");
+    }
+    value
+        .split('.')
+        .map(|part| {
+            if part.is_empty() {
+                bail!("unsupported SemVer prerelease: {value}");
+            }
+            if part.chars().all(|c| c.is_ascii_digit()) {
+                if part.len() > 1 && part.starts_with('0') {
+                    bail!("numeric SemVer prerelease identifiers must not contain leading zeroes");
+                }
+                return Ok(PrereleaseIdentifier::Numeric(part.parse::<u64>()?));
+            }
+            if !part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                bail!("unsupported SemVer prerelease: {value}");
+            }
+            Ok(PrereleaseIdentifier::Text(part.to_string()))
+        })
+        .collect()
+}
+
+fn compare_prerelease(left: &[PrereleaseIdentifier], right: &[PrereleaseIdentifier]) -> Ordering {
+    for (left_item, right_item) in left.iter().zip(right.iter()) {
+        let ordering = left_item.cmp(right_item);
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -715,7 +818,7 @@ mod tests {
         );
         assert_eq!(
             compare_versions("v1.0.0-alpha.2", "v1.0.0-alpha.10").unwrap(),
-            Ordering::Greater
+            Ordering::Less
         );
         assert_eq!(
             compare_versions("v1.2.0", "v1.1.9").unwrap(),

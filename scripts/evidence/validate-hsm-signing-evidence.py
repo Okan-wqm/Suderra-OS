@@ -20,7 +20,15 @@ LEGACY_SCHEMA_VERSIONS = {"suderra.hsm-signing-session.v1"}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PKCS11_KEY_URI_RE = re.compile(r"^pkcs11:.*(?:object|id)=")
 PLACEHOLDERS = {"", "not_collected", "NOT_COLLECTED", "TO_BE_COLLECTED", "pending", "PENDING"}
-SOFTHSM_MARKERS = ("softhsm", "soft-hsm", "software hsm")
+SOFTHSM_MARKERS = (
+    "softhsm",
+    "soft-hsm",
+    "software hsm",
+    "software token",
+    "file-backed",
+    "file backed",
+    "filehsm",
+)
 
 
 def sha256_file(path: Path) -> str:

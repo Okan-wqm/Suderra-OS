@@ -17,7 +17,9 @@ for token in \
     'run_rauc(&["install"' \
     'run_rauc(&["status", "mark-bad"])' \
     'run_rauc(&["status", "mark-good"])' \
-    'persist_rollback_floor'
+    'persist_rollback_floor' \
+    'pending_boot_slot' \
+    'alpha.2", "v1.0.0-alpha.10'
 do
     grep -Fq "${token}" "${OTA}" || {
         echo "ERROR: suderra-ota missing fail-closed OTA/rollback behavior: ${token}" >&2

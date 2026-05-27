@@ -167,6 +167,12 @@ ALLOWED_RELEASE_ASSET_ROLES = {
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+SIGNED_ARTIFACT_ROLES = {
+    "rauc-bundle",
+    "release-artifact",
+    "release-image",
+    "os-update-manifest",
+}
 
 
 class Validation:
@@ -312,6 +318,19 @@ def release_base(release_artifact: str) -> str:
     if release_artifact.endswith(".img.xz"):
         return release_artifact[: -len(".img.xz")]
     return release_artifact[:-3] if release_artifact.endswith(".xz") else release_artifact
+
+
+def evidence_artifact_sha256s(evidence: dict[str, Any]) -> set[str]:
+    artifacts = evidence.get("artifacts")
+    if not isinstance(artifacts, list):
+        return set()
+    return {
+        str(item["sha256"])
+        for item in artifacts
+        if isinstance(item, dict)
+        and isinstance(item.get("sha256"), str)
+        and SHA256_RE.fullmatch(item["sha256"])
+    }
 
 
 def contract_from_matrix(row: dict[str, Any]) -> dict[str, Any]:
@@ -2249,6 +2268,7 @@ def validate_hsm_signing_sessions(
         return
     if require_pass and release_tier == "production" and expected_required and not sessions:
         validation.error("$.hsm_signing_sessions", "must preserve production HSM signing sessions")
+    expected_artifact_sha256s = evidence_artifact_sha256s(evidence)
     for idx, item in enumerate(sessions):
         session_path = validate_preserved_ref(validation, f"$.hsm_signing_sessions[{idx}]", item, require_pass)
         if require_pass and session_path is not None:
@@ -2266,6 +2286,7 @@ def validate_hsm_signing_sessions(
                 continue
             artifacts = payload.get("artifacts")
             replay_items = artifacts if isinstance(artifacts, list) and artifacts else [None]
+            matched_expected_artifact = not (release_tier == "production" and expected_required)
             for artifact in replay_items:
                 replay_args = [
                     sys.executable,
@@ -2281,6 +2302,15 @@ def validate_hsm_signing_sessions(
                 if isinstance(artifact, dict):
                     role = artifact.get("role")
                     digest = artifact.get("sha256")
+                    if (
+                        release_tier == "production"
+                        and expected_required
+                        and isinstance(role, str)
+                        and role in SIGNED_ARTIFACT_ROLES
+                        and isinstance(digest, str)
+                        and digest in expected_artifact_sha256s
+                    ):
+                        matched_expected_artifact = True
                     if isinstance(role, str) and role.strip():
                         replay_args.extend(["--artifact-role", role])
                     if isinstance(digest, str) and digest.strip():
@@ -2296,6 +2326,11 @@ def validate_hsm_signing_sessions(
                 if result.returncode != 0:
                     message = result.stderr.strip() or result.stdout.strip() or "HSM validator replay failed"
                     validation.error(f"$.hsm_signing_sessions[{idx}].path", message)
+            if not matched_expected_artifact:
+                validation.error(
+                    f"$.hsm_signing_sessions[{idx}].path",
+                    "must bind a production release artifact digest",
+                )
 
 
 def validate_station_acquisitions(
@@ -2325,7 +2360,23 @@ def validate_station_acquisitions(
                 validation.error(f"$.station_acquisitions[{idx}].events", "must include adapter events")
             try:
                 module = load_script_module("station_acquisition", "scripts/evidence/station-acquisition.py")
-                for failure in module.validate_payload(payload, acquisition_path.parent, validation.check_files):
+                source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+                ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+                hardware = evidence.get("hardware") if isinstance(evidence.get("hardware"), dict) else {}
+                binding = hardware.get("artifact_binding") if isinstance(hardware.get("artifact_binding"), dict) else {}
+                station_registry = hardware.get("station_registry") if isinstance(hardware.get("station_registry"), dict) else {}
+                for failure in module.validate_payload(
+                    payload,
+                    acquisition_path.parent,
+                    validation.check_files,
+                    expected_version=str(evidence.get("version")),
+                    expected_target=str(evidence.get("target")),
+                    expected_source_sha=source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                    expected_source_run_id=str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                    expected_artifact_sha256=binding.get("build_artifact_sha256"),
+                    expected_artifact_bytes=binding.get("build_artifact_bytes"),
+                    expected_registry_sha256=station_registry.get("sha256"),
+                ):
                     validation.error(f"$.station_acquisitions[{idx}].path", failure)
             except Exception as exc:
                 validation.error(f"$.station_acquisitions[{idx}].path", f"cannot replay station acquisition: {exc}")
