@@ -71,11 +71,10 @@ production_signing_evidence() {
         "${evidence}" \
         --pkcs11-uri "${uri}" \
         --certificate "${SUDERRA_RAUC_SIGNING_CERT}" \
-        --artifact-role "rauc-bundle" \
         --require-production
     )
     if [ -n "${artifact_sha}" ]; then
-        args+=(--artifact-sha256 "${artifact_sha}")
+        args+=(--artifact-role "rauc-bundle" --artifact-sha256 "${artifact_sha}")
     fi
     "${args[@]}" >/dev/null || die "HSM signing evidence validation failed"
 }
@@ -197,6 +196,9 @@ create_x86_bundle() {
     chmod 0755 "${stage_dir}/suderra-rauc-x86-slot-hook.sh"
 
     write_manifest "${stage_dir}/manifest.raucm" "${version}" "${rootfs}" "${verity}"
+    if production_mode; then
+        production_signing_evidence
+    fi
     rm -f "${output}"
     "${rauc_tool}" bundle \
         --cert="${signing_cert}" \

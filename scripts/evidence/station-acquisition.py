@@ -16,19 +16,13 @@ import subprocess
 import sys
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
 
-SCHEMA_VERSION = "suderra.station-acquisition.v1"
-REQUIRED_ADAPTER_ROLES = {
-    "flash",
-    "readback",
-    "uart",
-    "power",
-    "storage",
-    "tpm",
-    "secure-boot",
-    "rauc",
-    "tamper",
-}
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
+SCHEMA_VERSION = evidence_contract.schema_version("station_acquisition", EVIDENCE_CONTRACT)
+REQUIRED_ADAPTER_ROLES = set(evidence_contract.adapter_roles(EVIDENCE_CONTRACT))
+REQUIRED_EVENT_ORDER = tuple(evidence_contract.adapter_roles(EVIDENCE_CONTRACT))
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -200,11 +194,14 @@ def validate_payload(
         errors.append("events must be a non-empty list")
         return errors
     roles = set()
+    ordered_roles: list[str] = []
     for idx, event in enumerate(events):
         if not isinstance(event, dict):
             errors.append(f"events[{idx}] must be an object")
             continue
         roles.add(event.get("role"))
+        if isinstance(event.get("role"), str):
+            ordered_roles.append(str(event["role"]))
         if event.get("status") != "passed":
             errors.append(f"events[{idx}].status must be passed")
         measured = event.get("measured")
@@ -263,6 +260,9 @@ def validate_payload(
     missing = sorted(REQUIRED_ADAPTER_ROLES - {role for role in roles if isinstance(role, str)})
     if missing:
         errors.append(f"events missing required adapter roles: {', '.join(missing)}")
+    order_positions = [ordered_roles.index(role) for role in REQUIRED_EVENT_ORDER if role in ordered_roles]
+    if order_positions != sorted(order_positions):
+        errors.append("events must preserve station acquisition order: " + ", ".join(REQUIRED_EVENT_ORDER))
     return errors
 
 

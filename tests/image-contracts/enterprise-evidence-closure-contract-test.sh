@@ -12,13 +12,16 @@ RUNTIME_RUNNER="${PROJECT_ROOT}/tests/qemu/production-runtime.py"
 SCANNER_REPLAY="${PROJECT_ROOT}/scripts/evidence/security-raw-replay.py"
 STATION_ACQUISITION="${PROJECT_ROOT}/scripts/evidence/station-acquisition.py"
 HSM_VALIDATOR="${PROJECT_ROOT}/scripts/evidence/validate-hsm-signing-evidence.py"
+EVIDENCE_CONTRACT="${PROJECT_ROOT}/scripts/evidence/evidence_contract.py"
 
 python3 -m py_compile \
+    "${EVIDENCE_CONTRACT}" \
     "${RUNTIME_VALIDATOR}" \
     "${RUNTIME_RUNNER}" \
     "${SCANNER_REPLAY}" \
     "${STATION_ACQUISITION}" \
     "${HSM_VALIDATOR}"
+python3 "${EVIDENCE_CONTRACT}" validate >/dev/null
 "${RUNTIME_VALIDATOR}" --help >/dev/null
 "${RUNTIME_RUNNER}" --help >/dev/null
 "${SCANNER_REPLAY}" --help >/dev/null
@@ -30,6 +33,44 @@ SOURCE_SHA="$(git -C "${PROJECT_ROOT}" rev-parse HEAD)"
 EXPECTED_IMAGE_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 REGISTRY_SHA="6666666666666666666666666666666666666666666666666666666666666666"
 ARTIFACT_SHA="7777777777777777777777777777777777777777777777777777777777777777"
+python3 - "${PROJECT_ROOT}" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "evidence_contract",
+    root / "scripts/evidence/evidence_contract.py",
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+contract = module.load_contract(root / "ci/evidence-contract.yml")
+runtime_checks = module.runtime_required_checks(contract)
+scenario_to_checks = module.runtime_scenario_to_checks(contract)
+covered = {check for checks in scenario_to_checks.values() for check in checks}
+missing = set(runtime_checks) - covered
+if missing:
+    raise SystemExit(f"runtime checks are not mapped from scenarios: {sorted(missing)}")
+if module.runtime_suite_targets_for("x86_64", contract) != ["qemu-x86_64-prod-ab"]:
+    raise SystemExit("x86_64 runtime suite mapping must come from evidence contract")
+policy = module.target_policy("x86_64", contract)
+if policy.get("production_gate") is not True or policy.get("release_public") is not False:
+    raise SystemExit("x86_64 must be a gated non-public production target in evidence contract")
+if set(module.adapter_roles(contract)) != {
+    "flash",
+    "readback",
+    "uart",
+    "power",
+    "storage",
+    "tpm",
+    "secure-boot",
+    "rauc",
+    "tamper",
+}:
+    raise SystemExit("hardware adapter roles must come from evidence contract")
+PY
 RUNTIME_ROOT="${TMPDIR}/runtime"
 mkdir -p "${RUNTIME_ROOT}/logs"
 

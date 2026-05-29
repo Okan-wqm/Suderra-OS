@@ -23,6 +23,10 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
+
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
 SCHEMA_VERSION = "suderra.release-ingress.v1"
 BINDING_SCHEMA_VERSION = "suderra.release-input-binding.v2"
 BUILDROOT_IDENTITY_SCHEMA_FIELD = "buildroot_source_identity_schema_version"
@@ -36,10 +40,10 @@ SCHEMA_ROLES = {
     "binding_manifest": BINDING_SCHEMA_VERSION,
     "approval": "suderra.release-approval.v2",
     "qemu_input": "suderra.qemu-acceptance.v4",
-    "lab_input": "suderra.lab-evidence.v3",
-    "production_runtime_suite": "suderra.qemu-production-runtime-suite.v2",
-    "hsm_signing_session": "suderra.hsm-signing-session.v2",
-    "release_evidence": "suderra.release-evidence.v5",
+    "lab_input": evidence_contract.schema_version("lab_evidence", EVIDENCE_CONTRACT),
+    "production_runtime_suite": evidence_contract.schema_version("production_runtime_suite", EVIDENCE_CONTRACT),
+    "hsm_signing_session": evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT),
+    "release_evidence": evidence_contract.schema_version("release_evidence", EVIDENCE_CONTRACT),
 }
 OPTIONAL_EMPTY_INPUT_ROLES = {"qemu-stderr"}
 PREFLIGHT_INPUT_DIRS = (

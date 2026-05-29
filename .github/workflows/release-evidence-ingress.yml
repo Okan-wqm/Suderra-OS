@@ -245,5 +245,8 @@ jobs:
             release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json
             release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json.sig
             release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json.cert
+            operator-bundle-download/operator-evidence.tar
+            operator-bundle-download/operator-evidence.tar.sig
+            operator-bundle-download/operator-evidence.tar.cert
           retention-days: 30
           if-no-files-found: error
