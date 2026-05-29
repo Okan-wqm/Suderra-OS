@@ -13,21 +13,14 @@ import re
 import sys
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
 
-SCHEMA_VERSION = "suderra.qemu-production-runtime-suite.v2"
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
+SCHEMA_VERSION = evidence_contract.schema_version("production_runtime_suite", EVIDENCE_CONTRACT)
 LEGACY_SCHEMA_VERSIONS = {"suderra.qemu-production-runtime-suite.v1"}
 V2_REQUIRED_PROFILES = {"production-candidate", "production-runtime"}
-REQUIRED_SCENARIOS = (
-    "signed-boot",
-    "unsigned-boot-rejection",
-    "cmdline-tamper-rejection",
-    "dm-verity-rootfs-tamper-rejection",
-    "rauc-good-update",
-    "rauc-bad-signature-rejection",
-    "rauc-health-rollback",
-    "anti-rollback-downgrade-rejection",
-    "data-luks-swtpm",
-)
+REQUIRED_SCENARIOS = tuple(evidence_contract.runtime_required_scenarios(EVIDENCE_CONTRACT))
 SCENARIO_STATUSES = {"passed", "failed", "infra-error", "timeout"}
 EXPECTED_OUTCOMES = {
     "booted",
@@ -36,6 +29,7 @@ EXPECTED_OUTCOMES = {
     "userspace-rejected",
     "rollback-completed",
 }
+GUEST_FACT_REQUIRED_OUTCOMES = {"booted", "rollback-completed"}
 REQUIRED_V2_LOG_ROLES = {"serial", "qmp-events"}
 REQUIRED_V2_GUEST_FACTS = (
     "secure_boot",
@@ -173,14 +167,16 @@ def observed_outcome_from_serial(serial: str) -> str | None:
 def qmp_quit_ack_observed(events: Any) -> bool:
     if not isinstance(events, list):
         return False
+    quit_ack_observed = False
     for event in events:
         if not isinstance(event, dict):
             continue
-        if event.get("event") == "SHUTDOWN":
-            return True
         if event.get("id") == "suderra-production-runtime-quit" and "return" in event:
+            quit_ack_observed = True
+            continue
+        if event.get("event") == "SHUTDOWN" and quit_ack_observed:
             return True
-    return False
+    return quit_ack_observed
 
 
 def validate_top_level_v2(errors: list[str], payload: dict[str, Any]) -> None:
@@ -328,7 +324,10 @@ def validate_scenario_v2(
         if isinstance(qmp_log, dict) and not qmp_quit_ack_observed(read_json(root, qmp_log.get("path"))):
             error(errors, f"{scenario_path}.logs", "QMP log must prove quit acknowledgement or shutdown")
 
-    validate_guest_facts_v2(errors, scenario_path, name, scenario.get("guest_facts"))
+    if scenario.get("observed_outcome") in GUEST_FACT_REQUIRED_OUTCOMES:
+        validate_guest_facts_v2(errors, scenario_path, name, scenario.get("guest_facts"))
+    elif "guest_facts" in scenario and not isinstance(scenario.get("guest_facts"), dict):
+        error(errors, f"{scenario_path}.guest_facts", "must be an object when present")
 
     mutation = scenario.get("mutation")
     if isinstance(mutation, dict) and name != "signed-boot":

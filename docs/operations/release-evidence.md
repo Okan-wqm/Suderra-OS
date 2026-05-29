@@ -12,11 +12,14 @@ Generated CI evidence roots may use a suffix such as
 binds the bundle to the final `<version>/<target>/evidence.json` suffix rather
 than to a hardcoded root directory.
 
-`evidence.json` is the canonical release evidence index. It records the target
-contract, build source, immutable asset manifest, artifact hashes, signatures,
-provenance, SBOM/VEX, reproducibility, security scans, machine verification,
-governance snapshots, QEMU or hardware acceptance, runtime checks, approvals,
-residual risk, and the final release decision.
+`ci/evidence-contract.yml` is the SSOT for release evidence policy. It owns
+schema versions, production gate policy, runtime-suite mappings, required
+runtime checks, hardware board/adapter requirements, and signing artifact roles.
+`evidence.json` is the per-target evidence index generated from that contract.
+It records the target contract, build source, immutable asset manifest, artifact
+hashes, signatures, provenance, SBOM/VEX, reproducibility, security scans,
+machine verification, governance snapshots, QEMU or hardware acceptance,
+runtime checks, approvals, residual risk, and the final release decision.
 
 Published releases also include `release-evidence-<version>.tar.zst` with
 `.sig` and `.cert` sidecars plus `release-publication-manifest.json` with its
@@ -60,11 +63,11 @@ python3 scripts/evidence/release-evidence.py validate \
     release-evidence/v0.1.0-rc.1/rpi4/evidence.json
 ```
 
-Alpha evidence keeps build, security, signatures, attestations,
-QEMU/hardware, governance, approval, and residual-risk checks strict. The
-required QEMU, hardware, and runtime checks are derived from `ci/build-matrix.yml`
-and the target contract; evidence JSON cannot mark a matrix-required gate as not
-required. Alpha may use CI/lab signing material and may omit production-only
+Alpha evidence keeps build, security, signatures, attestations, QEMU/hardware,
+governance, approval, and residual-risk checks strict. Build targets still come
+from `ci/build-matrix.yml`, while production evidence gates come from
+`ci/evidence-contract.yml`; validators and workflows must not duplicate those
+gate lists. Alpha may use CI/lab signing material and may omit production-only
 controls such as signed VEX, dm-verity, RAUC, and lockdown evidence. GA releases
 must use the production tier and cannot validate as alpha.
 
@@ -77,7 +80,7 @@ Required top-level fields:
 | `schema_version` | Must be `suderra.release-evidence.v5` for promotion evidence; v2/v3/v4 are archive-only. |
 | `version`, `target` | Must match the bundle path components. |
 | `target_contract` | Snapshot from `ci/build-matrix.yml`. |
-| `source` | Repository, tag, commit, clean/dirty state, and CI run ID. |
+| `source` | Repository, tag, commit, clean/dirty state, Image Build run identity, and release workflow identities. Final replay binds reproducibility, security, runtime, lab, and station evidence to the Image Build run, not the later release workflow run. |
 | `asset_manifest` | `release-assets.json` generated from the staged release bytes. |
 | `artifacts` | Release artifacts, hashes, byte counts, signatures, and provenance. |
 | `sbom`, `vex` | CycloneDX SBOM and OpenVEX status when applicable. |

@@ -92,15 +92,19 @@ suderra-ota install suderra-os-v0.2.0.manifest.json suderra-os-v0.2.0.raucb
 1. RAUC boot-state JSON üretilir; active slot ve GRUB A/B counters kaydedilir.
 2. `/data` ve `/boot` mount'ları hazır mı kontrol edilir.
 3. RAUC status alınır; agent varsa `systemctl is-active` sonucu kontrol edilir.
-4. **Hepsi OK** → `rauc status mark-good` ve `suderra-ota mark-good`
+4. **Hepsi OK** → `suderra-ota mark-good`; bu komut RAUC mark-good,
+   rollback-floor persistence ve OTA state güncellemesini tek transaction olarak
+   yürütür.
 5. **Fail** → `suderra-ota rollback --reason health-gate` ve reboot
    isteği; bootloader eski slot'a döner.
 
+`suderra-ota install`, RAUC install sonrası pending boot slot'u env veya RAUC
+status JSON üzerinden kanıtlayamazsa update'i fail-closed sonlandırır.
 `suderra-ota mark-good` pending version ile işaretlenen version'ın aynı
-olmasını ve kaydedilmiş pending boot slot varsa aktif slot'un onunla
-eşleşmesini zorunlu kılar. Network/readiness endpoint ve 3-deneme threshold
-henüz production blocker olarak kalır; dokümante edilmeden `production_ready`
-açılamaz.
+olmasını, aktif slot'un pending slot ile eşleşmesini, RAUC mark-good'un
+başarmasını ve rollback floor'un yalnızca bundan sonra ilerlemesini zorunlu
+kılar. 3-deneme fallback hâlâ production evidence ile kanıtlanmadan
+`production_ready` açılamaz.
 
 ## Update Sunucusu
 

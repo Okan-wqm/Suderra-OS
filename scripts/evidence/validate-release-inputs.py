@@ -17,6 +17,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
 from release_approval import validate_approval_payload  # noqa: E402
 
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
@@ -96,12 +97,8 @@ def find_hsm_certificate(session: Path, payload: dict[str, Any]) -> Path | None:
     return None
 
 
-SIGNED_ARTIFACT_ROLES = {
-    "rauc-bundle",
-    "release-artifact",
-    "release-image",
-    "os-update-manifest",
-}
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
+SIGNED_ARTIFACT_ROLES = evidence_contract.signed_artifact_roles(EVIDENCE_CONTRACT)
 
 
 def validate_hsm_session_replay(

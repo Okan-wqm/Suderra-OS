@@ -89,9 +89,6 @@ struct MarkGoodArgs {
     /// Version to mark good. Defaults to the pending version from state.
     #[arg(long)]
     version: Option<String>,
-    /// Persist Suderra state after an external RAUC mark-good already ran.
-    #[arg(long, hide = true, default_value_t = false)]
-    skip_rauc: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -188,9 +185,11 @@ fn install(args: InstallArgs) -> Result<()> {
 
     info!(version = %manifest.version, target = %manifest.target, "installing RAUC bundle");
     run_rauc(&["install", path_str(&args.bundle)?]).context("rauc install failed")?;
+    let pending_boot_slot = pending_boot_slot_after_install()
+        .context("cannot prove inactive RAUC slot selected for next boot")?;
 
     state.pending_version = Some(manifest.version.clone());
-    state.pending_boot_slot = configured_pending_boot_slot();
+    state.pending_boot_slot = Some(pending_boot_slot.clone());
     state.reboot_required = !args.no_reboot;
     state.last_error = None;
     let event = event_json(
@@ -204,6 +203,7 @@ fn install(args: InstallArgs) -> Result<()> {
                 "sha256": manifest.bundle.sha256,
                 "bytes": manifest.bundle.bytes,
             },
+            "pending_boot_slot": pending_boot_slot,
             "reboot_requested": !args.no_reboot,
         })),
         None,
@@ -288,9 +288,7 @@ fn mark_good(args: MarkGoodArgs) -> Result<()> {
             state.rollback_floor
         );
     }
-    if !args.skip_rauc {
-        run_rauc(&["status", "mark-good"]).context("rauc mark-good failed")?;
-    }
+    run_rauc(&["status", "mark-good"]).context("rauc mark-good failed")?;
     state.current_version = version.clone();
     if compare_versions(&version, &state.rollback_floor)? == Ordering::Greater {
         state.rollback_floor = version.clone();
@@ -491,6 +489,10 @@ fn verify_bundle(manifest: &SignedManifest, bundle: &Path) -> Result<()> {
 }
 
 fn run_rauc(args: &[&str]) -> Result<()> {
+    run_rauc_output(args).map(|_| ())
+}
+
+fn run_rauc_output(args: &[&str]) -> Result<String> {
     let rauc = std::env::var("SUDERRA_OTA_RAUC").unwrap_or_else(|_| "rauc".to_string());
     let output = Command::new(&rauc)
         .args(args)
@@ -505,7 +507,7 @@ fn run_rauc(args: &[&str]) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn request_reboot(reason: &str) -> Result<()> {
@@ -627,6 +629,44 @@ fn configured_pending_boot_slot() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| matches!(value.as_str(), "A" | "B"))
+}
+
+fn pending_boot_slot_after_install() -> Result<String> {
+    if let Some(slot) = configured_pending_boot_slot() {
+        return Ok(slot);
+    }
+    let status = run_rauc_output(&["status", "--output-format=json"])
+        .context("rauc status did not expose pending boot slot")?;
+    let payload: Value = serde_json::from_str(&status).context("rauc status JSON is invalid")?;
+    find_slot_value(
+        &payload,
+        &["pending_boot_slot", "bootname", "boot_slot", "slot"],
+    )
+    .filter(|slot| matches!(slot.as_str(), "A" | "B"))
+    .ok_or_else(|| anyhow!("rauc status JSON does not prove pending boot slot A/B"))
+}
+
+fn find_slot_value(value: &Value, names: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for name in names {
+                if let Some(Value::String(slot)) = map.get(*name) {
+                    let trimmed = slot.trim();
+                    if matches!(trimmed, "A" | "B") {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+            for child in map.values() {
+                if let Some(slot) = find_slot_value(child, names) {
+                    return Some(slot);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items.iter().find_map(|item| find_slot_value(item, names)),
+        _ => None,
+    }
 }
 
 fn active_boot_slot() -> Option<String> {

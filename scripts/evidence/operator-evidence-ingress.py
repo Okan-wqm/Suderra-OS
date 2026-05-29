@@ -22,15 +22,19 @@ from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
+
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
 SCHEMA_VERSION = "suderra.operator-evidence-ingress.v2"
 AUDIT_SCHEMA_VERSION = "suderra.audit-log-snapshot.v1"
 STATION_REGISTRY_SCHEMA_VERSION = "suderra.lab-station-registry.v1"
 QEMU_SCHEMA_VERSION = "suderra.qemu-acceptance.v4"
-LAB_SCHEMA_VERSION = "suderra.lab-evidence.v3"
+LAB_SCHEMA_VERSION = evidence_contract.schema_version("lab_evidence", EVIDENCE_CONTRACT)
 APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
 REPRODUCIBILITY_SCHEMA_VERSION = "suderra.reproducibility.v1"
-PRODUCTION_RUNTIME_SUITE_SCHEMA_VERSION = "suderra.qemu-production-runtime-suite.v2"
-HSM_SIGNING_SESSION_SCHEMA_VERSION = "suderra.hsm-signing-session.v2"
+PRODUCTION_RUNTIME_SUITE_SCHEMA_VERSION = evidence_contract.schema_version("production_runtime_suite", EVIDENCE_CONTRACT)
+HSM_SIGNING_SESSION_SCHEMA_VERSION = evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT)
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$")

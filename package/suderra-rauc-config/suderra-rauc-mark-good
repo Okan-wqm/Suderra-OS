@@ -26,12 +26,13 @@ if ! /usr/sbin/suderra-rauc-health-gate; then
     exit 1
 fi
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/pre-mark-good.json
-if ! /usr/bin/rauc status mark-good; then
-    if [ -x /usr/bin/suderra-ota ]; then
-        /usr/bin/suderra-ota rollback --reason mark-good-failed
-    else
-        /usr/bin/rauc status mark-bad || true
+if [ -x /usr/bin/suderra-ota ]; then
+    if ! /usr/bin/suderra-ota mark-good; then
+        /usr/bin/suderra-ota rollback --reason mark-good-failed || true
+        exit 1
     fi
+elif ! /usr/bin/rauc status mark-good; then
+    /usr/bin/rauc status mark-bad || true
     exit 1
 fi
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/mark-good.json

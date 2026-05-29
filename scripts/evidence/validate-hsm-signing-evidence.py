@@ -14,8 +14,11 @@ import re
 import sys
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
 
-SCHEMA_VERSION = "suderra.hsm-signing-session.v2"
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
+SCHEMA_VERSION = evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT)
 LEGACY_SCHEMA_VERSIONS = {"suderra.hsm-signing-session.v1"}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PKCS11_KEY_URI_RE = re.compile(r"^pkcs11:.*(?:object|id)=")
@@ -86,16 +89,23 @@ def validate(
         "operator",
         "issuer",
         "started_at",
+        "signed_at",
         "expires_at",
     ):
         if is_placeholder(payload.get(field)):
             failures.append(f"{field} must be non-placeholder")
-    for field in ("started_at", "expires_at"):
+    for field in ("started_at", "signed_at", "expires_at"):
         if parse_utc(payload.get(field)) is None:
             failures.append(f"{field} must be an ISO-8601 UTC timestamp")
+    started = parse_utc(payload.get("started_at"))
+    signed = parse_utc(payload.get("signed_at"))
     expires = parse_utc(payload.get("expires_at"))
-    if expires is not None and expires <= datetime.now(timezone.utc):
-        failures.append("expires_at must be in the future")
+    if started is not None and signed is not None and signed < started:
+        failures.append("signed_at must be at or after started_at")
+    if signed is not None and expires is not None and signed > expires:
+        failures.append("signed_at must be at or before expires_at")
+    if require_production and signed is None:
+        failures.append("production HSM evidence must preserve signed_at for historical replay")
     if payload.get("hardware_backed") is not True:
         failures.append("hardware_backed must be true")
     provider = str(payload.get("provider", "")).lower()

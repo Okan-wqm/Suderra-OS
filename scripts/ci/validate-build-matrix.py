@@ -21,6 +21,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX_PATH = ROOT / "ci" / "build-matrix.yml"
+sys.path.insert(0, str(ROOT / "scripts" / "evidence"))
+import evidence_contract  # noqa: E402
+
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
 
 TARGET_FIELDS = {
     "name",
@@ -535,6 +539,19 @@ def validate(strict_production_variant: bool = False) -> int:
             if "mutated" in root_identity or root_identity in {"template", "installer-rootfs"}:
                 errors.append(f"{name}: production_ready target must not rely on mutable root identity")
 
+    contract_targets = set(EVIDENCE_CONTRACT.get("targets", {}))
+    production_targets = {
+        str(target.get("target"))
+        for target in matrix["defconfigs"]
+        if bool(target.get("production_required"))
+    }
+    missing_contract_targets = sorted(production_targets - contract_targets)
+    if missing_contract_targets:
+        errors.append(
+            "ci/evidence-contract.yml must define every production_required target: "
+            + ", ".join(missing_contract_targets)
+        )
+
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
@@ -610,11 +627,20 @@ def production_readiness(tag: str | None) -> int:
     blockers = [
         target
         for target in matrix["defconfigs"]
-        if bool(target.get("production_required")) and not bool(target.get("production_ready"))
+        if bool(
+            evidence_contract.target_policy(str(target.get("target")), EVIDENCE_CONTRACT).get(
+                "production_gate",
+                bool(target.get("production_required")),
+            )
+        )
+        and not bool(target.get("production_ready"))
     ]
     if blockers:
         release_kind = "pre-release" if tag and "-" in tag else "release"
-        print(f"Production {release_kind} is blocked by unfinished target contracts:", file=sys.stderr)
+        print(
+            f"Production {release_kind} is blocked by unfinished evidence-contract gates:",
+            file=sys.stderr,
+        )
         for target in blockers:
             print(
                 f"- {target['name']}: {target['blocker']}",
@@ -637,7 +663,13 @@ def candidate_readiness(tag: str | None, require_inputs: bool = False) -> int:
     blockers = [
         target
         for target in matrix["defconfigs"]
-        if bool(target.get("production_required")) and not bool(target.get("production_ready"))
+        if bool(
+            evidence_contract.target_policy(str(target.get("target")), EVIDENCE_CONTRACT).get(
+                "production_gate",
+                bool(target.get("production_required")),
+            )
+        )
+        and not bool(target.get("production_ready"))
     ]
     release_targets = [target for target in matrix["defconfigs"] if bool(target.get("release"))]
     missing_blockers = [

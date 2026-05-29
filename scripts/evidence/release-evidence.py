@@ -30,7 +30,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.release-evidence.v5"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
+
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
+SCHEMA_VERSION = evidence_contract.schema_version("release_evidence", EVIDENCE_CONTRACT)
 LEGACY_SCHEMA_VERSIONS = {"suderra.release-evidence.v2", "suderra.release-evidence.v3", "suderra.release-evidence.v4"}
 ASSET_MANIFEST_SCHEMA_VERSION = "suderra.release-assets.v1"
 APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
@@ -103,22 +107,8 @@ GOVERNANCE_CHECKS = (
     "codeowners",
     "audit_log",
 )
-REQUIRED_RUNTIME_CHECKS = (
-    "secure_boot",
-    "dm_verity",
-    "dm_verity_tamper",
-    "rauc_good_update",
-    "rauc_bad_signature",
-    "rauc_health_rollback",
-    "anti_rollback",
-    "data_luks",
-    "lockdown",
-    "nmap",
-    "systemd_security",
-)
-PRODUCTION_RUNTIME_SUITE_TARGETS = {
-    "x86_64": "qemu-x86_64-prod-ab",
-}
+REQUIRED_RUNTIME_CHECKS = tuple(evidence_contract.runtime_required_checks(EVIDENCE_CONTRACT))
+SCENARIO_TO_RUNTIME_CHECKS = evidence_contract.runtime_scenario_to_checks(EVIDENCE_CONTRACT)
 REQUIRED_QEMU_CHECKS = (
     "boot",
     "systemd",
@@ -127,31 +117,10 @@ REQUIRED_QEMU_CHECKS = (
     "network",
     "lockdown-transition",
 )
-REQUIRED_HARDWARE_CHECKS = (
-    "board-identity",
-    "artifact-hash",
-    "flash-transcript",
-    "full-readback-hash",
-    "serial-boot-log",
-    "post-install-boot",
-    "partitions",
-    "root-data-mounts",
-    "network",
-    "listeners",
-    "failed-units",
-    "thermal",
-    "watchdog",
-)
-REQUIRED_HARDWARE_BOARDS_BY_TARGET = {
-    "rpi4": ("raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"),
-    "pi-cm4-revpi-usb-installer": (
-        "raspberry-pi-4-model-b",
-        "cm4-lite-sd",
-        "cm4-emmc-io-board",
-        "revpi-connect-4",
-    ),
-    "revpi4": ("revpi-connect-4",),
-}
+REQUIRED_HARDWARE_CHECKS = tuple(evidence_contract.hardware_required_checks(EVIDENCE_CONTRACT))
+REQUIRED_X86_HARDWARE_CHECKS = tuple(evidence_contract.x86_hardware_required_checks(EVIDENCE_CONTRACT))
+REQUIRED_X86_NEGATIVE_TESTS = tuple(evidence_contract.x86_required_negative_tests(EVIDENCE_CONTRACT))
+REQUIRED_HARDWARE_BOARDS_BY_TARGET = evidence_contract.required_hardware_boards_by_target(EVIDENCE_CONTRACT)
 ALLOWED_RELEASE_ASSET_ROLES = {
     "release-image",
     "checksum",
@@ -167,12 +136,7 @@ ALLOWED_RELEASE_ASSET_ROLES = {
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
-SIGNED_ARTIFACT_ROLES = {
-    "rauc-bundle",
-    "release-artifact",
-    "release-image",
-    "os-update-manifest",
-}
+SIGNED_ARTIFACT_ROLES = evidence_contract.signed_artifact_roles(EVIDENCE_CONTRACT)
 
 
 class Validation:
@@ -358,8 +322,10 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
     base = release_base(release_artifact)
     acceptance = str(contract["acceptance"])
     production_required = bool(contract["production_required"])
+    policy = target_policy_for(str(contract["target"]), row)
     qemu_required = bool(row.get("qemu_test", False))
-    hardware_required = production_required or "hardware" in acceptance
+    hardware_required = bool(policy.get("hardware_required", production_required or "hardware" in acceptance))
+    runtime_required = bool(policy.get("runtime_required", production_required))
     dirty = bool(git_output(["status", "--porcelain"]))
 
     return {
@@ -373,12 +339,11 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "git_commit": git_output(["rev-parse", "HEAD"]) or "unknown",
             "git_tag": version,
             "dirty": dirty,
-            "ci": {
-                "provider": "github-actions",
-                "workflow": "release",
-                "run_id": "not_collected",
-                "run_attempt": "not_collected",
-            },
+            "ci": workflow_identity("Image Build"),
+            "image_build": workflow_identity("Image Build"),
+            "release_preflight": workflow_identity("Release Preflight"),
+            "release_sign": workflow_identity("Release"),
+            "release_publish": workflow_identity("Release Publish"),
         },
         "asset_manifest": {
             "path": "release-assets.json",
@@ -456,8 +421,8 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "checks": [],
         },
         "runtime_qemu": {
-            "required": production_required,
-            "status": "not_run" if production_required else "not_applicable",
+            "required": runtime_required,
+            "status": "not_run" if runtime_required else "not_applicable",
             "production_suites": [],
         },
         "hardware": {
@@ -470,8 +435,8 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
         "release_image_scan_reports": [],
         "runtime_checks": {
             name: {
-                "required": production_required,
-                "status": "not_run" if production_required else "not_applicable",
+                "required": runtime_required,
+                "status": "not_run" if runtime_required else "not_applicable",
                 "evidence": None,
             }
             for name in REQUIRED_RUNTIME_CHECKS
@@ -715,13 +680,34 @@ def release_asset_manifest(
         )
     git_commit = git_output(["rev-parse", "HEAD"]) or "unknown"
     buildroot_metadata: dict[str, Any] = {}
+    binding: dict[str, Any] | None = None
     if binding_manifest is not None:
         binding = read_json(binding_manifest)
         if not isinstance(binding, dict):
             raise ValueError(f"binding manifest is missing or invalid JSON: {binding_manifest}")
+        if isinstance(binding.get("source_sha"), str):
+            git_commit = str(binding["source_sha"])
         buildroot_metadata = buildroot_metadata_from_release_binding(binding)
     elif re.fullmatch(r"[0-9a-f]{40}", git_commit):
         buildroot_metadata = buildroot_metadata_for_manifest(buildroot_source_metadata(git_commit))
+    image_build = workflow_identity(
+        "Image Build",
+        run_id=(
+            str(binding.get("source_run_id"))
+            if isinstance(binding, dict) and binding.get("source_run_id") is not None
+            else "not_collected"
+        ),
+        run_attempt=(
+            str(binding.get("source_run_attempt"))
+            if isinstance(binding, dict) and binding.get("source_run_attempt") is not None
+            else "not_collected"
+        ),
+    )
+    release_workflow = workflow_identity(
+        os.environ.get("GITHUB_WORKFLOW", "release"),
+        run_id=os.environ.get("GITHUB_RUN_ID", "not_collected"),
+        run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT", "not_collected"),
+    )
     return {
         "schema_version": ASSET_MANIFEST_SCHEMA_VERSION,
         "version": version,
@@ -731,12 +717,15 @@ def release_asset_manifest(
             "git_commit": git_commit,
             "git_tag": version,
             "dirty": tracked_source_dirty(),
-            "ci": {
-                "provider": "github-actions",
-                "workflow": os.environ.get("GITHUB_WORKFLOW", "release"),
-                "run_id": os.environ.get("GITHUB_RUN_ID", "not_collected"),
-                "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "not_collected"),
-            },
+            "ci": image_build,
+            "image_build": image_build,
+            "release_preflight": workflow_identity(
+                "Release Preflight",
+                run_id=os.environ.get("SUDERRA_RELEASE_PREFLIGHT_RUN_ID", "not_collected"),
+                run_attempt=os.environ.get("SUDERRA_RELEASE_PREFLIGHT_RUN_ATTEMPT", "not_collected"),
+            ),
+            "release_sign": release_workflow,
+            "release_publish": workflow_identity("Release Publish"),
         },
         "matrix_sha256": matrix_digest(matrix_path),
         **buildroot_metadata,
@@ -751,8 +740,58 @@ def copy_into_bundle(bundle_dir: Path, source: Path, rel: str) -> str:
     return rel
 
 
+def workflow_identity(workflow: str, *, run_id: str = "not_collected", run_attempt: str = "not_collected") -> dict[str, str]:
+    return {
+        "provider": "github-actions",
+        "workflow": workflow,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+    }
+
+
+def collected_workflow_identity(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("run_id"), str)
+        and value.get("run_id") != "not_collected"
+        and isinstance(value.get("run_attempt"), str)
+        and value.get("run_attempt") != "not_collected"
+    )
+
+
+def source_image_build_identity(evidence: dict[str, Any]) -> dict[str, Any]:
+    source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+    image_build = source.get("image_build")
+    if collected_workflow_identity(image_build):
+        return image_build
+    ci = source.get("ci")
+    return ci if isinstance(ci, dict) else {}
+
+
+def target_policy_for(target: str, row: dict[str, Any] | None = None) -> dict[str, Any]:
+    policy = evidence_contract.target_policy(target, EVIDENCE_CONTRACT)
+    if policy:
+        return policy
+    production_required = bool(row.get("production_required")) if isinstance(row, dict) else False
+    acceptance = str(row.get("acceptance", "")) if isinstance(row, dict) else ""
+    return {
+        "hardware_required": production_required or "hardware" in acceptance,
+        "production_gate": production_required,
+        "release_image_scan_required": production_required,
+        "release_public": bool(row.get("release")) if isinstance(row, dict) else False,
+        "runtime_required": production_required,
+        "signing_required": production_required,
+    }
+
+
+def runtime_suite_targets_for(target: str) -> list[str]:
+    suites = evidence_contract.runtime_suite_targets_for(target, EVIDENCE_CONTRACT)
+    return suites
+
+
 def runtime_suite_target_for(target: str) -> str:
-    return PRODUCTION_RUNTIME_SUITE_TARGETS.get(target, target)
+    suites = runtime_suite_targets_for(target)
+    return suites[0] if suites else target
 
 
 def copy_input_relative(bundle_dir: Path, source_root: Path, rel: str, dest_root: str) -> str | None:
@@ -1278,10 +1317,12 @@ def apply_release_inputs(
                                 for item in raw_items
                             ):
                                 raw_items.append(raw_record)
-    runtime_target = runtime_suite_target_for(target)
-    runtime_suite = input_root / "release-runtime" / version / runtime_target / "production-runtime.json"
-    if runtime_suite.is_file() and runtime_suite.stat().st_size > 0:
-        rel_runtime = copy_into_bundle(bundle_dir, runtime_suite, "preflight/runtime/production-runtime.json")
+    for runtime_target in runtime_suite_targets_for(target):
+        runtime_suite = input_root / "release-runtime" / version / runtime_target / "production-runtime.json"
+        if not runtime_suite.is_file() or runtime_suite.stat().st_size <= 0:
+            continue
+        runtime_dest = str(Path("preflight/runtime") / runtime_target / "production-runtime.json")
+        rel_runtime = copy_into_bundle(bundle_dir, runtime_suite, runtime_dest)
         evidence["runtime_qemu"]["production_suites"].append(
             {
                 "target": runtime_target,
@@ -1303,24 +1344,15 @@ def apply_release_inputs(
                         continue
                     log_source = runtime_suite.parent / rel_log
                     if log_source.is_file():
-                        copy_into_bundle(bundle_dir, log_source, str(Path("preflight/runtime") / rel_log))
+                        copy_into_bundle(bundle_dir, log_source, str(Path("preflight/runtime") / runtime_target / rel_log))
             scenarios = runtime_payload.get("scenarios")
             if isinstance(scenarios, list) and all(isinstance(item, dict) and item.get("status") == "passed" for item in scenarios):
                 evidence["runtime_qemu"]["status"] = "passed"
-                scenario_to_runtime = {
-                    "signed-boot": "secure_boot",
-                    "dm-verity-rootfs-tamper-rejection": "dm_verity_tamper",
-                    "rauc-good-update": "rauc_good_update",
-                    "rauc-bad-signature-rejection": "rauc_bad_signature",
-                    "rauc-health-rollback": "rauc_health_rollback",
-                    "anti-rollback-downgrade-rejection": "anti_rollback",
-                    "data-luks-swtpm": "data_luks",
-                }
                 for scenario in scenarios:
-                    check_name = scenario_to_runtime.get(str(scenario.get("name")))
-                    if check_name in evidence["runtime_checks"]:
-                        evidence["runtime_checks"][check_name]["status"] = "passed"
-                        evidence["runtime_checks"][check_name]["evidence"] = rel_runtime
+                    for check_name in SCENARIO_TO_RUNTIME_CHECKS.get(str(scenario.get("name")), ()):
+                        if check_name in evidence["runtime_checks"]:
+                            evidence["runtime_checks"][check_name]["status"] = "passed"
+                            evidence["runtime_checks"][check_name]["evidence"] = rel_runtime
     signing_root = input_root / "release-signing" / version / target
     if signing_root.is_dir():
         for session in sorted(signing_root.glob("*.json")):
@@ -1900,7 +1932,7 @@ def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], 
         try:
             module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
             source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
-            ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+            ci = source_image_build_identity(evidence)
             for failure in module.validate_repro(
                 repro_path,
                 str(evidence.get("version")),
@@ -1956,7 +1988,7 @@ def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], 
                 module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
                 scan = item.get("name") if isinstance(item, dict) else None
                 source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
-                ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+                ci = source_image_build_identity(evidence)
                 for failure in module.validate_security_report(
                     report_path,
                     str(scan),
@@ -2201,15 +2233,22 @@ def validate_runtime_qemu(
     source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
     expected_source_sha = source.get("git_commit") if isinstance(source.get("git_commit"), str) else None
     evidence_target = str(evidence.get("target", ""))
-    expected_runtime_target = runtime_suite_target_for(evidence_target)
+    expected_runtime_targets = runtime_suite_targets_for(evidence_target)
+    expected_runtime_target_set = set(expected_runtime_targets)
+    seen_runtime_targets: set[str] = set()
     for idx, item in enumerate(suites):
         if isinstance(item, dict):
             suite_target = item.get("target")
-            if isinstance(suite_target, str) and suite_target != expected_runtime_target:
+            if isinstance(suite_target, str):
+                seen_runtime_targets.add(suite_target)
+            if expected_runtime_target_set and isinstance(suite_target, str) and suite_target not in expected_runtime_target_set:
                 validation.error(
                     f"$.runtime_qemu.production_suites[{idx}].target",
-                    f"must be {expected_runtime_target}",
+                    f"must be one of: {', '.join(sorted(expected_runtime_target_set))}",
                 )
+            expected_runtime_target = suite_target if isinstance(suite_target, str) else runtime_suite_target_for(evidence_target)
+        else:
+            expected_runtime_target = runtime_suite_target_for(evidence_target)
         suite_path = validate_preserved_ref(validation, f"$.runtime_qemu.production_suites[{idx}]", item, require_pass)
         if require_pass and suite_path is not None:
             try:
@@ -2232,6 +2271,13 @@ def validate_runtime_qemu(
                     f"$.runtime_qemu.production_suites[{idx}].path",
                     f"cannot replay production-runtime suite validation: {exc}",
                 )
+    if require_pass and release_tier == "production" and expected_required and expected_runtime_target_set:
+        missing_targets = sorted(expected_runtime_target_set - seen_runtime_targets)
+        if missing_targets:
+            validation.error(
+                "$.runtime_qemu.production_suites",
+                f"missing required runtime suite targets: {', '.join(missing_targets)}",
+            )
     if require_pass and release_tier == "production" and expected_required and runtime_qemu.get("status") != "passed":
         validation.error("$.runtime_qemu.status", "must be passed for production release evidence")
 
@@ -2361,7 +2407,7 @@ def validate_station_acquisitions(
             try:
                 module = load_script_module("station_acquisition", "scripts/evidence/station-acquisition.py")
                 source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
-                ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+                ci = source_image_build_identity(evidence)
                 hardware = evidence.get("hardware") if isinstance(evidence.get("hardware"), dict) else {}
                 binding = hardware.get("artifact_binding") if isinstance(hardware.get("artifact_binding"), dict) else {}
                 station_registry = hardware.get("station_registry") if isinstance(hardware.get("station_registry"), dict) else {}
@@ -2395,8 +2441,44 @@ def validate_release_image_scan_reports(
         return
     if require_pass and release_tier == "production" and expected_required and not reports:
         validation.error("$.release_image_scan_reports", "must include scanner-native release image reports")
+    release_subjects = {
+        (str(item.get("name")), str(item.get("sha256")), item.get("bytes"))
+        for item in evidence.get("artifacts", [])
+        if isinstance(item, dict)
+        and item.get("role") == "release-image"
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("sha256"), str)
+        and isinstance(item.get("bytes"), int)
+    }
     for idx, item in enumerate(reports):
-        validate_preserved_ref(validation, f"$.release_image_scan_reports[{idx}]", item, require_pass)
+        report_path = validate_preserved_ref(validation, f"$.release_image_scan_reports[{idx}]", item, require_pass)
+        if require_pass and release_tier == "production" and expected_required and report_path is not None:
+            payload = read_json(report_path)
+            if not isinstance(payload, dict):
+                validation.error(f"$.release_image_scan_reports[{idx}].path", "must be scanner-native JSON")
+                continue
+            if payload.get("schema_version") != evidence_contract.schema_version("release_security_report", EVIDENCE_CONTRACT):
+                validation.error(
+                    f"$.release_image_scan_reports[{idx}].schema_version",
+                    "must be the release security report schema",
+                )
+            subjects = payload.get("subjects")
+            if not isinstance(subjects, list) or not subjects:
+                validation.error(f"$.release_image_scan_reports[{idx}].subjects", "must include scanned subjects")
+                continue
+            matched = False
+            for subject in subjects:
+                if not isinstance(subject, dict) or subject.get("role") != "release-image":
+                    continue
+                candidate = (str(subject.get("name")), str(subject.get("sha256")), subject.get("bytes"))
+                if candidate in release_subjects:
+                    matched = True
+                    break
+            if not matched:
+                validation.error(
+                    f"$.release_image_scan_reports[{idx}].subjects",
+                    "must bind a release-image subject name, sha256, and bytes from evidence.artifacts",
+                )
 
 
 def validate_hardware(
@@ -2456,7 +2538,7 @@ def validate_hardware(
                     try:
                         module = load_script_module("validate_lab_input", "scripts/evidence/validate-lab-input.py")
                         source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
-                        ci = source.get("ci") if isinstance(source.get("ci"), dict) else {}
+                        ci = source_image_build_identity(evidence)
                         profile = "release-candidate" if "-" in str(evidence.get("version", "")) else "production-candidate"
                         for failure in module.validate_lab(
                             lab_input_path,
@@ -2806,11 +2888,19 @@ def validate_source(validation: Validation, evidence: dict[str, Any], require_pa
     else:
         for field in ("provider", "workflow", "run_id", "run_attempt"):
             check_string(validation, f"$.source.ci.{field}", ci.get(field))
-        if require_pass:
-            if ci.get("run_id") == "not_collected":
-                validation.error("$.source.ci.run_id", "must be collected for release-ready evidence")
-            if ci.get("run_attempt") == "not_collected":
-                validation.error("$.source.ci.run_attempt", "must be collected for release-ready evidence")
+    for name in ("image_build", "release_preflight", "release_sign", "release_publish"):
+        identity = source.get(name)
+        if identity is None:
+            continue
+        if not isinstance(identity, dict):
+            validation.error(f"$.source.{name}", "must be an object")
+            continue
+        for field in ("provider", "workflow", "run_id", "run_attempt"):
+            check_string(validation, f"$.source.{name}.{field}", identity.get(field))
+    image_build = source_image_build_identity(evidence)
+    if require_pass:
+        if not collected_workflow_identity(image_build):
+            validation.error("$.source.image_build.run_id", "must be collected for release-ready evidence")
     if require_pass:
         if not isinstance(source.get("git_commit"), str) or not re.fullmatch(
             r"[0-9a-f]{40}", source["git_commit"]
@@ -2885,17 +2975,20 @@ def release_tier_from_version(version: Any) -> str:
 def expected_gate_requirements(
     evidence: dict[str, Any],
     matrix: dict[str, Any] | None,
-) -> tuple[bool, bool, bool]:
+) -> tuple[bool, bool, bool, bool, bool]:
     contract = evidence.get("target_contract")
     if not isinstance(contract, dict):
-        return False, False, False
+        return False, False, False, False, False
     row = targets_by_id(matrix).get(str(evidence.get("target", ""))) if matrix is not None else None
     qemu_required = bool(row.get("qemu_test", False)) if isinstance(row, dict) else False
     production_required = bool(contract.get("production_required"))
     acceptance = str(contract.get("acceptance", ""))
-    hardware_required = production_required or "hardware" in acceptance
-    runtime_required = production_required
-    return qemu_required, hardware_required, runtime_required
+    policy = target_policy_for(str(evidence.get("target", "")), row)
+    hardware_required = bool(policy.get("hardware_required", production_required or "hardware" in acceptance))
+    runtime_required = bool(policy.get("runtime_required", production_required))
+    signing_required = bool(policy.get("signing_required", production_required))
+    image_scan_required = bool(policy.get("release_image_scan_required", production_required))
+    return qemu_required, hardware_required, runtime_required, signing_required, image_scan_required
 
 
 def validate_evidence(
@@ -2950,7 +3043,13 @@ def validate_evidence(
             validation.error("$matrix", f"cannot read matrix: {exc}")
 
     validate_target_contract(validation, evidence, matrix)
-    qemu_required, hardware_required, runtime_required = expected_gate_requirements(evidence, matrix)
+    (
+        qemu_required,
+        hardware_required,
+        runtime_required,
+        signing_required,
+        image_scan_required,
+    ) = expected_gate_requirements(evidence, matrix)
     validate_source(validation, evidence, require_pass)
     validate_asset_manifest(validation, evidence, require_pass)
     validate_artifacts(validation, evidence, require_pass, effective_tier)
@@ -2976,8 +3075,8 @@ def validate_evidence(
     validate_runtime_qemu(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_hardware(validation, evidence, require_pass, hardware_required)
     validate_station_acquisitions(validation, evidence, require_pass, effective_tier, hardware_required)
-    validate_hsm_signing_sessions(validation, evidence, require_pass, effective_tier, runtime_required)
-    validate_release_image_scan_reports(validation, evidence, require_pass, effective_tier, runtime_required)
+    validate_hsm_signing_sessions(validation, evidence, require_pass, effective_tier, signing_required)
+    validate_release_image_scan_reports(validation, evidence, require_pass, effective_tier, image_scan_required)
     validate_runtime_checks(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_approvals(validation, evidence, require_pass)
     validate_release_decision(validation, evidence, require_pass)
@@ -3001,16 +3100,31 @@ def schema_contract() -> dict[str, Any]:
         "approval_schema_version": APPROVAL_SCHEMA_VERSION,
         "machine_verification_schema_version": MACHINE_VERIFICATION_SCHEMA_VERSION,
         "machine_verification_checks": list(MACHINE_VERIFICATION_CHECKS),
-        "production_runtime_suite_schema_version": "suderra.qemu-production-runtime-suite.v2",
-        "hsm_signing_session_schema_version": "suderra.hsm-signing-session.v2",
-        "release_security_report_schema_version": "suderra.release-security-report.v2",
+        "evidence_contract_schema_version": evidence_contract.CONTRACT_SCHEMA_VERSION,
+        "evidence_contract_path": "ci/evidence-contract.yml",
+        "production_runtime_suite_schema_version": evidence_contract.schema_version(
+            "production_runtime_suite",
+            EVIDENCE_CONTRACT,
+        ),
+        "hsm_signing_session_schema_version": evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT),
+        "release_security_report_schema_version": evidence_contract.schema_version(
+            "release_security_report",
+            EVIDENCE_CONTRACT,
+        ),
         "governance_checks": list(GOVERNANCE_CHECKS),
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
+        "runtime_scenario_to_checks": {name: list(checks) for name, checks in sorted(SCENARIO_TO_RUNTIME_CHECKS.items())},
         "required_qemu_checks": list(REQUIRED_QEMU_CHECKS),
         "required_hardware_checks": list(REQUIRED_HARDWARE_CHECKS),
+        "required_x86_hardware_checks": list(REQUIRED_X86_HARDWARE_CHECKS),
+        "required_x86_negative_tests": list(REQUIRED_X86_NEGATIVE_TESTS),
         "required_hardware_boards_by_target": {
             target: list(boards)
             for target, boards in sorted(REQUIRED_HARDWARE_BOARDS_BY_TARGET.items())
+        },
+        "runtime_suite_targets": {
+            target: evidence_contract.runtime_suite_targets_for(target, EVIDENCE_CONTRACT)
+            for target in sorted(EVIDENCE_CONTRACT.get("targets", {}))
         },
         "release_ready_invariants": [
             "source.dirty is false and source.git_commit is a full commit sha",

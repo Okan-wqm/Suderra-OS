@@ -21,10 +21,14 @@ import subprocess
 import sys
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
-SCHEMA_VERSION = "suderra.lab-evidence.v3"
+EVIDENCE_CONTRACT = evidence_contract.load_contract()
+SCHEMA_VERSION = evidence_contract.schema_version("lab_evidence", EVIDENCE_CONTRACT)
 STATION_BUNDLE_SCHEMA_VERSION = "suderra.lab-station-bundle.v1"
 STATION_REGISTRY_SCHEMA_VERSION = "suderra.lab-station-registry.v1"
 LEGACY_SCHEMA_VERSIONS = {"suderra.lab-evidence.v2"}
@@ -64,21 +68,7 @@ REQUIRED_DEVICE_IDENTITY_FIELDS = (
     "storage_serial",
     "root_partuuid",
 )
-REQUIRED_LAB_CHECKS = (
-    "board-identity",
-    "artifact-hash",
-    "flash-transcript",
-    "full-readback-hash",
-    "serial-boot-log",
-    "post-install-boot",
-    "partitions",
-    "root-data-mounts",
-    "network",
-    "listeners",
-    "failed-units",
-    "thermal",
-    "watchdog",
-)
+REQUIRED_LAB_CHECKS = tuple(evidence_contract.hardware_required_checks(EVIDENCE_CONTRACT))
 REQUIRED_USB_NEGATIVE_TESTS = (
     "no-target-disk",
     "ambiguous-targets",
@@ -90,30 +80,9 @@ REQUIRED_USB_NEGATIVE_TESTS = (
     "small-target",
     "rollback-floor-violation",
 )
-REQUIRED_X86_HARDWARE_CHECKS = (
-    "tpm-presence",
-    "secure-boot-enforced",
-    "rauc-rollback",
-    "dm-verity-tamper-rejection",
-    "boot-tamper-rejection",
-    "power-cycle-transcript",
-)
-REQUIRED_X86_NEGATIVE_TESTS = (
-    "dm-verity-rootfs-tamper",
-    "secure-boot-unsigned-uki",
-    "rauc-health-rollback",
-)
-REQUIRED_BOARDS_BY_TARGET = {
-    "x86_64": ("industrial-x86_64",),
-    "rpi4": ("raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"),
-    "pi-cm4-revpi-usb-installer": (
-        "raspberry-pi-4-model-b",
-        "cm4-lite-sd",
-        "cm4-emmc-io-board",
-        "revpi-connect-4",
-    ),
-    "revpi4": ("revpi-connect-4",),
-}
+REQUIRED_X86_HARDWARE_CHECKS = tuple(evidence_contract.x86_hardware_required_checks(EVIDENCE_CONTRACT))
+REQUIRED_X86_NEGATIVE_TESTS = tuple(evidence_contract.x86_required_negative_tests(EVIDENCE_CONTRACT))
+REQUIRED_BOARDS_BY_TARGET = evidence_contract.required_hardware_boards_by_target(EVIDENCE_CONTRACT)
 STRICT_PROFILES = {"release-candidate", "production-candidate"}
 
 

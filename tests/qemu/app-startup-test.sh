@@ -24,7 +24,11 @@ grep -q 'RequiresMountsFor=/data /boot' "${RAUC_MARK_GOOD_UNIT}" || {
     echo "ERROR: mark-good startup must require durable /data and /boot" >&2
     exit 1
 }
-grep -q 'suderra-ota mark-good --skip-rauc' "${OTA_MARK_GOOD_UNIT}" || {
-    echo "ERROR: OTA mark-good startup must persist rollback floor after RAUC mark-good" >&2
+grep -q 'ExecStart=/usr/bin/suderra-ota mark-good' "${OTA_MARK_GOOD_UNIT}" || {
+    echo "ERROR: OTA mark-good startup must let suderra-ota own RAUC mark-good" >&2
     exit 1
 }
+if grep -q -- '--skip-rauc' "${OTA_MARK_GOOD_UNIT}"; then
+    echo "ERROR: OTA mark-good startup must not bypass RAUC mark-good ownership" >&2
+    exit 1
+fi

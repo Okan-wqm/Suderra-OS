@@ -1,0 +1,163 @@
+{
+  "schema_version": "suderra.evidence-contract.v1",
+  "schema_versions": {
+    "hsm_signing_session": "suderra.hsm-signing-session.v2",
+    "lab_evidence": "suderra.lab-evidence.v3",
+    "machine_verification": "suderra.machine-verification.v3",
+    "production_runtime_suite": "suderra.qemu-production-runtime-suite.v2",
+    "release_evidence": "suderra.release-evidence.v5",
+    "release_security_report": "suderra.release-security-report.v2",
+    "station_acquisition": "suderra.station-acquisition.v1"
+  },
+  "profiles": {
+    "ci": {"production_candidate": false},
+    "dev": {"production_candidate": false},
+    "ga": {"production_candidate": true},
+    "production-candidate": {"production_candidate": true}
+  },
+  "runtime": {
+    "required_checks": [
+      "secure_boot",
+      "dm_verity",
+      "dm_verity_tamper",
+      "rauc_good_update",
+      "rauc_bad_signature",
+      "rauc_health_rollback",
+      "anti_rollback",
+      "data_luks",
+      "lockdown",
+      "nmap",
+      "systemd_security"
+    ],
+    "required_scenarios": [
+      "signed-boot",
+      "unsigned-boot-rejection",
+      "cmdline-tamper-rejection",
+      "dm-verity-rootfs-tamper-rejection",
+      "rauc-good-update",
+      "rauc-bad-signature-rejection",
+      "rauc-health-rollback",
+      "anti-rollback-downgrade-rejection",
+      "data-luks-swtpm"
+    ],
+    "scenario_to_checks": {
+      "anti-rollback-downgrade-rejection": ["anti_rollback"],
+      "data-luks-swtpm": ["data_luks"],
+      "dm-verity-rootfs-tamper-rejection": ["dm_verity_tamper"],
+      "rauc-bad-signature-rejection": ["rauc_bad_signature"],
+      "rauc-good-update": ["rauc_good_update"],
+      "rauc-health-rollback": ["rauc_health_rollback"],
+      "signed-boot": ["secure_boot", "dm_verity", "lockdown", "nmap", "systemd_security"]
+    },
+    "suite_targets": {
+      "pi-cm4-revpi-usb-installer": [],
+      "qemu-x86_64-prod-ab": ["qemu-x86_64-prod-ab"],
+      "revpi4": [],
+      "rpi4": [],
+      "x86_64": ["qemu-x86_64-prod-ab"]
+    }
+  },
+  "hardware": {
+    "adapter_roles": [
+      "flash",
+      "readback",
+      "uart",
+      "power",
+      "storage",
+      "tpm",
+      "secure-boot",
+      "rauc",
+      "tamper"
+    ],
+    "required_boards_by_target": {
+      "pi-cm4-revpi-usb-installer": [
+        "raspberry-pi-4-model-b",
+        "cm4-lite-sd",
+        "cm4-emmc-io-board",
+        "revpi-connect-4"
+      ],
+      "revpi4": ["revpi-connect-4"],
+      "rpi4": ["raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"],
+      "x86_64": ["industrial-x86_64"]
+    },
+    "required_checks": [
+      "board-identity",
+      "artifact-hash",
+      "flash-transcript",
+      "full-readback-hash",
+      "serial-boot-log",
+      "post-install-boot",
+      "partitions",
+      "root-data-mounts",
+      "network",
+      "listeners",
+      "failed-units",
+      "thermal",
+      "watchdog"
+    ],
+    "x86_required_checks": [
+      "tpm-presence",
+      "secure-boot-enforced",
+      "rauc-rollback",
+      "dm-verity-tamper-rejection",
+      "boot-tamper-rejection",
+      "power-cycle-transcript"
+    ],
+    "x86_required_negative_tests": [
+      "dm-verity-rootfs-tamper",
+      "secure-boot-unsigned-uki",
+      "rauc-health-rollback"
+    ]
+  },
+  "signing": {
+    "request_schema_version": "suderra.signing-request.v1",
+    "signed_artifact_roles": [
+      "rauc-bundle",
+      "release-artifact",
+      "release-image",
+      "os-update-manifest"
+    ]
+  },
+  "targets": {
+    "pi-cm4-revpi-usb-installer": {
+      "hardware_required": true,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": true,
+      "runtime_required": false,
+      "signing_required": true
+    },
+    "qemu-x86_64-prod-ab": {
+      "hardware_required": false,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": false,
+      "runtime_required": true,
+      "signing_required": true
+    },
+    "revpi4": {
+      "hardware_required": true,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": true,
+      "runtime_required": false,
+      "signing_required": true
+    },
+    "rpi4": {
+      "hardware_required": true,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": true,
+      "runtime_required": false,
+      "signing_required": true
+    },
+    "x86_64": {
+      "hardware_required": true,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": false,
+      "runtime_required": true,
+      "signing_required": true
+    }
+  }
+}

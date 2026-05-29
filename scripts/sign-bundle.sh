@@ -54,19 +54,24 @@ resolve_rauc() {
 }
 
 production_signing_evidence() {
+    local artifact_sha="${1:-}"
     local evidence="${SUDERRA_HSM_SIGNING_EVIDENCE:-}"
+    local -a args
     if [ -z "${evidence}" ] || [ ! -s "${evidence}" ]; then
         echo "ERROR: production signing requires SUDERRA_HSM_SIGNING_EVIDENCE" >&2
         exit 1
     fi
-    python3 "${SCRIPT_DIR}/evidence/validate-hsm-signing-evidence.py" validate \
+    args=(
+        python3 "${SCRIPT_DIR}/evidence/validate-hsm-signing-evidence.py" validate
         "${evidence}" \
         --pkcs11-uri "${SUDERRA_RAUC_PKCS11_URI}" \
         --certificate "${SUDERRA_RAUC_SIGNING_CERT}" \
-        --artifact-role "rauc-bundle" \
-        --artifact-sha256 "$(sha256sum "${BUNDLE}" | awk '{print $1}')" \
-        --require-production \
-        >/dev/null
+        --require-production
+    )
+    if [ -n "${artifact_sha}" ]; then
+        args+=(--artifact-role "rauc-bundle" --artifact-sha256 "${artifact_sha}")
+    fi
+    "${args[@]}" >/dev/null
 }
 
 require_pkcs11_key_uri() {
@@ -107,6 +112,7 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         echo "ERROR: production signing requires rauc host tool" >&2
         exit 1
     }
+    production_signing_evidence
     echo "==> RAUC bundle HSM/PKCS#11 imzalama: ${BUNDLE}"
     "${RAUC_TOOL}" resign \
         --cert="${SUDERRA_RAUC_SIGNING_CERT}" \
@@ -115,7 +121,7 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         "${BUNDLE}.signed"
     mv "${BUNDLE}.signed" "${BUNDLE}"
     "${RAUC_TOOL}" info --keyring="${SUDERRA_RAUC_KEYRING}" "${BUNDLE}" >/dev/null
-    production_signing_evidence
+    production_signing_evidence "$(sha256sum "${BUNDLE}" | awk '{print $1}')"
 fi
 
 # 1. RAUC re-sign (eğer bundle henüz imzasız ise)
