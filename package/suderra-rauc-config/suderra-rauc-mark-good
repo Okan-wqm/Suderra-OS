@@ -15,7 +15,23 @@ if [ ! -x /usr/sbin/suderra-rauc-health-gate ]; then
 fi
 
 mkdir -p /data/rauc
-/usr/sbin/suderra-rauc-health-gate
+if ! /usr/sbin/suderra-rauc-health-gate; then
+    /usr/sbin/suderra-rauc-boot-state >/data/rauc/health-rollback-pre.json || true
+    if [ -x /usr/bin/suderra-ota ]; then
+        /usr/bin/suderra-ota rollback --reason health-gate
+    else
+        /usr/bin/rauc status mark-bad
+        /sbin/reboot "suderra-rauc health-gate" || true
+    fi
+    exit 1
+fi
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/pre-mark-good.json
-/usr/bin/rauc status mark-good
+if ! /usr/bin/rauc status mark-good; then
+    if [ -x /usr/bin/suderra-ota ]; then
+        /usr/bin/suderra-ota rollback --reason mark-good-failed
+    else
+        /usr/bin/rauc status mark-bad || true
+    fi
+    exit 1
+fi
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/mark-good.json

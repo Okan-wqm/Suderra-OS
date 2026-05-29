@@ -88,10 +88,10 @@ Required top-level fields:
 | `preflight_inputs` | Preserved approval, reproducibility, security, QEMU, and lab input files replayed by final validation. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
-| `runtime_qemu` | Non-public production-runtime QEMU suite evidence for Secure Boot, dm-verity, RAUC, anti-rollback, and `/data` LUKS/swtpm scenarios. |
+| `runtime_qemu` | Non-public `suderra.qemu-production-runtime-suite.v2` evidence for Secure Boot, dm-verity, RAUC, anti-rollback, and `/data` LUKS/swtpm scenarios. The production x86 gate binds to the non-public `qemu-x86_64-prod-ab` runtime suite; target mismatches fail validation. |
 | `hardware` | Board serial logs and hardware acceptance results. |
 | `station_acquisitions` | Adapter-executed lab acquisition records, including station registry binding and raw adapter transcript digests. |
-| `hsm_signing_sessions` | HSM/PKCS#11 signing sessions with token/key identity, challenge-response, audit transcript, and artifact-role bindings. |
+| `hsm_signing_sessions` | HSM/PKCS#11 signing sessions with token/key identity, challenge-response, audit transcript, certificate preservation, and exact artifact-role/digest bindings replayed with `validate-hsm-signing-evidence.py`. |
 | `release_image_scan_reports` | Scanner-native rootfs/image/SBOM reports bound to release subjects and raw scanner bytes. |
 | `runtime_checks` | `secure_boot`, `dm_verity`, `dm_verity_tamper`, `rauc_good_update`, `rauc_bad_signature`, `rauc_health_rollback`, `anti_rollback`, `data_luks`, `lockdown`, `nmap`, and `systemd_security`. |
 | `approvals` | Release-owner or security approvals. |

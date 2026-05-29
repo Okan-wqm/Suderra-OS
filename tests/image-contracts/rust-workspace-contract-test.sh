@@ -94,7 +94,8 @@ git -C "${ROOT}" check-ignore -q userspace/Cargo.lock &&
 
 for mk in \
     "${ROOT}/package/suderra-os-installer/suderra-os-installer.mk" \
-    "${ROOT}/package/suderra-firstboot/suderra-firstboot.mk"; do
+    "${ROOT}/package/suderra-firstboot/suderra-firstboot.mk" \
+    "${ROOT}/package/suderra-ota/suderra-ota.mk"; do
     grep -q 'SUDERRA_RUST_WORKSPACE_BUILD' "${mk}" ||
         {
             echo "ERROR: ${mk} must use the shared Rust workspace build contract" >&2
@@ -109,7 +110,8 @@ done
 
 for config in \
     "${ROOT}/package/suderra-os-installer/Config.in" \
-    "${ROOT}/package/suderra-firstboot/Config.in"; do
+    "${ROOT}/package/suderra-firstboot/Config.in" \
+    "${ROOT}/package/suderra-ota/Config.in"; do
     grep -q 'depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS' "${config}" ||
         {
             echo "ERROR: ${config} must be gated on Rust target support" >&2

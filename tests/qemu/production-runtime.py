@@ -26,6 +26,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = ROOT / "scripts" / "evidence" / "validate-production-runtime-suite.py"
+SCENARIO_RESULT = "scenario-result.json"
 
 
 def load_validator() -> Any:
@@ -113,12 +114,76 @@ def log_entries(base: Path, scenario_dir: Path) -> list[dict[str, Any]]:
     return output
 
 
+def qemu_version_from_result(result: dict[str, Any]) -> str:
+    value = result.get("qemu_version")
+    if isinstance(value, str) and value.strip():
+        return value
+    return "not_collected"
+
+
+def list_from_result(result: dict[str, Any], field: str) -> list[str]:
+    value = result.get(field)
+    if isinstance(value, list) and all(isinstance(item, str) and item for item in value):
+        return value
+    return []
+
+
+def object_from_result(result: dict[str, Any], field: str) -> dict[str, Any]:
+    value = result.get(field)
+    return value if isinstance(value, dict) else {}
+
+
+def scenario_logs_by_role(logs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(item["role"]): item
+        for item in logs
+        if isinstance(item, dict) and isinstance(item.get("role"), str)
+    }
+
+
+def raw_evidence_from_logs(logs: list[dict[str, Any]]) -> dict[str, str]:
+    by_role = scenario_logs_by_role(logs)
+    return {
+        "serial_sha256": str(by_role.get("serial", {}).get("sha256", "")),
+        "qmp_events_sha256": str(by_role.get("qmp-events", {}).get("sha256", "")),
+    }
+
+
+def read_scenario_result(path: Path) -> dict[str, Any]:
+    try:
+        payload = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def mutation_artifact_from_result(
+    measured: dict[str, Any],
+    scenario_dir: Path,
+    suite_root: Path,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    artifact = object_from_result(measured, "mutation_artifact")
+    if not artifact:
+        return fallback
+    artifact = dict(artifact)
+    path = artifact.get("path")
+    if isinstance(path, str) and path.strip():
+        rel = Path(path)
+        if not rel.is_absolute() and ".." not in rel.parts:
+            actual = scenario_dir / rel
+            if actual.exists():
+                artifact["path"] = actual.relative_to(suite_root).as_posix()
+    return artifact
+
+
 def execute_scenario(
     plan: dict[str, Any],
     item: dict[str, Any],
     idx: int,
     work_root: Path,
 ) -> dict[str, Any]:
+    suite_root = work_root.parent
     name = require_string(item, "name", f"scenarios[{idx}]")
     scenario_dir = work_root / name
     scenario_dir.mkdir(parents=True, exist_ok=True)
@@ -127,6 +192,7 @@ def execute_scenario(
     before_root = scenario_dir / "mutation-before"
     after_root = scenario_dir / "mutation-after"
     before_digest = sha256_tree(before_root)
+    swtpm_before_digest = sha256_tree(Path(plan["swtpm_state"]))
     started_at = now_utc()
     command = command_from_spec(item, f"scenarios[{idx}]")
     env = {
@@ -137,6 +203,8 @@ def execute_scenario(
         "SUDERRA_OVMF_CODE": str(plan["ovmf_code"]),
         "SUDERRA_OVMF_VARS": str(plan["ovmf_vars"]),
         "SUDERRA_SWTPM_STATE": str(plan["swtpm_state"]),
+        "SUDERRA_EXPECTED_OUTCOME": str(item.get("expected_outcome", "")),
+        "SUDERRA_SCENARIO_RESULT": str(scenario_dir / SCENARIO_RESULT),
     }
     result = subprocess.run(
         command,
@@ -149,8 +217,12 @@ def execute_scenario(
     completed_at = now_utc()
     after_digest = sha256_tree(after_root)
     expected_exit_code = item.get("expected_exit_code", 0)
-    status = "passed" if result.returncode == expected_exit_code else "failed"
-    observed_outcome = str(item.get("expected_outcome")) if status == "passed" else "userspace-rejected"
+    measured = read_scenario_result(scenario_dir / SCENARIO_RESULT)
+    measured_status = measured.get("status")
+    status = "passed" if result.returncode == expected_exit_code and measured_status == "passed" else "failed"
+    observed_outcome = measured.get("observed_outcome")
+    if not isinstance(observed_outcome, str) or not observed_outcome.strip():
+        observed_outcome = "userspace-rejected"
     mutation_type = str(item.get("mutation_type", "none" if name == "signed-boot" else "external-command"))
     mutation_target = str(item.get("mutation_target", scenario_dir))
     if name != "signed-boot" and before_digest == after_digest:
@@ -173,13 +245,33 @@ def execute_scenario(
         "failure_class": "none" if status == "passed" else "security_failure",
         "exit_code": result.returncode,
         "expected_exit_code": expected_exit_code,
+        "qemu_version": qemu_version_from_result(measured),
+        "qemu_argv": list_from_result(measured, "qemu_argv"),
+        "termination": {
+            **object_from_result(measured, "termination"),
+            "class": str(object_from_result(measured, "termination").get("class", "measured")),
+            "reason": str(object_from_result(measured, "termination").get("reason", "scenario result")),
+        },
+        "raw_evidence": object_from_result(measured, "raw_evidence") or raw_evidence_from_logs(log_entries(suite_root, scenario_dir)),
+        "guest_facts": object_from_result(measured, "guest_facts"),
+        "swtpm_state": {
+            "path": str(plan["swtpm_state"]),
+            "before_sha256": str(measured.get("swtpm_state_before_sha256", swtpm_before_digest)),
+            "after_sha256": str(measured.get("swtpm_state_after_sha256", sha256_tree(plan["swtpm_state"]))),
+        },
         "mutation": {
             "type": mutation_type,
             "target": mutation_target,
             "before_sha256": before_digest,
             "after_sha256": after_digest,
+            "artifact": mutation_artifact_from_result(measured, scenario_dir, suite_root, {
+                "role": mutation_type,
+                "path": str(Path("production-runtime-logs") / name / SCENARIO_RESULT),
+                "before_sha256": before_digest,
+                "after_sha256": after_digest,
+            }),
         },
-        "logs": log_entries(work_root, scenario_dir),
+        "logs": log_entries(suite_root, scenario_dir),
     }
 
 
@@ -208,6 +300,24 @@ def create_command(args: argparse.Namespace) -> int:
     plan["ovmf_code"] = ovmf_code
     plan["ovmf_vars"] = ovmf_vars
     plan["swtpm_state"] = swtpm_state
+    swtpm_state_before_sha256 = sha256_tree(swtpm_state)
+    scenarios = [
+        execute_scenario(plan, item, idx, work_root)
+        for idx, item in enumerate(scenarios_spec)
+        if isinstance(item, dict)
+    ]
+    first_qemu_argv = next(
+        (scenario.get("qemu_argv") for scenario in scenarios if isinstance(scenario.get("qemu_argv"), list) and scenario["qemu_argv"]),
+        [],
+    )
+    first_qemu_version = next(
+        (
+            str(scenario.get("qemu_version"))
+            for scenario in scenarios
+            if isinstance(scenario.get("qemu_version"), str) and scenario.get("qemu_version") != "not_collected"
+        ),
+        "not_collected",
+    )
     suite = {
         "schema_version": load_validator().SCHEMA_VERSION,
         "version": plan["version"],
@@ -220,13 +330,18 @@ def create_command(args: argparse.Namespace) -> int:
         "ovmf_code_sha256": sha256_file(ovmf_code),
         "ovmf_vars": str(ovmf_vars),
         "ovmf_vars_sha256": sha256_file(ovmf_vars),
+        "ovmf_enrollment": {
+            "mode": str(plan.get("ovmf_enrollment_mode", "secure-boot-enrolled")),
+            "enrolled_vars_sha256": str(plan.get("ovmf_enrolled_vars_sha256", sha256_file(ovmf_vars))),
+            "secure_boot_db_sha256": str(plan.get("secure_boot_db_sha256", sha256_file(ovmf_vars))),
+        },
+        "qemu_version": first_qemu_version,
+        "qemu_argv": first_qemu_argv,
         "swtpm_state": str(swtpm_state),
         "swtpm_state_sha256": sha256_tree(swtpm_state),
-        "scenarios": [
-            execute_scenario(plan, item, idx, work_root)
-            for idx, item in enumerate(scenarios_spec)
-            if isinstance(item, dict)
-        ],
+        "swtpm_state_before_sha256": swtpm_state_before_sha256,
+        "swtpm_state_after_sha256": sha256_tree(swtpm_state),
+        "scenarios": scenarios,
     }
     write_json(args.output, suite)
     failures = load_validator().validate(
@@ -237,6 +352,7 @@ def create_command(args: argparse.Namespace) -> int:
         expected_target=str(plan["target"]),
         expected_source_sha=str(plan["source_sha"]),
         expected_artifact_sha256=sha256_file(image),
+        profile="production-runtime",
     )
     if failures:
         for failure in failures:

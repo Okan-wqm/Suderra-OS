@@ -104,7 +104,8 @@ Required additional gates:
 - Production trust roots come from prod/HSM-backed key material, not dev or CI
   key profiles. RAUC and production image signing require a PKCS#11 URI and
   validated `suderra.hsm-signing-session.v2` evidence; file-backed private keys
-  are rejected.
+  are rejected. Release validators replay the HSM evidence against the preserved
+  certificate and exact signed artifact digest.
 - x86 uses UEFI Secure Boot, signed UKI, immutable cmdline, and dm-verity.
 - ARM uses U-Boot verified boot, signed FIT, immutable cmdline, and dm-verity.
 - RAUC A/B slots, signed bundles, boot try counters, health checks, mark-good,
@@ -114,6 +115,9 @@ Required additional gates:
 - Production-runtime QEMU evidence must prove Secure Boot enforcement,
   dm-verity tamper rejection, RAUC good update, bad-signature rejection, health
   rollback, anti-rollback, and `/data` encryption behavior.
+- x86 hardware lab evidence must include TPM presence, Secure Boot enabled and
+  enforced, RAUC rollback/mark-good behavior, negative dm-verity and boot
+  tamper rejection, power-cycle transcript, and full readback binding.
 - Signed SBOM and VEX are published and verified.
 - Hardware evidence covers every production-required board and intended carrier.
 

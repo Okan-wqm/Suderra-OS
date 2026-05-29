@@ -90,7 +90,21 @@ REQUIRED_USB_NEGATIVE_TESTS = (
     "small-target",
     "rollback-floor-violation",
 )
+REQUIRED_X86_HARDWARE_CHECKS = (
+    "tpm-presence",
+    "secure-boot-enforced",
+    "rauc-rollback",
+    "dm-verity-tamper-rejection",
+    "boot-tamper-rejection",
+    "power-cycle-transcript",
+)
+REQUIRED_X86_NEGATIVE_TESTS = (
+    "dm-verity-rootfs-tamper",
+    "secure-boot-unsigned-uki",
+    "rauc-health-rollback",
+)
 REQUIRED_BOARDS_BY_TARGET = {
+    "x86_64": ("industrial-x86_64",),
     "rpi4": ("raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"),
     "pi-cm4-revpi-usb-installer": (
         "raspberry-pi-4-model-b",
@@ -614,6 +628,7 @@ def validate_lab(
     if not isinstance(devices, list) or not devices:
         error(errors, "$.devices", "must be a non-empty list")
         devices = []
+    target = str(payload.get("target", ""))
     for idx, device in enumerate(devices):
         device_path = f"$.devices[{idx}]"
         if not isinstance(device, dict):
@@ -678,6 +693,8 @@ def validate_lab(
             error(errors, f"{device_path}.checks", "must be an object")
             checks = {}
         missing_checks = sorted(set(REQUIRED_LAB_CHECKS) - set(checks))
+        if target == "x86_64":
+            missing_checks = sorted(set(missing_checks) | (set(REQUIRED_X86_HARDWARE_CHECKS) - set(checks)))
         if missing_checks:
             error(errors, f"{device_path}.checks", f"missing required checks: {', '.join(missing_checks)}")
         if device.get("board") == "revpi-connect-4" and "revpi-io" not in checks:
@@ -703,7 +720,6 @@ def validate_lab(
                     check_sha256(errors, f"{check_path}.evidence_sha256", check.get("evidence_sha256"))
             if require_pass and check.get("status") != "passed":
                 error(errors, f"{check_path}.status", "must be passed for release lab input")
-    target = str(payload.get("target", ""))
     required_boards = REQUIRED_BOARDS_BY_TARGET.get(target, ())
     if required_boards:
         seen = {
@@ -727,6 +743,15 @@ def validate_lab(
         missing = sorted(set(REQUIRED_USB_NEGATIVE_TESTS) - names)
         if missing:
             error(errors, "$.negative_tests", f"missing required negative tests: {', '.join(missing)}")
+    if target == "x86_64" and profile == "production-candidate":
+        names = {
+            item.get("name")
+            for item in negative_tests
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        missing = sorted(set(REQUIRED_X86_NEGATIVE_TESTS) - names)
+        if missing:
+            error(errors, "$.negative_tests", f"missing required x86 negative tests: {', '.join(missing)}")
     seen_negative_tests: set[str] = set()
     allowed_negative_tests = set(REQUIRED_USB_NEGATIVE_TESTS) if target == "pi-cm4-revpi-usb-installer" else None
     for idx, item in enumerate(negative_tests):

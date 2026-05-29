@@ -200,9 +200,26 @@ data_encrypted=0
 case "${data_source}" in
     /dev/mapper/*|/dev/dm-*) data_encrypted=1 ;;
 esac
+data_mapper="not_collected"
+data_mapper_open=0
+data_mapper_table="${WORK_DIR}/data-mapper-table.txt"
+: > "${data_mapper_table}"
+case "${data_source}" in
+    /dev/mapper/*)
+        data_mapper="${data_source##*/}"
+        ;;
+    /dev/dm-*)
+        data_mapper="${data_source##*/}"
+        ;;
+esac
+if [ "${data_mapper}" != "not_collected" ] && command -v dmsetup >/dev/null 2>&1; then
+    if dmsetup table "${data_mapper}" > "${data_mapper_table}" 2>&1; then
+        data_mapper_open=1
+    fi
+fi
 
 rollback_floor="not_collected"
-for rollback_file in /etc/suderra/rollback-floor /usr/lib/suderra/rollback-floor /var/lib/suderra/rollback-floor; do
+for rollback_file in /data/suderra/ota/rollback-floor /etc/suderra/rollback-floor /usr/lib/suderra/rollback-floor /var/lib/suderra/rollback-floor; do
     if [ -r "${rollback_file}" ]; then
         rollback_floor="$(sed -n '1p' "${rollback_file}" 2>/dev/null || true)"
         [ -n "${rollback_floor}" ] || rollback_floor="not_collected"
@@ -294,7 +311,12 @@ printf '"data_encryption":{'
 printf '"encrypted":'; json_bool "${data_encrypted}"; printf ','
 printf '"mount_source":'; json_string "${data_source}"; printf ','
 printf '"fstype":'; json_string "${data_fstype}"; printf ','
-printf '"options":'; json_string "${data_options}"
+printf '"options":'; json_string "${data_options}"; printf ','
+printf '"luks_mapper_state":{'
+printf '"mapper":'; json_string "${data_mapper}"; printf ','
+printf '"open":'; json_bool "${data_mapper_open}"; printf ','
+printf '"table":'; json_lines_from_file "${data_mapper_table}" 80
+printf '}'
 printf '},'
 printf '"anti_rollback":{'
 printf '"rollback_floor":'; json_string "${rollback_floor}"

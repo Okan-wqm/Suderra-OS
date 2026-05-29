@@ -88,6 +88,7 @@
       "host-e2fsprogs: configure: WARNING: unrecognized options: --enable-shared, --disable-static, --disable-gtk-doc, --disable-gtk-doc-html, --disable-doc, --disable-docs, --disable-documentation, --disable-debug, --with-xmlto, --with-fop, --disable-dependency-tracking",
       "host-expat: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-doc, --disable-docs, --disable-documentation, --disable-debug, --with-xmlto, --with-fop, --disable-nls",
       "host-fakeroot: ./wrapawk: warning: regexp escape sequence `\\#' is not a known regexp operator",
+      "host-fakeroot: ./wrapawk: warning: faked.c: In function 'save_database':",
       "host-fakeroot: configure.ac: warning: AC_CHECK_FUNCS($WRAPPED): you should use literals",
       "host-fakeroot: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-doc, --disable-docs, --disable-documentation, --disable-debug, --with-xmlto, --with-fop, --disable-nls",
       "host-fakeroot: faked.c: warning: format '%lli' expects argument of type 'long long int', but argument 4 has type 'fake_ino_t' {aka 'long unsigned int'} [-Wformat=]",

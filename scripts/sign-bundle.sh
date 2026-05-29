@@ -107,7 +107,6 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         echo "ERROR: production signing requires rauc host tool" >&2
         exit 1
     }
-    production_signing_evidence
     echo "==> RAUC bundle HSM/PKCS#11 imzalama: ${BUNDLE}"
     "${RAUC_TOOL}" resign \
         --cert="${SUDERRA_RAUC_SIGNING_CERT}" \
@@ -116,6 +115,7 @@ if [ "${PROD_MODE}" -eq 1 ]; then
         "${BUNDLE}.signed"
     mv "${BUNDLE}.signed" "${BUNDLE}"
     "${RAUC_TOOL}" info --keyring="${SUDERRA_RAUC_KEYRING}" "${BUNDLE}" >/dev/null
+    production_signing_evidence
 fi
 
 # 1. RAUC re-sign (eğer bundle henüz imzasız ise)

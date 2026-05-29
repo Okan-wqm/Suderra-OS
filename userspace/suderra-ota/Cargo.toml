@@ -32,3 +32,6 @@ sha2 = { workspace = true }
 ed25519-dalek = { workspace = true }
 sd-notify = { workspace = true }
 nix = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }

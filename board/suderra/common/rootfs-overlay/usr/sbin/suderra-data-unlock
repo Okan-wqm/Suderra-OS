@@ -1,0 +1,93 @@
+#!/bin/sh
+set -eu
+
+variant="dev"
+if [ -r /etc/os-release ]; then
+    variant="$(sed -n 's/^VARIANT=//p' /etc/os-release | tr -d '"' | head -n 1)"
+fi
+
+mount_data_bindings() {
+    mkdir -p /data/suderra/lib /data/suderra/log /data/suderra/releases
+    mkdir -p /var/lib/suderra /var/log/suderra /opt/suderra/edge/releases
+    if ! mountpoint -q /var/lib/suderra; then
+        mount --bind /data/suderra/lib /var/lib/suderra
+    fi
+    if ! mountpoint -q /var/log/suderra; then
+        mount --bind /data/suderra/log /var/log/suderra
+    fi
+    if ! mountpoint -q /opt/suderra/edge/releases; then
+        mount --bind /data/suderra/releases /opt/suderra/edge/releases
+    fi
+    chown root:root /data /data/suderra /var/lib/suderra 2>/dev/null || true
+    chown 200:200 /data/suderra/lib /data/suderra/log 2>/dev/null || true
+    chmod 0755 /data /data/suderra 2>/dev/null || true
+    chmod 0750 /data/suderra/lib /data/suderra/log /var/lib/suderra /var/log/suderra 2>/dev/null || true
+}
+
+mount_dev_data() {
+    mkdir -p /data
+    if ! mountpoint -q /data; then
+        [ -e /dev/disk/by-label/SUDERRA-DATA ] || {
+            echo "SUDERRA-DATA partition missing" >&2
+            exit 1
+        }
+        mount -L SUDERRA-DATA /data
+    fi
+    mount_data_bindings
+}
+
+unlock_prod_luks_data() {
+    data_dev="${SUDERRA_DATA_DEVICE:-/dev/disk/by-partlabel/data}"
+    mapper="${SUDERRA_DATA_MAPPER:-suderra-data}"
+    mapper_dev="/dev/mapper/${mapper}"
+
+    command -v cryptsetup >/dev/null 2>&1 || {
+        echo "cryptsetup missing; production /data cannot unlock" >&2
+        exit 1
+    }
+    [ -e "${data_dev}" ] || {
+        echo "production data partition missing: ${data_dev}" >&2
+        exit 1
+    }
+    cryptsetup isLuks "${data_dev}" || {
+        echo "production data partition is not LUKS2: ${data_dev}" >&2
+        exit 1
+    }
+    luks_type="$(cryptsetup luksDump "${data_dev}" 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -n 1)"
+    [ "${luks_type}" = "2" ] || {
+        echo "production data partition must be LUKS2" >&2
+        exit 1
+    }
+
+    if [ ! -e "${mapper_dev}" ]; then
+        if command -v systemd-cryptsetup >/dev/null 2>&1; then
+            systemd-cryptsetup attach "${mapper}" "${data_dev}" - \
+                tpm2-device=auto,headless=yes >/dev/null ||
+                {
+                    echo "TPM2-backed systemd-cryptsetup unlock failed" >&2
+                    exit 1
+                }
+        else
+            cryptsetup open --token-only "${data_dev}" "${mapper}" >/dev/null ||
+                {
+                    echo "TPM2 token unlock failed" >&2
+                    exit 1
+                }
+        fi
+    fi
+
+    mkdir -p /data
+    if ! mountpoint -q /data; then
+        mount "${mapper_dev}" /data
+    fi
+    mount_data_bindings
+}
+
+case "${variant}" in
+    prod)
+        unlock_prod_luks_data
+        ;;
+    *)
+        mount_dev_data
+        ;;
+esac

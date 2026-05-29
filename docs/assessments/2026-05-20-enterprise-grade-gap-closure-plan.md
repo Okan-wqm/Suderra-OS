@@ -437,6 +437,40 @@ when the code path, validator, negative test, and release documentation all
 agree. Grep-token contracts may remain as lint, but they do not close
 production behavior.
 
+## Implemented Twelfth Batch
+
+The twelfth implementation batch starts the x86_64 production-runtime chain
+without changing the `production_ready=false` posture:
+
+- `suderra-ota` is now a fail-closed RAUC OS update owner. It verifies signed
+  `suderra.os-update-manifest.v1` manifests, checks target/version/key-epoch,
+  enforces rollback floors, verifies bundle digest and size, invokes RAUC for
+  inactive-slot install/rollback/mark-good, records typed JSON evidence, and
+  persists the rollback floor only after mark-good.
+- x86_64 and qemu-x86_64-prod-ab production defconfigs now include
+  `suderra-ota`, cryptsetup/LVM device-mapper tooling, and TPM2 tooling needed
+  for the production runtime contract.
+- Production `/data` no longer ships as a plain ext4 filesystem in the x86 GPT
+  image. The data partition is reserved for LUKS2 provisioning, and
+  `suderra-data-unlock` fails closed in production unless the partition is
+  LUKS2 and unlocks through TPM2/systemd-cryptsetup or an enrolled token.
+- x86 signed slot UKIs now embed a minimal verity initramfs. The signed
+  command line binds the slot, partition identities, roothash, hash parameters,
+  and lockdown flags; the initramfs resolves the GPT partition identities and
+  creates the dm-verity mapping before switching to the verified rootfs.
+- `qemu-x86_64-prod-ab` has a protected internal workflow that builds the
+  production-runtime image, provisions OVMF/swtpm inputs, runs the
+  production-runtime scenario runner, validates
+  `suderra.qemu-production-runtime-suite.v2`, and uploads
+  `release-runtime/<version>/qemu-x86_64-prod-ab/production-runtime.json`.
+- Release ingress now archives `release-runtime` and `release-signing` inputs,
+  and release input/evidence validators check HSM session bindings for token
+  serial, key URI, key ID, challenge transcript, audit digest, certificate
+  digest, and signed artifact records.
+- The former placeholder runtime tests for dm-verity tamper, OTA rollback,
+  listener exposure, Lynis-style security baseline, and app startup were
+  replaced with executable contract checks and negative validator cases.
+
 ## Remaining Implementation Backlog
 
 ### Next Batch: x86_64 Production Chain

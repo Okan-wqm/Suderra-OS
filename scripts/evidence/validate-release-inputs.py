@@ -73,6 +73,100 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def find_hsm_certificate(session: Path, payload: dict[str, Any]) -> Path | None:
+    certificate_ref = payload.get("certificate_path")
+    certificate = payload.get("certificate")
+    if isinstance(certificate, dict) and isinstance(certificate.get("path"), str):
+        certificate_ref = certificate["path"]
+    if isinstance(certificate_ref, str) and certificate_ref.strip():
+        candidate = Path(certificate_ref)
+        if not candidate.is_absolute():
+            candidate = session.parent / candidate
+        if candidate.is_file():
+            return candidate
+    expected_sha = payload.get("certificate_sha256")
+    if isinstance(expected_sha, str) and SHA256_RE.fullmatch(expected_sha):
+        for candidate in sorted(session.parent.glob("*")):
+            if candidate.is_file() and candidate.suffix.lower() in {".crt", ".cer", ".pem"}:
+                try:
+                    if sha256_file(candidate) == expected_sha:
+                        return candidate
+                except OSError:
+                    continue
+    return None
+
+
+SIGNED_ARTIFACT_ROLES = {
+    "rauc-bundle",
+    "release-artifact",
+    "release-image",
+    "os-update-manifest",
+}
+
+
+def validate_hsm_session_replay(
+    session: Path,
+    payload: dict[str, Any],
+    failures: list[str],
+    *,
+    expected_artifact_sha256s: set[str] | None = None,
+) -> None:
+    cert = find_hsm_certificate(session, payload)
+    if cert is None:
+        failures.append(f"HSM signing session certificate file is missing or not digest-bound: {session}")
+        return
+    pkcs11_uri = payload.get("pkcs11_uri")
+    if not isinstance(pkcs11_uri, str) or not pkcs11_uri.strip():
+        failures.append(f"HSM signing session missing pkcs11_uri: {session}")
+        return
+    artifacts = payload.get("artifacts")
+    replay_items = artifacts if isinstance(artifacts, list) and artifacts else [None]
+    matched_expected_artifact = expected_artifact_sha256s is None
+    for artifact in replay_items:
+        replay_args = [
+            sys.executable,
+            "scripts/evidence/validate-hsm-signing-evidence.py",
+            "validate",
+            str(session),
+            "--pkcs11-uri",
+            pkcs11_uri,
+            "--certificate",
+            str(cert),
+            "--require-production",
+        ]
+        if isinstance(artifact, dict):
+            role = artifact.get("role")
+            digest = artifact.get("sha256")
+            if (
+                expected_artifact_sha256s is not None
+                and isinstance(role, str)
+                and role in SIGNED_ARTIFACT_ROLES
+                and isinstance(digest, str)
+                and digest in expected_artifact_sha256s
+            ):
+                matched_expected_artifact = True
+            if isinstance(role, str) and role.strip():
+                replay_args.extend(["--artifact-role", role])
+            if isinstance(digest, str) and digest.strip():
+                replay_args.extend(["--artifact-sha256", digest])
+            artifact_path = artifact.get("path")
+            if isinstance(artifact_path, str) and artifact_path.strip():
+                candidate = Path(artifact_path)
+                if not candidate.is_absolute():
+                    candidate = session.parent / candidate
+                if not candidate.is_file():
+                    failures.append(f"HSM artifact path missing: {session}: {artifact_path}")
+                else:
+                    if candidate.stat().st_size != artifact.get("bytes"):
+                        failures.append(f"HSM artifact bytes mismatch: {session}: {artifact_path}")
+                    if sha256_file(candidate) != digest:
+                        failures.append(f"HSM artifact sha256 mismatch: {session}: {artifact_path}")
+        failures.extend(run(replay_args))
+    if not matched_expected_artifact:
+        expected = ", ".join(sorted(expected_artifact_sha256s or [])) or "no bound artifacts"
+        failures.append(f"HSM signing session does not bind a release artifact digest for {session}: {expected}")
+
+
 def is_placeholder(value: Any) -> bool:
     return isinstance(value, str) and value.strip() in PLACEHOLDER_VALUES
 
@@ -487,6 +581,37 @@ def binding_artifact_sha256(binding: dict[str, Any] | None, target: str, artifac
     return matches[0] if len(matches) == 1 else None
 
 
+def binding_artifact_refs_for_target(binding: dict[str, Any] | None, target: str) -> list[dict[str, Any]]:
+    if not isinstance(binding, dict):
+        return []
+    artifacts = binding.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+    return [
+        item
+        for item in artifacts
+        if isinstance(item, dict)
+        and item.get("target") == target
+        and isinstance(item.get("sha256"), str)
+        and SHA256_RE.fullmatch(item["sha256"])
+    ]
+
+
+def lab_artifact_binding(path: Path) -> tuple[str | None, int | None]:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return None, None
+    binding = payload.get("artifact_binding")
+    if not isinstance(binding, dict):
+        return None, None
+    digest = binding.get("build_artifact_sha256")
+    size = binding.get("build_artifact_bytes")
+    return (
+        digest if isinstance(digest, str) and SHA256_RE.fullmatch(digest) else None,
+        size if isinstance(size, int) and size > 0 else None,
+    )
+
+
 def validate_approval(path: Path, version: str, target: str, source_sha: str | None) -> list[str]:
     payload = read_json(path)
     if not isinstance(payload, dict):
@@ -788,17 +913,33 @@ def main() -> int:
     if args.profile == "production-candidate":
         acquisition_root = args.root / "release-lab-input" / args.version
         acquisition_count = 0
+        registry_sha = sha256_file(station_registry) if station_registry.is_file() else None
         for target_dir in sorted(acquisition_root.iterdir()) if acquisition_root.is_dir() else []:
             if not target_dir.is_dir():
                 continue
             acquisition = target_dir / "station-acquisition.json"
             acquisition_count += 1
+            expected_artifact_sha, expected_artifact_bytes = lab_artifact_binding(target_dir / "lab.json")
             acquisition_args = [
                 sys.executable,
                 "scripts/evidence/station-acquisition.py",
                 "validate",
                 str(acquisition),
+                "--expected-version",
+                args.version,
+                "--expected-target",
+                target_dir.name,
             ]
+            if bound_source_sha:
+                acquisition_args.extend(["--expected-source-sha", bound_source_sha])
+            if bound_source_run_id:
+                acquisition_args.extend(["--expected-source-run-id", bound_source_run_id])
+            if expected_artifact_sha:
+                acquisition_args.extend(["--expected-artifact-sha256", expected_artifact_sha])
+            if expected_artifact_bytes is not None:
+                acquisition_args.extend(["--expected-artifact-bytes", str(expected_artifact_bytes)])
+            if registry_sha:
+                acquisition_args.extend(["--expected-registry-sha256", registry_sha])
             if args.check_files:
                 acquisition_args.append("--check-files")
             failures.extend(run(acquisition_args))
@@ -816,12 +957,17 @@ def main() -> int:
             if not isinstance(payload, dict):
                 failures.append(f"HSM signing session missing or invalid JSON: {session}")
                 continue
-            if payload.get("schema_version") != "suderra.hsm-signing-session.v2":
-                failures.append(f"HSM signing session must be suderra.hsm-signing-session.v2: {session}")
-            if payload.get("mode") != "production":
-                failures.append(f"HSM signing session mode must be production: {session}")
-            if not isinstance(payload.get("challenge"), dict) or not isinstance(payload.get("artifacts"), list):
-                failures.append(f"HSM signing session must bind challenge and artifacts: {session}")
+            target = session.parent.name
+            expected_sha256s = {
+                str(item["sha256"])
+                for item in binding_artifact_refs_for_target(binding, target)
+            }
+            validate_hsm_session_replay(
+                session,
+                payload,
+                failures,
+                expected_artifact_sha256s=expected_sha256s,
+            )
     for row in matrix.get("defconfigs", []):
         if row.get("release") and row.get("qemu_test"):
             qemu = args.root / "release-lab-input" / args.version / str(row["target"]) / "qemu.json"
@@ -854,6 +1000,8 @@ def main() -> int:
                 "scripts/evidence/validate-production-runtime-suite.py",
                 str(runtime),
                 "--require-pass",
+                "--profile",
+                "production-candidate",
                 "--expected-version",
                 args.version,
                 "--expected-target",

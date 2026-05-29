@@ -14,7 +14,9 @@ import sys
 from typing import Any
 
 
-SCHEMA_VERSION = "suderra.qemu-production-runtime-suite.v1"
+SCHEMA_VERSION = "suderra.qemu-production-runtime-suite.v2"
+LEGACY_SCHEMA_VERSIONS = {"suderra.qemu-production-runtime-suite.v1"}
+V2_REQUIRED_PROFILES = {"production-candidate", "production-runtime"}
 REQUIRED_SCENARIOS = (
     "signed-boot",
     "unsigned-boot-rejection",
@@ -34,9 +36,23 @@ EXPECTED_OUTCOMES = {
     "userspace-rejected",
     "rollback-completed",
 }
+REQUIRED_V2_LOG_ROLES = {"serial", "qmp-events"}
+REQUIRED_V2_GUEST_FACTS = (
+    "secure_boot",
+    "dm_verity",
+    "rauc",
+    "data_encryption",
+    "anti_rollback",
+)
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PLACEHOLDERS = {"", "TO_BE_COLLECTED", "NOT_COLLECTED", "not_collected", "pending", "PENDING"}
+SEMANTIC_BEGIN = "SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
+SEMANTIC_END = "SUDERRA_QEMU_SEMANTIC_JSON_END"
+OUTCOME_PREFIXES = (
+    "SUDERRA_PRODUCTION_RUNTIME_OUTCOME=",
+    "observed_outcome=",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -67,6 +83,21 @@ def check_sha256(errors: list[str], path: str, value: Any) -> None:
         error(errors, path, "must not be the all-zero sha256")
 
 
+def check_string_list(errors: list[str], path: str, value: Any) -> None:
+    if not isinstance(value, list) or not value:
+        error(errors, path, "must be a non-empty string list")
+        return
+    for idx, item in enumerate(value):
+        check_string(errors, f"{path}[{idx}]", item)
+
+
+def check_object(errors: list[str], path: str, value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        error(errors, path, "must be an object")
+        return {}
+    return value
+
+
 def check_relative_file(
     errors: list[str],
     root: Path,
@@ -92,6 +123,237 @@ def check_relative_file(
         error(errors, path, "referenced file sha256 mismatch")
 
 
+def relative_file(root: Path, value: Any) -> Path | None:
+    if not isinstance(value, str):
+        return None
+    rel = Path(value)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    return root / rel
+
+
+def read_text(root: Path, value: Any) -> str:
+    path = relative_file(root, value)
+    if path is None or not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_json(root: Path, value: Any) -> Any:
+    path = relative_file(root, value)
+    if path is None or not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def observed_outcome_from_serial(serial: str) -> str | None:
+    for line in serial.splitlines():
+        stripped = line.strip()
+        for prefix in OUTCOME_PREFIXES:
+            if stripped.startswith(prefix):
+                value = stripped[len(prefix) :].strip()
+                return value if value in EXPECTED_OUTCOMES else None
+    lowered = serial.lower()
+    if "rollback-completed" in lowered or "rollback completed" in lowered:
+        return "rollback-completed"
+    if "security violation" in lowered or "access denied" in lowered or ("secure boot" in lowered and "denied" in lowered):
+        return "firmware-rejected"
+    if "dm-verity" in lowered and any(token in lowered for token in ("corrupt", "verification failed", "root hash")):
+        return "kernel-rejected"
+    if "rauc" in lowered and any(token in lowered for token in ("signature", "downgrade", "rollback floor", "rejected")):
+        return "userspace-rejected"
+    if SEMANTIC_BEGIN in serial and SEMANTIC_END in serial:
+        return "booted"
+    return None
+
+
+def qmp_quit_ack_observed(events: Any) -> bool:
+    if not isinstance(events, list):
+        return False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") == "SHUTDOWN":
+            return True
+        if event.get("id") == "suderra-production-runtime-quit" and "return" in event:
+            return True
+    return False
+
+
+def validate_top_level_v2(errors: list[str], payload: dict[str, Any]) -> None:
+    check_string(errors, "$.qemu_version", payload.get("qemu_version"))
+    check_string_list(errors, "$.qemu_argv", payload.get("qemu_argv"))
+    if isinstance(payload.get("qemu_argv"), list):
+        argv = [str(item) for item in payload["qemu_argv"]]
+        if not any(Path(item).name == "qemu-system-x86_64" for item in argv):
+            error(errors, "$.qemu_argv", "must include qemu-system-x86_64")
+        if "-qmp" not in argv:
+            error(errors, "$.qemu_argv", "must include QMP")
+
+    enrollment = check_object(errors, "$.ovmf_enrollment", payload.get("ovmf_enrollment"))
+    if enrollment:
+        for field in ("enrolled_vars_sha256", "secure_boot_db_sha256"):
+            check_sha256(errors, f"$.ovmf_enrollment.{field}", enrollment.get(field))
+        check_string(errors, "$.ovmf_enrollment.mode", enrollment.get("mode"))
+
+    for field in ("swtpm_state_before_sha256", "swtpm_state_after_sha256"):
+        check_sha256(errors, f"$.{field}", payload.get(field))
+
+
+def validate_guest_facts_v2(errors: list[str], scenario_path: str, name: Any, facts: Any) -> None:
+    facts_obj = check_object(errors, f"{scenario_path}.guest_facts", facts)
+    if not facts_obj:
+        return
+    missing = sorted(set(REQUIRED_V2_GUEST_FACTS) - set(facts_obj))
+    if missing:
+        error(errors, f"{scenario_path}.guest_facts", f"missing required facts: {', '.join(missing)}")
+
+    secure_boot = facts_obj.get("secure_boot")
+    if isinstance(secure_boot, dict):
+        if secure_boot.get("enabled") is not True:
+            error(errors, f"{scenario_path}.guest_facts.secure_boot.enabled", "must be true")
+        check_string(errors, f"{scenario_path}.guest_facts.secure_boot.source", secure_boot.get("source"))
+    elif "secure_boot" in facts_obj:
+        error(errors, f"{scenario_path}.guest_facts.secure_boot", "must be an object")
+
+    dm_verity = facts_obj.get("dm_verity")
+    if isinstance(dm_verity, dict):
+        if dm_verity.get("active") is not True:
+            error(errors, f"{scenario_path}.guest_facts.dm_verity.active", "must be true")
+        table = dm_verity.get("table")
+        if isinstance(table, list):
+            if not table:
+                error(errors, f"{scenario_path}.guest_facts.dm_verity.table", "must be non-empty")
+        else:
+            check_string(errors, f"{scenario_path}.guest_facts.dm_verity.table", table)
+    elif "dm_verity" in facts_obj:
+        error(errors, f"{scenario_path}.guest_facts.dm_verity", "must be an object")
+
+    rauc = facts_obj.get("rauc")
+    if isinstance(rauc, dict):
+        if rauc.get("available") is not True:
+            error(errors, f"{scenario_path}.guest_facts.rauc.available", "must be true")
+        status = rauc.get("status")
+        if isinstance(status, list):
+            if not status:
+                error(errors, f"{scenario_path}.guest_facts.rauc.status", "must be non-empty")
+        else:
+            check_string(errors, f"{scenario_path}.guest_facts.rauc.status", status)
+    elif "rauc" in facts_obj:
+        error(errors, f"{scenario_path}.guest_facts.rauc", "must be an object")
+
+    data_encryption = facts_obj.get("data_encryption")
+    if isinstance(data_encryption, dict):
+        mapper = data_encryption.get("luks_mapper_state")
+        if not isinstance(mapper, dict):
+            error(errors, f"{scenario_path}.guest_facts.data_encryption.luks_mapper_state", "must be an object")
+        else:
+            check_string(errors, f"{scenario_path}.guest_facts.data_encryption.luks_mapper_state.mapper", mapper.get("mapper"))
+            if name == "data-luks-swtpm" and mapper.get("open") is not True:
+                error(errors, f"{scenario_path}.guest_facts.data_encryption.luks_mapper_state.open", "must be true")
+        if name == "data-luks-swtpm" and data_encryption.get("encrypted") is not True:
+            error(errors, f"{scenario_path}.guest_facts.data_encryption.encrypted", "must be true")
+    elif "data_encryption" in facts_obj:
+        error(errors, f"{scenario_path}.guest_facts.data_encryption", "must be an object")
+
+    anti_rollback = facts_obj.get("anti_rollback")
+    if isinstance(anti_rollback, dict):
+        check_string(
+            errors,
+            f"{scenario_path}.guest_facts.anti_rollback.rollback_floor",
+            anti_rollback.get("rollback_floor"),
+        )
+    elif "anti_rollback" in facts_obj:
+        error(errors, f"{scenario_path}.guest_facts.anti_rollback", "must be an object")
+
+
+def validate_scenario_v2(
+    errors: list[str],
+    root: Path,
+    scenario_path: str,
+    scenario: dict[str, Any],
+    name: Any,
+    logs_by_role: dict[str, dict[str, Any]],
+    check_files: bool,
+) -> None:
+    check_string_list(errors, f"{scenario_path}.qemu_argv", scenario.get("qemu_argv"))
+    if isinstance(scenario.get("qemu_argv"), list):
+        argv = [str(item) for item in scenario["qemu_argv"]]
+        if not any(Path(item).name == "qemu-system-x86_64" for item in argv):
+            error(errors, f"{scenario_path}.qemu_argv", "must include qemu-system-x86_64")
+        if "-qmp" not in argv:
+            error(errors, f"{scenario_path}.qemu_argv", "must include QMP")
+
+    termination = check_object(errors, f"{scenario_path}.termination", scenario.get("termination"))
+    if termination:
+        check_string(errors, f"{scenario_path}.termination.class", termination.get("class"))
+        check_string(errors, f"{scenario_path}.termination.reason", termination.get("reason"))
+        if termination.get("qmp_quit_sent") is not True:
+            error(errors, f"{scenario_path}.termination.qmp_quit_sent", "must be true")
+        if termination.get("qmp_quit_ack") is not True:
+            error(errors, f"{scenario_path}.termination.qmp_quit_ack", "must be true")
+        if termination.get("timeout") is True:
+            error(errors, f"{scenario_path}.termination.timeout", "must not be true")
+
+    swtpm = check_object(errors, f"{scenario_path}.swtpm_state", scenario.get("swtpm_state"))
+    if swtpm:
+        for field in ("before_sha256", "after_sha256"):
+            check_sha256(errors, f"{scenario_path}.swtpm_state.{field}", swtpm.get(field))
+        check_string(errors, f"{scenario_path}.swtpm_state.path", swtpm.get("path"))
+        if name == "data-luks-swtpm" and swtpm.get("before_sha256") == swtpm.get("after_sha256"):
+            error(errors, f"{scenario_path}.swtpm_state.after_sha256", "must differ for data LUKS/swtpm persistence")
+
+    raw = check_object(errors, f"{scenario_path}.raw_evidence", scenario.get("raw_evidence"))
+    if raw:
+        for role, field in (("serial", "serial_sha256"), ("qmp-events", "qmp_events_sha256")):
+            check_sha256(errors, f"{scenario_path}.raw_evidence.{field}", raw.get(field))
+            if role in logs_by_role and isinstance(raw.get(field), str) and raw.get(field) != logs_by_role[role].get("sha256"):
+                error(errors, f"{scenario_path}.raw_evidence.{field}", f"must match {role} log sha256")
+
+    missing_logs = sorted(REQUIRED_V2_LOG_ROLES - set(logs_by_role))
+    if missing_logs:
+        error(errors, f"{scenario_path}.logs", f"missing required raw log roles: {', '.join(missing_logs)}")
+    if check_files:
+        serial_log = logs_by_role.get("serial")
+        if isinstance(serial_log, dict):
+            replayed = observed_outcome_from_serial(read_text(root, serial_log.get("path")))
+            if replayed is None:
+                error(errors, f"{scenario_path}.logs", "serial log must support observed_outcome")
+            elif replayed != scenario.get("observed_outcome"):
+                error(errors, f"{scenario_path}.observed_outcome", "must match replayed serial evidence")
+        qmp_log = logs_by_role.get("qmp-events")
+        if isinstance(qmp_log, dict) and not qmp_quit_ack_observed(read_json(root, qmp_log.get("path"))):
+            error(errors, f"{scenario_path}.logs", "QMP log must prove quit acknowledgement or shutdown")
+
+    validate_guest_facts_v2(errors, scenario_path, name, scenario.get("guest_facts"))
+
+    mutation = scenario.get("mutation")
+    if isinstance(mutation, dict) and name != "signed-boot":
+        artifact = mutation.get("artifact")
+        if isinstance(artifact, dict):
+            for field in ("path", "role"):
+                check_string(errors, f"{scenario_path}.mutation.artifact.{field}", artifact.get(field))
+            for field in ("before_sha256", "after_sha256"):
+                check_sha256(errors, f"{scenario_path}.mutation.artifact.{field}", artifact.get(field))
+            if artifact.get("before_sha256") == artifact.get("after_sha256"):
+                error(errors, f"{scenario_path}.mutation.artifact.after_sha256", "must differ from before_sha256")
+            if artifact.get("path") == str(Path("production-runtime-logs") / str(name) / "scenario-result.json"):
+                error(errors, f"{scenario_path}.mutation.artifact.path", "must not use fallback scenario result JSON")
+            check_relative_file(
+                errors,
+                root,
+                f"{scenario_path}.mutation.artifact.path",
+                artifact.get("path"),
+                check_files,
+                artifact.get("after_sha256") if isinstance(artifact.get("after_sha256"), str) else None,
+            )
+        else:
+            error(errors, f"{scenario_path}.mutation.artifact", "must bind mutation artifact before/after hashes")
+
+
 def validate(
     path: Path,
     *,
@@ -101,6 +363,7 @@ def validate(
     expected_target: str | None = None,
     expected_source_sha: str | None = None,
     expected_artifact_sha256: str | None = None,
+    profile: str = "release-candidate",
 ) -> list[str]:
     root = path.parent
     errors: list[str] = []
@@ -113,8 +376,12 @@ def validate(
     if not isinstance(payload, dict):
         return [f"{path}: top-level JSON value must be an object"]
 
-    if payload.get("schema_version") != SCHEMA_VERSION:
+    schema_version = payload.get("schema_version")
+    if schema_version not in LEGACY_SCHEMA_VERSIONS | {SCHEMA_VERSION}:
         error(errors, "$.schema_version", f"must be {SCHEMA_VERSION}")
+    is_v2 = schema_version == SCHEMA_VERSION
+    if profile in V2_REQUIRED_PROFILES and not is_v2:
+        error(errors, "$.schema_version", f"{profile} requires {SCHEMA_VERSION}")
     for field in ("version", "target", "generated_at", "image", "ovmf_code", "ovmf_vars", "swtpm_state"):
         check_string(errors, f"$.{field}", payload.get(field))
     if expected_version is not None and payload.get("version") != expected_version:
@@ -130,6 +397,8 @@ def validate(
         check_sha256(errors, f"$.{field}", payload.get(field))
     if expected_artifact_sha256 is not None and payload.get("image_sha256") != expected_artifact_sha256:
         error(errors, "$.image_sha256", f"must match expected artifact sha256 {expected_artifact_sha256}")
+    if is_v2:
+        validate_top_level_v2(errors, payload)
 
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list) or not scenarios:
@@ -181,6 +450,7 @@ def validate(
             error(errors, f"{scenario_path}.logs", "must be a non-empty list")
         else:
             roles = set()
+            logs_by_role: dict[str, dict[str, Any]] = {}
             for log_idx, log in enumerate(logs):
                 log_path = f"{scenario_path}.logs[{log_idx}]"
                 if not isinstance(log, dict):
@@ -190,6 +460,7 @@ def validate(
                 check_string(errors, f"{log_path}.role", role)
                 if isinstance(role, str):
                     roles.add(role)
+                    logs_by_role[role] = log
                 check_sha256(errors, f"{log_path}.sha256", log.get("sha256"))
                 check_relative_file(
                     errors,
@@ -201,6 +472,8 @@ def validate(
                 )
             if "serial" not in roles and "qmp-events" not in roles:
                 error(errors, f"{scenario_path}.logs", "must include serial or qmp-events evidence")
+            if is_v2:
+                validate_scenario_v2(errors, root, scenario_path, scenario, name, logs_by_role, check_files)
     missing = sorted(set(REQUIRED_SCENARIOS) - set(by_name))
     if missing:
         error(errors, "$.scenarios", f"missing required scenarios: {', '.join(missing)}")
@@ -219,6 +492,11 @@ def main() -> int:
     parser.add_argument("--expected-target")
     parser.add_argument("--expected-source-sha")
     parser.add_argument("--expected-artifact-sha256")
+    parser.add_argument(
+        "--profile",
+        choices=("technical-dry-run", "release-candidate", "production-candidate", "production-runtime"),
+        default="release-candidate",
+    )
     args = parser.parse_args()
     errors = validate(
         args.input,
@@ -228,6 +506,7 @@ def main() -> int:
         expected_target=args.expected_target,
         expected_source_sha=args.expected_source_sha,
         expected_artifact_sha256=args.expected_artifact_sha256,
+        profile=args.profile,
     )
     if errors:
         for item in errors:

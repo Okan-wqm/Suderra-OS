@@ -120,6 +120,7 @@ chmod 0600 "${TARGET_DIR}/root/.profile" 2>/dev/null || true
 chmod 0755 "${TARGET_DIR}/usr/sbin/suderra-edge-install" \
            "${TARGET_DIR}/usr/sbin/suderra-lockdown" \
            "${TARGET_DIR}/usr/sbin/suderra-lockdown-status" \
+           "${TARGET_DIR}/usr/sbin/suderra-data-unlock" \
            "${TARGET_DIR}/usr/sbin/suderra-firewall" \
            "${TARGET_DIR}/usr/sbin/suderra-qemu-semantic-collector" \
            "${TARGET_DIR}/usr/sbin/suderra-provision" \

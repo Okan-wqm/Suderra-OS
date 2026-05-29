@@ -142,6 +142,8 @@ def build_device(
     if not isinstance(checks_spec, dict):
         raise ValueError(f"device {board} checks must be an object")
     required_checks = list(validator.REQUIRED_LAB_CHECKS)
+    if device.get("target") == "x86_64" or device.get("board") == "industrial-x86_64":
+        required_checks.extend(validator.REQUIRED_X86_HARDWARE_CHECKS)
     if board == "revpi-connect-4":
         required_checks.append("revpi-io")
     missing = sorted(set(required_checks) - set(checks_spec))

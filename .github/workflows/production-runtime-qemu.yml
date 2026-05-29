@@ -1,0 +1,139 @@
+name: QEMU x86_64 Production Runtime Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer version to bind into release-runtime evidence"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact commit SHA to test"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: qemu-x86_64-prod-ab-runtime-${{ inputs.version }}-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  qemu-x86_64-prod-ab:
+    name: qemu-x86_64-prod-ab production-runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    environment:
+      name: production-runtime
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.source_sha }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Validate source binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          python3 scripts/ci/validate-build-matrix.py validate
+
+      - name: Install QEMU Secure Boot runtime tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ovmf \
+            qemu-utils \
+            qemu-system-x86 \
+            swtpm \
+            sbsigntool \
+            cryptsetup-bin
+
+      - name: Build production-runtime image
+        env:
+          SUDERRA_VARIANT: prod
+          SUDERRA_RELEASE_TIER: production
+          SUDERRA_RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          ./scripts/build.sh suderra_qemu_x86_64_prod_ab_defconfig
+
+      - name: Provision enrolled OVMF and swtpm state
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-inputs/swtpm-state
+          cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd runtime-inputs/OVMF_CODE.secboot.fd
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd runtime-inputs/OVMF_VARS.fd
+          swtpm socket \
+            --tpm2 \
+            --tpmstate dir=runtime-inputs/swtpm-state \
+            --ctrl type=unixio,path=runtime-inputs/swtpm.ctrl \
+            --server type=unixio,path=runtime-inputs/swtpm.sock \
+            --daemon
+
+      - name: Run production-runtime scenario suite
+        run: |
+          set -euo pipefail
+          mkdir -p "release-runtime/${{ inputs.version }}/qemu-x86_64-prod-ab"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          scenarios = [
+              ("signed-boot", "booted", "none", "none"),
+              ("unsigned-boot-rejection", "firmware-rejected", "secureboot-signature", "uki"),
+              ("cmdline-tamper-rejection", "kernel-rejected", "signed-cmdline", "uki-cmdline"),
+              ("dm-verity-rootfs-tamper-rejection", "kernel-rejected", "rootfs-tamper", "rootfs"),
+              ("rauc-good-update", "booted", "rauc-install", "inactive-slot"),
+              ("rauc-bad-signature-rejection", "userspace-rejected", "rauc-signature", "bundle"),
+              ("rauc-health-rollback", "rollback-completed", "rauc-health", "health-gate"),
+              ("anti-rollback-downgrade-rejection", "userspace-rejected", "rollback-floor", "manifest"),
+              ("data-luks-swtpm", "booted", "swtpm-state", "data"),
+          ]
+          plan = {
+              "version": os.environ["VERSION"],
+              "target": "qemu-x86_64-prod-ab",
+              "source_sha": os.environ["SOURCE_SHA"],
+              "image": "output/suderra_qemu_x86_64_prod_ab_defconfig/images/disk.img",
+              "ovmf_code": "runtime-inputs/OVMF_CODE.secboot.fd",
+              "ovmf_vars": "runtime-inputs/OVMF_VARS.fd",
+              "swtpm_state": "runtime-inputs/swtpm-state",
+              "scenarios": [
+                  {
+                      "name": name,
+                      "expected_outcome": outcome,
+                      "mutation_type": mutation_type,
+                      "mutation_target": mutation_target,
+                      "command": ["tests/qemu/production-runtime-scenario.sh", name],
+                  }
+                  for name, outcome, mutation_type, mutation_target in scenarios
+              ],
+          }
+          Path("runtime-plan.json").write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          python3 tests/qemu/production-runtime.py create \
+            --plan runtime-plan.json \
+            --output "release-runtime/${{ inputs.version }}/qemu-x86_64-prod-ab/production-runtime.json"
+          python3 scripts/evidence/validate-production-runtime-suite.py \
+            "release-runtime/${{ inputs.version }}/qemu-x86_64-prod-ab/production-runtime.json" \
+            --require-pass \
+            --profile production-runtime \
+            --check-files \
+            --expected-version "${{ inputs.version }}" \
+            --expected-target qemu-x86_64-prod-ab \
+            --expected-source-sha "${{ inputs.source_sha }}"
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+
+      - name: Upload production runtime evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-runtime-${{ inputs.version }}-${{ inputs.source_sha }}-qemu-x86_64-prod-ab
+          path: release-runtime/
+          retention-days: 30
+          if-no-files-found: error

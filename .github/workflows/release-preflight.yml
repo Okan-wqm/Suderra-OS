@@ -390,6 +390,8 @@ jobs:
             release-ingress/
             release-lab-input/
             release-governance/
+            release-runtime/
+            release-signing/
             release-approvals/
             release-security/
             release-reproducibility/

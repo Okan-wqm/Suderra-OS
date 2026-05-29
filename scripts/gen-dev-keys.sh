@@ -58,6 +58,15 @@ openssl genpkey -algorithm ED25519 -out installer-payload.key 2>/dev/null
 openssl pkey -in installer-payload.key -pubout \
     -out installer-payload.ed25519.pub 2>/dev/null
 
+# OS update manifest signing. suderra-ota expects the public key as raw
+# Ed25519 bytes or lowercase hex; write the hex form for stable deployment.
+echo "==> OS update manifest signing key (Ed25519)"
+openssl genpkey -algorithm ED25519 -out os-update-manifest.key 2>/dev/null
+openssl pkey -in os-update-manifest.key -pubout -outform DER 2>/dev/null |
+    tail -c 32 |
+    od -An -tx1 -v |
+    tr -d ' \n' > os-update-manifest.ed25519.pub
+
 # Edge artifact/provisioning manifest signing
 echo "==> Edge artifact signing key (Ed25519)"
 openssl genpkey -algorithm ED25519 -out edge-artifact.key 2>/dev/null

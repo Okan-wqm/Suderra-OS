@@ -20,6 +20,7 @@ Required for x86-pre-genimage:
   SUDERRA_SECUREBOOT_SIGNING_CERT          Secure Boot signing certificate
   SUDERRA_GRUB_EFI_INPUT                   Optional unsigned GRUB EFI input
   SUDERRA_GRUB_EDITENV                     Optional grub-editenv path
+  target rootfs must contain busybox, blkid, dmsetup, mount and switch_root
 
 Required for sign-image:
   SUDERRA_IMAGE_SIGNING_KEY or SUDERRA_SECUREBOOT_SIGNING_KEY
@@ -235,7 +236,6 @@ write_x86_verity_cmdline() {
     local verity_partlabel
     local cmdline="${binaries_dir}/suderra-${slot}.cmdline"
     local data_sectors
-    local dm_table
 
     slot_lower="$(printf '%s' "${slot}" | tr 'A-Z' 'a-z')"
     root_partlabel="rootfs-${slot_lower}"
@@ -245,10 +245,161 @@ write_x86_verity_cmdline() {
     . "${binaries_dir}/rootfs.verity.env"
 
     data_sectors=$((DATA_BLOCKS * DATA_BLOCK_SIZE / 512))
-    dm_table="suderra-root,,,ro,0 ${data_sectors} verity 1 /dev/disk/by-partlabel/${root_partlabel} /dev/disk/by-partlabel/${verity_partlabel} ${DATA_BLOCK_SIZE} ${HASH_BLOCK_SIZE} ${DATA_BLOCKS} ${HASH_START_BLOCK} ${HASH_ALGORITHM} ${ROOT_HASH} ${SALT}"
     printf '%s\n' \
-        "console=ttyS0,115200n8 console=tty0 root=/dev/dm-0 ro rootwait rauc.slot=${slot} dm-mod.create=\"${dm_table}\" lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 vsyscall=none debugfs=off oops=panic panic=10 module.sig_enforce=1 quiet" \
+        "console=ttyS0,115200n8 console=tty0 root=/dev/mapper/suderra-root ro rootwait rauc.slot=${slot} suderra.slot=${slot} suderra.verity.root_partlabel=${root_partlabel} suderra.verity.hash_partlabel=${verity_partlabel} suderra.verity.data_sectors=${data_sectors} suderra.verity.data_blocks=${DATA_BLOCKS} suderra.verity.data_block_size=${DATA_BLOCK_SIZE} suderra.verity.hash_block_size=${HASH_BLOCK_SIZE} suderra.verity.hash_start_block=${HASH_START_BLOCK} suderra.verity.hash_algorithm=${HASH_ALGORITHM} suderra.verity.root_hash=${ROOT_HASH} suderra.verity.salt=${SALT} lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 vsyscall=none debugfs=off oops=panic panic=10 module.sig_enforce=1 quiet" \
         > "${cmdline}"
+}
+
+copy_target_binary() {
+    local target_dir="$1"
+    local initramfs_root="$2"
+    local path="$3"
+
+    need_file "${target_dir}${path}"
+    install -D -m 0755 "${target_dir}${path}" "${initramfs_root}${path}"
+}
+
+copy_first_target_binary() {
+    local target_dir="$1"
+    local initramfs_root="$2"
+    shift 2
+    local candidate
+
+    for candidate in "$@"; do
+        if [ -s "${target_dir}${candidate}" ]; then
+            copy_target_binary "${target_dir}" "${initramfs_root}" "${candidate}"
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+    die "required initramfs binary missing from target rootfs: $*"
+}
+
+copy_target_runtime_libs() {
+    local target_dir="$1"
+    local initramfs_root="$2"
+    local libdir
+
+    for libdir in /lib /lib64 /usr/lib; do
+        if [ -d "${target_dir}${libdir}" ]; then
+            mkdir -p "${initramfs_root}${libdir}"
+            cp -a "${target_dir}${libdir}/." "${initramfs_root}${libdir}/"
+        fi
+    done
+}
+
+build_x86_verity_initramfs() {
+    local binaries_dir="$1"
+    local target_dir="$2"
+    local slot="$3"
+    local output="$4"
+    local work
+    local root
+    local blkid_path
+    local dmsetup_path
+    local switch_root_path
+
+    need_cmd cpio
+    need_cmd gzip
+    need_file "${binaries_dir}/rootfs.verity.env"
+    need_file "${target_dir}/bin/busybox"
+
+    work="$(mktemp -d)"
+    root="${work}/initramfs"
+    mkdir -p "${root}/bin" "${root}/sbin" "${root}/usr/bin" "${root}/usr/sbin" \
+        "${root}/dev" "${root}/proc" "${root}/sys" "${root}/newroot" "${root}/run"
+
+    copy_target_binary "${target_dir}" "${root}" "/bin/busybox"
+    blkid_path="$(copy_first_target_binary "${target_dir}" "${root}" /sbin/blkid /usr/sbin/blkid /bin/blkid /usr/bin/blkid)"
+    dmsetup_path="$(copy_first_target_binary "${target_dir}" "${root}" /sbin/dmsetup /usr/sbin/dmsetup)"
+    switch_root_path="$(copy_first_target_binary "${target_dir}" "${root}" /sbin/switch_root /usr/sbin/switch_root /bin/switch_root /usr/bin/switch_root)"
+    copy_first_target_binary "${target_dir}" "${root}" /bin/mount /usr/bin/mount >/dev/null
+    copy_first_target_binary "${target_dir}" "${root}" /bin/sleep /usr/bin/sleep >/dev/null
+    copy_target_runtime_libs "${target_dir}" "${root}"
+
+    for applet in sh cat mkdir mount umount sleep head; do
+        ln -sfn busybox "${root}/bin/${applet}"
+    done
+
+    cat > "${root}/init" <<EOF
+#!/bin/sh
+set -eu
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PATH
+
+die() {
+    echo "Suderra initramfs failure: \$*" >&2
+    exec sh
+}
+
+mount -t proc proc /proc || die "cannot mount proc"
+mount -t sysfs sysfs /sys || die "cannot mount sysfs"
+mount -t devtmpfs devtmpfs /dev || mount -t tmpfs tmpfs /dev || die "cannot mount dev"
+mkdir -p /dev/mapper /newroot /run
+
+arg() {
+    key="\$1"
+    for token in \$(cat /proc/cmdline); do
+        case "\${token}" in
+            "\${key}="*) printf '%s\n' "\${token#*=}"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+root_label="\$(arg suderra.verity.root_partlabel || true)"
+hash_label="\$(arg suderra.verity.hash_partlabel || true)"
+data_sectors="\$(arg suderra.verity.data_sectors || true)"
+data_blocks="\$(arg suderra.verity.data_blocks || true)"
+data_block_size="\$(arg suderra.verity.data_block_size || true)"
+hash_block_size="\$(arg suderra.verity.hash_block_size || true)"
+hash_start_block="\$(arg suderra.verity.hash_start_block || true)"
+hash_algorithm="\$(arg suderra.verity.hash_algorithm || true)"
+root_hash="\$(arg suderra.verity.root_hash || true)"
+salt="\$(arg suderra.verity.salt || true)"
+
+[ -n "\${root_label}" ] || die "missing root partition label"
+[ -n "\${hash_label}" ] || die "missing verity partition label"
+[ -n "\${data_sectors}" ] || die "missing data sectors"
+[ -n "\${data_blocks}" ] || die "missing data blocks"
+[ -n "\${root_hash}" ] || die "missing dm-verity root hash"
+
+find_partlabel() {
+    label="\$1"
+    i=0
+    while [ "\${i}" -lt 100 ]; do
+        device="\$(${blkid_path} -t "PARTLABEL=\${label}" -o device 2>/dev/null | head -n 1 || true)"
+        if [ -n "\${device}" ] && [ -b "\${device}" ]; then
+            printf '%s\n' "\${device}"
+            return 0
+        fi
+        i=\$((i + 1))
+        sleep 0.1
+    done
+    return 1
+}
+
+rootdev="\$(find_partlabel "\${root_label}")" || die "cannot resolve verified root partition identity \${root_label}"
+hashdev="\$(find_partlabel "\${hash_label}")" || die "cannot resolve verified verity partition identity \${hash_label}"
+
+table="0 \${data_sectors} verity 1 \${rootdev} \${hashdev} \${data_block_size} \${hash_block_size} \${data_blocks} \${hash_start_block} \${hash_algorithm} \${root_hash} \${salt}"
+echo "\${table}" | ${dmsetup_path} create suderra-root --readonly || die "dm-verity mapping create failed"
+mount -o ro -t ext4 /dev/mapper/suderra-root /newroot || die "cannot mount verified root"
+
+umount /proc || true
+umount /sys || true
+exec ${switch_root_path} /newroot /sbin/init
+EOF
+    chmod 0755 "${root}/init"
+
+    (
+        cd "${root}"
+        find . -print0 | cpio --null -o --format=newc | gzip -n > "${output}"
+    )
+    need_file "${output}"
+    rm -rf "${work}"
+    echo "==> ${slot} slot verity initramfs: ${output}"
 }
 
 build_signed_slot_uki() {
@@ -262,6 +413,7 @@ build_signed_slot_uki() {
     local signed="${binaries_dir}/suderra-${slot}.efi"
     local sig="${binaries_dir}/suderra-${slot}.efi.sig"
     local cert_out="${binaries_dir}/suderra-${slot}.efi.cert"
+    local initrd="${binaries_dir}/suderra-${slot}.initrd"
     local esp_slot="${binaries_dir}/efi-part/EFI/SUDERRA/suderra-${slot}.efi"
     local osrel
 
@@ -280,10 +432,12 @@ build_signed_slot_uki() {
     osrel="${target_dir}/etc/os-release"
     need_file "${osrel}"
     write_x86_verity_cmdline "${binaries_dir}" "${slot}"
+    build_x86_verity_initramfs "${binaries_dir}" "${target_dir}" "${slot}" "${initrd}"
 
     objcopy \
         --add-section .osrel="${osrel}" --change-section-vma .osrel=0x20000 \
         --add-section .cmdline="${binaries_dir}/suderra-${slot}.cmdline" --change-section-vma .cmdline=0x30000 \
+        --add-section .initrd="${initrd}" --change-section-vma .initrd=0x3000000 \
         --add-section .linux="${binaries_dir}/bzImage" --change-section-vma .linux=0x2000000 \
         "${stub}" \
         "${unsigned}"
