@@ -772,15 +772,16 @@ def target_policy_for(target: str, row: dict[str, Any] | None = None) -> dict[st
     policy = evidence_contract.target_policy(target, EVIDENCE_CONTRACT)
     if policy:
         return policy
-    production_required = bool(row.get("production_required")) if isinstance(row, dict) else False
-    acceptance = str(row.get("acceptance", "")) if isinstance(row, dict) else ""
+    if isinstance(row, dict) and (row.get("production_required") is True or row.get("release") is True):
+        raise ValueError(f"{target}: missing ci/evidence-contract.yml target policy")
     return {
-        "hardware_required": production_required or "hardware" in acceptance,
-        "production_gate": production_required,
-        "release_image_scan_required": production_required,
-        "release_public": bool(row.get("release")) if isinstance(row, dict) else False,
-        "runtime_required": production_required,
-        "signing_required": production_required,
+        "hardware_required": False,
+        "ota_capable": False,
+        "production_gate": False,
+        "release_image_scan_required": False,
+        "release_public": False,
+        "runtime_required": False,
+        "signing_required": False,
     }
 
 
@@ -2983,7 +2984,10 @@ def expected_gate_requirements(
     qemu_required = bool(row.get("qemu_test", False)) if isinstance(row, dict) else False
     production_required = bool(contract.get("production_required"))
     acceptance = str(contract.get("acceptance", ""))
-    policy = target_policy_for(str(evidence.get("target", "")), row)
+    try:
+        policy = target_policy_for(str(evidence.get("target", "")), row)
+    except ValueError:
+        policy = {}
     hardware_required = bool(policy.get("hardware_required", production_required or "hardware" in acceptance))
     runtime_required = bool(policy.get("runtime_required", production_required))
     signing_required = bool(policy.get("signing_required", production_required))
@@ -3043,6 +3047,14 @@ def validate_evidence(
             validation.error("$matrix", f"cannot read matrix: {exc}")
 
     validate_target_contract(validation, evidence, matrix)
+    if matrix is not None:
+        matrix_row = targets_by_id(matrix).get(str(evidence.get("target", "")))
+        if (
+            isinstance(matrix_row, dict)
+            and (matrix_row.get("production_required") is True or matrix_row.get("release") is True)
+            and not evidence_contract.target_policy(str(evidence.get("target", "")), EVIDENCE_CONTRACT)
+        ):
+            validation.error("$.target", "release/production target must have ci/evidence-contract.yml policy")
     (
         qemu_required,
         hardware_required,

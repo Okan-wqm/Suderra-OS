@@ -539,18 +539,7 @@ def validate(strict_production_variant: bool = False) -> int:
             if "mutated" in root_identity or root_identity in {"template", "installer-rootfs"}:
                 errors.append(f"{name}: production_ready target must not rely on mutable root identity")
 
-    contract_targets = set(EVIDENCE_CONTRACT.get("targets", {}))
-    production_targets = {
-        str(target.get("target"))
-        for target in matrix["defconfigs"]
-        if bool(target.get("production_required"))
-    }
-    missing_contract_targets = sorted(production_targets - contract_targets)
-    if missing_contract_targets:
-        errors.append(
-            "ci/evidence-contract.yml must define every production_required target: "
-            + ", ".join(missing_contract_targets)
-        )
+    errors.extend(evidence_contract.validate_matrix_join(matrix, EVIDENCE_CONTRACT))
 
     if errors:
         for error in errors:

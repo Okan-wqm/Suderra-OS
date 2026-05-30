@@ -499,14 +499,21 @@ def load_matrix(path: Path) -> dict[str, Any]:
     return data
 
 
-def release_targets_requiring_hardware(matrix: dict[str, Any]) -> list[str]:
+def release_targets_requiring_hardware(matrix: dict[str, Any], profile: str) -> list[str]:
     targets = []
     for row in matrix.get("defconfigs", []):
-        if not row.get("release"):
-            continue
         target = str(row.get("target", ""))
+        policy = evidence_contract.target_policy(target, EVIDENCE_CONTRACT)
+        contract_hardware_required = bool(policy.get("hardware_required"))
+        contract_production_gate = bool(policy.get("production_gate"))
         acceptance = str(row.get("acceptance", ""))
-        if row.get("production_required") or "hardware" in acceptance:
+        release_hardware_required = bool(row.get("release")) and (row.get("production_required") or "hardware" in acceptance)
+        production_hardware_required = (
+            profile == "production-candidate"
+            and contract_hardware_required
+            and contract_production_gate
+        )
+        if release_hardware_required or production_hardware_required:
             targets.append(target)
     return targets
 
@@ -801,7 +808,7 @@ def validate_command(args: argparse.Namespace) -> int:
 def validate_matrix_command(args: argparse.Namespace) -> int:
     matrix = load_matrix(args.matrix)
     failures: list[str] = []
-    for target in release_targets_requiring_hardware(matrix):
+    for target in release_targets_requiring_hardware(matrix, args.profile):
         evidence = args.root / args.version / target / "lab.json"
         failures.extend(
             validate_lab(

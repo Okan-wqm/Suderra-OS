@@ -219,10 +219,17 @@ def execute_scenario(
     expected_exit_code = item.get("expected_exit_code", 0)
     measured = read_scenario_result(scenario_dir / SCENARIO_RESULT)
     measured_status = measured.get("status")
-    status = "passed" if result.returncode == expected_exit_code and measured_status == "passed" else "failed"
     observed_outcome = measured.get("observed_outcome")
+    observation = object_from_result(measured, "observation")
     if not isinstance(observed_outcome, str) or not observed_outcome.strip():
-        observed_outcome = "userspace-rejected"
+        observed_outcome = "not-collected"
+    observation_outcome = observation.get("observed_outcome") if observation else None
+    has_typed_observation = isinstance(observation_outcome, str) and observation_outcome == observed_outcome
+    status = (
+        "passed"
+        if result.returncode == expected_exit_code and measured_status == "passed" and has_typed_observation
+        else "failed"
+    )
     mutation_type = str(item.get("mutation_type", "none" if name == "signed-boot" else "external-command"))
     mutation_target = str(item.get("mutation_target", scenario_dir))
     if name != "signed-boot" and before_digest == after_digest:
@@ -238,6 +245,7 @@ def execute_scenario(
         "status": status,
         "expected_outcome": require_string(item, "expected_outcome", f"scenarios[{idx}]"),
         "observed_outcome": observed_outcome,
+        "observation": observation,
         "command": " ".join(shlex.quote(part) for part in command),
         "started_at": started_at,
         "completed_at": completed_at,

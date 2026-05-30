@@ -9,6 +9,7 @@ python3 "${PROJECT_ROOT}/scripts/ci/validate-build-matrix.py" validate
 
 python3 - "${PROJECT_ROOT}" <<'PY'
 import json
+import importlib.util
 import re
 import subprocess
 import sys
@@ -16,6 +17,30 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 validator = root / "scripts" / "ci" / "validate-build-matrix.py"
+evidence_contract_spec = importlib.util.spec_from_file_location(
+    "evidence_contract",
+    root / "scripts" / "evidence" / "evidence_contract.py",
+)
+matrix_spec = importlib.util.spec_from_file_location("validate_build_matrix", validator)
+assert evidence_contract_spec is not None and evidence_contract_spec.loader is not None
+assert matrix_spec is not None and matrix_spec.loader is not None
+evidence_contract = importlib.util.module_from_spec(evidence_contract_spec)
+validate_build_matrix = importlib.util.module_from_spec(matrix_spec)
+evidence_contract_spec.loader.exec_module(evidence_contract)
+matrix_spec.loader.exec_module(validate_build_matrix)
+
+contract = evidence_contract.load_contract(root / "ci" / "evidence-contract.yml")
+matrix = validate_build_matrix.load_matrix(root / "ci" / "build-matrix.yml")
+join_errors = evidence_contract.validate_matrix_join(matrix, contract)
+if join_errors:
+    raise SystemExit("evidence contract/build matrix join errors:\n" + "\n".join(join_errors))
+bad_matrix = json.loads(json.dumps(matrix))
+for row in bad_matrix["defconfigs"]:
+    if row.get("target") == "x86_64":
+        row["signing"] = "unsigned-lab"
+bad_errors = evidence_contract.validate_matrix_join(bad_matrix, contract)
+if not any("signing_required" in item for item in bad_errors):
+    raise SystemExit("evidence contract/build matrix join failed to reject unsigned production signing")
 
 
 def matrix_defconfigs(selector: str) -> set[str]:
