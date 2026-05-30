@@ -6,6 +6,11 @@
 ## Genel Bakış
 
 Suderra OS, RAUC tabanlı A/B partition OTA kullanır. Detay: [ADR-0004](../architecture/ADR-0004-rauc-ab-partition.md).
+OTA capability is target-specific and governed by `ci/evidence-contract.yml`
+under `ota.targets`. At this stage only `x86_64` and the non-public
+`qemu-x86_64-prod-ab` runtime lane are OTA-capable. RPi4, RevPi4, and the USB
+installer remain provisioning-only until their signed boot, RAUC, rollback, and
+hardware evidence contracts exist.
 
 ```
 Geliştirici makinesi              Update sunucu                Cihaz
@@ -105,6 +110,13 @@ olmasını, aktif slot'un pending slot ile eşleşmesini, RAUC mark-good'un
 başarmasını ve rollback floor'un yalnızca bundan sonra ilerlemesini zorunlu
 kılar. 3-deneme fallback hâlâ production evidence ile kanıtlanmadan
 `production_ready` açılamaz.
+
+Release evidence for OTA-capable targets must include the OS update manifest
+signature, the RAUC bundle signature, the exact HSM artifact digest binding,
+and runtime observations for good update, bad RAUC signer, health rollback,
+anti-rollback downgrade, and boot fallback scenarios. These roles come from
+the evidence contract; release workflows must not keep a separate OTA target
+allowlist.
 
 ## Update Sunucusu
 

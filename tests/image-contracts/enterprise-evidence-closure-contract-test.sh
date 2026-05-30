@@ -53,6 +53,20 @@ covered = {check for checks in scenario_to_checks.values() for check in checks}
 missing = set(runtime_checks) - covered
 if missing:
     raise SystemExit(f"runtime checks are not mapped from scenarios: {sorted(missing)}")
+scenario_contracts = module.runtime_scenario_contracts(contract)
+if set(scenario_contracts) != set(module.runtime_required_scenarios(contract)):
+    raise SystemExit("runtime scenario contracts must cover every required scenario")
+for name, scenario_contract in scenario_contracts.items():
+    if scenario_contract["expected_outcome"] not in {
+        "booted",
+        "firmware-rejected",
+        "kernel-rejected",
+        "userspace-rejected",
+        "rollback-completed",
+    }:
+        raise SystemExit(f"{name} has unsupported expected outcome")
+    if not scenario_contract["required_log_roles"]:
+        raise SystemExit(f"{name} must define required raw log roles")
 if module.runtime_suite_targets_for("x86_64", contract) != ["qemu-x86_64-prod-ab"]:
     raise SystemExit("x86_64 runtime suite mapping must come from evidence contract")
 policy = module.target_policy("x86_64", contract)
@@ -193,15 +207,15 @@ source_sha = sys.argv[2]
 image_sha = sys.argv[3]
 root = out.parent
 scenarios = [
-    ("signed-boot", "booted", "none"),
-    ("unsigned-boot-rejection", "firmware-rejected", "uki-signature"),
-    ("cmdline-tamper-rejection", "kernel-rejected", "cmdline"),
-    ("dm-verity-rootfs-tamper-rejection", "kernel-rejected", "rootfs-partition"),
-    ("rauc-good-update", "booted", "rauc-install"),
-    ("rauc-bad-signature-rejection", "userspace-rejected", "rauc-bundle-signature"),
-    ("rauc-health-rollback", "rollback-completed", "rauc-health"),
-    ("anti-rollback-downgrade-rejection", "userspace-rejected", "rauc-version"),
-    ("data-luks-swtpm", "booted", "swtpm-state"),
+    ("signed-boot", "booted", "none", "none", "runtime"),
+    ("unsigned-boot-rejection", "firmware-rejected", "secureboot-signature", "uki", "firmware"),
+    ("cmdline-tamper-rejection", "kernel-rejected", "signed-cmdline", "uki-cmdline", "kernel"),
+    ("dm-verity-rootfs-tamper-rejection", "kernel-rejected", "rootfs-tamper", "rootfs", "kernel"),
+    ("rauc-good-update", "booted", "rauc-install", "inactive-slot", "userspace"),
+    ("rauc-bad-signature-rejection", "userspace-rejected", "rauc-signature", "bundle", "userspace"),
+    ("rauc-health-rollback", "rollback-completed", "rauc-health", "health-gate", "userspace"),
+    ("anti-rollback-downgrade-rejection", "userspace-rejected", "rollback-floor", "manifest", "userspace"),
+    ("data-luks-swtpm", "booted", "swtpm-state", "data", "storage"),
 ]
 guest_facts = {
     "secure_boot": {"enabled": True, "source": "ovmf"},
@@ -214,7 +228,7 @@ guest_facts = {
     "anti_rollback": {"rollback_floor": "v9.9.9"},
 }
 items = []
-for name, outcome, mutation in scenarios:
+for name, outcome, mutation, mutation_target, observed_layer in scenarios:
     scenario_dir = root / "logs" / name
     scenario_dir.mkdir(parents=True, exist_ok=True)
     serial = scenario_dir / f"{name}.serial.log"
@@ -244,7 +258,7 @@ for name, outcome, mutation in scenarios:
         artifact_after = hashlib.sha256(artifact.read_bytes()).hexdigest()
         mutation_payload = {
             "type": mutation,
-            "target": "base-image",
+            "target": mutation_target,
             "before_sha256": before,
             "after_sha256": after,
             "artifact": {
@@ -260,6 +274,15 @@ for name, outcome, mutation in scenarios:
             "status": "passed",
             "expected_outcome": outcome,
             "observed_outcome": outcome,
+            "observation": {
+                "schema_version": "suderra.runtime-observation.v1",
+                "producer": "contract-fixture",
+                "scenario": name,
+                "source": "serial-marker",
+                "observed_outcome": outcome,
+                "observed_layer": observed_layer,
+                "signal": "SUDERRA_PRODUCTION_RUNTIME_OUTCOME",
+            },
             "command": f"tests/qemu/production-runtime-scenario.sh {name}",
             "started_at": "2026-05-21T00:00:00Z",
             "completed_at": "2026-05-21T00:00:01Z",
@@ -336,6 +359,27 @@ python3 "${RUNTIME_VALIDATOR}" "${V2_RUNTIME_ROOT}/production-runtime.json" \
     --expected-source-sha "${SOURCE_SHA}" \
     --expected-artifact-sha256 "${EXPECTED_IMAGE_SHA}" \
     >/dev/null
+
+python3 - "${V2_RUNTIME_ROOT}/production-runtime.json" "${V2_RUNTIME_ROOT}/runtime-v2-no-observation.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+out = Path(sys.argv[2])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["scenarios"][0].pop("observation")
+out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${RUNTIME_VALIDATOR}" "${V2_RUNTIME_ROOT}/runtime-v2-no-observation.json" \
+    --check-files \
+    --require-pass \
+    --profile production-runtime \
+    2>"${TMPDIR}/runtime-v2-no-observation.err"; then
+    echo "ERROR: production-runtime v2 accepted serial/QMP-only evidence without typed observation" >&2
+    exit 1
+fi
+grep -q "observation" "${TMPDIR}/runtime-v2-no-observation.err"
 
 python3 - "${V2_RUNTIME_ROOT}/production-runtime.json" "${V2_RUNTIME_ROOT}/runtime-v2-replay.json" <<'PY'
 import hashlib

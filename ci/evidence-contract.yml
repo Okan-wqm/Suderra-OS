@@ -4,9 +4,13 @@
     "hsm_signing_session": "suderra.hsm-signing-session.v2",
     "lab_evidence": "suderra.lab-evidence.v3",
     "machine_verification": "suderra.machine-verification.v3",
+    "hardware_subject": "suderra.hardware-subject.v1",
+    "ota_target_contract": "suderra.ota-target-contract.v1",
     "production_runtime_suite": "suderra.qemu-production-runtime-suite.v2",
     "release_evidence": "suderra.release-evidence.v5",
     "release_security_report": "suderra.release-security-report.v2",
+    "runtime_observation": "suderra.runtime-observation.v1",
+    "signing_manifest": "suderra.signing-manifest.v1",
     "station_acquisition": "suderra.station-acquisition.v1"
   },
   "profiles": {
@@ -49,8 +53,92 @@
       "rauc-health-rollback": ["rauc_health_rollback"],
       "signed-boot": ["secure_boot", "dm_verity", "lockdown", "nmap", "systemd_security"]
     },
+    "scenario_contracts": {
+      "anti-rollback-downgrade-rejection": {
+        "expected_outcome": "userspace-rejected",
+        "guest_facts_required": false,
+        "mutation_target": "manifest",
+        "mutation_type": "rollback-floor",
+        "observation_source": ["serial", "qmp-events"],
+        "observed_layer": "userspace",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "cmdline-tamper-rejection": {
+        "expected_outcome": "kernel-rejected",
+        "guest_facts_required": false,
+        "mutation_target": "uki-cmdline",
+        "mutation_type": "signed-cmdline",
+        "observation_source": ["serial", "qmp-events"],
+        "observed_layer": "kernel",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "data-luks-swtpm": {
+        "expected_outcome": "booted",
+        "guest_facts_required": true,
+        "mutation_target": "data",
+        "mutation_type": "swtpm-state",
+        "observation_source": ["serial", "qmp-events", "guest-semantic"],
+        "observed_layer": "storage",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "dm-verity-rootfs-tamper-rejection": {
+        "expected_outcome": "kernel-rejected",
+        "guest_facts_required": false,
+        "mutation_target": "rootfs",
+        "mutation_type": "rootfs-tamper",
+        "observation_source": ["serial", "qmp-events"],
+        "observed_layer": "kernel",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "rauc-bad-signature-rejection": {
+        "expected_outcome": "userspace-rejected",
+        "guest_facts_required": false,
+        "mutation_target": "bundle",
+        "mutation_type": "rauc-signature",
+        "observation_source": ["serial", "qmp-events"],
+        "observed_layer": "userspace",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "rauc-good-update": {
+        "expected_outcome": "booted",
+        "guest_facts_required": true,
+        "mutation_target": "inactive-slot",
+        "mutation_type": "rauc-install",
+        "observation_source": ["serial", "qmp-events", "guest-semantic"],
+        "observed_layer": "userspace",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "rauc-health-rollback": {
+        "expected_outcome": "rollback-completed",
+        "guest_facts_required": true,
+        "mutation_target": "health-gate",
+        "mutation_type": "rauc-health",
+        "observation_source": ["serial", "qmp-events", "guest-semantic"],
+        "observed_layer": "userspace",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "signed-boot": {
+        "expected_outcome": "booted",
+        "guest_facts_required": true,
+        "mutation_target": "none",
+        "mutation_type": "none",
+        "observation_source": ["serial", "qmp-events", "guest-semantic"],
+        "observed_layer": "runtime",
+        "required_log_roles": ["serial", "qmp-events"]
+      },
+      "unsigned-boot-rejection": {
+        "expected_outcome": "firmware-rejected",
+        "guest_facts_required": false,
+        "mutation_target": "uki",
+        "mutation_type": "secureboot-signature",
+        "observation_source": ["serial", "qmp-events"],
+        "observed_layer": "firmware",
+        "required_log_roles": ["serial", "qmp-events"]
+      }
+    },
     "suite_targets": {
       "pi-cm4-revpi-usb-installer": [],
+      "qemu-x86_64": [],
       "qemu-x86_64-prod-ab": ["qemu-x86_64-prod-ab"],
       "revpi4": [],
       "rpi4": [],
@@ -110,7 +198,26 @@
     ]
   },
   "signing": {
+    "manifest_schema_version": "suderra.signing-manifest.v1",
     "request_schema_version": "suderra.signing-request.v1",
+    "role_bindings": {
+      "os-update-manifest": {
+        "digest_source": "manifest-json",
+        "required_for_ota_capable": true
+      },
+      "rauc-bundle": {
+        "digest_source": "final-raucb",
+        "required_for_ota_capable": true
+      },
+      "release-artifact": {
+        "digest_source": "release-input-binding",
+        "required_for_release_public": true
+      },
+      "release-image": {
+        "digest_source": "release-input-binding",
+        "required_for_release_public": true
+      }
+    },
     "signed_artifact_roles": [
       "rauc-bundle",
       "release-artifact",
@@ -118,9 +225,73 @@
       "os-update-manifest"
     ]
   },
+  "ota": {
+    "target_contract_schema_version": "suderra.ota-target-contract.v1",
+    "targets": {
+      "pi-cm4-revpi-usb-installer": {
+        "backend": "none",
+        "compatible": "suderra-os-installer",
+        "health_policy": "provisioning-only",
+        "lifecycle": "provisioning-only",
+        "ota_capable": false,
+        "rollback_state": "not-applicable"
+      },
+      "qemu-x86_64": {
+        "backend": "none",
+        "compatible": "suderra-os-qemu-x86_64",
+        "health_policy": "qemu-acceptance-only",
+        "lifecycle": "development-release",
+        "ota_capable": false,
+        "rollback_state": "not-applicable"
+      },
+      "qemu-x86_64-prod-ab": {
+        "backend": "grub-rauc",
+        "compatible": "suderra-os-x86_64",
+        "health_policy": "production-runtime",
+        "lifecycle": "production-runtime-evidence",
+        "ota_capable": true,
+        "rollback_state": "tpm-nv-required"
+      },
+      "revpi4": {
+        "backend": "none",
+        "compatible": "suderra-os-revpi4",
+        "health_policy": "provisioning-only",
+        "lifecycle": "provisioning-only",
+        "ota_capable": false,
+        "rollback_state": "not-applicable"
+      },
+      "rpi4": {
+        "backend": "none",
+        "compatible": "suderra-os-rpi4",
+        "health_policy": "provisioning-only",
+        "lifecycle": "provisioning-only",
+        "ota_capable": false,
+        "rollback_state": "not-applicable"
+      },
+      "x86_64": {
+        "backend": "grub-rauc",
+        "compatible": "suderra-os-x86_64",
+        "health_policy": "production-runtime",
+        "lifecycle": "production",
+        "ota_capable": true,
+        "rollback_state": "tpm-nv-required"
+      }
+    }
+  },
+  "retention": {
+    "required_exports": [
+      "release-runtime",
+      "release-signing",
+      "release-lab-input",
+      "release-governance",
+      "release-reproducibility",
+      "release-security"
+    ]
+  },
   "targets": {
     "pi-cm4-revpi-usb-installer": {
       "hardware_required": true,
+      "ota_capable": false,
       "production_gate": true,
       "release_image_scan_required": true,
       "release_public": true,
@@ -129,14 +300,25 @@
     },
     "qemu-x86_64-prod-ab": {
       "hardware_required": false,
+      "ota_capable": true,
       "production_gate": true,
       "release_image_scan_required": true,
       "release_public": false,
       "runtime_required": true,
       "signing_required": true
     },
+    "qemu-x86_64": {
+      "hardware_required": false,
+      "ota_capable": false,
+      "production_gate": false,
+      "release_image_scan_required": false,
+      "release_public": true,
+      "runtime_required": false,
+      "signing_required": false
+    },
     "revpi4": {
       "hardware_required": true,
+      "ota_capable": false,
       "production_gate": true,
       "release_image_scan_required": true,
       "release_public": true,
@@ -145,6 +327,7 @@
     },
     "rpi4": {
       "hardware_required": true,
+      "ota_capable": false,
       "production_gate": true,
       "release_image_scan_required": true,
       "release_public": true,
@@ -153,6 +336,7 @@
     },
     "x86_64": {
       "hardware_required": true,
+      "ota_capable": true,
       "production_gate": true,
       "release_image_scan_required": true,
       "release_public": false,

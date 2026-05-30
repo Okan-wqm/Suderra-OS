@@ -232,6 +232,10 @@ The candidate bundle must include and the signed ingress manifest must digest:
 - `build-artifacts/image-build-contract/image-build-contract.json`
 - `release-lab-input/<version>/qemu-x86_64/qemu.json`
 - `release-lab-input/<version>/<hardware-target>/lab.json`
+- `release-runtime/<version>/<runtime-target>/production-runtime.json` when
+  `ci/evidence-contract.yml` marks the target as runtime-required
+- `release-signing/<version>/**/*.json` when the target policy requires
+  production signing or OTA-capable artifacts
 - `release-governance/<version>/audit-log.json`
 - `release-governance/<version>/station-registry.json`
 - `release-governance/<version>/governance-policy-validation.json`

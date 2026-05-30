@@ -23,6 +23,7 @@ from typing import Any
 
 SEMANTIC_BEGIN = "SUDERRA_QEMU_SEMANTIC_JSON_BEGIN"
 SEMANTIC_END = "SUDERRA_QEMU_SEMANTIC_JSON_END"
+OBSERVATION_SCHEMA_VERSION = "suderra.runtime-observation.v1"
 OUTCOME_PREFIXES = (
     "SUDERRA_PRODUCTION_RUNTIME_OUTCOME=",
     "observed_outcome=",
@@ -33,6 +34,24 @@ EXPECTED_OUTCOMES = {
     "kernel-rejected",
     "userspace-rejected",
     "rollback-completed",
+}
+OUTCOME_LAYERS = {
+    "booted": "runtime",
+    "firmware-rejected": "firmware",
+    "kernel-rejected": "kernel",
+    "userspace-rejected": "userspace",
+    "rollback-completed": "userspace",
+}
+SCENARIO_OBSERVED_LAYERS = {
+    "anti-rollback-downgrade-rejection": "userspace",
+    "cmdline-tamper-rejection": "kernel",
+    "data-luks-swtpm": "storage",
+    "dm-verity-rootfs-tamper-rejection": "kernel",
+    "rauc-bad-signature-rejection": "userspace",
+    "rauc-good-update": "userspace",
+    "rauc-health-rollback": "userspace",
+    "signed-boot": "runtime",
+    "unsigned-boot-rejection": "firmware",
 }
 
 
@@ -161,27 +180,79 @@ def parse_semantic(serial: str) -> dict[str, Any]:
 
 
 def observed_outcome(serial: str, semantic: dict[str, Any], process_returncode: int | None) -> str:
+    return classify_observation("", serial, semantic, process_returncode)["observed_outcome"]
+
+
+def classify_observation(
+    scenario: str,
+    serial: str,
+    semantic: dict[str, Any],
+    process_returncode: int | None,
+) -> dict[str, Any]:
+    outcome = "userspace-rejected"
+    source = "qemu-exit"
+    signal_value = "nonzero-exit-or-no-semantic"
     for line in serial.splitlines():
         stripped = line.strip()
         for prefix in OUTCOME_PREFIXES:
             if stripped.startswith(prefix):
                 value = stripped[len(prefix) :].strip()
                 if value in EXPECTED_OUTCOMES:
-                    return value
+                    outcome = value
+                    source = "serial-marker"
+                    signal_value = prefix.rstrip("=")
+                    return {
+                        "schema_version": OBSERVATION_SCHEMA_VERSION,
+                        "producer": "tests/qemu/production-runtime-scenario.py",
+                        "scenario": scenario,
+                        "source": source,
+                        "observed_outcome": outcome,
+                        "observed_layer": SCENARIO_OBSERVED_LAYERS.get(scenario, OUTCOME_LAYERS[outcome]),
+                        "signal": signal_value,
+                    }
     lowered = serial.lower()
     if "rollback-completed" in lowered or "rollback completed" in lowered:
-        return "rollback-completed"
-    if "security violation" in lowered or "access denied" in lowered or "secure boot" in lowered and "denied" in lowered:
-        return "firmware-rejected"
-    if "dm-verity" in lowered and any(token in lowered for token in ("corrupt", "verification failed", "root hash")):
-        return "kernel-rejected"
-    if "rauc" in lowered and any(token in lowered for token in ("signature", "downgrade", "rollback floor", "rejected")):
-        return "userspace-rejected"
-    if semantic:
-        return "booted"
-    if process_returncode == 0:
-        return "booted"
-    return "userspace-rejected"
+        outcome = "rollback-completed"
+        source = "serial-heuristic"
+        signal_value = "rollback-completed"
+        return {
+            "schema_version": OBSERVATION_SCHEMA_VERSION,
+            "producer": "tests/qemu/production-runtime-scenario.py",
+            "scenario": scenario,
+            "source": source,
+            "observed_outcome": outcome,
+            "observed_layer": SCENARIO_OBSERVED_LAYERS.get(scenario, OUTCOME_LAYERS[outcome]),
+            "signal": signal_value,
+        }
+    if "security violation" in lowered or "access denied" in lowered or ("secure boot" in lowered and "denied" in lowered):
+        outcome = "firmware-rejected"
+        source = "serial-heuristic"
+        signal_value = "secure-boot-denied"
+    elif "dm-verity" in lowered and any(token in lowered for token in ("corrupt", "verification failed", "root hash")):
+        outcome = "kernel-rejected"
+        source = "serial-heuristic"
+        signal_value = "dm-verity-rejection"
+    elif "rauc" in lowered and any(token in lowered for token in ("signature", "downgrade", "rollback floor", "rejected")):
+        outcome = "userspace-rejected"
+        source = "serial-heuristic"
+        signal_value = "rauc-rejection"
+    elif semantic:
+        outcome = "booted"
+        source = "guest-semantic"
+        signal_value = "semantic-json"
+    elif process_returncode == 0:
+        outcome = "booted"
+        source = "qemu-exit"
+        signal_value = "zero-exit"
+    return {
+        "schema_version": OBSERVATION_SCHEMA_VERSION,
+        "producer": "tests/qemu/production-runtime-scenario.py",
+        "scenario": scenario,
+        "source": source,
+        "observed_outcome": outcome,
+        "observed_layer": SCENARIO_OBSERVED_LAYERS.get(scenario, OUTCOME_LAYERS[outcome]),
+        "signal": signal_value,
+    }
 
 
 def start_swtpm(swtpm_state: Path, scenario_dir: Path) -> tuple[subprocess.Popen[bytes], Path]:
@@ -351,7 +422,8 @@ def run_scenario(args: argparse.Namespace) -> int:
                 qmp_drain(qmp_sock, qmp_events)
                 serial = read_text(serial_log)
                 semantic = parse_semantic(serial)
-                outcome = observed_outcome(serial, semantic, qemu_process.poll())
+                observation = classify_observation(args.scenario, serial, semantic, qemu_process.poll())
+                outcome = observation["observed_outcome"]
                 if outcome == expected and (outcome != "booted" or semantic):
                     break
                 if qemu_process.poll() is not None:
@@ -397,7 +469,8 @@ def run_scenario(args: argparse.Namespace) -> int:
         )
         serial = read_text(serial_log)
         semantic = parse_semantic(serial)
-        outcome = observed_outcome(serial, semantic, qemu_process.returncode if qemu_process else None)
+        observation = classify_observation(args.scenario, serial, semantic, qemu_process.returncode if qemu_process else None)
+        outcome = observation["observed_outcome"]
         mutation_artifact = None
         mutation_path = os.environ.get("SUDERRA_MUTATION_ARTIFACT")
         if mutation_path:
@@ -426,6 +499,7 @@ def run_scenario(args: argparse.Namespace) -> int:
             "status": status,
             "expected_outcome": expected,
             "observed_outcome": outcome,
+            "observation": observation,
             "started_at": started_at,
             "completed_at": now_utc(),
             "qemu_version": qemu_version(),
@@ -478,6 +552,15 @@ def main() -> int:
                 "status": "failed",
                 "expected_outcome": os.environ.get("SUDERRA_EXPECTED_OUTCOME", ""),
                 "observed_outcome": "userspace-rejected",
+                "observation": {
+                    "schema_version": OBSERVATION_SCHEMA_VERSION,
+                    "producer": "tests/qemu/production-runtime-scenario.py",
+                    "scenario": args.scenario,
+                    "source": "harness-error",
+                    "observed_outcome": "userspace-rejected",
+                    "observed_layer": SCENARIO_OBSERVED_LAYERS.get(args.scenario, "userspace"),
+                    "signal": str(exc),
+                },
                 "started_at": now_utc(),
                 "completed_at": now_utc(),
                 "qemu_version": qemu_version(),

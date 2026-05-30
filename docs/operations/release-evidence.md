@@ -15,6 +15,11 @@ than to a hardcoded root directory.
 `ci/evidence-contract.yml` is the SSOT for release evidence policy. It owns
 schema versions, production gate policy, runtime-suite mappings, required
 runtime checks, hardware board/adapter requirements, and signing artifact roles.
+It also owns the production-runtime scenario observation contract, OTA target
+capability policy, signing manifest role bindings, and retained evidence export
+roots. Validators fail closed when the build matrix and this contract disagree;
+workflows must generate runtime plans from the contract instead of copying
+scenario lists.
 `evidence.json` is the per-target evidence index generated from that contract.
 It records the target contract, build source, immutable asset manifest, artifact
 hashes, signatures, provenance, SBOM/VEX, reproducibility, security scans,
@@ -91,10 +96,10 @@ Required top-level fields:
 | `preflight_inputs` | Preserved approval, reproducibility, security, QEMU, and lab input files replayed by final validation. |
 | `governance` | Policy validation, branch protection, ruleset, tag protection, workflow permission, CODEOWNERS, audit, and release environment snapshots. |
 | `qemu` | QEMU boot and application evidence for QEMU targets. |
-| `runtime_qemu` | Non-public `suderra.qemu-production-runtime-suite.v2` evidence for Secure Boot, dm-verity, RAUC, anti-rollback, and `/data` LUKS/swtpm scenarios. The production x86 gate binds to the non-public `qemu-x86_64-prod-ab` runtime suite; target mismatches fail validation. |
+| `runtime_qemu` | Non-public `suderra.qemu-production-runtime-suite.v2` evidence for Secure Boot, dm-verity, RAUC, anti-rollback, and `/data` LUKS/swtpm scenarios. Each scenario carries typed `suderra.runtime-observation.v1` evidence that must match raw serial/QMP replay and the SSOT scenario contract. The production x86 gate binds to the non-public `qemu-x86_64-prod-ab` runtime suite; target mismatches fail validation. |
 | `hardware` | Board serial logs and hardware acceptance results. |
 | `station_acquisitions` | Adapter-executed lab acquisition records, including station registry binding and raw adapter transcript digests. |
-| `hsm_signing_sessions` | HSM/PKCS#11 signing sessions with token/key identity, challenge-response, audit transcript, certificate preservation, and exact artifact-role/digest bindings replayed with `validate-hsm-signing-evidence.py`. |
+| `hsm_signing_sessions` | HSM/PKCS#11 signing sessions with token/key identity, challenge-response, audit transcript, certificate preservation, SSOT signing role bindings, and exact artifact-role/digest bindings replayed with `validate-hsm-signing-evidence.py`. |
 | `release_image_scan_reports` | Scanner-native rootfs/image/SBOM reports bound to release subjects and raw scanner bytes. |
 | `runtime_checks` | `secure_boot`, `dm_verity`, `dm_verity_tamper`, `rauc_good_update`, `rauc_bad_signature`, `rauc_health_rollback`, `anti_rollback`, `data_luks`, `lockdown`, `nmap`, and `systemd_security`. |
 | `approvals` | Release-owner or security approvals. |
@@ -190,6 +195,12 @@ Required operator evidence for the first RC is:
 - `release-governance/<version>/station-registry.json`
 - `release-approvals/<version>/<target>.json` for every release target
 - `release-reproducibility/<version>/<target>.json` for every release target
+
+Production-candidate evidence additionally requires non-public production
+inputs named by `ci/evidence-contract.yml`, including
+`release-runtime/<version>/qemu-x86_64-prod-ab/production-runtime.json` and
+`release-lab-input/<version>/x86_64/lab.json`. These are not public release
+artifacts, but they are promotion gates for the x86 production target.
 
 `release-governance/<version>/audit-log.json` must use
 `suderra.audit-log-snapshot.v1`, have `status: collected`, include
@@ -346,9 +357,12 @@ python3 scripts/evidence/release-publication-manifest.py validate \
 ## Hardware Evidence
 
 Production hardware targets require the board coverage encoded in the evidence
-schema. For the USB installer alpha path that means all four board IDs:
+contract. For the USB installer alpha path that means all four board IDs:
 `raspberry-pi-4-model-b`, `cm4-lite-sd`, `cm4-emmc-io-board`, and
-`revpi-connect-4`. The evidence bundle should include:
+`revpi-connect-4`. For production-candidate x86 evidence the required board is
+`industrial-x86_64`, with additional TPM, Secure Boot enforcement, RAUC
+rollback, dm-verity/boot tamper, and power-cycle transcript checks from the
+SSOT contract. The evidence bundle should include:
 
 - Board model, serial number, operator, and test timestamp in the device record.
 - Serial console boot log.

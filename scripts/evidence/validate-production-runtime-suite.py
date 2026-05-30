@@ -18,9 +18,11 @@ import evidence_contract  # noqa: E402
 
 EVIDENCE_CONTRACT = evidence_contract.load_contract()
 SCHEMA_VERSION = evidence_contract.schema_version("production_runtime_suite", EVIDENCE_CONTRACT)
+RUNTIME_OBSERVATION_SCHEMA_VERSION = evidence_contract.schema_version("runtime_observation", EVIDENCE_CONTRACT)
 LEGACY_SCHEMA_VERSIONS = {"suderra.qemu-production-runtime-suite.v1"}
 V2_REQUIRED_PROFILES = {"production-candidate", "production-runtime"}
 REQUIRED_SCENARIOS = tuple(evidence_contract.runtime_required_scenarios(EVIDENCE_CONTRACT))
+SCENARIO_CONTRACTS = evidence_contract.runtime_scenario_contracts(EVIDENCE_CONTRACT)
 SCENARIO_STATUSES = {"passed", "failed", "infra-error", "timeout"}
 EXPECTED_OUTCOMES = {
     "booted",
@@ -47,6 +49,13 @@ OUTCOME_PREFIXES = (
     "SUDERRA_PRODUCTION_RUNTIME_OUTCOME=",
     "observed_outcome=",
 )
+OBSERVATION_SOURCE_ROLES = {
+    "guest-semantic": "guest-semantic",
+    "harness-error": "qmp-events",
+    "qemu-exit": "qmp-events",
+    "serial-heuristic": "serial",
+    "serial-marker": "serial",
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -266,6 +275,40 @@ def validate_guest_facts_v2(errors: list[str], scenario_path: str, name: Any, fa
         error(errors, f"{scenario_path}.guest_facts.anti_rollback", "must be an object")
 
 
+def validate_observation_v2(
+    errors: list[str],
+    scenario_path: str,
+    scenario: dict[str, Any],
+    name: Any,
+    scenario_contract: dict[str, Any],
+) -> None:
+    observation = check_object(errors, f"{scenario_path}.observation", scenario.get("observation"))
+    if not observation:
+        return
+    if observation.get("schema_version") != RUNTIME_OBSERVATION_SCHEMA_VERSION:
+        error(
+            errors,
+            f"{scenario_path}.observation.schema_version",
+            f"must be {RUNTIME_OBSERVATION_SCHEMA_VERSION}",
+        )
+    for field in ("producer", "source", "observed_outcome", "observed_layer", "signal"):
+        check_string(errors, f"{scenario_path}.observation.{field}", observation.get(field))
+    if isinstance(name, str) and observation.get("scenario") != name:
+        error(errors, f"{scenario_path}.observation.scenario", "must match scenario name")
+    if observation.get("observed_outcome") != scenario.get("observed_outcome"):
+        error(errors, f"{scenario_path}.observation.observed_outcome", "must match scenario observed_outcome")
+    expected_layer = scenario_contract.get("observed_layer")
+    if isinstance(expected_layer, str) and observation.get("observed_layer") != expected_layer:
+        error(errors, f"{scenario_path}.observation.observed_layer", f"must be {expected_layer}")
+    observation_source = observation.get("source")
+    source_role = OBSERVATION_SOURCE_ROLES.get(observation_source) if isinstance(observation_source, str) else None
+    allowed_sources = scenario_contract.get("observation_source", [])
+    if isinstance(observation_source, str) and source_role is None:
+        error(errors, f"{scenario_path}.observation.source", "is unsupported")
+    elif source_role is not None and isinstance(allowed_sources, list) and source_role not in allowed_sources:
+        error(errors, f"{scenario_path}.observation.source", "is not allowed by runtime scenario contract")
+
+
 def validate_scenario_v2(
     errors: list[str],
     root: Path,
@@ -274,7 +317,11 @@ def validate_scenario_v2(
     name: Any,
     logs_by_role: dict[str, dict[str, Any]],
     check_files: bool,
+    scenario_contract: dict[str, Any],
 ) -> None:
+    expected_outcome = scenario_contract.get("expected_outcome")
+    if isinstance(expected_outcome, str) and scenario.get("expected_outcome") != expected_outcome:
+        error(errors, f"{scenario_path}.expected_outcome", "must match runtime scenario contract")
     check_string_list(errors, f"{scenario_path}.qemu_argv", scenario.get("qemu_argv"))
     if isinstance(scenario.get("qemu_argv"), list):
         argv = [str(item) for item in scenario["qemu_argv"]]
@@ -309,7 +356,11 @@ def validate_scenario_v2(
             if role in logs_by_role and isinstance(raw.get(field), str) and raw.get(field) != logs_by_role[role].get("sha256"):
                 error(errors, f"{scenario_path}.raw_evidence.{field}", f"must match {role} log sha256")
 
-    missing_logs = sorted(REQUIRED_V2_LOG_ROLES - set(logs_by_role))
+    required_log_roles = set(REQUIRED_V2_LOG_ROLES)
+    contract_log_roles = scenario_contract.get("required_log_roles")
+    if isinstance(contract_log_roles, list) and contract_log_roles:
+        required_log_roles = {str(item) for item in contract_log_roles}
+    missing_logs = sorted(required_log_roles - set(logs_by_role))
     if missing_logs:
         error(errors, f"{scenario_path}.logs", f"missing required raw log roles: {', '.join(missing_logs)}")
     if check_files:
@@ -324,13 +375,21 @@ def validate_scenario_v2(
         if isinstance(qmp_log, dict) and not qmp_quit_ack_observed(read_json(root, qmp_log.get("path"))):
             error(errors, f"{scenario_path}.logs", "QMP log must prove quit acknowledgement or shutdown")
 
-    if scenario.get("observed_outcome") in GUEST_FACT_REQUIRED_OUTCOMES:
+    validate_observation_v2(errors, scenario_path, scenario, name, scenario_contract)
+
+    if scenario_contract.get("guest_facts_required") is True or scenario.get("observed_outcome") in GUEST_FACT_REQUIRED_OUTCOMES:
         validate_guest_facts_v2(errors, scenario_path, name, scenario.get("guest_facts"))
     elif "guest_facts" in scenario and not isinstance(scenario.get("guest_facts"), dict):
         error(errors, f"{scenario_path}.guest_facts", "must be an object when present")
 
     mutation = scenario.get("mutation")
     if isinstance(mutation, dict) and name != "signed-boot":
+        expected_mutation_type = scenario_contract.get("mutation_type")
+        expected_mutation_target = scenario_contract.get("mutation_target")
+        if isinstance(expected_mutation_type, str) and mutation.get("type") != expected_mutation_type:
+            error(errors, f"{scenario_path}.mutation.type", "must match runtime scenario contract")
+        if isinstance(expected_mutation_target, str) and mutation.get("target") != expected_mutation_target:
+            error(errors, f"{scenario_path}.mutation.target", "must match runtime scenario contract")
         artifact = mutation.get("artifact")
         if isinstance(artifact, dict):
             for field in ("path", "role"):
@@ -472,7 +531,17 @@ def validate(
             if "serial" not in roles and "qmp-events" not in roles:
                 error(errors, f"{scenario_path}.logs", "must include serial or qmp-events evidence")
             if is_v2:
-                validate_scenario_v2(errors, root, scenario_path, scenario, name, logs_by_role, check_files)
+                scenario_contract = SCENARIO_CONTRACTS.get(name, {}) if isinstance(name, str) else {}
+                validate_scenario_v2(
+                    errors,
+                    root,
+                    scenario_path,
+                    scenario,
+                    name,
+                    logs_by_role,
+                    check_files,
+                    scenario_contract,
+                )
     missing = sorted(set(REQUIRED_SCENARIOS) - set(by_name))
     if missing:
         error(errors, "$.scenarios", f"missing required scenarios: {', '.join(missing)}")
