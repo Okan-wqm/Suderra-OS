@@ -59,6 +59,18 @@ grep -q 'certificate_sha256' "${HSM_EVIDENCE}"
 grep -q 'challenge' "${HSM_EVIDENCE}"
 grep -q 'SoftHSM' "${HSM_EVIDENCE}"
 
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${TMPDIR}/hsm.key" >/dev/null 2>&1
+openssl req -x509 -new -key "${TMPDIR}/hsm.key" -subj "/CN=Suderra Contract HSM" -days 3650 \
+    -out "${TMPDIR}/rauc-signing.crt" >/dev/null 2>&1
+printf 'contract challenge request\n' >"${TMPDIR}/challenge-request.bin"
+openssl dgst -sha256 -sign "${TMPDIR}/hsm.key" -out "${TMPDIR}/challenge-request.sig" \
+    "${TMPDIR}/challenge-request.bin"
+printf '{"challenge":"contract","status":"passed"}\n' >"${TMPDIR}/challenge-transcript.json"
+printf 'contract RAUC bundle bytes\n' >"${TMPDIR}/contract.raucb"
+openssl dgst -sha256 -sign "${TMPDIR}/hsm.key" -out "${TMPDIR}/contract.raucb.sig" \
+    "${TMPDIR}/contract.raucb"
+ARTIFACT_SHA="$(sha256sum "${TMPDIR}/contract.raucb" | awk '{print $1}')"
+
 python3 - "${TMPDIR}" <<'PY'
 import hashlib
 import json
@@ -67,7 +79,11 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 cert = root / "rauc-signing.crt"
-cert.write_text("contract certificate\n", encoding="utf-8")
+challenge = root / "challenge-request.bin"
+challenge_sig = root / "challenge-request.sig"
+transcript = root / "challenge-transcript.json"
+artifact = root / "contract.raucb"
+artifact_sig = root / "contract.raucb.sig"
 payload = {
     "schema_version": "suderra.hsm-signing-session.v2",
     "mode": "production",
@@ -77,6 +93,7 @@ payload = {
     "pkcs11_uri": "pkcs11:token=Suderra;object=rauc-prod;type=private",
     "key_label": "rauc-prod",
     "key_id": "01",
+    "certificate_path": "rauc-signing.crt",
     "certificate_sha256": hashlib.sha256(cert.read_bytes()).hexdigest(),
     "ceremony_id": "CER-2026-0001",
     "operator": "release-operator",
@@ -86,7 +103,7 @@ payload = {
     "expires_at": "2099-01-01T00:00:00Z",
     "audit": {
         "log_sha256": "a" * 64,
-        "transcript_sha256": "b" * 64,
+        "transcript_sha256": hashlib.sha256(transcript.read_bytes()).hexdigest(),
     },
     "token": {
         "label": "Suderra Production Token",
@@ -106,17 +123,24 @@ payload = {
     },
     "challenge": {
         "nonce": "contract-nonce",
-        "request_sha256": "d" * 64,
-        "signature_sha256": "e" * 64,
-        "transcript_sha256": "f" * 64,
-        "algorithm": "pkcs11-signature-challenge-v1",
+        "request_path": "challenge-request.bin",
+        "request_sha256": hashlib.sha256(challenge.read_bytes()).hexdigest(),
+        "signature_path": "challenge-request.sig",
+        "signature_sha256": hashlib.sha256(challenge_sig.read_bytes()).hexdigest(),
+        "transcript_path": "challenge-transcript.json",
+        "transcript_sha256": hashlib.sha256(transcript.read_bytes()).hexdigest(),
+        "algorithm": "openssl-dgst-sha256",
     },
     "artifacts": [
         {
             "role": "rauc-bundle",
             "name": "contract.raucb",
-            "sha256": "1" * 64,
-            "bytes": 1024,
+            "path": "contract.raucb",
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            "bytes": artifact.stat().st_size,
+            "signature_path": "contract.raucb.sig",
+            "signature_sha256": hashlib.sha256(artifact_sig.read_bytes()).hexdigest(),
+            "signature_algorithm": "openssl-dgst-sha256",
         }
     ],
 }
@@ -127,7 +151,7 @@ python3 "${HSM_EVIDENCE}" validate \
     --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
     --certificate "${TMPDIR}/rauc-signing.crt" \
     --artifact-role rauc-bundle \
-    --artifact-sha256 "$(printf '1%.0s' {1..64})" \
+    --artifact-sha256 "${ARTIFACT_SHA}" \
     --require-production \
     >/dev/null
 if python3 "${HSM_EVIDENCE}" validate \
@@ -179,7 +203,7 @@ if python3 "${HSM_EVIDENCE}" validate \
     --pkcs11-uri 'pkcs11:token=Suderra;object=rauc-prod;type=private' \
     --certificate "${TMPDIR}/rauc-signing.crt" \
     --artifact-role rauc-bundle \
-    --artifact-sha256 "$(printf '1%.0s' {1..64})" \
+    --artifact-sha256 "${ARTIFACT_SHA}" \
     --require-production \
     2>"${TMPDIR}/hsm-split.err"; then
     echo "ERROR: HSM validator accepted role/SHA split across artifacts" >&2

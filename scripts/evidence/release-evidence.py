@@ -55,13 +55,21 @@ TOP_LEVEL_FIELDS = {
     "machine_verification",
     "build_evidence",
     "preflight_inputs",
+    "subject_graph",
     "governance",
+    "governance_role_bindings",
     "qemu",
     "runtime_qemu",
+    "runtime_observations",
     "hardware",
+    "hardware_subjects",
     "station_acquisitions",
+    "signing_manifests",
+    "ota_artifacts",
     "hsm_signing_sessions",
     "release_image_scan_reports",
+    "scanner_native_reports",
+    "retention_manifest",
     "runtime_checks",
     "approvals",
     "residual_risk",
@@ -193,56 +201,16 @@ def parse_key_value(text: str) -> tuple[str, str]:
 
 
 def load_matrix(path: Path) -> dict[str, Any]:
-    data: dict[str, Any] = {"defconfigs": [], "variants": [], "security_scans": []}
-    section: str | None = None
-    current: dict[str, Any] | None = None
-    pending_key: str | None = None
-
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = strip_comment(raw)
-        if not line.strip():
-            continue
-
-        indent = len(line) - len(line.lstrip(" "))
-        text = line.strip()
-
-        if indent == 0 and text.endswith(":"):
-            section = text[:-1]
-            data.setdefault(section, [])
-            current = None
-            pending_key = None
-            continue
-
-        if section in {"defconfigs", "variants"}:
-            if indent == 2 and text.startswith("- "):
-                current = {}
-                data[section].append(current)
-                rest = text[2:].strip()
-                if rest:
-                    key, value = parse_key_value(rest)
-                    current[key] = parse_scalar(value)
-                pending_key = None
-                continue
-            if indent == 4 and current is not None:
-                key, value = parse_key_value(text)
-                if value:
-                    current[key] = parse_scalar(value)
-                    pending_key = None
-                else:
-                    current[key] = []
-                    pending_key = key
-                continue
-            if indent == 6 and text.startswith("- ") and current is not None and pending_key:
-                current[pending_key].append(parse_scalar(text[2:].strip()))
-                continue
-
-        if section == "security_scans" and indent == 2 and text.startswith("- "):
-            data[section].append(parse_scalar(text[2:].strip()))
-            continue
-
-        raise ValueError(f"unsupported YAML subset at {path}:{lineno}: {raw}")
-
-    return data
+    script = ROOT / "scripts" / "ci" / "validate-build-matrix.py"
+    spec = importlib.util.spec_from_file_location("validate_build_matrix", script)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot import matrix loader from {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    matrix = module.load_matrix(path)
+    if not isinstance(matrix, dict):
+        raise ValueError(f"build matrix loader returned non-object for {path}")
+    return matrix
 
 
 def targets_by_id(matrix: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -406,6 +374,7 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "qemu": None,
             "lab": None,
         },
+        "subject_graph": None,
         "governance": {
             "retention_years": 7,
             "approval_model": "enterprise-two-role",
@@ -414,6 +383,7 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
                 for name in GOVERNANCE_CHECKS
             },
         },
+        "governance_role_bindings": None,
         "qemu": {
             "required": qemu_required,
             "status": "not_run" if qemu_required else "not_applicable",
@@ -425,14 +395,20 @@ def generated_evidence(version: str, row: dict[str, Any], security_scans: list[s
             "status": "not_run" if runtime_required else "not_applicable",
             "production_suites": [],
         },
+        "runtime_observations": [],
         "hardware": {
             "required": hardware_required,
             "status": "not_run" if hardware_required else "not_applicable",
             "devices": [],
         },
+        "hardware_subjects": [],
         "station_acquisitions": [],
+        "signing_manifests": [],
+        "ota_artifacts": [],
         "hsm_signing_sessions": [],
         "release_image_scan_reports": [],
+        "scanner_native_reports": [],
+        "retention_manifest": None,
         "runtime_checks": {
             name: {
                 "required": runtime_required,
@@ -740,6 +716,16 @@ def copy_into_bundle(bundle_dir: Path, source: Path, rel: str) -> str:
     return rel
 
 
+def preserved_ref(bundle_dir: Path, source: Path, rel: str) -> dict[str, Any]:
+    copied = copy_into_bundle(bundle_dir, source, rel)
+    copied_path = bundle_dir / copied
+    return {
+        "path": copied,
+        "sha256": sha256_file(copied_path),
+        "bytes": copied_path.stat().st_size,
+    }
+
+
 def workflow_identity(workflow: str, *, run_id: str = "not_collected", run_attempt: str = "not_collected") -> dict[str, str]:
     return {
         "provider": "github-actions",
@@ -898,7 +884,7 @@ def apply_machine_verification(bundle_dir: Path, release_dir: Path, evidence: di
 def apply_build_evidence(bundle_dir: Path, input_root: Path, version: str, target: str, evidence: dict[str, Any]) -> None:
     profile = "release-candidate" if "-" in version else "production-candidate"
     binding = read_json(input_root / "release-inputs" / version / f"{profile}.json")
-    if not isinstance(binding, dict):
+    if not isinstance(binding, dict) and profile == "release-candidate":
         binding = read_json(input_root / "release-inputs" / version / "release-candidate.json")
     if not isinstance(binding, dict):
         return
@@ -958,9 +944,12 @@ def apply_governance(bundle_dir: Path, governance_root: Path, version: str, evid
     for name, filename in mapping.items():
         source = governance_root / version / filename
         if source.is_file() and source.stat().st_size > 0:
+            rel = copy_into_bundle(bundle_dir, source, f"governance/{filename}")
             evidence["governance"]["checks"][name] = {
                 "status": "passed",
-                "evidence": copy_into_bundle(bundle_dir, source, f"governance/{filename}"),
+                "evidence": rel,
+                "sha256": sha256_file(bundle_dir / rel),
+                "bytes": (bundle_dir / rel).stat().st_size,
             }
 
 
@@ -1217,6 +1206,64 @@ def apply_release_inputs(
     target: str,
     evidence: dict[str, Any],
 ) -> None:
+    profile = "release-candidate" if "-" in version else "production-candidate"
+    release_input = input_root / "release-inputs" / version / f"{profile}.json"
+    if release_input.is_file() and release_input.stat().st_size > 0:
+        rel_input = copy_into_bundle(bundle_dir, release_input, f"preflight/release-inputs/{profile}.json")
+        evidence["preflight_inputs"]["release_input"] = {
+            "profile": profile,
+            "path": rel_input,
+            "sha256": sha256_file(bundle_dir / rel_input),
+            "bytes": (bundle_dir / rel_input).stat().st_size,
+        }
+
+    subject_graph = input_root / "release-subject-graph" / version / "release-subject-graph.json"
+    if subject_graph.is_file() and subject_graph.stat().st_size > 0:
+        evidence["subject_graph"] = preserved_ref(bundle_dir, subject_graph, "subject-graph/release-subject-graph.json")
+
+    role_bindings = input_root / "release-governance" / version / "role-bindings.json"
+    if role_bindings.is_file() and role_bindings.stat().st_size > 0:
+        evidence["governance_role_bindings"] = preserved_ref(
+            bundle_dir,
+            role_bindings,
+            "governance/role-bindings.json",
+        )
+
+    retention = input_root / "release-retention" / version / "retention-manifest.json"
+    if retention.is_file() and retention.stat().st_size > 0:
+        evidence["retention_manifest"] = preserved_ref(
+            bundle_dir,
+            retention,
+            "retention/retention-manifest.json",
+        )
+
+    signing_manifest = input_root / "release-signing" / version / target / "signing-manifest.json"
+    if signing_manifest.is_file() and signing_manifest.stat().st_size > 0:
+        evidence["signing_manifests"].append(
+            {
+                "target": target,
+                **preserved_ref(bundle_dir, signing_manifest, "preflight/signing/signing-manifest.json"),
+            }
+        )
+
+    ota_artifacts = input_root / "release-ota" / version / target / "ota-artifacts.json"
+    if ota_artifacts.is_file() and ota_artifacts.stat().st_size > 0:
+        evidence["ota_artifacts"].append(
+            {
+                "target": target,
+                **preserved_ref(bundle_dir, ota_artifacts, "preflight/ota/ota-artifacts.json"),
+            }
+        )
+
+    hardware_subject = input_root / "release-lab-input" / version / target / "hardware-subject.json"
+    if hardware_subject.is_file() and hardware_subject.stat().st_size > 0:
+        evidence["hardware_subjects"].append(
+            {
+                "target": target,
+                **preserved_ref(bundle_dir, hardware_subject, "hardware/input/hardware-subject.json"),
+            }
+        )
+
     repro = input_root / "release-reproducibility" / version / f"{target}.json"
     if repro.is_file() and repro.stat().st_size > 0:
         repro_payload = read_json(repro)
@@ -1248,14 +1295,14 @@ def apply_release_inputs(
             )
             if isinstance(report_payload, dict):
                 if report_payload.get("schema_version") == "suderra.release-security-report.v2":
-                    evidence["release_image_scan_reports"].append(
-                        {
-                            "name": scan["name"],
-                            "path": rel_report,
-                            "sha256": sha256_file(bundle_dir / rel_report),
-                            "bytes": (bundle_dir / rel_report).stat().st_size,
-                        }
-                    )
+                    scan_ref = {
+                        "name": scan["name"],
+                        "path": rel_report,
+                        "sha256": sha256_file(bundle_dir / rel_report),
+                        "bytes": (bundle_dir / rel_report).stat().st_size,
+                    }
+                    evidence["release_image_scan_reports"].append(scan_ref)
+                    evidence["scanner_native_reports"].append(dict(scan_ref))
                 evidence_path = report_payload.get("evidence_path")
                 evidence_sha = report_payload.get("evidence_sha256")
                 evidence_bytes = report_payload.get("evidence_bytes")
@@ -1350,6 +1397,19 @@ def apply_release_inputs(
             if isinstance(scenarios, list) and all(isinstance(item, dict) and item.get("status") == "passed" for item in scenarios):
                 evidence["runtime_qemu"]["status"] = "passed"
                 for scenario in scenarios:
+                    observation = scenario.get("observation")
+                    if isinstance(observation, dict):
+                        evidence["runtime_observations"].append(
+                            {
+                                "suite_target": runtime_target,
+                                "scenario": scenario.get("name"),
+                                "observed_outcome": scenario.get("observed_outcome"),
+                                "source": observation.get("source"),
+                                "schema_version": observation.get("schema_version"),
+                                "suite_path": rel_runtime,
+                                "suite_sha256": sha256_file(bundle_dir / rel_runtime),
+                            }
+                        )
                     for check_name in SCENARIO_TO_RUNTIME_CHECKS.get(str(scenario.get("name")), ()):
                         if check_name in evidence["runtime_checks"]:
                             evidence["runtime_checks"][check_name]["status"] = "passed"
@@ -1357,13 +1417,31 @@ def apply_release_inputs(
     signing_root = input_root / "release-signing" / version / target
     if signing_root.is_dir():
         for session in sorted(signing_root.glob("*.json")):
+            if session.name == "signing-manifest.json":
+                continue
             rel_session = copy_into_bundle(bundle_dir, session, f"preflight/signing/{session.name}")
             session_payload = read_json(session)
             if isinstance(session_payload, dict):
+                supporting_refs: list[str] = []
                 cert_ref = session_payload.get("certificate_path")
                 cert = session_payload.get("certificate")
                 if isinstance(cert, dict) and isinstance(cert.get("path"), str):
                     cert_ref = cert["path"]
+                if isinstance(cert_ref, str):
+                    supporting_refs.append(cert_ref)
+                challenge = session_payload.get("challenge")
+                if isinstance(challenge, dict):
+                    for field in ("request_path", "signature_path", "transcript_path"):
+                        if isinstance(challenge.get(field), str):
+                            supporting_refs.append(challenge[field])
+                artifacts = session_payload.get("artifacts")
+                if isinstance(artifacts, list):
+                    for artifact in artifacts:
+                        if not isinstance(artifact, dict):
+                            continue
+                        for field in ("path", "signature_path"):
+                            if isinstance(artifact.get(field), str):
+                                supporting_refs.append(artifact[field])
                 certificate_source: Path | None = None
                 if isinstance(cert_ref, str) and cert_ref.strip():
                     candidate = Path(cert_ref)
@@ -1379,6 +1457,17 @@ def apply_release_inputs(
                                 break
                 if certificate_source is not None:
                     copy_into_bundle(bundle_dir, certificate_source, f"preflight/signing/{certificate_source.name}")
+                for supporting_ref in sorted(set(supporting_refs)):
+                    candidate = Path(supporting_ref)
+                    if candidate.is_absolute() or ".." in candidate.parts:
+                        continue
+                    supporting_source = session.parent / candidate
+                    if supporting_source.is_file() and supporting_source != certificate_source:
+                        copy_into_bundle(
+                            bundle_dir,
+                            supporting_source,
+                            str(Path("preflight/signing") / candidate),
+                        )
             evidence["hsm_signing_sessions"].append(
                 {
                     "path": rel_session,
@@ -1900,6 +1989,357 @@ def validate_preserved_ref(validation: Validation, path: str, value: Any, requir
     return file_for_relative_path(validation, value.get("path"))
 
 
+def expected_subject_id_for_evidence(evidence: dict[str, Any]) -> str | None:
+    source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+    ci = source_image_build_identity(evidence)
+    source_sha = source.get("git_commit")
+    source_run_id = ci.get("run_id")
+    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        return None
+    if not isinstance(source_run_id, str) or not source_run_id or source_run_id == "not_collected":
+        return None
+    if not isinstance(evidence.get("version"), str) or not isinstance(evidence.get("target"), str):
+        return None
+    return evidence_contract.release_subject_id(
+        version=evidence["version"],
+        target=evidence["target"],
+        source_sha=source_sha,
+        source_run_id=source_run_id,
+        contract=EVIDENCE_CONTRACT,
+    )
+
+
+def subject_graph_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    subjects = payload.get("subjects")
+    if isinstance(subjects, list):
+        return [item for item in subjects if isinstance(item, dict)]
+    nodes = payload.get("nodes")
+    if isinstance(nodes, list):
+        return [item for item in nodes if isinstance(item, dict)]
+    if isinstance(payload.get("subject_id"), str):
+        return [payload]
+    return []
+
+
+def validate_subject_graph_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    validate_closure: bool = False,
+) -> None:
+    graph_path = validate_preserved_ref(validation, "$.subject_graph", evidence.get("subject_graph"), require_pass)
+    if not require_pass or graph_path is None:
+        return
+    payload = read_json(graph_path)
+    if not isinstance(payload, dict):
+        validation.error("$.subject_graph.path", "must be release subject graph JSON")
+        return
+    expected_schema = evidence_contract.schema_version("release_subject_graph", EVIDENCE_CONTRACT)
+    if payload.get("schema_version") != expected_schema:
+        validation.error("$.subject_graph.schema_version", f"must be {expected_schema}")
+    if payload.get("version") not in {None, evidence.get("version")}:
+        validation.error("$.subject_graph.version", "must match evidence.version")
+    target = str(evidence.get("target", ""))
+    expected_subject = expected_subject_id_for_evidence(evidence)
+    nodes = subject_graph_nodes(payload)
+    matching = [node for node in nodes if node.get("target") == target]
+    if not matching:
+        validation.error("$.subject_graph.nodes", f"must include target {target}")
+        return
+    node = matching[0]
+    if expected_subject is not None and node.get("subject_id") != expected_subject:
+        validation.error("$.subject_graph.subject_id", "must match canonical release subject id")
+    artifact_sha256s = evidence_artifact_sha256s(evidence)
+    compressed = node.get("compressed_artifact_sha256")
+    artifacts = node.get("artifacts") if isinstance(node.get("artifacts"), dict) else {}
+    if compressed is None and isinstance(artifacts, dict):
+        compressed_ref = artifacts.get("compressed_release_artifact")
+        if isinstance(compressed_ref, dict):
+            compressed = compressed_ref.get("sha256")
+    if artifact_sha256s and compressed not in artifact_sha256s:
+        validation.error("$.subject_graph.compressed_artifact_sha256", "must bind an evidence artifact digest")
+    if validate_closure:
+        try:
+            module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+            matrix = module.load_matrix(module.DEFAULT_MATRIX)
+            source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+            ci = source_image_build_identity(evidence)
+            preflight = evidence.get("preflight_inputs") if isinstance(evidence.get("preflight_inputs"), dict) else {}
+            release_input_ref = preflight.get("release_input")
+            binding = None
+            profile = payload.get("profile") if isinstance(payload.get("profile"), str) else None
+            if isinstance(release_input_ref, dict):
+                release_input_path = file_for_relative_path(validation, release_input_ref.get("path"))
+                if release_input_path is not None:
+                    binding = read_json(release_input_path)
+                    if isinstance(binding, dict) and isinstance(binding.get("profile"), str):
+                        profile = binding["profile"]
+            if not isinstance(binding, dict):
+                validation.error("$.preflight_inputs.release_input", "must preserve release input binding for subject graph replay")
+            elif not isinstance(profile, str) or not profile:
+                validation.error("$.subject_graph.profile", "must identify the release input profile")
+            else:
+                for failure in module.validate_subject_graph(
+                    graph_path,
+                    version=str(evidence.get("version")),
+                    profile=profile,
+                    source_sha=source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                    source_run_id=str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                    matrix=matrix,
+                    binding=binding,
+                    root=None,
+                    check_files=False,
+                ):
+                    validation.error("$.subject_graph.path", failure)
+        except Exception as exc:
+            validation.error("$.subject_graph.path", f"cannot replay subject graph validation: {exc}")
+        validate_subject_graph_closure(validation, evidence, payload, node)
+
+
+def graph_required_evidence_nodes(payload: dict[str, Any], subject_id: str) -> list[dict[str, Any]]:
+    nodes = payload.get("evidence_nodes")
+    if not isinstance(nodes, list):
+        return []
+    return [
+        item
+        for item in nodes
+        if isinstance(item, dict)
+        and item.get("required") is True
+        and item.get("subject_id") == subject_id
+    ]
+
+
+def ref_identity(ref: dict[str, Any]) -> tuple[str | None, int | None]:
+    sha = ref.get("sha256")
+    size = ref.get("bytes")
+    return (
+        sha if isinstance(sha, str) and SHA256_RE.fullmatch(sha) else None,
+        size if isinstance(size, int) and size > 0 else None,
+    )
+
+
+def append_graph_ref(
+    refs: list[dict[str, Any]],
+    *,
+    role: str,
+    target: str,
+    ref: dict[str, Any] | None,
+    name: str | None = None,
+) -> None:
+    if not isinstance(ref, dict):
+        return
+    sha, size = ref_identity(ref)
+    if sha is None or size is None:
+        return
+    item = {"role": role, "target": target, "sha256": sha, "bytes": size}
+    if name is not None:
+        item["name"] = name
+    refs.append(item)
+
+
+def final_evidence_graph_refs(evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    target = str(evidence.get("target", ""))
+    refs: list[dict[str, Any]] = []
+    preflight = evidence.get("preflight_inputs") if isinstance(evidence.get("preflight_inputs"), dict) else {}
+    append_graph_ref(refs, role="release-input-binding", target=target, ref=preflight.get("release_input"))
+    append_graph_ref(refs, role="reproducibility", target=target, ref=preflight.get("reproducibility"))
+    append_graph_ref(refs, role="retention-manifest", target=target, ref=evidence.get("retention_manifest"))
+    append_graph_ref(refs, role="governance-role-bindings", target=target, ref=evidence.get("governance_role_bindings"))
+    for item in evidence.get("artifacts", []) if isinstance(evidence.get("artifacts"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="compressed-release-artifact", target=target, ref=item, name=item.get("name"))
+    for item in evidence.get("signing_manifests", []) if isinstance(evidence.get("signing_manifests"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="signing-manifest", target=str(item.get("target", target)), ref=item)
+    for item in evidence.get("hardware_subjects", []) if isinstance(evidence.get("hardware_subjects"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="hardware-subject", target=str(item.get("target", target)), ref=item)
+    for item in evidence.get("ota_artifacts", []) if isinstance(evidence.get("ota_artifacts"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="ota-artifacts", target=str(item.get("target", target)), ref=item)
+    runtime_qemu = evidence.get("runtime_qemu") if isinstance(evidence.get("runtime_qemu"), dict) else {}
+    for item in runtime_qemu.get("production_suites", []) if isinstance(runtime_qemu.get("production_suites"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="runtime-suite", target=target, ref=item, name=item.get("target"))
+    for item in evidence.get("scanner_native_reports", []) if isinstance(evidence.get("scanner_native_reports"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="scanner-native-report", target=target, ref=item, name=item.get("name"))
+    for item in evidence.get("release_image_scan_reports", []) if isinstance(evidence.get("release_image_scan_reports"), list) else []:
+        if isinstance(item, dict):
+            append_graph_ref(refs, role="scanner-native-report", target=target, ref=item, name=item.get("name"))
+    hardware = evidence.get("hardware") if isinstance(evidence.get("hardware"), dict) else {}
+    station_registry = hardware.get("station_registry") if isinstance(hardware.get("station_registry"), dict) else None
+    append_graph_ref(refs, role="station-registry", target=target, ref=station_registry)
+    governance = evidence.get("governance") if isinstance(evidence.get("governance"), dict) else {}
+    checks = governance.get("checks") if isinstance(governance.get("checks"), dict) else {}
+    policy = checks.get("policy_validation") if isinstance(checks.get("policy_validation"), dict) else None
+    append_graph_ref(refs, role="governance-snapshot", target=target, ref=policy)
+    return refs
+
+
+def validate_subject_graph_closure(
+    validation: Validation,
+    evidence: dict[str, Any],
+    graph: dict[str, Any],
+    subject_node: dict[str, Any],
+) -> None:
+    subject_id = subject_node.get("subject_id")
+    if not isinstance(subject_id, str):
+        validation.error("$.subject_graph.subject_id", "must be present for closure validation")
+        return
+    required_nodes = graph_required_evidence_nodes(graph, subject_id)
+    if not required_nodes:
+        validation.error("$.subject_graph.evidence_nodes", "must include required evidence closure nodes")
+        return
+    final_refs = final_evidence_graph_refs(evidence)
+    for idx, node in enumerate(required_nodes):
+        role = node.get("role")
+        if role in {"raw-image"}:
+            continue
+        node_sha = node.get("sha256")
+        node_bytes = node.get("bytes")
+        if role == "compressed-release-artifact":
+            if isinstance(node_sha, str) and node_sha in evidence_artifact_sha256s(evidence):
+                continue
+        if not isinstance(role, str) or not role.strip():
+            validation.error(f"$.subject_graph.evidence_nodes[{idx}].role", "must be a non-placeholder string")
+            continue
+        if not isinstance(node_sha, str) or not SHA256_RE.fullmatch(node_sha) or node_sha == "0" * 64:
+            validation.error(f"$.subject_graph.evidence_nodes[{idx}].sha256", "must be preserved for final closure")
+            continue
+        if not isinstance(node_bytes, int) or node_bytes <= 0:
+            validation.error(f"$.subject_graph.evidence_nodes[{idx}].bytes", "must be preserved for final closure")
+            continue
+        matched = any(
+            ref.get("role") == role
+            and ref.get("sha256") == node_sha
+            and ref.get("bytes") == node_bytes
+            for ref in final_refs
+        )
+        if not matched:
+            validation.error(
+                f"$.subject_graph.evidence_nodes[{idx}]",
+                f"required graph node is not preserved in final evidence: {role} {node.get('path')}",
+            )
+
+
+def validate_governance_role_bindings_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+) -> None:
+    bindings_path = validate_preserved_ref(
+        validation,
+        "$.governance_role_bindings",
+        evidence.get("governance_role_bindings"),
+        require_pass,
+    )
+    if not require_pass or bindings_path is None:
+        return
+    try:
+        module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+        for failure in module.validate_governance_role_bindings(bindings_path, version=str(evidence.get("version"))):
+            validation.error("$.governance_role_bindings.path", failure)
+    except Exception as exc:
+        validation.error("$.governance_role_bindings.path", f"cannot replay governance role binding validation: {exc}")
+
+
+def validate_retention_manifest_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+) -> None:
+    retention_path = validate_preserved_ref(validation, "$.retention_manifest", evidence.get("retention_manifest"), require_pass)
+    if not require_pass or retention_path is None:
+        return
+    source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+    ci = source_image_build_identity(evidence)
+    try:
+        module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+        for failure in module.validate_retention_manifest(
+            retention_path,
+            version=str(evidence.get("version")),
+            source_sha=source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+            source_run_id=str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+        ):
+            validation.error("$.retention_manifest.path", failure)
+    except Exception as exc:
+        validation.error("$.retention_manifest.path", f"cannot replay retention manifest validation: {exc}")
+
+
+def validate_signing_manifests_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    manifests = evidence.get("signing_manifests")
+    if not isinstance(manifests, list):
+        validation.error("$.signing_manifests", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not manifests:
+        validation.error("$.signing_manifests", "must preserve signing manifests")
+    source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+    ci = source_image_build_identity(evidence)
+    expected_artifact_sha256s = evidence_artifact_sha256s(evidence)
+    for idx, item in enumerate(manifests):
+        manifest_path = validate_preserved_ref(validation, f"$.signing_manifests[{idx}]", item, require_pass)
+        if isinstance(item, dict):
+            check_string(validation, f"$.signing_manifests[{idx}].target", item.get("target"))
+        if require_pass and manifest_path is not None:
+            try:
+                module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+                target = item.get("target") if isinstance(item, dict) and isinstance(item.get("target"), str) else str(evidence.get("target"))
+                for failure in module.validate_signing_manifest(
+                    manifest_path,
+                    version=str(evidence.get("version")),
+                    target=target,
+                    source_sha=source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                    source_run_id=str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                    expected_artifact_sha256s=expected_artifact_sha256s,
+                ):
+                    validation.error(f"$.signing_manifests[{idx}].path", failure)
+            except Exception as exc:
+                validation.error(f"$.signing_manifests[{idx}].path", f"cannot replay signing manifest validation: {exc}")
+
+
+def validate_hardware_subjects_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    expected_required: bool,
+) -> None:
+    subjects = evidence.get("hardware_subjects")
+    if not isinstance(subjects, list):
+        validation.error("$.hardware_subjects", "must be a list")
+        return
+    if require_pass and expected_required and not subjects:
+        validation.error("$.hardware_subjects", "must preserve hardware subject evidence")
+    source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+    ci = source_image_build_identity(evidence)
+    expected_artifact_sha256s = evidence_artifact_sha256s(evidence)
+    for idx, item in enumerate(subjects):
+        subject_path = validate_preserved_ref(validation, f"$.hardware_subjects[{idx}]", item, require_pass)
+        if isinstance(item, dict):
+            check_string(validation, f"$.hardware_subjects[{idx}].target", item.get("target"))
+        if require_pass and subject_path is not None:
+            try:
+                module = load_script_module("validate_release_inputs", "scripts/evidence/validate-release-inputs.py")
+                target = item.get("target") if isinstance(item, dict) and isinstance(item.get("target"), str) else str(evidence.get("target"))
+                for failure in module.validate_hardware_subject(
+                    subject_path,
+                    version=str(evidence.get("version")),
+                    target=target,
+                    source_sha=source.get("git_commit") if isinstance(source.get("git_commit"), str) else None,
+                    source_run_id=str(ci.get("run_id")) if ci.get("run_id") is not None else None,
+                    expected_artifact_sha256s=expected_artifact_sha256s,
+                ):
+                    validation.error(f"$.hardware_subjects[{idx}].path", failure)
+            except Exception as exc:
+                validation.error(f"$.hardware_subjects[{idx}].path", f"cannot replay hardware subject validation: {exc}")
+
+
 def validate_preflight_inputs(validation: Validation, evidence: dict[str, Any], require_pass: bool) -> None:
     inputs = evidence.get("preflight_inputs")
     if not isinstance(inputs, dict):
@@ -2283,6 +2723,68 @@ def validate_runtime_qemu(
         validation.error("$.runtime_qemu.status", "must be passed for production release evidence")
 
 
+def validate_runtime_observations_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    observations = evidence.get("runtime_observations")
+    if not isinstance(observations, list):
+        validation.error("$.runtime_observations", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not observations:
+        validation.error("$.runtime_observations", "must preserve typed runtime observations")
+    seen: set[tuple[str, str]] = set()
+    for idx, item in enumerate(observations):
+        path = f"$.runtime_observations[{idx}]"
+        if not isinstance(item, dict):
+            validation.error(path, "must be an object")
+            continue
+        for field in ("suite_target", "scenario", "observed_outcome", "source", "schema_version", "suite_path", "suite_sha256"):
+            check_string(validation, f"{path}.{field}", item.get(field))
+        if item.get("schema_version") != evidence_contract.schema_version("runtime_observation", EVIDENCE_CONTRACT):
+            validation.error(f"{path}.schema_version", "must be the runtime observation schema")
+        if isinstance(item.get("suite_sha256"), str):
+            check_sha256(validation, f"{path}.suite_sha256", item.get("suite_sha256"), True)
+        key = (str(item.get("suite_target")), str(item.get("scenario")))
+        if key in seen:
+            validation.error(path, "must be unique per suite_target and scenario")
+        seen.add(key)
+
+
+def validate_scanner_native_reports_section(
+    validation: Validation,
+    evidence: dict[str, Any],
+    require_pass: bool,
+    release_tier: str,
+    expected_required: bool,
+) -> None:
+    reports = evidence.get("scanner_native_reports")
+    if not isinstance(reports, list):
+        validation.error("$.scanner_native_reports", "must be a list")
+        return
+    if require_pass and release_tier == "production" and expected_required and not reports:
+        validation.error("$.scanner_native_reports", "must preserve scanner-native raw report records")
+    report_keys = {
+        (item.get("name"), item.get("sha256"), item.get("bytes"))
+        for item in evidence.get("release_image_scan_reports", [])
+        if isinstance(item, dict)
+    }
+    for idx, item in enumerate(reports):
+        path = f"$.scanner_native_reports[{idx}]"
+        report_path = validate_preserved_ref(validation, path, item, require_pass)
+        if not isinstance(item, dict):
+            continue
+        if (item.get("name"), item.get("sha256"), item.get("bytes")) not in report_keys:
+            validation.error(path, "must mirror release_image_scan_reports")
+        if require_pass and release_tier == "production" and expected_required and report_path is not None:
+            payload = read_json(report_path)
+            if not isinstance(payload, dict) or payload.get("schema_version") != evidence_contract.schema_version("release_security_report", EVIDENCE_CONTRACT):
+                validation.error(f"{path}.path", "must be scanner-native release security report JSON")
+
+
 def validate_hsm_signing_sessions(
     validation: Validation,
     evidence: dict[str, Any],
@@ -2400,8 +2902,9 @@ def validate_station_acquisitions(
             if not isinstance(payload, dict):
                 validation.error(f"$.station_acquisitions[{idx}].path", "must be station acquisition JSON")
                 continue
-            if payload.get("schema_version") != "suderra.station-acquisition.v1":
-                validation.error(f"$.station_acquisitions[{idx}].schema_version", "must be suderra.station-acquisition.v1")
+            expected_schema = evidence_contract.schema_version("station_acquisition", EVIDENCE_CONTRACT)
+            if payload.get("schema_version") != expected_schema:
+                validation.error(f"$.station_acquisitions[{idx}].schema_version", f"must be {expected_schema}")
             events = payload.get("events")
             if not isinstance(events, list) or not events:
                 validation.error(f"$.station_acquisitions[{idx}].events", "must include adapter events")
@@ -3002,6 +3505,7 @@ def validate_evidence(
     check_files: bool,
     release_tier: str | None,
     allow_tier_override: bool = False,
+    validate_subject_graph_closure_enabled: bool = False,
 ) -> list[str]:
     validation = Validation(evidence_path, check_files)
     try:
@@ -3082,13 +3586,25 @@ def validate_evidence(
     validate_machine_verification(validation, evidence, require_pass)
     validate_build_evidence(validation, evidence, require_pass)
     validate_preflight_inputs(validation, evidence, require_pass)
+    validate_subject_graph_section(
+        validation,
+        evidence,
+        require_pass,
+        validate_subject_graph_closure_enabled,
+    )
     validate_governance(validation, evidence, require_pass)
+    validate_governance_role_bindings_section(validation, evidence, require_pass)
     validate_qemu(validation, evidence, require_pass, qemu_required)
     validate_runtime_qemu(validation, evidence, require_pass, effective_tier, runtime_required)
+    validate_runtime_observations_section(validation, evidence, require_pass, effective_tier, runtime_required)
+    validate_signing_manifests_section(validation, evidence, require_pass, effective_tier, signing_required)
     validate_hardware(validation, evidence, require_pass, hardware_required)
+    validate_hardware_subjects_section(validation, evidence, require_pass, hardware_required)
     validate_station_acquisitions(validation, evidence, require_pass, effective_tier, hardware_required)
     validate_hsm_signing_sessions(validation, evidence, require_pass, effective_tier, signing_required)
     validate_release_image_scan_reports(validation, evidence, require_pass, effective_tier, image_scan_required)
+    validate_scanner_native_reports_section(validation, evidence, require_pass, effective_tier, image_scan_required)
+    validate_retention_manifest_section(validation, evidence, require_pass)
     validate_runtime_checks(validation, evidence, require_pass, effective_tier, runtime_required)
     validate_approvals(validation, evidence, require_pass)
     validate_release_decision(validation, evidence, require_pass)
@@ -3123,6 +3639,17 @@ def schema_contract() -> dict[str, Any]:
             "release_security_report",
             EVIDENCE_CONTRACT,
         ),
+        "release_subject_graph_schema_version": evidence_contract.schema_version(
+            "release_subject_graph",
+            EVIDENCE_CONTRACT,
+        ),
+        "retention_manifest_schema_version": evidence_contract.schema_version("retention_manifest", EVIDENCE_CONTRACT),
+        "signing_manifest_schema_version": evidence_contract.schema_version("signing_manifest", EVIDENCE_CONTRACT),
+        "hardware_subject_schema_version": evidence_contract.schema_version("hardware_subject", EVIDENCE_CONTRACT),
+        "governance_role_bindings_schema_version": evidence_contract.schema_version(
+            "governance_role_bindings",
+            EVIDENCE_CONTRACT,
+        ),
         "governance_checks": list(GOVERNANCE_CHECKS),
         "required_runtime_checks": list(REQUIRED_RUNTIME_CHECKS),
         "runtime_scenario_to_checks": {name: list(checks) for name, checks in sorted(SCENARIO_TO_RUNTIME_CHECKS.items())},
@@ -3142,12 +3669,15 @@ def schema_contract() -> dict[str, Any]:
             "source.dirty is false and source.git_commit is a full commit sha",
             "asset_manifest is generated from staged release bytes and verified",
             "build logs, warning classifier evidence, and Buildroot source identity are retained in the bundle",
+            "subject_graph binds the exact version, target, source run, and release artifact digest",
             "artifact hashes, sizes, signatures, and provenance are present, verified, and match referenced files",
             "SBOM is CycloneDX JSON with a non-empty matching component count and verified signature",
             "signed VEX is present",
             "reproducibility and every matrix security scan are passed with reports",
             "machine verification records bind SHA256SUMS, cosign, and attestation checks to structured subjects",
             "governance snapshots show branch, ruleset, tag, release-sign, and release-publish environment protections",
+            "governance role bindings and retention manifest are preserved and replayed",
+            "signing manifests and hardware subjects are first-class evidence when target policy requires them",
             "required QEMU and hardware evidence sections are passed",
             "required runtime checks have passed evidence files",
             "release_decision is approved or approved_with_residual_risk",
@@ -3190,6 +3720,7 @@ def validate_command(args: argparse.Namespace) -> int:
         args.check_files,
         args.release_tier,
         args.allow_tier_override,
+        args.validate_subject_graph,
     )
     if errors:
         for error in errors:
@@ -3222,6 +3753,13 @@ def migrate_command(args: argparse.Namespace) -> int:
         if isinstance(checks, dict):
             for name in GOVERNANCE_CHECKS:
                 checks.setdefault(name, {"status": "not_collected", "evidence": None})
+    evidence.setdefault("subject_graph", None)
+    evidence.setdefault("governance_role_bindings", None)
+    evidence.setdefault("hardware_subjects", [])
+    evidence.setdefault("signing_manifests", [])
+    evidence.setdefault("retention_manifest", None)
+    evidence.setdefault("runtime_observations", [])
+    evidence.setdefault("scanner_native_reports", [])
     output = args.output or args.input
     if output.exists() and output != args.input and not args.force:
         print(f"ERROR: refusing to overwrite existing evidence file: {output}", file=sys.stderr)
@@ -3363,6 +3901,11 @@ def main() -> int:
     validate.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     validate.add_argument("--require-pass", action="store_true")
     validate.add_argument("--check-files", action="store_true")
+    validate.add_argument(
+        "--validate-subject-graph",
+        action="store_true",
+        help="require subject-graph evidence_nodes to be preserved in final evidence",
+    )
     validate.add_argument(
         "--release-tier",
         choices=("alpha", "production"),

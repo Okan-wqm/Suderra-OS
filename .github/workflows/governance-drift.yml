@@ -1,0 +1,59 @@
+name: Governance Drift Evidence
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: governance-drift-evidence
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect governance drift evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Collect and validate governance policy
+        env:
+          GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          root="release-governance/drift/${GITHUB_RUN_ID}"
+          python3 scripts/evidence/collect-governance.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --version "${GITHUB_RUN_ID}" \
+            --output-root release-governance/drift \
+            --repo-root .
+          mkdir -p "${root}"
+          python3 scripts/evidence/validate-governance.py \
+            --policy ci/github-governance-policy.yml \
+            --snapshot-root "${root}" \
+            --output "${root}/governance-policy-validation.json"
+          cosign sign-blob \
+            --yes \
+            --output-signature="${root}/governance-policy-validation.json.sig" \
+            --output-certificate="${root}/governance-policy-validation.json.cert" \
+            "${root}/governance-policy-validation.json"
+
+      - name: Upload governance drift evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: governance-drift-${{ github.run_id }}
+          path: release-governance/drift/${{ github.run_id }}/
+          retention-days: 30
+          if-no-files-found: error

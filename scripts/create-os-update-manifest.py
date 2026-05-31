@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -26,6 +27,10 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def production_mode() -> bool:
+    return os.environ.get("SUDERRA_SIGNING_MODE") == "prod" or os.environ.get("SUDERRA_RELEASE_TIER") == "production"
 
 
 def public_key_bytes(path: Path) -> bytes:
@@ -102,7 +107,48 @@ def sign_ed25519(signing_key: Path, payload: bytes) -> bytes:
         signature.unlink(missing_ok=True)
 
 
+def verify_ed25519(public_key: Path, payload: bytes, signature: bytes) -> None:
+    with tempfile.NamedTemporaryFile(prefix="suderra-os-update-manifest-", delete=False) as payload_handle:
+        payload_handle.write(payload)
+        payload_handle.flush()
+        canonical = Path(payload_handle.name)
+    with tempfile.NamedTemporaryFile(prefix="suderra-os-update-manifest-", suffix=".sig", delete=False) as sig_handle:
+        sig_handle.write(signature)
+        sig_handle.flush()
+        signature_path = Path(sig_handle.name)
+    try:
+        result = subprocess.run(
+            [
+                "openssl",
+                "pkeyutl",
+                "-verify",
+                "-rawin",
+                "-pubin",
+                "-inkey",
+                str(public_key),
+                "-sigfile",
+                str(signature_path),
+                "-in",
+                str(canonical),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip() or "openssl pkeyutl verify failed")
+    finally:
+        canonical.unlink(missing_ok=True)
+        signature_path.unlink(missing_ok=True)
+
+
 def create_command(args: argparse.Namespace) -> int:
+    if production_mode() and os.environ.get("SUDERRA_OS_UPDATE_MANIFEST_ALLOW_FILE_KEY") != "1":
+        print(
+            "ERROR: production OS update manifest signing requires HSM-bound signing evidence; file keys are lab-only",
+            file=sys.stderr,
+        )
+        return 1
     if not args.bundle.is_file() or args.bundle.stat().st_size <= 0:
         print(f"ERROR: bundle is missing or empty: {args.bundle}", file=sys.stderr)
         return 1
@@ -132,6 +178,49 @@ def create_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def verify_command(args: argparse.Namespace) -> int:
+    if not args.manifest.is_file() or args.manifest.stat().st_size <= 0:
+        print(f"ERROR: manifest is missing or empty: {args.manifest}", file=sys.stderr)
+        return 1
+    if not args.public_key.is_file() or args.public_key.stat().st_size <= 0:
+        print(f"ERROR: public key is missing or empty: {args.public_key}", file=sys.stderr)
+        return 1
+    try:
+        payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("manifest must be a JSON object")
+        signature = payload.pop("signature", None)
+        if not isinstance(signature, dict):
+            raise ValueError("manifest signature block is required")
+        if payload.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
+        if signature.get("algorithm") != SIGNATURE_ALGORITHM:
+            raise ValueError(f"signature.algorithm must be {SIGNATURE_ALGORITHM}")
+        public = public_key_bytes(args.public_key)
+        public_sha = hashlib.sha256(public).hexdigest()
+        if signature.get("public_key_sha256") != public_sha:
+            raise ValueError("signature.public_key_sha256 does not match public key")
+        signature_hex = signature.get("signature_hex")
+        if not isinstance(signature_hex, str) or len(signature_hex) % 2 != 0:
+            raise ValueError("signature.signature_hex must be hex")
+        verify_ed25519(args.public_key, canonical_bytes(payload), bytes.fromhex(signature_hex))
+        if args.bundle is not None:
+            if not args.bundle.is_file() or args.bundle.stat().st_size <= 0:
+                raise ValueError(f"bundle is missing or empty: {args.bundle}")
+            bundle = payload.get("bundle")
+            if not isinstance(bundle, dict):
+                raise ValueError("manifest.bundle is required")
+            if bundle.get("sha256") != sha256_file(args.bundle):
+                raise ValueError("manifest bundle digest does not match bundle file")
+            if bundle.get("bytes") != args.bundle.stat().st_size:
+                raise ValueError("manifest bundle size does not match bundle file")
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"verified OS update manifest: {args.manifest}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -149,6 +238,11 @@ def main() -> int:
     create.add_argument("--public-key", type=Path, required=True)
     create.add_argument("--output", type=Path, required=True)
     create.set_defaults(func=create_command)
+    verify = subparsers.add_parser("verify")
+    verify.add_argument("--manifest", type=Path, required=True)
+    verify.add_argument("--public-key", type=Path, required=True)
+    verify.add_argument("--bundle", type=Path)
+    verify.set_defaults(func=verify_command)
     args = parser.parse_args()
     return args.func(args)
 

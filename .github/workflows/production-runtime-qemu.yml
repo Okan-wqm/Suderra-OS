@@ -11,13 +11,33 @@ on:
         description: "Exact commit SHA to test"
         required: true
         type: string
+      source_run_id:
+        description: "Image Build workflow run id that produced the release subject"
+        required: true
+        type: string
+      source_run_attempt:
+        description: "Image Build workflow run attempt that produced the release subject"
+        required: true
+        type: string
+      compressed_artifact_sha256:
+        description: "Compressed release artifact digest from the release input binding"
+        required: true
+        type: string
+      raw_image_sha256:
+        description: "Raw disk image digest from the release input binding"
+        required: true
+        type: string
+      release_artifact:
+        description: "Compressed release artifact name from ci/build-matrix.yml"
+        required: true
+        type: string
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: qemu-x86_64-prod-ab-runtime-${{ inputs.version }}-${{ inputs.source_sha }}
+  group: qemu-x86_64-prod-ab-runtime-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -78,11 +98,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "release-runtime/${{ inputs.version }}/qemu-x86_64-prod-ab"
+          test "$(sha256sum output/suderra_qemu_x86_64_prod_ab_defconfig/images/disk.img | awk '{print $1}')" = "${RAW_IMAGE_SHA256}"
           python3 scripts/evidence/evidence_contract.py runtime-plan \
             --version "${VERSION}" \
             --target qemu-x86_64-prod-ab \
             --source-sha "${SOURCE_SHA}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --source-run-attempt "${SOURCE_RUN_ATTEMPT}" \
+            --defconfig suderra_qemu_x86_64_prod_ab_defconfig \
             --image output/suderra_qemu_x86_64_prod_ab_defconfig/images/disk.img \
+            --raw-image-sha256 "${RAW_IMAGE_SHA256}" \
+            --compressed-artifact-sha256 "${COMPRESSED_ARTIFACT_SHA256}" \
+            --release-artifact "${RELEASE_ARTIFACT}" \
             --ovmf-code runtime-inputs/OVMF_CODE.secboot.fd \
             --ovmf-vars runtime-inputs/OVMF_VARS.fd \
             --swtpm-state runtime-inputs/swtpm-state \
@@ -98,10 +125,21 @@ jobs:
             --check-files \
             --expected-version "${{ inputs.version }}" \
             --expected-target qemu-x86_64-prod-ab \
-            --expected-source-sha "${{ inputs.source_sha }}"
+            --expected-source-sha "${{ inputs.source_sha }}" \
+            --expected-source-run-id "${{ inputs.source_run_id }}" \
+            --expected-source-run-attempt "${{ inputs.source_run_attempt }}" \
+            --expected-defconfig suderra_qemu_x86_64_prod_ab_defconfig \
+            --expected-raw-image-sha256 "${{ inputs.raw_image_sha256 }}" \
+            --expected-compressed-artifact-sha256 "${{ inputs.compressed_artifact_sha256 }}" \
+            --expected-release-artifact "${{ inputs.release_artifact }}"
         env:
           VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          RAW_IMAGE_SHA256: ${{ inputs.raw_image_sha256 }}
+          COMPRESSED_ARTIFACT_SHA256: ${{ inputs.compressed_artifact_sha256 }}
+          RELEASE_ARTIFACT: ${{ inputs.release_artifact }}
 
       - name: Upload production runtime evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

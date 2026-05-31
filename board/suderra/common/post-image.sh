@@ -88,6 +88,7 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
 fi
 PRODUCTION_ARTIFACTS="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/production-artifacts.sh"
 CREATE_RAUC_BUNDLE="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/create-rauc-bundle.sh"
+PRODUCE_OTA_ARTIFACTS="${BR2_EXTERNAL_SUDERRA_PATH}/scripts/evidence/produce-ota-artifacts.py"
 RAUC_BUNDLE_PATH=""
 
 reproducible_timestamp() {
@@ -329,9 +330,21 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
             echo "ERROR: SUDERRA_RELEASE_VERSION is required for production RAUC bundle generation"
             exit 1
         fi
-        RAUC_BUNDLE_PATH="${BINARIES_DIR}/suderra-os-${release_version}-x86_64.raucb"
-        echo "==> x86 production RAUC bundle üretimi: $(basename "${RAUC_BUNDLE_PATH}")"
-        "${CREATE_RAUC_BUNDLE}" x86 "${BINARIES_DIR}" "${release_version}" "${RAUC_BUNDLE_PATH}"
+        ota_target=""
+        case "${DEFCONFIG_NAME}" in
+            suderra_x86_64) ota_target="x86_64" ;;
+            suderra_qemu_x86_64_prod_ab) ota_target="qemu-x86_64-prod-ab" ;;
+        esac
+        RAUC_BUNDLE_PATH="${BINARIES_DIR}/suderra-os-${release_version}-${ota_target}.raucb"
+        echo "==> production OTA artifact üretimi: $(basename "${RAUC_BUNDLE_PATH}")"
+        python3 "${PRODUCE_OTA_ARTIFACTS}" create \
+            --version "${release_version}" \
+            --target "${ota_target}" \
+            --source-sha "${SUDERRA_SOURCE_SHA:-}" \
+            --source-run-id "${SUDERRA_SOURCE_RUN_ID:-}" \
+            --binaries-dir "${BINARIES_DIR}" \
+            --output-root "${BINARIES_DIR}/release-ota" \
+            --rauc-bundle-tool "${CREATE_RAUC_BUNDLE}"
     fi
 fi
 

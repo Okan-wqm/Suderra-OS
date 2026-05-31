@@ -132,8 +132,16 @@ grep -q 'rei-${VERSION}-${SOURCE_SHA}-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}' "$
     echo "ERROR: release preflight must download the exact source-bound evidence ingress artifact" >&2
     exit 1
 }
-grep -q 'SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ inputs.version }}/audit-log.json' "${PREFLIGHT_WORKFLOW}" || {
-    echo "ERROR: release preflight must feed governance audit evidence from the ingress artifact" >&2
+if grep -q 'SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ inputs.version }}/audit-log.json' "${PREFLIGHT_WORKFLOW}"; then
+    echo "ERROR: release preflight must not use the output audit-log.json as its audit source" >&2
+    exit 1
+fi
+if grep -q 'SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ needs.validate.outputs.version }}/audit-log.json' "${RELEASE_WORKFLOW}"; then
+    echo "ERROR: release workflow must not use the output audit-log.json as its audit source" >&2
+    exit 1
+fi
+grep -q 'collect-governance.py' "${PREFLIGHT_WORKFLOW}" || {
+    echo "ERROR: release preflight must collect replayable governance audit evidence" >&2
     exit 1
 }
 if grep -q 'contents: write' "${PREFLIGHT_WORKFLOW}"; then
@@ -205,6 +213,11 @@ grep -q 'collect-ci-check-evidence.py' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must convert exact source_sha CI checks into release security evidence" >&2
     exit 1
 }
+grep -q 'prepare-release-inputs.py subject-graph' "${PREFLIGHT_WORKFLOW}" &&
+    grep -q -- '--input-root .' "${PREFLIGHT_WORKFLOW}" || {
+        echo "ERROR: release preflight must generate the subject graph from preserved SSOT inputs" >&2
+        exit 1
+    }
 grep -q -- '--station-registry release-governance/${{ needs.validate.outputs.version }}/station-registry.json' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must validate lab evidence against a governance-owned station registry" >&2
     exit 1
@@ -229,6 +242,15 @@ grep -q -- '--require-ingress-signature' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must require ingress signature verification" >&2
     exit 1
 }
+grep -q -- '--validate-subject-graph' "${RELEASE_WORKFLOW}" || {
+    echo "ERROR: release workflow must validate final evidence against the subject graph closure" >&2
+    exit 1
+}
+grep -q 'governance-drift.yml' "${RELEASE_WORKFLOW}" &&
+    grep -q 'governance-drift-${drift_run_id}' "${RELEASE_WORKFLOW}" || {
+        echo "ERROR: release workflow must require the latest signed governance drift evidence" >&2
+        exit 1
+    }
 grep -q 'Image Build' "${PREFLIGHT_WORKFLOW}" || {
     echo "ERROR: release preflight must bind Image Build, not fast Build" >&2
     exit 1

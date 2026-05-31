@@ -36,6 +36,18 @@ def is_placeholder(value: Any) -> bool:
     return not isinstance(value, str) or value.strip() in PLACEHOLDERS
 
 
+def canonical_env_sha256(env: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(env, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def canonical_replay_sha256(raw_sha256: str, severity_counts: dict[str, int]) -> str:
+    payload = {
+        "raw_sha256": raw_sha256,
+        "severity_counts": severity_counts,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def count_severities(payload: Any, tool: str) -> dict[str, int]:
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0}
 
@@ -104,6 +116,50 @@ def validate_report(report_path: Path, *, raw_root: Path | None = None, check_fi
     for field in ("version", "source_sha", "source_run_id", "scan", "tool", "tool_version", "generated_at"):
         if is_placeholder(report.get(field)):
             errors.append(f"{report_path}: {field} must be a non-placeholder string")
+    if is_placeholder(report.get("subject_id")):
+        errors.append(f"{report_path}: subject_id must be a non-placeholder string")
+    subject_graph_sha = report.get("subject_graph_sha256")
+    if not isinstance(subject_graph_sha, str) or not SHA256_RE.fullmatch(subject_graph_sha) or subject_graph_sha == "0" * 64:
+        errors.append(f"{report_path}: subject_graph_sha256 must be a non-zero sha256")
+    subject_graph = report.get("subject_graph")
+    if not isinstance(subject_graph, dict):
+        errors.append(f"{report_path}: subject_graph must be an object")
+    else:
+        graph_sha = subject_graph.get("sha256")
+        if graph_sha != subject_graph_sha:
+            errors.append(f"{report_path}: subject_graph.sha256 must match subject_graph_sha256")
+        if is_placeholder(subject_graph.get("path")):
+            errors.append(f"{report_path}: subject_graph.path must be non-placeholder")
+        if not isinstance(subject_graph.get("bytes"), int) or subject_graph.get("bytes", 0) <= 0:
+            errors.append(f"{report_path}: subject_graph.bytes must be positive")
+    scanner_binary = report.get("scanner_binary")
+    if not isinstance(scanner_binary, dict):
+        errors.append(f"{report_path}: scanner_binary must be an object")
+    else:
+        for field in ("name", "version", "sha256"):
+            value = scanner_binary.get(field)
+            if field == "sha256":
+                if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
+                    errors.append(f"{report_path}: scanner_binary.sha256 must be a non-zero sha256")
+            elif is_placeholder(value):
+                errors.append(f"{report_path}: scanner_binary.{field} must be non-placeholder")
+    invocation = report.get("invocation")
+    if not isinstance(invocation, dict):
+        errors.append(f"{report_path}: invocation must be an object")
+    else:
+        argv = invocation.get("argv")
+        if not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv):
+            errors.append(f"{report_path}: invocation.argv must be a non-empty string list")
+        env = invocation.get("env")
+        if not isinstance(env, dict):
+            errors.append(f"{report_path}: invocation.env must be an object")
+        env_sha = invocation.get("env_sha256")
+        if not isinstance(env_sha, str) or not SHA256_RE.fullmatch(env_sha) or env_sha == "0" * 64:
+            errors.append(f"{report_path}: invocation.env_sha256 must be a non-zero sha256")
+        elif isinstance(env, dict) and canonical_env_sha256(env) != env_sha:
+            errors.append(f"{report_path}: invocation.env_sha256 must replay from invocation.env")
+        if is_placeholder(invocation.get("working_dir_policy")):
+            errors.append(f"{report_path}: invocation.working_dir_policy must be non-placeholder")
     subjects = report.get("subjects")
     if not isinstance(subjects, list) or not subjects:
         errors.append(f"{report_path}: subjects must be a non-empty list")
@@ -112,7 +168,7 @@ def validate_report(report_path: Path, *, raw_root: Path | None = None, check_fi
             if not isinstance(subject, dict):
                 errors.append(f"{report_path}: subjects[{idx}] must be an object")
                 continue
-            for field in ("name", "role", "path", "sha256", "scan_mode"):
+            for field in ("subject_id", "name", "role", "path", "sha256", "scan_mode"):
                 if field == "sha256":
                     value = subject.get(field)
                     if not isinstance(value, str) or not SHA256_RE.fullmatch(value) or value == "0" * 64:
@@ -128,8 +184,34 @@ def validate_report(report_path: Path, *, raw_root: Path | None = None, check_fi
         for field in ("type", "version", "created_at", "digest"):
             if is_placeholder(scanner_db.get(field)):
                 errors.append(f"{report_path}: scanner_db.{field} must be non-placeholder")
+        archive_sha = scanner_db.get("archive_sha256")
+        digest = scanner_db.get("digest")
+        if not isinstance(archive_sha, str) or not SHA256_RE.fullmatch(archive_sha) or archive_sha == "0" * 64:
+            errors.append(f"{report_path}: scanner_db.archive_sha256 must be a non-zero sha256")
+        elif isinstance(digest, str) and digest.startswith("sha256:") and digest.removeprefix("sha256:") != archive_sha:
+            errors.append(f"{report_path}: scanner_db.archive_sha256 must match scanner_db.digest")
         if scanner_db.get("auto_update_disabled") is not True:
             errors.append(f"{report_path}: scanner_db.auto_update_disabled must be true")
+    for field in ("sbom", "vex"):
+        ref = report.get(field)
+        if not isinstance(ref, dict):
+            errors.append(f"{report_path}: {field} must be an object")
+            continue
+        ref_path = ref.get("path")
+        ref_sha = ref.get("sha256")
+        if is_placeholder(ref_path):
+            errors.append(f"{report_path}: {field}.path must be non-placeholder")
+        if not isinstance(ref_sha, str) or not SHA256_RE.fullmatch(ref_sha) or ref_sha == "0" * 64:
+            errors.append(f"{report_path}: {field}.sha256 must be a non-zero sha256")
+    replay = report.get("replay")
+    if not isinstance(replay, dict):
+        errors.append(f"{report_path}: replay must be an object")
+    else:
+        if replay.get("status") != "passed":
+            errors.append(f"{report_path}: replay.status must be passed")
+        output_sha = replay.get("output_sha256")
+        if not isinstance(output_sha, str) or not SHA256_RE.fullmatch(output_sha) or output_sha == "0" * 64:
+            errors.append(f"{report_path}: replay.output_sha256 must be a non-zero sha256")
     raw = report.get("raw")
     if not isinstance(raw, dict):
         errors.append(f"{report_path}: raw must be an object")
@@ -183,6 +265,14 @@ def validate_report(report_path: Path, *, raw_root: Path | None = None, check_fi
     for severity, value in recomputed.items():
         if reported.get(severity, 0) != value:
             errors.append(f"{report_path}: severity_counts.{severity} must replay from raw evidence")
+    if isinstance(replay, dict):
+        if replay.get("raw_sha256") != raw_sha:
+            errors.append(f"{report_path}: replay.raw_sha256 must match raw.sha256")
+        replay_counts = replay.get("severity_counts")
+        if replay_counts != reported:
+            errors.append(f"{report_path}: replay.severity_counts must match severity_counts")
+        if replay.get("output_sha256") != canonical_replay_sha256(raw_sha, recomputed):
+            errors.append(f"{report_path}: replay.output_sha256 must replay from raw evidence")
     if recomputed["critical"] > 0 or recomputed["high"] > 0:
         errors.append(f"{report_path}: raw scanner evidence contains high/critical findings")
     return errors

@@ -5,21 +5,91 @@
     "lab_evidence": "suderra.lab-evidence.v3",
     "machine_verification": "suderra.machine-verification.v3",
     "hardware_subject": "suderra.hardware-subject.v1",
+    "ota_artifacts": "suderra.ota-artifacts.v1",
     "ota_target_contract": "suderra.ota-target-contract.v1",
     "production_runtime_suite": "suderra.qemu-production-runtime-suite.v2",
-    "release_evidence": "suderra.release-evidence.v5",
+    "release_evidence": "suderra.release-evidence.v6",
     "release_security_report": "suderra.release-security-report.v2",
+    "release_subject_graph": "suderra.release-subject-graph.v1",
+    "retention_manifest": "suderra.retention-manifest.v1",
     "runtime_observation": "suderra.runtime-observation.v1",
-    "signing_manifest": "suderra.signing-manifest.v1",
-    "station_acquisition": "suderra.station-acquisition.v1"
+    "signing_manifest": "suderra.signing-manifest.v2",
+    "governance_role_bindings": "suderra.governance-role-bindings.v1",
+    "station_acquisition": "suderra.station-acquisition.v2"
   },
   "profiles": {
     "ci": {"production_candidate": false},
     "dev": {"production_candidate": false},
     "ga": {"production_candidate": true},
+    "release-candidate": {"production_candidate": false},
     "production-candidate": {"production_candidate": true}
   },
+  "subjects": {
+    "schema_version": "suderra.release-subject-graph.v1",
+    "subject_id_template": "suderra-release:{version}:{target}:{source_sha}:{source_run_id}",
+    "identity_fields": [
+      "version",
+      "source_sha",
+      "source_run_id",
+      "target",
+      "defconfig"
+    ],
+    "artifact_fields": [
+      "raw_image_sha256",
+      "raw_image_bytes",
+      "compressed_artifact_sha256",
+      "compressed_artifact_bytes"
+    ],
+    "required_subject_exports": {
+      "release-inputs": "release-inputs/{version}/{profile}.json",
+      "release-subject-graph": "release-subject-graph/{version}/release-subject-graph.json",
+      "release-runtime": "release-runtime/{version}/{target}/production-runtime.json",
+      "release-signing": "release-signing/{version}/{target}/signing-manifest.json",
+      "release-lab-input": "release-lab-input/{version}/{target}/hardware-subject.json",
+      "release-security": "release-security/{version}/{scan}.json",
+      "release-governance": "release-governance/{version}/role-bindings.json",
+      "release-retention": "release-retention/{version}/retention-manifest.json",
+      "release-ota": "release-ota/{version}/{target}/ota-artifacts.json"
+    },
+    "join_requirements": {
+      "fail_closed_on_unknown_target": true,
+      "runtime_required_targets_require_suite": true,
+      "signing_required_targets_require_manifest": true,
+      "hardware_required_targets_require_subject": true,
+      "release_public_must_match_matrix_release": true,
+      "all_evidence_must_bind_subject_id": true
+    },
+    "subject_roles": [
+      "build-input",
+      "raw-image",
+      "compressed-release-artifact",
+      "runtime-suite",
+      "signing-manifest",
+      "hardware-subject",
+      "security-report",
+      "governance-snapshot",
+      "retention-manifest",
+      "ota-artifacts"
+    ]
+  },
   "runtime": {
+    "observation_authority": {
+      "schema_version": "suderra.runtime-observation.v1",
+      "observed_outcome_sources": [
+        "serial-marker",
+        "guest-semantic",
+        "secure-boot-event",
+        "kernel-verity-event",
+        "suderra-ota-event",
+        "qmp-events"
+      ],
+      "forbidden_sources": [
+        "expected-outcome",
+        "scenario-contract",
+        "manual-copy"
+      ],
+      "raw_replay_required": true
+    },
     "required_checks": [
       "secure_boot",
       "dm_verity",
@@ -157,6 +227,30 @@
       "rauc",
       "tamper"
     ],
+    "subject_binding": {
+      "schema_version": "suderra.hardware-subject.v1",
+      "required_fields": [
+        "subject_id",
+        "version",
+        "target",
+        "source_sha",
+        "source_run_id",
+        "raw_image_sha256",
+        "compressed_artifact_sha256",
+        "station_acquisition_event_id",
+        "station_id",
+        "device_identity",
+        "storage_by_id",
+        "fixture_id",
+        "adapter_inventory_sha256",
+        "readback_sha256"
+      ],
+      "producer_source": "station-acquisition",
+      "readback_must_match_build_subject": true,
+      "station_registry_required": true,
+      "adapter_inventory_must_match_registry": true,
+      "station_acquisition_event_required": true
+    },
     "required_boards_by_target": {
       "pi-cm4-revpi-usb-installer": [
         "raspberry-pi-4-model-b",
@@ -198,24 +292,73 @@
     ]
   },
   "signing": {
-    "manifest_schema_version": "suderra.signing-manifest.v1",
+    "manifest_schema_version": "suderra.signing-manifest.v2",
     "request_schema_version": "suderra.signing-request.v1",
+    "manifest_required_fields": [
+      "schema_version",
+      "subject_id",
+      "version",
+      "target",
+      "source_sha",
+      "source_run_id",
+      "roles"
+    ],
+    "role_required_fields": [
+      "role",
+      "input_sha256",
+      "output_sha256",
+      "certificate_sha256",
+      "pkcs11_uri",
+      "hsm_serial",
+      "key_id",
+      "challenge_transcript_sha256",
+      "challenge_signature_sha256",
+      "artifact_signature_sha256",
+      "artifact_path",
+      "artifact_bytes",
+      "verifier",
+      "replay_status"
+    ],
+    "digest_semantics": {
+      "input_sha256": "bytes-before-role-signature",
+      "output_sha256": "final-signed-artifact-bytes",
+      "certificate_sha256": "signing-certificate-bytes",
+      "challenge_transcript_sha256": "canonical challenge transcript replay bytes",
+      "artifact_signature_sha256": "detached or embedded signature bytes",
+      "artifact_path": "relative final artifact path inside the governed signing output set",
+      "artifact_bytes": "final signed artifact byte length"
+    },
+    "replay_requirements": {
+      "certificate_key_match_required": true,
+      "challenge_signature_replay_required": true,
+      "artifact_signature_replay_required": true,
+      "transcript_digest_replay_required": true,
+      "software_hsm_rejected_for_production": true
+    },
     "role_bindings": {
       "os-update-manifest": {
         "digest_source": "manifest-json",
-        "required_for_ota_capable": true
+        "required_for_ota_capable": true,
+        "final_digest_field": "output_sha256",
+        "input_digest_field": "input_sha256"
       },
       "rauc-bundle": {
         "digest_source": "final-raucb",
-        "required_for_ota_capable": true
+        "required_for_ota_capable": true,
+        "final_digest_field": "output_sha256",
+        "input_digest_field": "input_sha256"
       },
       "release-artifact": {
         "digest_source": "release-input-binding",
-        "required_for_release_public": true
+        "required_for_release_public": true,
+        "final_digest_field": "output_sha256",
+        "input_digest_field": "input_sha256"
       },
       "release-image": {
         "digest_source": "release-input-binding",
-        "required_for_release_public": true
+        "required_for_release_public": true,
+        "final_digest_field": "output_sha256",
+        "input_digest_field": "input_sha256"
       }
     },
     "signed_artifact_roles": [
@@ -230,62 +373,142 @@
     "targets": {
       "pi-cm4-revpi-usb-installer": {
         "backend": "none",
+        "boot_backend": "provisioning-only",
         "compatible": "suderra-os-installer",
+        "bundle_artifacts": [],
         "health_policy": "provisioning-only",
+        "health_checks": [],
         "lifecycle": "provisioning-only",
+        "mark_good_policy": "not-applicable",
         "ota_capable": false,
-        "rollback_state": "not-applicable"
+        "rollback_state": "not-applicable",
+        "rollback_storage": "not-applicable",
+        "slot_labels": [],
+        "verity_devices": []
       },
       "qemu-x86_64": {
         "backend": "none",
+        "boot_backend": "qemu-smoke",
         "compatible": "suderra-os-qemu-x86_64",
+        "bundle_artifacts": [],
         "health_policy": "qemu-acceptance-only",
+        "health_checks": [],
         "lifecycle": "development-release",
+        "mark_good_policy": "not-applicable",
         "ota_capable": false,
-        "rollback_state": "not-applicable"
+        "rollback_state": "not-applicable",
+        "rollback_storage": "not-applicable",
+        "slot_labels": [],
+        "verity_devices": []
       },
       "qemu-x86_64-prod-ab": {
         "backend": "grub-rauc",
+        "boot_backend": "grub-rauc",
         "compatible": "suderra-os-x86_64",
+        "bundle_artifacts": [
+          "suderra-os-{version}-{target}.raucb",
+          "suderra-os-update-manifest.json"
+        ],
         "health_policy": "production-runtime",
+        "health_checks": [
+          "booted-inactive-slot",
+          "rauc-status-active",
+          "dm-verity-active",
+          "data-luks-open",
+          "rollback-floor-current"
+        ],
         "lifecycle": "production-runtime-evidence",
+        "mark_good_policy": "health-gate-before-rauc-mark-good",
         "ota_capable": true,
-        "rollback_state": "tpm-nv-required"
+        "rollback_state": "tpm-nv-required",
+        "rollback_storage": "tpm-nv-or-bootloader-monotonic",
+        "slot_labels": ["rootfs-a", "rootfs-b"],
+        "verity_devices": ["rootfs-a-verity", "rootfs-b-verity"]
       },
       "revpi4": {
         "backend": "none",
+        "boot_backend": "provisioning-only",
         "compatible": "suderra-os-revpi4",
+        "bundle_artifacts": [],
         "health_policy": "provisioning-only",
+        "health_checks": [],
         "lifecycle": "provisioning-only",
+        "mark_good_policy": "not-applicable",
         "ota_capable": false,
-        "rollback_state": "not-applicable"
+        "rollback_state": "not-applicable",
+        "rollback_storage": "not-applicable",
+        "slot_labels": [],
+        "verity_devices": []
       },
       "rpi4": {
         "backend": "none",
+        "boot_backend": "provisioning-only",
         "compatible": "suderra-os-rpi4",
+        "bundle_artifacts": [],
         "health_policy": "provisioning-only",
+        "health_checks": [],
         "lifecycle": "provisioning-only",
+        "mark_good_policy": "not-applicable",
         "ota_capable": false,
-        "rollback_state": "not-applicable"
+        "rollback_state": "not-applicable",
+        "rollback_storage": "not-applicable",
+        "slot_labels": [],
+        "verity_devices": []
       },
       "x86_64": {
         "backend": "grub-rauc",
+        "boot_backend": "grub-rauc",
         "compatible": "suderra-os-x86_64",
+        "bundle_artifacts": [
+          "suderra-os-{version}-{target}.raucb",
+          "suderra-os-update-manifest.json"
+        ],
         "health_policy": "production-runtime",
+        "health_checks": [
+          "booted-inactive-slot",
+          "rauc-status-active",
+          "dm-verity-active",
+          "data-luks-open",
+          "rollback-floor-current"
+        ],
         "lifecycle": "production",
+        "mark_good_policy": "health-gate-before-rauc-mark-good",
         "ota_capable": true,
-        "rollback_state": "tpm-nv-required"
+        "rollback_state": "tpm-nv-required",
+        "rollback_storage": "tpm-nv-or-bootloader-monotonic",
+        "slot_labels": ["rootfs-a", "rootfs-b"],
+        "verity_devices": ["rootfs-a-verity", "rootfs-b-verity"]
       }
     }
   },
   "retention": {
+    "manifest_schema_version": "suderra.retention-manifest.v1",
+    "policy_id": "suderra-enterprise-7y-immutable-evidence",
+    "minimum_years": 7,
+    "store_class": "immutable-encrypted-evidence-archive",
+    "kms_required": true,
+    "legal_hold_supported": true,
+    "access_log_required": true,
+    "required_replay": [
+      "release-input-binding",
+      "runtime-suite",
+      "hsm-signing-manifest",
+      "station-acquisition",
+      "scanner-raw-replay",
+      "governance-snapshot",
+      "publication-manifest"
+    ],
     "required_exports": [
+      "release-inputs",
+      "release-subject-graph",
       "release-runtime",
       "release-signing",
       "release-lab-input",
       "release-governance",
       "release-reproducibility",
-      "release-security"
+      "release-security",
+      "release-retention",
+      "release-ota"
     ]
   },
   "targets": {

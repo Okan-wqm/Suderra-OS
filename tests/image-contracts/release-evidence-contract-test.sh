@@ -517,10 +517,218 @@ for name, check in data["governance"]["checks"].items():
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU serial and journal evidence\n")
 
+subject_id = (
+    f"suderra-release:{data['version']}:{data['target']}:"
+    f"{data['source']['git_commit']}:{data['source']['ci']['run_id']}"
+)
+release_input_payload = {
+    "schema_version": "suderra.release-input-binding.v2",
+    "version": data["version"],
+    "profile": "production-candidate",
+    "source_sha": data["source"]["git_commit"],
+    "source_run_id": data["source"]["ci"]["run_id"],
+}
+input_digest, input_size = write_text(
+    "preflight/release-inputs/production-candidate.json",
+    json.dumps(release_input_payload, sort_keys=True) + "\n",
+)
+data["preflight_inputs"]["release_input"] = {
+    "profile": "production-candidate",
+    "path": "preflight/release-inputs/production-candidate.json",
+    "sha256": input_digest,
+    "bytes": input_size,
+}
+input_node_id = f"{subject_id}:release-input-binding"
+subject_graph = {
+    "schema_version": "suderra.release-subject-graph.v1",
+    "version": data["version"],
+    "profile": "production-candidate",
+    "subjects": [],
+    "evidence_nodes": [
+        {
+            "node_id": input_node_id,
+            "subject_id": subject_id,
+            "target": data["target"],
+            "role": "release-input-binding",
+            "path": f"release-inputs/{data['version']}/production-candidate.json",
+            "schema_role": "binding_manifest",
+            "schema_version": "suderra.release-input-binding.v2",
+            "required": True,
+            "producer": "prepare-release-inputs.py",
+            "sha256": input_digest,
+            "bytes": input_size,
+        }
+    ],
+    "evidence_edges": [
+        {
+            "from": subject_id,
+            "to": input_node_id,
+            "relationship": "requires",
+            "role": "release-input-binding",
+        }
+    ],
+    "required_paths": [f"release-inputs/{data['version']}/production-candidate.json"],
+    "retention_closure": {
+        "policy_id": "suderra-enterprise-7y-immutable-evidence",
+        "required_exports": [
+            "release-inputs",
+            "release-subject-graph",
+            "release-runtime",
+            "release-signing",
+            "release-lab-input",
+            "release-governance",
+            "release-reproducibility",
+            "release-security",
+            "release-retention",
+            "release-ota",
+        ],
+    },
+}
+subject_targets = [
+    data["target"],
+    "x86_64",
+    "qemu-x86_64-prod-ab",
+    "rpi4",
+    "pi-cm4-revpi-usb-installer",
+    "revpi4",
+]
+for idx, target in enumerate(dict.fromkeys(subject_targets)):
+    target_subject_id = (
+        f"suderra-release:{data['version']}:{target}:"
+        f"{data['source']['git_commit']}:{data['source']['ci']['run_id']}"
+    )
+    artifact_sha = data["artifacts"][0]["sha256"] if target == data["target"] else f"{idx + 1:x}" * 64
+    artifact_bytes = data["artifacts"][0]["bytes"] if target == data["target"] else 8 + idx
+    subject_graph["subjects"].append(
+        {
+            "subject_id": target_subject_id,
+            "version": data["version"],
+            "target": target,
+            "source_sha": data["source"]["git_commit"],
+            "source_run_id": data["source"]["ci"]["run_id"],
+            "raw_image_sha256": artifact_sha,
+            "raw_image_bytes": artifact_bytes,
+            "compressed_artifact_sha256": artifact_sha,
+            "compressed_artifact_bytes": artifact_bytes,
+        }
+    )
+digest, size = write_text("subject-graph/release-subject-graph.json", json.dumps(subject_graph, sort_keys=True) + "\n")
+data["subject_graph"] = {"path": "subject-graph/release-subject-graph.json", "sha256": digest, "bytes": size}
+
+role_bindings = {
+    "schema_version": "suderra.governance-role-bindings.v1",
+    "version": data["version"],
+    "bindings": [
+        {
+            "role": "release-owner",
+            "github_subject": "suderra-release-owners",
+            "subject_type": "team",
+            "github_node_id": "TEAM_release",
+            "source_snapshot_sha256": "a" * 64,
+            "permission_snapshot_sha256": "1" * 64,
+            "environment_reviewer_binding_sha256": "2" * 64,
+            "effective_permission": "admin",
+        },
+        {
+            "role": "security-owner",
+            "github_subject": "suderra-security-owners",
+            "subject_type": "team",
+            "github_node_id": "TEAM_security",
+            "source_snapshot_sha256": "b" * 64,
+            "permission_snapshot_sha256": "3" * 64,
+            "environment_reviewer_binding_sha256": "4" * 64,
+            "effective_permission": "admin",
+        },
+    ],
+}
+digest, size = write_text("governance/role-bindings.json", json.dumps(role_bindings, sort_keys=True) + "\n")
+data["governance_role_bindings"] = {"path": "governance/role-bindings.json", "sha256": digest, "bytes": size}
+
+retention_exports = [
+    "release-inputs",
+    "release-subject-graph",
+    "release-runtime",
+    "release-signing",
+    "release-lab-input",
+    "release-governance",
+    "release-reproducibility",
+    "release-security",
+    "release-retention",
+    "release-ota",
+]
+retention_replay = [
+    "release-input-binding",
+    "runtime-suite",
+    "hsm-signing-manifest",
+    "station-acquisition",
+    "scanner-raw-replay",
+    "governance-snapshot",
+    "publication-manifest",
+]
+retention = {
+    "schema_version": "suderra.retention-manifest.v1",
+    "policy_id": "suderra-enterprise-7y-immutable-evidence",
+    "version": data["version"],
+    "source_sha": data["source"]["git_commit"],
+    "source_run_id": data["source"]["ci"]["run_id"],
+    "store_class": "immutable-encrypted-evidence-archive",
+    "retention_years": 7,
+    "exports": [{"name": name, "path": name} for name in retention_exports],
+    "restore_replay_tests": [{"name": name, "status": "passed"} for name in retention_replay],
+    "kms_key_id": "kms-contract",
+    "custody_chain": "custody-contract",
+    "access_log": "access-log-contract",
+    "archive_object_uri": "s3://suderra-evidence/v9.9.9/archive.tar.zst",
+    "archive_object_version_id": "version-contract",
+    "archive_object_sha256": "c" * 64,
+    "retention_lock_mode": "compliance",
+    "retain_until": "2033-05-13T00:00:00Z",
+    "legal_hold_status": "available",
+    "legal_hold_id": "legal-hold-contract",
+    "access_log_sha256": "d" * 64,
+    "restore_job_id": "restore-contract",
+    "restored_archive_sha256": "c" * 64,
+    "replay_validator_output_sha256": "f" * 64,
+    "custody_events": [
+        {
+            "event_id": "custody-contract-1",
+            "event_type": "archive-written",
+            "actor": "retention-exporter",
+            "occurred_at": "2026-05-13T00:00:00Z",
+            "evidence_sha256": "c" * 64,
+        }
+    ],
+}
+digest, size = write_text("retention/retention-manifest.json", json.dumps(retention, sort_keys=True) + "\n")
+data["retention_manifest"] = {"path": "retention/retention-manifest.json", "sha256": digest, "bytes": size}
+
 evidence_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
-python3 "${TOOL}" validate "${EVIDENCE}" --require-pass --check-files >/dev/null
+python3 "${TOOL}" validate "${EVIDENCE}" --require-pass --check-files --validate-subject-graph >/dev/null
+
+MISSING_SUBJECT_GRAPH="${TMPDIR}/missing-subject-graph/v9.9.9/qemu-x86_64/evidence.json"
+mkdir -p "$(dirname "${MISSING_SUBJECT_GRAPH}")"
+cp -a "$(dirname "${EVIDENCE}")/." "$(dirname "${MISSING_SUBJECT_GRAPH}")/"
+python3 - "${MISSING_SUBJECT_GRAPH}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["subject_graph"] = None
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${TOOL}" validate "${MISSING_SUBJECT_GRAPH}" --require-pass --check-files 2>"${TMPDIR}/subject-graph.err"; then
+    echo "ERROR: release evidence accepted missing subject graph" >&2
+    exit 1
+fi
+grep -q "subject_graph" "${TMPDIR}/subject-graph.err" || {
+    echo "ERROR: missing subject graph failure did not cite subject_graph" >&2
+    cat "${TMPDIR}/subject-graph.err" >&2
+    exit 1
+}
 
 MISSING_MACHINE_RECORD="${TMPDIR}/missing-machine-record/v9.9.9/qemu-x86_64/evidence.json"
 mkdir -p "$(dirname "${MISSING_MACHINE_RECORD}")"
@@ -1058,6 +1266,117 @@ for name, check in data["governance"]["checks"].items():
     write_text(check["evidence"], json.dumps(payload, sort_keys=True) + "\n")
 for rel in data["qemu"]["logs"]:
     write_text(rel, "synthetic QEMU alpha evidence\n")
+
+subject_id = (
+    f"suderra-release:{data['version']}:{data['target']}:"
+    f"{data['source']['git_commit']}:{data['source']['ci']['run_id']}"
+)
+subject_graph = {
+    "schema_version": "suderra.release-subject-graph.v1",
+    "version": data["version"],
+    "profile": "release-candidate",
+    "subjects": [
+        {
+            "subject_id": subject_id,
+            "version": data["version"],
+            "target": data["target"],
+            "defconfig": data["target_contract"]["defconfig"],
+            "source_sha": data["source"]["git_commit"],
+            "source_run_id": data["source"]["ci"]["run_id"],
+            "compressed_artifact_sha256": data["artifacts"][0]["sha256"],
+            "compressed_artifact_bytes": data["artifacts"][0]["bytes"],
+        }
+    ],
+}
+digest, size = write_text("subject-graph/release-subject-graph.json", json.dumps(subject_graph, sort_keys=True) + "\n")
+data["subject_graph"] = {"path": "subject-graph/release-subject-graph.json", "sha256": digest, "bytes": size}
+
+role_bindings = {
+    "schema_version": "suderra.governance-role-bindings.v1",
+    "version": data["version"],
+    "bindings": [
+        {
+            "role": "release-owner",
+            "github_subject": "suderra-release-owners",
+            "subject_type": "team",
+            "github_node_id": "TEAM_release",
+            "source_snapshot_sha256": "a" * 64,
+            "permission_snapshot_sha256": "1" * 64,
+            "environment_reviewer_binding_sha256": "2" * 64,
+            "effective_permission": "admin",
+        },
+        {
+            "role": "security-owner",
+            "github_subject": "suderra-security-owners",
+            "subject_type": "team",
+            "github_node_id": "TEAM_security",
+            "source_snapshot_sha256": "b" * 64,
+            "permission_snapshot_sha256": "3" * 64,
+            "environment_reviewer_binding_sha256": "4" * 64,
+            "effective_permission": "admin",
+        },
+    ],
+}
+digest, size = write_text("governance/role-bindings.json", json.dumps(role_bindings, sort_keys=True) + "\n")
+data["governance_role_bindings"] = {"path": "governance/role-bindings.json", "sha256": digest, "bytes": size}
+
+retention_exports = [
+    "release-inputs",
+    "release-subject-graph",
+    "release-runtime",
+    "release-signing",
+    "release-lab-input",
+    "release-governance",
+    "release-reproducibility",
+    "release-security",
+    "release-retention",
+    "release-ota",
+]
+retention_replay = [
+    "release-input-binding",
+    "runtime-suite",
+    "hsm-signing-manifest",
+    "station-acquisition",
+    "scanner-raw-replay",
+    "governance-snapshot",
+    "publication-manifest",
+]
+retention = {
+    "schema_version": "suderra.retention-manifest.v1",
+    "policy_id": "suderra-enterprise-7y-immutable-evidence",
+    "version": data["version"],
+    "source_sha": data["source"]["git_commit"],
+    "source_run_id": data["source"]["ci"]["run_id"],
+    "store_class": "immutable-encrypted-evidence-archive",
+    "retention_years": 7,
+    "exports": [{"name": name, "path": name} for name in retention_exports],
+    "restore_replay_tests": [{"name": name, "status": "passed"} for name in retention_replay],
+    "kms_key_id": "kms-contract",
+    "custody_chain": "custody-contract",
+    "access_log": "access-log-contract",
+    "archive_object_uri": "s3://suderra-evidence/v9.9.9-alpha.1/archive.tar.zst",
+    "archive_object_version_id": "version-contract",
+    "archive_object_sha256": "c" * 64,
+    "retention_lock_mode": "compliance",
+    "retain_until": "2033-05-13T00:00:00Z",
+    "legal_hold_status": "available",
+    "legal_hold_id": "legal-hold-contract",
+    "access_log_sha256": "d" * 64,
+    "restore_job_id": "restore-contract",
+    "restored_archive_sha256": "c" * 64,
+    "replay_validator_output_sha256": "f" * 64,
+    "custody_events": [
+        {
+            "event_id": "custody-contract-1",
+            "event_type": "archive-written",
+            "actor": "retention-exporter",
+            "occurred_at": "2026-05-13T00:00:00Z",
+            "evidence_sha256": "c" * 64,
+        }
+    ],
+}
+digest, size = write_text("retention/retention-manifest.json", json.dumps(retention, sort_keys=True) + "\n")
+data["retention_manifest"] = {"path": "retention/retention-manifest.json", "sha256": digest, "bytes": size}
 
 evidence_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY

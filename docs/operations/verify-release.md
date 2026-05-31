@@ -7,6 +7,21 @@ Alpha/pre-release artifact'leri lab validation içindir. Production doğrulama
 akışı ancak `production-readiness` ve production-tier release evidence geçtiğinde
 tamamlanmış sayılır.
 
+Enterprise production doğrulaması aynı release subject graph'a bağlı şu güncel
+şemaları bekler:
+
+| Kanıt | Şema |
+|---|---|
+| Release evidence | `suderra.release-evidence.v6` |
+| Subject graph | `suderra.release-subject-graph.v1` |
+| Runtime suite | `suderra.qemu-production-runtime-suite.v2` |
+| Runtime observation | `suderra.runtime-observation.v1` |
+| Signing manifest | `suderra.signing-manifest.v2` |
+| Hardware subject | `suderra.hardware-subject.v1` |
+| OTA artifacts | Contract-owned `release-ota/<version>/<target>/ota-artifacts.json` |
+| Security report | `suderra.release-security-report.v2` |
+| Retention manifest | `suderra.retention-manifest.v1` |
+
 Örnekler `v1.0.0` ve Raspberry Pi 4 artifact'i içindir. Diğer imajlar
 `ci/build-matrix.yml` içindeki `release_artifact` değerleriyle aynı adları
 kullanır.
@@ -183,9 +198,36 @@ find "evidence/${VERSION}" -name evidence.json -print0 | \
     python3 scripts/evidence/release-evidence.py validate \
       --require-pass \
       --check-files \
+      --validate-subject-graph \
       "${evidence_json}"
   done
 ```
+
+Enterprise retention doğrulaması:
+
+```bash
+python3 scripts/evidence/evidence_contract.py retention-plan \
+    --version "${VERSION}" \
+    --source-sha "<release-source-sha>" \
+    --source-run-id "<image-build-run-id>" \
+    > expected-retention-plan.json
+
+python3 scripts/evidence/validate-release-inputs.py \
+    --version "${VERSION}" \
+    --release-tier production \
+    --profile production-candidate \
+    --root evidence \
+    --binding-manifest "evidence/release-inputs/${VERSION}/production-candidate.json" \
+    --source-sha "<release-source-sha>" \
+    --source-run-id "<image-build-run-id>" \
+    --check-files
+```
+
+Production-candidate verification also expects `release-ota/`, scanner-native
+raw reports, signing manifests, hardware subjects, role bindings, station
+registry, and retention manifest entries to close over the same subject graph.
+The retention manifest must prove restore/replay from the immutable archive and
+the restored archive digest must equal the archived object digest.
 
 ## VEX Doğrulama
 
@@ -242,6 +284,9 @@ Verification: OK
 7. Cihaza yükle.
 8. Boot sonrası dm-verity durumunu kontrol et.
 9. RAUC bundle varsa `rauc info` ile keyring doğrulaması yap.
+10. Evidence archive içinde signing manifest, hardware subject, governance role
+    bindings ve retention manifest'in aynı subject ID'ye bağlı olduğunu doğrula.
+11. Retained archive üzerinden restore/replay testlerini çalıştır.
 
 ## Trust Anchor'lar
 

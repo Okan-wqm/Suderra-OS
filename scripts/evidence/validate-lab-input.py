@@ -242,25 +242,49 @@ def check_station_registry(
     if entry.get("public_key_sha256") != public_key_sha256:
         error(errors, "$.station_signature.public_key_sha256", "must match external station registry")
     allowed_targets = entry.get("allowed_targets")
-    if isinstance(allowed_targets, list) and "*" not in allowed_targets and payload.get("target") not in allowed_targets:
-        error(errors, "$.target", "must be allowed by external station registry")
-    elif not isinstance(allowed_targets, list) or not allowed_targets:
+    if not isinstance(allowed_targets, list) or not allowed_targets:
         error(errors, "$.station_registry.allowed_targets", "must be a non-empty list")
+    elif profile in STRICT_PROFILES and "*" in allowed_targets:
+        error(errors, "$.station_registry.allowed_targets", "must not contain wildcard target authorization")
+    elif "*" not in allowed_targets and payload.get("target") not in allowed_targets:
+        error(errors, "$.target", "must be allowed by external station registry")
     calibration_expires_at = entry.get("calibration_expires_at")
     calibration_expiry = parse_utc(calibration_expires_at)
     if calibration_expiry is None:
         error(errors, "$.station_registry.calibration_expires_at", "must be recorded")
     elif profile in STRICT_PROFILES and calibration_expiry <= datetime.now(timezone.utc):
         error(errors, "$.station_registry.calibration_expires_at", "must be in the future")
-    if not isinstance(entry.get("adapter_inventory"), dict) or not entry["adapter_inventory"]:
+    adapter_inventory = entry.get("adapter_inventory")
+    if not isinstance(adapter_inventory, dict) or not adapter_inventory:
         error(errors, "$.station_registry.adapter_inventory", "must be a non-empty object")
+    else:
+        for role, adapter in adapter_inventory.items():
+            adapter_path = f"$.station_registry.adapter_inventory.{role}"
+            if profile in STRICT_PROFILES and not isinstance(adapter, dict):
+                error(errors, adapter_path, "must bind role/id/version/binary_sha256 exactly")
+                continue
+            if isinstance(adapter, dict):
+                if adapter.get("role", role) != role:
+                    error(errors, f"{adapter_path}.role", "must match adapter inventory key")
+                for field in ("id", "version", "binary_sha256", "command_schema_id"):
+                    if field == "binary_sha256":
+                        check_sha256(errors, f"{adapter_path}.{field}", adapter.get(field))
+                    else:
+                        check_string(errors, f"{adapter_path}.{field}", adapter.get(field))
     operator_roles = entry.get("operator_roles")
     if profile in STRICT_PROFILES and (not isinstance(operator_roles, list) or not operator_roles):
         error(errors, "$.station_registry.operator_roles", "must be a non-empty list")
+    operator_authorization = entry.get("operator_authorization")
+    if profile in STRICT_PROFILES and (
+        not isinstance(operator_authorization, str) or not operator_authorization.strip()
+    ):
+        error(errors, "$.station_registry.operator_authorization", "must bind operator authorization")
     allowed_storage = entry.get("allowed_storage_by_id")
     if not isinstance(allowed_storage, list) or not allowed_storage:
         error(errors, "$.station_registry.allowed_storage_by_id", "must be a non-empty list")
         allowed_storage = []
+    elif profile in STRICT_PROFILES and "*" in allowed_storage:
+        error(errors, "$.station_registry.allowed_storage_by_id", "must not contain wildcard storage authorization")
     devices = payload.get("devices")
     if isinstance(devices, list):
         for idx, device in enumerate(devices):
