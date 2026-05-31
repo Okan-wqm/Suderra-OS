@@ -160,12 +160,13 @@ registry = {
             ],
             "calibration_expires_at": "2099-01-01T00:00:00Z",
             "adapter_inventory": {
-                "flash": "contract-adapter",
-                "readback": "contract-adapter",
-                "uart": "contract-adapter",
-                "revpi-io": "contract-adapter",
+                "flash": {"role": "flash", "id": "contract-flash", "version": "1", "binary_sha256": "1" * 64, "command_schema_id": "suderra.flash.v1"},
+                "readback": {"role": "readback", "id": "contract-readback", "version": "1", "binary_sha256": "2" * 64, "command_schema_id": "suderra.readback.v1"},
+                "uart": {"role": "uart", "id": "contract-uart", "version": "1", "binary_sha256": "3" * 64, "command_schema_id": "suderra.uart.v1"},
+                "revpi-io": {"role": "revpi-io", "id": "contract-revpi-io", "version": "1", "binary_sha256": "4" * 64, "command_schema_id": "suderra.revpi-io.v1"},
             },
             "operator_roles": ["contract"],
+            "operator_authorization": "contract-release-lab-authorization",
         }
     ],
 }
@@ -205,12 +206,13 @@ registry = {
             ],
             "calibration_expires_at": "2099-01-01T00:00:00Z",
             "adapter_inventory": {
-                "flash": "contract-adapter",
-                "readback": "contract-adapter",
-                "uart": "contract-adapter",
-                "revpi-io": "contract-adapter",
+                "flash": {"role": "flash", "id": "contract-flash", "version": "1", "binary_sha256": "1" * 64, "command_schema_id": "suderra.flash.v1"},
+                "readback": {"role": "readback", "id": "contract-readback", "version": "1", "binary_sha256": "2" * 64, "command_schema_id": "suderra.readback.v1"},
+                "uart": {"role": "uart", "id": "contract-uart", "version": "1", "binary_sha256": "3" * 64, "command_schema_id": "suderra.uart.v1"},
+                "revpi-io": {"role": "revpi-io", "id": "contract-revpi-io", "version": "1", "binary_sha256": "4" * 64, "command_schema_id": "suderra.revpi-io.v1"},
             },
             "operator_roles": ["contract"],
+            "operator_authorization": "contract-release-lab-authorization",
         }
     ],
 }

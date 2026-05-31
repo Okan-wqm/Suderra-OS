@@ -35,6 +35,12 @@ APPROVAL_SCHEMA_VERSION = "suderra.release-approval.v2"
 REPRODUCIBILITY_SCHEMA_VERSION = "suderra.reproducibility.v1"
 PRODUCTION_RUNTIME_SUITE_SCHEMA_VERSION = evidence_contract.schema_version("production_runtime_suite", EVIDENCE_CONTRACT)
 HSM_SIGNING_SESSION_SCHEMA_VERSION = evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT)
+HARDWARE_SUBJECT_SCHEMA_VERSION = evidence_contract.schema_version("hardware_subject", EVIDENCE_CONTRACT)
+RELEASE_SECURITY_REPORT_SCHEMA_VERSION = evidence_contract.schema_version("release_security_report", EVIDENCE_CONTRACT)
+RELEASE_SUBJECT_GRAPH_SCHEMA_VERSION = evidence_contract.schema_version("release_subject_graph", EVIDENCE_CONTRACT)
+RETENTION_MANIFEST_SCHEMA_VERSION = evidence_contract.schema_version("retention_manifest", EVIDENCE_CONTRACT)
+SIGNING_MANIFEST_SCHEMA_VERSION = evidence_contract.schema_version("signing_manifest", EVIDENCE_CONTRACT)
+GOVERNANCE_ROLE_BINDINGS_SCHEMA_VERSION = evidence_contract.schema_version("governance_role_bindings", EVIDENCE_CONTRACT)
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$")
@@ -45,11 +51,14 @@ ALLOWED_INPUT_DIRS = (
     "release-governance",
     "release-runtime",
     "release-signing",
+    "release-retention",
+    "release-security",
+    "release-ota",
 )
 FORBIDDEN_INPUT_DIRS = (
     "build-artifacts",
     "release-inputs",
-    "release-security",
+    "release-subject-graph",
     "release-evidence-generated",
     "signed-release",
 )
@@ -257,15 +266,37 @@ def required_evidence_paths(version: str, matrix_path: Path) -> set[str]:
         f"release-governance/{version}/audit-log.json",
         f"release-governance/{version}/station-registry.json",
     }
+    production_profile = "-" not in version
+    if production_profile:
+        required.add(f"release-governance/{version}/role-bindings.json")
+        required.add(f"release-retention/{version}/retention-manifest.json")
+        for scan in matrix.get("security_scans", []):
+            required.add(f"release-security/{version}/{scan}.json")
     hardware_targets = release_targets_requiring_hardware(matrix)
     for row in release_rows(matrix):
         target = str(row["target"])
+        policy = evidence_contract.target_policy(target, EVIDENCE_CONTRACT)
         if row.get("qemu_test"):
             required.add(f"release-lab-input/{version}/{target}/qemu.json")
         if target in hardware_targets:
             required.add(f"release-lab-input/{version}/{target}/lab.json")
+        if production_profile and policy.get("hardware_required") is True:
+            required.add(f"release-lab-input/{version}/{target}/hardware-subject.json")
+            required.add(f"release-lab-input/{version}/{target}/station-acquisition.json")
+        if production_profile and policy.get("signing_required") is True:
+            required.add(f"release-signing/{version}/{target}/signing-manifest.json")
         required.add(f"release-approvals/{version}/{target}.json")
         required.add(f"release-reproducibility/{version}/{target}.json")
+    if production_profile:
+        for target, policy in EVIDENCE_CONTRACT.get("targets", {}).items():
+            if not isinstance(policy, dict) or policy.get("release_public") is True:
+                continue
+            if policy.get("runtime_required") is True:
+                required.add(f"release-runtime/{version}/{target}/production-runtime.json")
+            if policy.get("signing_required") is True:
+                required.add(f"release-signing/{version}/{target}/signing-manifest.json")
+            if policy.get("ota_capable") is True:
+                required.add(f"release-ota/{version}/{target}/ota-artifacts.json")
     return required
 
 
@@ -276,6 +307,8 @@ def role_for_path(rel: Path) -> str:
     if len(parts) >= 3 and parts[0] == "release-governance" and rel.name == "station-registry.json":
         return "station-registry"
     if parts and parts[0] == "release-governance":
+        if rel.name == "role-bindings.json":
+            return "governance-role-bindings"
         return "governance-input"
     if parts and parts[0] == "release-approvals":
         return "release-approval"
@@ -285,6 +318,10 @@ def role_for_path(rel: Path) -> str:
         return "qemu-input"
     if parts and parts[0] == "release-lab-input" and rel.name == "lab.json":
         return "lab-input"
+    if parts and parts[0] == "release-lab-input" and rel.name == "hardware-subject.json":
+        return "hardware-subject"
+    if parts and parts[0] == "release-lab-input" and rel.name == "station-acquisition.json":
+        return "station-acquisition"
     if parts and parts[0] == "release-lab-input" and rel.name == "station-bundle.json":
         return "lab-station-bundle"
     if parts and parts[0] == "release-lab-input" and rel.name == "station-bundle.json.sig":
@@ -297,10 +334,24 @@ def role_for_path(rel: Path) -> str:
         return "production-runtime-suite"
     if parts and parts[0] == "release-runtime":
         return "production-runtime-supporting-evidence"
+    if parts and parts[0] == "release-signing" and rel.name == "signing-manifest.json":
+        return "signing-manifest"
     if parts and parts[0] == "release-signing" and rel.suffix == ".json":
         return "hsm-signing-session"
     if parts and parts[0] == "release-signing":
         return "hsm-signing-supporting-evidence"
+    if parts and parts[0] == "release-retention" and rel.name == "retention-manifest.json":
+        return "retention-manifest"
+    if parts and parts[0] == "release-retention":
+        return "retention-supporting-evidence"
+    if parts and parts[0] == "release-ota" and rel.name == "ota-artifacts.json":
+        return "ota-artifacts"
+    if parts and parts[0] == "release-ota":
+        return "ota-supporting-evidence"
+    if parts and parts[0] == "release-security" and rel.suffix == ".json":
+        return "security-report"
+    if parts and parts[0] == "release-security":
+        return "security-raw-evidence"
     return "operator-evidence"
 
 
@@ -309,18 +360,30 @@ def required_schema_version_for_path(rel: Path) -> str | None:
         return AUDIT_SCHEMA_VERSION
     if len(rel.parts) >= 3 and rel.parts[0] == "release-governance" and rel.name == "station-registry.json":
         return STATION_REGISTRY_SCHEMA_VERSION
+    if len(rel.parts) >= 3 and rel.parts[0] == "release-governance" and rel.name == "role-bindings.json":
+        return GOVERNANCE_ROLE_BINDINGS_SCHEMA_VERSION
     if rel.parts and rel.parts[0] == "release-lab-input" and rel.name == "qemu.json":
         return QEMU_SCHEMA_VERSION
     if rel.parts and rel.parts[0] == "release-lab-input" and rel.name == "lab.json":
         return LAB_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-lab-input" and rel.name == "hardware-subject.json":
+        return HARDWARE_SUBJECT_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-lab-input" and rel.name == "station-acquisition.json":
+        return evidence_contract.schema_version("station_acquisition", EVIDENCE_CONTRACT)
     if rel.parts and rel.parts[0] == "release-approvals":
         return APPROVAL_SCHEMA_VERSION
     if rel.parts and rel.parts[0] == "release-reproducibility":
         return REPRODUCIBILITY_SCHEMA_VERSION
     if rel.parts and rel.parts[0] == "release-runtime" and rel.name == "production-runtime.json":
         return PRODUCTION_RUNTIME_SUITE_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-signing" and rel.name == "signing-manifest.json":
+        return SIGNING_MANIFEST_SCHEMA_VERSION
     if rel.parts and rel.parts[0] == "release-signing" and rel.suffix == ".json":
         return HSM_SIGNING_SESSION_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-retention" and rel.name == "retention-manifest.json":
+        return RETENTION_MANIFEST_SCHEMA_VERSION
+    if rel.parts and rel.parts[0] == "release-ota" and rel.name == "ota-artifacts.json":
+        return evidence_contract.schema_version("ota_artifacts", EVIDENCE_CONTRACT)
     return None
 
 
@@ -407,6 +470,13 @@ def validate_core_files(input_root: Path, version: str, matrix: Path, files: lis
                     failures.append(f"{path}: required evidence must be a JSON object")
                 else:
                     expected_schema = required_schema_version_for_path(Path(required_path))
+                    if (
+                        expected_schema is None
+                        and Path(required_path).parts
+                        and Path(required_path).parts[0] == "release-security"
+                        and Path(required_path).suffix == ".json"
+                    ):
+                        expected_schema = RELEASE_SECURITY_REPORT_SCHEMA_VERSION
                     if expected_schema is not None and payload.get("schema_version") != expected_schema:
                         failures.append(f"{path}: schema_version must be {expected_schema}")
     return failures

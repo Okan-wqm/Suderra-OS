@@ -89,6 +89,18 @@ FAKEROOT_REGEXP_WARNING_RE = re.compile(
     r"^(?:awk: )?(?:(?:\./wrapawk(?::\d+(?:[.-]\d+)*)?|\d+(?:[.-]\d+)*): )?"
     r"warning: regexp escape sequence `\\#' is not a known regexp operator$"
 )
+GRUB2_LINUX16_LINK_WARNING_RE = re.compile(
+    r"^\$OUTPUT_DIR/per-package/grub2/host/bin/\.\./lib/gcc/"
+    r"x86_64-buildroot-linux-gnu/\$GCC_VERSION/../../../../"
+    r"x86_64-buildroot-linux-gnu/bin/ld: warning: "
+    r"\$OUTPUT_DIR/per-package/grub2/host/bin/"
+    r"x86_64-buildroot-linux-gnu-gcc\b.*\s+-o linux16\.module "
+    r"loader/i386/pc/linux16_module-linux\.o$"
+)
+GRUB2_LINUX16_LINK_FINGERPRINT = (
+    "ld: warning: x86_64-buildroot-linux-gnu-gcc links "
+    "linux16.module from loader/i386/pc/linux16_module-linux.o"
+)
 
 
 @dataclass(frozen=True)
@@ -185,6 +197,8 @@ def fingerprint(text: str) -> str:
 def canonical_package_fingerprint(package: str | None, raw_fingerprint: str) -> str:
     if package == "host-fakeroot" and FAKEROOT_REGEXP_WARNING_RE.match(raw_fingerprint):
         return FAKEROOT_WRAPAWK_REGEXP_WARNING
+    if package == "grub2" and GRUB2_LINUX16_LINK_WARNING_RE.match(raw_fingerprint):
+        return GRUB2_LINUX16_LINK_FINGERPRINT
     return raw_fingerprint
 
 

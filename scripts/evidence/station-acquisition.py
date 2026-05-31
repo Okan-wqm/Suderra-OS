@@ -63,6 +63,107 @@ def command_from_event(event: dict[str, Any], path: str) -> list[str]:
     raise ValueError(f"{path}.command must be a command array or shell-like command string")
 
 
+def measurement_from_stdout(stdout: Path) -> dict[str, Any]:
+    text = stdout.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        return {}
+    candidates = [text, *[line.strip() for line in reversed(text.splitlines()) if line.strip()]]
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            measured = payload.get("measured")
+            if isinstance(measured, dict):
+                return measured
+            return payload
+    return {}
+
+
+def event_id_for(index: int, role: str, adapter_id: str, stdout: Path, stderr: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"{index}:{role}:{adapter_id}".encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(sha256_file(stdout).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(sha256_file(stderr).encode("ascii"))
+    return f"station-event:{digest.hexdigest()[:24]}"
+
+
+def station_registry_entry(registry: dict[str, Any] | None, station_id: Any) -> dict[str, Any] | None:
+    if not isinstance(registry, dict) or not isinstance(station_id, str) or not station_id:
+        return None
+    stations = registry.get("stations")
+    if not isinstance(stations, list):
+        return None
+    for item in stations:
+        if isinstance(item, dict) and item.get("station_id") == station_id:
+            return item
+    return None
+
+
+def registry_adapter_entry(station: dict[str, Any], role: str) -> dict[str, Any] | None:
+    inventory = station.get("adapter_inventory")
+    if not isinstance(inventory, dict):
+        return None
+    item = inventory.get(role)
+    if not isinstance(item, dict):
+        return None
+    return item
+
+
+def validate_registry_binding(
+    errors: list[str],
+    *,
+    payload: dict[str, Any],
+    registry: dict[str, Any] | None,
+) -> None:
+    if registry is None:
+        return
+    if registry.get("schema_version") != "suderra.lab-station-registry.v1":
+        errors.append("station registry schema_version must be suderra.lab-station-registry.v1")
+    station = station_registry_entry(registry, payload.get("station_id"))
+    if station is None:
+        errors.append("station_id must exist in station registry")
+        return
+    allowed_targets = station.get("allowed_targets")
+    if not isinstance(allowed_targets, list) or not allowed_targets:
+        errors.append("station registry allowed_targets must be a non-empty list")
+    elif "*" in allowed_targets:
+        errors.append("station registry allowed_targets must not use wildcard target authorization")
+    elif payload.get("target") not in allowed_targets:
+        errors.append("target must be allowed by station registry")
+    allowed_storage = station.get("allowed_storage_by_id")
+    if isinstance(allowed_storage, list) and "*" in allowed_storage:
+        errors.append("station registry allowed_storage_by_id must not use wildcard storage authorization")
+    events = payload.get("events")
+    if not isinstance(events, list):
+        return
+    for idx, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        role = event.get("role")
+        if not isinstance(role, str):
+            continue
+        adapter = registry_adapter_entry(station, role)
+        if adapter is None:
+            errors.append(f"events[{idx}].role must have an exact adapter_inventory entry in station registry")
+            continue
+        expected_role = adapter.get("role", role)
+        if expected_role != role:
+            errors.append(f"events[{idx}].role must match station registry adapter role")
+        field_pairs = (
+            ("adapter_id", "id"),
+            ("adapter_version", "version"),
+            ("adapter_binary_sha256", "binary_sha256"),
+            ("command_schema_id", "command_schema_id"),
+        )
+        for event_field, registry_field in field_pairs:
+            if event.get(event_field) != adapter.get(registry_field):
+                errors.append(f"events[{idx}].{event_field} must match station registry adapter {registry_field}")
+
+
 def run_event(event: dict[str, Any], index: int, output_root: Path) -> dict[str, Any]:
     role = require_string(event, "role", f"events[{index}]")
     adapter_id = require_string(event, "adapter_id", f"events[{index}]")
@@ -81,14 +182,14 @@ def run_event(event: dict[str, Any], index: int, output_root: Path) -> dict[str,
     completed_at = now_utc()
     expected_exit = int(event.get("expected_exit_code", 0))
     status = "passed" if result.returncode == expected_exit else "failed"
-    measured = event.get("measured")
-    if not isinstance(measured, dict):
-        measured = {}
+    measured = measurement_from_stdout(stdout)
     return {
+        "event_id": event_id_for(index, role, adapter_id, stdout, stderr),
         "role": role,
         "adapter_id": adapter_id,
         "adapter_version": require_string(event, "adapter_version", f"events[{index}]"),
         "adapter_binary_sha256": require_string(event, "adapter_binary_sha256", f"events[{index}]"),
+        "command_schema_id": require_string(event, "command_schema_id", f"events[{index}]"),
         "argv": command,
         "started_at": started_at,
         "completed_at": completed_at,
@@ -105,6 +206,7 @@ def run_event(event: dict[str, Any], index: int, output_root: Path) -> dict[str,
             "sha256": sha256_file(stderr),
             "bytes": stderr.stat().st_size,
         },
+        "measurement_source": "adapter-stdout-json",
         "measured": measured,
     }
 
@@ -159,6 +261,7 @@ def validate_payload(
     expected_artifact_sha256: str | None = None,
     expected_artifact_bytes: int | None = None,
     expected_registry_sha256: str | None = None,
+    station_registry: dict[str, Any] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     if payload.get("schema_version") != SCHEMA_VERSION:
@@ -189,6 +292,7 @@ def validate_payload(
         errors.append("registry_sha256 must be a non-zero sha256")
     elif expected_registry_sha256 is not None and registry_sha != expected_registry_sha256:
         errors.append(f"registry_sha256 must match expected registry sha256 {expected_registry_sha256}")
+    validate_registry_binding(errors, payload=payload, registry=station_registry)
     events = payload.get("events")
     if not isinstance(events, list) or not events:
         errors.append("events must be a non-empty list")
@@ -204,10 +308,16 @@ def validate_payload(
             ordered_roles.append(str(event["role"]))
         if event.get("status") != "passed":
             errors.append(f"events[{idx}].status must be passed")
+        if not isinstance(event.get("event_id"), str) or not event["event_id"].startswith("station-event:"):
+            errors.append(f"events[{idx}].event_id must be a stable station-event id")
+        if event.get("measurement_source") != "adapter-stdout-json":
+            errors.append(f"events[{idx}].measurement_source must be adapter-stdout-json")
         measured = event.get("measured")
         if not isinstance(measured, dict):
             errors.append(f"events[{idx}].measured must be an object")
             measured = {}
+        elif not measured:
+            errors.append(f"events[{idx}].measured must be derived from adapter output")
         role = event.get("role")
         if role == "readback":
             expected = payload.get("artifact_sha256")
@@ -271,6 +381,7 @@ def validate_command(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         print("ERROR: station acquisition must be a JSON object", file=sys.stderr)
         return 1
+    registry = read_json(args.station_registry) if args.station_registry is not None else None
     failures = validate_payload(
         payload,
         args.input.parent,
@@ -282,6 +393,7 @@ def validate_command(args: argparse.Namespace) -> int:
         expected_artifact_sha256=args.expected_artifact_sha256,
         expected_artifact_bytes=args.expected_artifact_bytes,
         expected_registry_sha256=args.expected_registry_sha256,
+        station_registry=registry if isinstance(registry, dict) else None,
     )
     if failures:
         for failure in failures:
@@ -308,6 +420,7 @@ def main() -> int:
     validate.add_argument("--expected-artifact-sha256")
     validate.add_argument("--expected-artifact-bytes", type=int)
     validate.add_argument("--expected-registry-sha256")
+    validate.add_argument("--station-registry", type=Path)
     validate.set_defaults(func=validate_command)
     args = parser.parse_args()
     try:

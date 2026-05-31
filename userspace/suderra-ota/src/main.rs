@@ -531,6 +531,7 @@ fn request_reboot(reason: &str) -> Result<()> {
 }
 
 fn load_state() -> Result<OtaState> {
+    production_rollback_floor_requires_monotonic_state()?;
     let path = state_path();
     if !path.exists() {
         let fallback_floor = std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR")
@@ -584,6 +585,7 @@ fn persist_last_event(event: &Value, error: Option<String>) -> Result<()> {
 }
 
 fn persist_rollback_floor(version: &str) -> Result<()> {
+    production_rollback_floor_requires_monotonic_state()?;
     let path = rollback_floor_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -604,6 +606,20 @@ fn read_rollback_floor() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
+    let production = std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1");
+    if !production {
+        return Ok(());
+    }
+    match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE").ok().as_deref() {
+        Some("tpm-nv") | Some("bootloader-monotonic") => Ok(()),
+        Some(other) => bail!(
+            "production anti-rollback requires TPM NV or bootloader monotonic state, got {other}"
+        ),
+        None => bail!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE=tpm-nv or bootloader-monotonic"),
+    }
 }
 
 fn state_dir() -> PathBuf {

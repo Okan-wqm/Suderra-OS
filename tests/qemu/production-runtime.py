@@ -287,7 +287,22 @@ def create_command(args: argparse.Namespace) -> int:
     plan = read_json(args.plan)
     if not isinstance(plan, dict):
         raise ValueError("scenario plan must be a JSON object")
-    for field in ("version", "target", "source_sha", "image", "ovmf_code", "ovmf_vars", "swtpm_state"):
+    for field in (
+        "version",
+        "target",
+        "source_sha",
+        "source_run_id",
+        "source_run_attempt",
+        "subject_id",
+        "defconfig",
+        "image",
+        "raw_image_sha256",
+        "compressed_artifact_sha256",
+        "release_artifact",
+        "ovmf_code",
+        "ovmf_vars",
+        "swtpm_state",
+    ):
         require_string(plan, field, "plan")
     image = Path(plan["image"])
     ovmf_code = Path(plan["ovmf_code"])
@@ -331,6 +346,13 @@ def create_command(args: argparse.Namespace) -> int:
         "version": plan["version"],
         "target": plan["target"],
         "source_sha": plan["source_sha"],
+        "source_run_id": plan["source_run_id"],
+        "source_run_attempt": plan["source_run_attempt"],
+        "subject_id": plan["subject_id"],
+        "defconfig": plan["defconfig"],
+        "raw_image_sha256": plan["raw_image_sha256"],
+        "compressed_artifact_sha256": plan["compressed_artifact_sha256"],
+        "release_artifact": plan["release_artifact"],
         "generated_at": now_utc(),
         "image": str(image),
         "image_sha256": sha256_file(image),

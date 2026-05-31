@@ -10,22 +10,36 @@ trap 'rm -rf "${TMPDIR}"' EXIT
 RUNTIME_VALIDATOR="${PROJECT_ROOT}/scripts/evidence/validate-production-runtime-suite.py"
 RUNTIME_RUNNER="${PROJECT_ROOT}/tests/qemu/production-runtime.py"
 SCANNER_REPLAY="${PROJECT_ROOT}/scripts/evidence/security-raw-replay.py"
+SCANNER_PRODUCER="${PROJECT_ROOT}/scripts/evidence/collect-scanner-native-evidence.py"
 STATION_ACQUISITION="${PROJECT_ROOT}/scripts/evidence/station-acquisition.py"
 HSM_VALIDATOR="${PROJECT_ROOT}/scripts/evidence/validate-hsm-signing-evidence.py"
 EVIDENCE_CONTRACT="${PROJECT_ROOT}/scripts/evidence/evidence_contract.py"
+RELEASE_INPUTS_VALIDATOR="${PROJECT_ROOT}/scripts/evidence/validate-release-inputs.py"
+OTA_PRODUCER="${PROJECT_ROOT}/scripts/evidence/produce-ota-artifacts.py"
+RETENTION_PRODUCER="${PROJECT_ROOT}/scripts/evidence/produce-retention-manifest.py"
+OS_UPDATE_MANIFEST="${PROJECT_ROOT}/scripts/create-os-update-manifest.py"
 
 python3 -m py_compile \
     "${EVIDENCE_CONTRACT}" \
     "${RUNTIME_VALIDATOR}" \
     "${RUNTIME_RUNNER}" \
     "${SCANNER_REPLAY}" \
+    "${SCANNER_PRODUCER}" \
     "${STATION_ACQUISITION}" \
-    "${HSM_VALIDATOR}"
+    "${HSM_VALIDATOR}" \
+    "${RELEASE_INPUTS_VALIDATOR}" \
+    "${OTA_PRODUCER}" \
+    "${RETENTION_PRODUCER}" \
+    "${OS_UPDATE_MANIFEST}"
 python3 "${EVIDENCE_CONTRACT}" validate >/dev/null
 "${RUNTIME_VALIDATOR}" --help >/dev/null
 "${RUNTIME_RUNNER}" --help >/dev/null
 "${SCANNER_REPLAY}" --help >/dev/null
+"${SCANNER_PRODUCER}" --help >/dev/null
 "${STATION_ACQUISITION}" --help >/dev/null
+"${OTA_PRODUCER}" --help >/dev/null
+"${RETENTION_PRODUCER}" --help >/dev/null
+"${OS_UPDATE_MANIFEST}" --help >/dev/null
 
 VERSION="v9.9.9"
 TARGET="qemu-x86_64-prod-ab"
@@ -328,6 +342,13 @@ payload = {
     "version": "v9.9.9",
     "target": "qemu-x86_64-prod-ab",
     "source_sha": source_sha,
+    "source_run_id": "123456789",
+    "source_run_attempt": "1",
+    "subject_id": f"suderra-release:v9.9.9:qemu-x86_64-prod-ab:{source_sha}:123456789",
+    "defconfig": "suderra_qemu_x86_64_prod_ab_defconfig",
+    "raw_image_sha256": image_sha,
+    "compressed_artifact_sha256": image_sha,
+    "release_artifact": "suderra-os-v9.9.9-qemu-x86_64-prod-ab.img.xz",
     "generated_at": "2026-05-21T00:00:00Z",
     "image": "disk.img",
     "image_sha256": image_sha,
@@ -381,6 +402,28 @@ if python3 "${RUNTIME_VALIDATOR}" "${V2_RUNTIME_ROOT}/runtime-v2-no-observation.
 fi
 grep -q "observation" "${TMPDIR}/runtime-v2-no-observation.err"
 
+python3 - "${V2_RUNTIME_ROOT}/production-runtime.json" "${V2_RUNTIME_ROOT}/runtime-v2-expected-derived.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+out = Path(sys.argv[2])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["scenarios"][0]["observation"]["source"] = "expected-outcome"
+payload["scenarios"][0]["observation"]["signal"] = "expected_outcome"
+out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${RUNTIME_VALIDATOR}" "${V2_RUNTIME_ROOT}/runtime-v2-expected-derived.json" \
+    --check-files \
+    --require-pass \
+    --profile production-runtime \
+    2>"${TMPDIR}/runtime-v2-expected-derived.err"; then
+    echo "ERROR: production-runtime v2 accepted expected-derived observed_outcome evidence" >&2
+    exit 1
+fi
+grep -q "expected outcome" "${TMPDIR}/runtime-v2-expected-derived.err"
+
 python3 - "${V2_RUNTIME_ROOT}/production-runtime.json" "${V2_RUNTIME_ROOT}/runtime-v2-replay.json" <<'PY'
 import hashlib
 import json
@@ -411,11 +454,30 @@ grep -q "replayed serial evidence" "${TMPDIR}/runtime-v2-replay.err"
 
 SECURITY_ROOT="${TMPDIR}/release-security/${VERSION}"
 mkdir -p "${SECURITY_ROOT}"
+SUBJECT_GRAPH="${TMPDIR}/release-subject-graph.json"
+cat >"${SUBJECT_GRAPH}" <<JSON
+{"schema_version":"suderra.release-subject-graph.v1","version":"${VERSION}","profile":"production-candidate","subjects":[]}
+JSON
+GRAPH_SHA="$(sha256sum "${SUBJECT_GRAPH}" | awk '{print $1}')"
+GRAPH_BYTES="$(wc -c < "${SUBJECT_GRAPH}" | awk '{print $1}')"
 cat >"${SECURITY_ROOT}/trivy-raw.json" <<'JSON'
 {"Results":[{"Target":"rootfs","Vulnerabilities":[]}]}
 JSON
 RAW_SHA="$(sha256sum "${SECURITY_ROOT}/trivy-raw.json" | awk '{print $1}')"
 RAW_BYTES="$(wc -c < "${SECURITY_ROOT}/trivy-raw.json" | awk '{print $1}')"
+ENV_SHA="$(printf '{}' | sha256sum | awk '{print $1}')"
+REPLAY_SHA="$(python3 - "${RAW_SHA}" <<'PY'
+import hashlib
+import json
+import sys
+
+payload = {
+    "raw_sha256": sys.argv[1],
+    "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0},
+}
+print(hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+PY
+)"
 cat >"${SECURITY_ROOT}/trivy.json" <<JSON
 {
   "schema_version": "suderra.release-security-report.v2",
@@ -427,15 +489,35 @@ cat >"${SECURITY_ROOT}/trivy.json" <<JSON
   "generated_at": "2026-05-21T00:00:00Z",
   "tool": "trivy",
   "tool_version": "0.70.0",
+  "subject_id": "suderra-release:${VERSION}:qemu-x86_64-prod-ab:${SOURCE_SHA}:123456789",
+  "subject_graph_sha256": "${GRAPH_SHA}",
+  "subject_graph": {
+    "path": "${SUBJECT_GRAPH}",
+    "sha256": "${GRAPH_SHA}",
+    "bytes": ${GRAPH_BYTES}
+  },
+  "scanner_binary": {
+    "name": "trivy",
+    "version": "0.70.0",
+    "sha256": "1${RAW_SHA#?}"
+  },
+  "invocation": {
+    "argv": ["trivy", "filesystem", "--format", "json", "--skip-db-update"],
+    "env": {},
+    "env_sha256": "${ENV_SHA}",
+    "working_dir_policy": "repo-root"
+  },
   "scanner_db": {
     "type": "trivy-db",
     "version": "2026-05-21",
     "created_at": "2026-05-21T00:00:00Z",
     "digest": "sha256:${RAW_SHA}",
+    "archive_sha256": "${RAW_SHA}",
     "auto_update_disabled": true
   },
   "subjects": [
     {
+      "subject_id": "suderra-release:${VERSION}:qemu-x86_64-prod-ab:${SOURCE_SHA}:123456789",
       "name": "suderra-qemu.img.xz",
       "role": "release-image",
       "path": "suderra-qemu.img.xz",
@@ -455,10 +537,46 @@ cat >"${SECURITY_ROOT}/trivy.json" <<JSON
     "medium": 0,
     "low": 0,
     "unknown": 0
+  },
+  "replay": {
+    "status": "passed",
+    "raw_sha256": "${RAW_SHA}",
+    "output_sha256": "${REPLAY_SHA}",
+    "severity_counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "unknown": 0
+    }
+  },
+  "sbom": {
+    "path": "sbom/contract.cdx.json",
+    "sha256": "2${RAW_SHA#?}"
+  },
+  "vex": {
+    "path": "vex/contract.vex.json",
+    "sha256": "3${RAW_SHA#?}"
   }
 }
 JSON
 python3 "${SCANNER_REPLAY}" "${SECURITY_ROOT}/trivy.json" --check-files --raw-root "${TMPDIR}/release-security" >/dev/null
+
+python3 - "${SECURITY_ROOT}/trivy.json" "${SECURITY_ROOT}/trivy-missing-binary.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload.pop("scanner_binary")
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${SCANNER_REPLAY}" "${SECURITY_ROOT}/trivy-missing-binary.json" --check-files --raw-root "${TMPDIR}/release-security" \
+    2>"${TMPDIR}/scanner-missing-binary.err"; then
+    echo "ERROR: scanner replay accepted v2 report without scanner binary provenance" >&2
+    exit 1
+fi
+grep -q "scanner_binary" "${TMPDIR}/scanner-missing-binary.err"
 
 python3 - "${SECURITY_ROOT}/trivy-raw.json" <<'PY'
 import json
@@ -476,6 +594,54 @@ if python3 "${SCANNER_REPLAY}" "${SECURITY_ROOT}/trivy.json" --check-files --raw
     exit 1
 fi
 grep -q "sha256 mismatch\\|high/critical\\|severity_counts" "${TMPDIR}/scanner.err"
+
+printf 'retained evidence archive\n' >"${TMPDIR}/archive.tar.zst"
+cp "${TMPDIR}/archive.tar.zst" "${TMPDIR}/restored-archive.tar.zst"
+printf 'access log export\n' >"${TMPDIR}/access-log.jsonl"
+printf 'retention replay passed\n' >"${TMPDIR}/retention-replay.txt"
+python3 "${RETENTION_PRODUCER}" create \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-run-id 123456789 \
+    --archive "${TMPDIR}/archive.tar.zst" \
+    --archive-object-uri "s3://suderra-evidence/${VERSION}/archive.tar.zst" \
+    --archive-object-version-id "version-contract" \
+    --kms-key-id "kms-contract" \
+    --retention-lock-mode compliance \
+    --retain-until "2099-01-01T00:00:00Z" \
+    --legal-hold-status available \
+    --legal-hold-id "legal-hold-contract" \
+    --access-log "${TMPDIR}/access-log.jsonl" \
+    --custody-chain "custody-contract" \
+    --custody-event-id "custody-contract-1" \
+    --custody-actor "retention-exporter" \
+    --restore-job-id "restore-contract" \
+    --restored-archive "${TMPDIR}/restored-archive.tar.zst" \
+    --replay-validator-output "${TMPDIR}/retention-replay.txt" \
+    --output "${TMPDIR}/release-retention/${VERSION}/retention-manifest.json" \
+    >/dev/null
+python3 - "${PROJECT_ROOT}" "${TMPDIR}/release-retention/${VERSION}/retention-manifest.json" "${VERSION}" "${SOURCE_SHA}" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, manifest, version, source_sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location(
+    "validate_release_inputs",
+    Path(root) / "scripts/evidence/validate-release-inputs.py",
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+failures = module.validate_retention_manifest(
+    Path(manifest),
+    version=version,
+    source_sha=source_sha,
+    source_run_id="123456789",
+)
+if failures:
+    raise SystemExit("retention producer emitted invalid manifest: " + "; ".join(failures))
+PY
 
 ACQ_PLAN="${TMPDIR}/station-plan.json"
 python3 - "${ACQ_PLAN}" "${VERSION}" "${SOURCE_SHA}" "${REGISTRY_SHA}" "${ARTIFACT_SHA}" <<'PY'
@@ -510,8 +676,12 @@ payload = {
             "adapter_id": adapter,
             "adapter_version": "1",
             "adapter_binary_sha256": prefix + "0" * 63,
-            "command": ["true"],
-            "measured": measured,
+            "command_schema_id": f"suderra.{role}.v1",
+            "command": [
+                sys.executable,
+                "-c",
+                "import json; print(json.dumps(" + repr(measured) + "))",
+            ],
         }
         for role, adapter, prefix, measured in events
     ],
@@ -523,6 +693,70 @@ python3 "${STATION_ACQUISITION}" create \
     --output "${TMPDIR}/station-acquisition.json" \
     >/dev/null
 python3 "${STATION_ACQUISITION}" validate "${TMPDIR}/station-acquisition.json" --check-files >/dev/null
+REGISTRY="${TMPDIR}/station-registry.json"
+python3 - "${REGISTRY}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+events = [
+    ("flash", "flash-1", "1"),
+    ("readback", "readback-1", "2"),
+    ("uart", "uart-1", "3"),
+    ("power", "power-1", "4"),
+    ("storage", "storage-1", "6"),
+    ("tpm", "tpm-1", "7"),
+    ("secure-boot", "secure-boot-1", "8"),
+    ("rauc", "rauc-1", "9"),
+    ("tamper", "tamper-1", "a"),
+]
+payload = {
+    "schema_version": "suderra.lab-station-registry.v1",
+    "stations": [
+        {
+            "station_id": "station-1",
+            "fixture_id": "fixture-1",
+            "public_key_sha256": "b" * 64,
+            "allowed_targets": ["revpi4"],
+            "allowed_storage_by_id": ["/dev/disk/by-id/test"],
+            "calibration_expires_at": "2099-01-01T00:00:00Z",
+            "adapter_inventory": {
+                role: {
+                    "role": role,
+                    "id": adapter_id,
+                    "version": "1",
+                    "binary_sha256": prefix + "0" * 63,
+                    "command_schema_id": f"suderra.{role}.v1",
+                }
+                for role, adapter_id, prefix in events
+            },
+            "operator_roles": ["contract"],
+            "operator_authorization": "contract-release-lab-authorization",
+        }
+    ],
+}
+Path(sys.argv[1]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+python3 "${STATION_ACQUISITION}" validate "${TMPDIR}/station-acquisition.json" \
+    --check-files \
+    --station-registry "${REGISTRY}" \
+    >/dev/null
+python3 - "${REGISTRY}" "${TMPDIR}/bad-station-registry.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload["stations"][0]["adapter_inventory"]["flash"]["id"] = "wrong-flash-adapter"
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+if python3 "${STATION_ACQUISITION}" validate "${TMPDIR}/station-acquisition.json" \
+    --station-registry "${TMPDIR}/bad-station-registry.json" \
+    2>"${TMPDIR}/station-adapter.err"; then
+    echo "ERROR: station acquisition accepted adapter identity that did not match registry" >&2
+    exit 1
+fi
+grep -q "station registry adapter" "${TMPDIR}/station-adapter.err"
 python3 "${STATION_ACQUISITION}" validate "${TMPDIR}/station-acquisition.json" \
     --check-files \
     --expected-version "${VERSION}" \
@@ -533,6 +767,71 @@ python3 "${STATION_ACQUISITION}" validate "${TMPDIR}/station-acquisition.json" \
     --expected-artifact-bytes 8 \
     --expected-registry-sha256 "${REGISTRY_SHA}" \
     >/dev/null
+python3 - "${PROJECT_ROOT}" "${TMPDIR}/station-acquisition.json" "${REGISTRY}" "${TMPDIR}/hardware-subject.json" "${VERSION}" "${SOURCE_SHA}" "${ARTIFACT_SHA}" "${REGISTRY_SHA}" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+root, acquisition_path, registry_path, subject_path, version, source_sha, artifact_sha, registry_sha = sys.argv[1:]
+acquisition = json.loads(Path(acquisition_path).read_text(encoding="utf-8"))
+registry = json.loads(Path(registry_path).read_text(encoding="utf-8"))
+event_id = next(event["event_id"] for event in acquisition["events"] if event["role"] == "readback")
+subject = {
+    "schema_version": "suderra.hardware-subject.v1",
+    "subject_id": f"suderra-release:{version}:revpi4:{source_sha}:123456789",
+    "version": version,
+    "target": "revpi4",
+    "source_sha": source_sha,
+    "source_run_id": "123456789",
+    "raw_image_sha256": artifact_sha,
+    "compressed_artifact_sha256": artifact_sha,
+    "station_acquisition_event_id": event_id,
+    "station_id": "station-1",
+    "device_identity": {"storage_by_id": "/dev/disk/by-id/test"},
+    "storage_by_id": "/dev/disk/by-id/test",
+    "fixture_id": "fixture-1",
+    "adapter_inventory_sha256": registry_sha,
+    "readback_sha256": artifact_sha,
+}
+Path(subject_path).write_text(json.dumps(subject, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+spec = importlib.util.spec_from_file_location(
+    "validate_release_inputs",
+    Path(root) / "scripts/evidence/validate-release-inputs.py",
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+event_ids = {event["event_id"] for event in acquisition["events"]}
+failures = module.validate_hardware_subject(
+    Path(subject_path),
+    version=version,
+    target="revpi4",
+    source_sha=source_sha,
+    source_run_id="123456789",
+    expected_artifact_sha256s={artifact_sha},
+    station_event_ids=event_ids,
+    station_acquisition=acquisition,
+    station_registry=registry,
+)
+if failures:
+    raise SystemExit("valid station-derived hardware subject failed: " + "; ".join(failures))
+subject["storage_by_id"] = "/dev/disk/by-id/self-reported"
+Path(subject_path).write_text(json.dumps(subject, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+failures = module.validate_hardware_subject(
+    Path(subject_path),
+    version=version,
+    target="revpi4",
+    source_sha=source_sha,
+    source_run_id="123456789",
+    expected_artifact_sha256s={artifact_sha},
+    station_event_ids=event_ids,
+    station_acquisition=acquisition,
+    station_registry=registry,
+)
+if not any("derived from station storage event" in item for item in failures):
+    raise SystemExit("hardware subject self-reported storage identity did not fail closed")
+PY
 if python3 "${STATION_ACQUISITION}" validate "${TMPDIR}/station-acquisition.json" \
     --expected-target x86_64 \
     2>"${TMPDIR}/station-target.err"; then

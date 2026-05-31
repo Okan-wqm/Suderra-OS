@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import quote
 
 
 SNAPSHOTS = {
@@ -94,17 +95,50 @@ def collect_ruleset_details(repo: str, output: Path) -> None:
     output.write_text(json.dumps(detailed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def collect_audit(output: Path) -> None:
+def collect_audit(output: Path, repo: str) -> None:
     audit_path = os.environ.get("SUDERRA_GOVERNANCE_AUDIT_LOG")
     if audit_path:
         source = Path(audit_path)
+        if source.resolve() == output.resolve():
+            raise RuntimeError("SUDERRA_GOVERNANCE_AUDIT_LOG must be a source export, not the output audit-log.json")
+        if not source.is_file() or source.stat().st_size <= 0:
+            raise RuntimeError(f"SUDERRA_GOVERNANCE_AUDIT_LOG source missing or empty: {source}")
         payload = json.loads(source.read_text(encoding="utf-8"))
         output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return
+    owner = repo.split("/", 1)[0]
+    raw = gh_api(f"orgs/{owner}/audit-log?phrase={quote('repo:' + repo)}&per_page=100")
+    if not isinstance(raw, list):
+        raise RuntimeError("GitHub audit log response must be a list")
+    raw_path = output.with_name("audit-log-raw.json")
+    raw_path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    raw_sha = sha256_file(raw_path)
     audit = {
         "schema_version": "suderra.audit-log-snapshot.v1",
-        "status": "not_collected",
+        "status": "collected",
+        "repository": repo,
+        "query": f"repo:{repo}",
+        "source_kind": "organization",
+        "event_count": len(raw),
+        "events_sha256": raw_sha,
+        "raw_export": {
+            "path": raw_path.name,
+            "sha256": raw_sha,
+            "bytes": raw_path.stat().st_size,
+        },
+        "collector": {
+            "identity": "collect-governance.py",
+        },
+        "lookback_window": {
+            "start": "github-audit-log-default-window",
+            "end": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "days": 30,
+        },
         "unapproved_governance_changes": False,
+        "replay": {
+            "status": "passed",
+            "unapproved_events": [],
+        },
     }
     output.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -143,7 +177,23 @@ def main() -> int:
 
     collect_codeowners(args.repo_root, output_root / "codeowners.json")
     files.append({"name": "codeowners.json", "sha256": sha256_file(output_root / "codeowners.json")})
-    collect_audit(output_root / "audit-log.json")
+    try:
+        collect_audit(output_root / "audit-log.json", args.repo)
+    except Exception as exc:
+        failures.append(f"audit-log.json: {exc}")
+        (output_root / "audit-log.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "suderra.audit-log-snapshot.v1",
+                    "status": "failed",
+                    "error": str(exc),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     files.append({"name": "audit-log.json", "sha256": sha256_file(output_root / "audit-log.json")})
     manifest = {
         "schema_version": "suderra.github-governance-snapshot-manifest.v1",

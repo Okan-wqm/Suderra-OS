@@ -21,6 +21,9 @@ import subprocess
 import sys
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence_contract  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "ci" / "build-matrix.yml"
@@ -435,6 +438,388 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
     return payload, errors
 
 
+def artifact_ref(binding: dict[str, Any], target: str, artifact: str) -> dict[str, Any] | None:
+    artifacts = binding.get("artifacts")
+    if not isinstance(artifacts, list):
+        return None
+    for item in artifacts:
+        if not isinstance(item, dict):
+            continue
+        if item.get("target") == target and item.get("artifact") == artifact:
+            return item
+    return None
+
+
+def relative_path(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    return path.as_posix()
+
+
+def file_measurement(input_root: Path | None, rel_path: str) -> dict[str, Any]:
+    measurement: dict[str, Any] = {"path": rel_path}
+    if input_root is None:
+        return measurement
+    path = input_root / rel_path
+    if path.is_file():
+        measurement["sha256"] = sha256_file(path)
+        measurement["bytes"] = path.stat().st_size
+    return measurement
+
+
+def artifact_measurement(ref: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(ref, dict):
+        return {}
+    measurement: dict[str, Any] = {}
+    rel_path = relative_path(ref.get("path"))
+    if rel_path is not None:
+        measurement["path"] = rel_path
+    if isinstance(ref.get("sha256"), str):
+        measurement["sha256"] = ref["sha256"]
+    if isinstance(ref.get("bytes"), int):
+        measurement["bytes"] = ref["bytes"]
+    return measurement
+
+
+def node_id_for(subject_id: str, role: str, path: str) -> str:
+    digest = sha256_bytes(f"{subject_id}|{role}|{path}".encode("utf-8"))[:24]
+    return f"evidence-node:{digest}"
+
+
+def append_evidence_node(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    *,
+    subject_id: str,
+    target: str,
+    role: str,
+    path: str,
+    schema_role: str,
+    schema_version: str,
+    required: bool,
+    measurement: dict[str, Any] | None = None,
+    producer: str = "ci/evidence-contract.yml",
+) -> str:
+    payload = {
+        "node_id": node_id_for(subject_id, role, path),
+        "subject_id": subject_id,
+        "target": target,
+        "role": role,
+        "path": path,
+        "schema_role": schema_role,
+        "schema_version": schema_version,
+        "required": bool(required),
+        "producer": producer,
+    }
+    if measurement:
+        for field in ("sha256", "bytes"):
+            if field in measurement:
+                payload[field] = measurement[field]
+    nodes.append(payload)
+    edges.append(
+        {
+            "from": subject_id,
+            "to": payload["node_id"],
+            "relationship": "requires" if required else "observes",
+            "role": role,
+        }
+    )
+    return str(payload["node_id"])
+
+
+def subject_graph_payload(
+    binding: dict[str, Any],
+    matrix: dict[str, Any],
+    *,
+    input_root: Path | None = None,
+) -> dict[str, Any]:
+    contract = evidence_contract.load_contract()
+    version = str(binding.get("version"))
+    profile = str(binding.get("profile"))
+    source_sha = str(binding.get("source_sha"))
+    source_run_id = str(binding.get("source_run_id"))
+    subjects: list[dict[str, Any]] = []
+    evidence_nodes: list[dict[str, Any]] = []
+    evidence_edges: list[dict[str, Any]] = []
+    scans = [str(item) for item in matrix.get("security_scans", []) if isinstance(item, str)]
+    for row in matrix.get("defconfigs", []):
+        if not isinstance(row, dict) or not isinstance(row.get("target"), str):
+            continue
+        target = str(row["target"])
+        policy = evidence_contract.target_policy(target, contract)
+        if not policy or not (policy.get("production_gate") or policy.get("release_public")):
+            continue
+        production_candidate = profile == "production-candidate"
+        raw_ref = artifact_ref(binding, target, str(row.get("artifact")))
+        compressed_ref = artifact_ref(binding, target, str(row.get("release_artifact")))
+        subject_id = evidence_contract.release_subject_id(
+            version=version,
+            target=target,
+            source_sha=source_sha,
+            source_run_id=source_run_id,
+            contract=contract,
+        )
+        required_evidence: list[str] = []
+        binding_path = f"release-inputs/{version}/{profile}.json"
+        required_evidence.append(
+            append_evidence_node(
+                evidence_nodes,
+                evidence_edges,
+                subject_id=subject_id,
+                target=target,
+                role="release-input-binding",
+                path=binding_path,
+                schema_role="binding_manifest",
+                schema_version=SCHEMA_VERSION,
+                required=True,
+                measurement=file_measurement(input_root, binding_path),
+                producer="prepare-release-inputs.py",
+            )
+        )
+        for role, artifact in (
+            ("raw-image", raw_ref),
+            ("compressed-release-artifact", compressed_ref),
+        ):
+            measurement = artifact_measurement(artifact)
+            rel_path = measurement.get("path")
+            if isinstance(rel_path, str):
+                required_evidence.append(
+                    append_evidence_node(
+                        evidence_nodes,
+                        evidence_edges,
+                        subject_id=subject_id,
+                        target=target,
+                        role=role,
+                        path=rel_path,
+                        schema_role="build_artifact",
+                        schema_version="sha256-digest",
+                        required=profile == "production-candidate",
+                        measurement=measurement,
+                        producer="ci/build-matrix.yml",
+                    )
+                )
+        for runtime_target in evidence_contract.runtime_suite_targets_for(target, contract):
+            runtime_path = f"release-runtime/{version}/{runtime_target}/production-runtime.json"
+            required_evidence.append(
+                append_evidence_node(
+                    evidence_nodes,
+                    evidence_edges,
+                    subject_id=subject_id,
+                    target=target,
+                    role="runtime-suite",
+                    path=runtime_path,
+                    schema_role="production_runtime_suite",
+                    schema_version=evidence_contract.schema_version("production_runtime_suite", contract),
+                    required=production_candidate and bool(policy.get("runtime_required")),
+                    measurement=file_measurement(input_root, runtime_path),
+                )
+            )
+        if policy.get("signing_required") is True:
+            signing_path = f"release-signing/{version}/{target}/signing-manifest.json"
+            required_evidence.append(
+                append_evidence_node(
+                    evidence_nodes,
+                    evidence_edges,
+                    subject_id=subject_id,
+                    target=target,
+                    role="signing-manifest",
+                    path=signing_path,
+                    schema_role="signing_manifest",
+                    schema_version=evidence_contract.schema_version("signing_manifest", contract),
+                    required=production_candidate,
+                    measurement=file_measurement(input_root, signing_path),
+                )
+            )
+        if policy.get("hardware_required") is True:
+            hardware_path = f"release-lab-input/{version}/{target}/hardware-subject.json"
+            required_evidence.append(
+                append_evidence_node(
+                    evidence_nodes,
+                    evidence_edges,
+                    subject_id=subject_id,
+                    target=target,
+                    role="hardware-subject",
+                    path=hardware_path,
+                    schema_role="hardware_subject",
+                    schema_version=evidence_contract.schema_version("hardware_subject", contract),
+                    required=production_candidate,
+                    measurement=file_measurement(input_root, hardware_path),
+                )
+            )
+            registry_path = f"release-governance/{version}/station-registry.json"
+            required_evidence.append(
+                append_evidence_node(
+                    evidence_nodes,
+                    evidence_edges,
+                    subject_id=subject_id,
+                    target=target,
+                    role="station-registry",
+                    path=registry_path,
+                    schema_role="lab_station_registry",
+                    schema_version="suderra.lab-station-registry.v1",
+                    required=production_candidate,
+                    measurement=file_measurement(input_root, registry_path),
+                )
+            )
+        if policy.get("release_image_scan_required") is True:
+            for scan in scans:
+                scan_path = f"release-security/{version}/{scan}.json"
+                required_evidence.append(
+                    append_evidence_node(
+                        evidence_nodes,
+                        evidence_edges,
+                        subject_id=subject_id,
+                        target=target,
+                        role="scanner-native-report",
+                        path=scan_path,
+                        schema_role="release_security_report",
+                        schema_version=evidence_contract.schema_version("release_security_report", contract),
+                        required=production_candidate,
+                        measurement=file_measurement(input_root, scan_path),
+                        )
+                    )
+        if policy.get("ota_capable") is True:
+            ota_path = f"release-ota/{version}/{target}/ota-artifacts.json"
+            required_evidence.append(
+                append_evidence_node(
+                    evidence_nodes,
+                    evidence_edges,
+                    subject_id=subject_id,
+                    target=target,
+                    role="ota-artifacts",
+                    path=ota_path,
+                    schema_role="ota_artifacts",
+                    schema_version=evidence_contract.schema_version("ota_artifacts", contract),
+                    required=production_candidate,
+                    measurement=file_measurement(input_root, ota_path),
+                )
+            )
+        if policy.get("production_gate") is True:
+            for role, rel_path, schema_role, schema_version in (
+                (
+                    "governance-role-bindings",
+                    f"release-governance/{version}/role-bindings.json",
+                    "governance_role_bindings",
+                    evidence_contract.schema_version("governance_role_bindings", contract),
+                ),
+                (
+                    "governance-snapshot",
+                    f"release-governance/{version}/governance-policy-validation.json",
+                    "github_governance_validation",
+                    "suderra.github-governance-validation.v2",
+                ),
+                (
+                    "reproducibility",
+                    f"release-reproducibility/{version}/{target}.json",
+                    "reproducibility",
+                    "suderra.reproducibility.v1",
+                ),
+            ):
+                required_evidence.append(
+                    append_evidence_node(
+                        evidence_nodes,
+                        evidence_edges,
+                        subject_id=subject_id,
+                        target=target,
+                        role=role,
+                        path=rel_path,
+                        schema_role=schema_role,
+                        schema_version=schema_version,
+                        required=production_candidate or role == "reproducibility",
+                        measurement=file_measurement(input_root, rel_path),
+                    )
+                )
+            if profile == "production-candidate":
+                retention_path = f"release-retention/{version}/retention-manifest.json"
+                required_evidence.append(
+                    append_evidence_node(
+                        evidence_nodes,
+                        evidence_edges,
+                        subject_id=subject_id,
+                        target=target,
+                        role="retention-manifest",
+                        path=retention_path,
+                        schema_role="retention_manifest",
+                        schema_version=evidence_contract.schema_version("retention_manifest", contract),
+                        required=True,
+                        measurement=file_measurement(input_root, retention_path),
+                    )
+                )
+        subject = {
+            "subject_id": subject_id,
+            "version": version,
+            "profile": profile,
+            "target": target,
+            "defconfig": row.get("name"),
+            "source_sha": source_sha,
+            "source_run_id": source_run_id,
+            "source_run_attempt": str(binding.get("source_run_attempt")),
+            "raw_image_sha256": raw_ref.get("sha256") if isinstance(raw_ref, dict) else None,
+            "raw_image_bytes": raw_ref.get("bytes") if isinstance(raw_ref, dict) else None,
+            "compressed_artifact_sha256": compressed_ref.get("sha256") if isinstance(compressed_ref, dict) else None,
+            "compressed_artifact_bytes": compressed_ref.get("bytes") if isinstance(compressed_ref, dict) else None,
+            "artifacts": {
+                "raw_image": {
+                    "name": row.get("artifact"),
+                    "sha256": raw_ref.get("sha256") if isinstance(raw_ref, dict) else None,
+                    "bytes": raw_ref.get("bytes") if isinstance(raw_ref, dict) else None,
+                },
+                "compressed_release_artifact": {
+                    "name": row.get("release_artifact"),
+                    "sha256": compressed_ref.get("sha256") if isinstance(compressed_ref, dict) else None,
+                    "bytes": compressed_ref.get("bytes") if isinstance(compressed_ref, dict) else None,
+                },
+            },
+            "target_policy": policy,
+            "runtime_suite_targets": evidence_contract.runtime_suite_targets_for(target, contract),
+            "required_evidence_nodes": sorted(required_evidence),
+        }
+        subjects.append(subject)
+    return {
+        "schema_version": evidence_contract.schema_version("release_subject_graph", contract),
+        "version": version,
+        "profile": profile,
+        "source_sha": source_sha,
+        "source_run_id": source_run_id,
+        "source_run_attempt": str(binding.get("source_run_attempt")),
+        "producer": {
+            "name": "prepare-release-inputs.py subject-graph",
+            "source": "ci/evidence-contract.yml",
+        },
+        "subjects": sorted(subjects, key=lambda item: str(item.get("target"))),
+        "evidence_nodes": sorted(evidence_nodes, key=lambda item: (str(item.get("target")), str(item.get("role")), str(item.get("path")))),
+        "evidence_edges": sorted(evidence_edges, key=lambda item: (str(item.get("from")), str(item.get("role")), str(item.get("to")))),
+        "required_paths": sorted(
+            {
+                str(item["path"])
+                for item in evidence_nodes
+                if item.get("required") is True and isinstance(item.get("path"), str)
+            }
+        ),
+        "retention_closure": {
+            "policy_id": evidence_contract.retention_policy(contract)["policy_id"],
+            "required_exports": evidence_contract.retention_required_exports(contract),
+        },
+    }
+
+
+def subject_graph_command(args: argparse.Namespace) -> int:
+    binding = read_json(args.binding_manifest)
+    if not isinstance(binding, dict):
+        print(f"ERROR: binding manifest must be a JSON object: {args.binding_manifest}", file=sys.stderr)
+        return 1
+    matrix_path = args.matrix if args.matrix.is_absolute() else ROOT / args.matrix
+    matrix, _matrix_module = load_matrix(matrix_path)
+    input_root = args.input_root if args.input_root is None or args.input_root.is_absolute() else ROOT / args.input_root
+    payload = subject_graph_payload(binding, matrix, input_root=input_root)
+    write_json(args.output, payload)
+    print(f"wrote release subject graph: {args.output}")
+    return 0
+
+
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -521,6 +906,10 @@ def init_command(args: argparse.Namespace) -> int:
     plan_args.require_artifacts = args.artifact_root is not None
     payload, errors = binding_payload(plan_args)
     write_json(binding_output, payload)
+    write_json(
+        args.output_root / "release-subject-graph" / args.version / "release-subject-graph.json",
+        subject_graph_payload(payload, matrix, input_root=args.output_root),
+    )
 
     for row in release_rows(matrix):
         target = str(row["target"])
@@ -637,6 +1026,13 @@ def main() -> int:
     add_common(init)
     init.add_argument("--output-root", type=Path, required=True)
     init.set_defaults(func=init_command)
+
+    subject_graph = subparsers.add_parser("subject-graph")
+    subject_graph.add_argument("--binding-manifest", type=Path, required=True)
+    subject_graph.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    subject_graph.add_argument("--input-root", type=Path)
+    subject_graph.add_argument("--output", type=Path, required=True)
+    subject_graph.set_defaults(func=subject_graph_command)
 
     args = parser.parse_args()
     return args.func(args)

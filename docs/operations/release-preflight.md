@@ -214,7 +214,7 @@ validation fails closed.
 
 The candidate bundle must include and the signed ingress manifest must digest:
 
-- `release-inputs/<version>/release-candidate.json`
+- `release-inputs/<version>/<profile>.json`
 - `release-ingress/<version>/ingress-manifest.json` plus `.sig` and `.cert`
 - `release-ingress/<version>/evidence-ingress-manifest.json` plus `.sig` and
   `.cert`
@@ -236,14 +236,19 @@ The candidate bundle must include and the signed ingress manifest must digest:
   `ci/evidence-contract.yml` marks the target as runtime-required
 - `release-signing/<version>/**/*.json` when the target policy requires
   production signing or OTA-capable artifacts
+- `release-ota/<version>/<ota-target>/ota-artifacts.json` when the target policy
+  marks the target as OTA-capable
+- `release-subject-graph/<version>/release-subject-graph.json`
 - `release-governance/<version>/audit-log.json`
 - `release-governance/<version>/station-registry.json`
 - `release-governance/<version>/governance-policy-validation.json`
 - `release-approvals/<version>/<target>.json` using
   `suderra.release-approval.v2`
-- `release-security/<version>/<scan>.json` plus the raw
-  `release-security/<version>/github-check-runs.json` byte stream referenced by
-  each report
+- `release-security/<version>/<scan>.json` plus retained raw scanner bytes. For
+  production-candidate, reports must be scanner-native v2 with scanner binary,
+  invocation, database archive, scanned subject, SBOM/VEX linkage, and replay
+  output. GitHub check-run summaries are governance signals, not production
+  scanner evidence.
 - `release-reproducibility/<version>/<target>.json`
 
 All evidence must reference the same source commit, Image Build run ID, Buildroot
@@ -276,13 +281,13 @@ build-log, performance, USB installer base, payload, and Image Build contract
 artifacts from one successful `Image Build` run, verifies their GitHub Artifact
 Attestations against `.github/workflows/image-build.yml` on `refs/heads/main`,
 downloads the immutable `Release Evidence Ingress` artifact for operator lab,
-approval, reproducibility, audit, and station-registry inputs, collects
-exact-commit GitHub check-run security evidence into
-`release-security/<version>/*.json`, and records the resulting input tree in
-signed `suderra.release-ingress.v1`. Source checkout copies of ignored evidence
-directories are not trusted. The tag workflow downloads the approved preflight
-artifact, verifies the ingress cosign identity, stages release-named files from
-`build-artifacts/`, signs, attests, and publishes those bytes. Before signing,
+approval, reproducibility, audit, station-registry, scanner-native,
+subject-graph, signing, OTA, hardware-subject, and retention inputs. It records
+the resulting input tree in signed `suderra.release-ingress.v1`. Source checkout
+copies of ignored evidence directories are not trusted. The tag workflow
+downloads the approved preflight artifact, verifies the ingress cosign identity,
+stages release-named files from `build-artifacts/`, signs, attests, and
+publishes those bytes. Before signing,
 `validate-release-artifact-binding.py` maps staged release files back to their
 preflight-bound source artifacts and compares SHA-256 digests:
 

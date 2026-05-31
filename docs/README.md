@@ -35,6 +35,7 @@ docs/
 - [kernel-hardening.md](security/kernel-hardening.md) — hangi CONFIG'ler açık/kapalı, neden
 - [sbom-process.md](security/sbom-process.md) — SBOM (CycloneDX) üretim akışı
 - [key-management.md](security/key-management.md) — anahtar lifecycle, HSM roadmap
+- [key-ceremony.md](security/key-ceremony.md) — production HSM ceremony, delegation, rotation, compromise drill
 - [cve-process.md](security/cve-process.md) — CVE takip + patch politikası
 - [cvd-policy.md](security/cvd-policy.md) — Coordinated Vulnerability Disclosure (ISO 29147)
 - [incident-response.md](security/incident-response.md) — Incident response runbook (CRA Art 14)
@@ -45,11 +46,14 @@ docs/
 ### Operasyon
 
 - [Enterprise Grade Gap Closure Plan](assessments/2026-05-20-enterprise-grade-gap-closure-plan.md) — tarihli source-of-truth production backlog
+- [Assessment Index](assessments/INDEX.md) — assessment durumları ve supersede/archive takibi
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
+- [operator-lifecycle.md](operations/operator-lifecycle.md) — freeze, ingress, preflight, signing, publish, abort ve retention RACI
+- [evidence-retention.md](operations/evidence-retention.md) — contract-governed immutable evidence retention ve restore/replay testleri
 - [release-lifecycle.md](operations/release-lifecycle.md) — alpha ve production release kapıları
-- [release-evidence.md](operations/release-evidence.md) — release evidence v3, governance, QEMU ve lab input sözleşmeleri
+- [release-evidence.md](operations/release-evidence.md) — SSOT release evidence contract, subject graph, governance, QEMU ve lab input akışı
 - [release-preflight.md](operations/release-preflight.md) — source/run/artifact binding ile release-candidate preflight
 - [ci-log-and-warning-triage.md](operations/ci-log-and-warning-triage.md) — build warning/SARIF governance
 - [ota.md](operations/ota.md) — RAUC bundle oluştur, sun, rollback
@@ -105,3 +109,18 @@ docs/
 | ota.md | Skeleton — Faz 4'te dolacak |
 | iec-62443-mapping.md | Skeleton — Faz 6'da dolacak |
 | cra-readiness.md | Skeleton — Faz 6'da dolacak |
+
+## Enterprise SSOT
+
+Production evidence policy is not duplicated in docs. Operators must treat these
+files as authoritative:
+
+- `ci/build-matrix.yml`: build target and artifact catalog.
+- `ci/evidence-contract.yml`: subject graph, evidence, signing, runtime, OTA,
+  hardware, and retention contract.
+- `ci/github-governance-policy.yml`: branch protection, checks, release
+  environments, reviewer roles, and drift governance.
+
+Schema versions, retention years, replay names, signing roles, required checks,
+and promotion gates must be generated from the SSOT CLIs or kept inside explicit
+generated blocks. Narrative docs may describe procedures, not redefine policy.

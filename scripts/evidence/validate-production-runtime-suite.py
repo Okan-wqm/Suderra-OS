@@ -23,6 +23,7 @@ LEGACY_SCHEMA_VERSIONS = {"suderra.qemu-production-runtime-suite.v1"}
 V2_REQUIRED_PROFILES = {"production-candidate", "production-runtime"}
 REQUIRED_SCENARIOS = tuple(evidence_contract.runtime_required_scenarios(EVIDENCE_CONTRACT))
 SCENARIO_CONTRACTS = evidence_contract.runtime_scenario_contracts(EVIDENCE_CONTRACT)
+OBSERVATION_AUTHORITY = EVIDENCE_CONTRACT["runtime"]["observation_authority"]
 SCENARIO_STATUSES = {"passed", "failed", "infra-error", "timeout"}
 EXPECTED_OUTCOMES = {
     "booted",
@@ -51,10 +52,11 @@ OUTCOME_PREFIXES = (
 )
 OBSERVATION_SOURCE_ROLES = {
     "guest-semantic": "guest-semantic",
-    "harness-error": "qmp-events",
-    "qemu-exit": "qmp-events",
-    "serial-heuristic": "serial",
+    "kernel-verity-event": "serial",
+    "qmp-events": "qmp-events",
     "serial-marker": "serial",
+    "secure-boot-event": "qmp-events",
+    "suderra-ota-event": "guest-semantic",
 }
 
 
@@ -189,6 +191,10 @@ def qmp_quit_ack_observed(events: Any) -> bool:
 
 
 def validate_top_level_v2(errors: list[str], payload: dict[str, Any]) -> None:
+    for field in ("source_run_id", "source_run_attempt", "subject_id", "defconfig", "raw_image_sha256", "compressed_artifact_sha256", "release_artifact"):
+        check_string(errors, f"$.{field}", payload.get(field))
+    for field in ("raw_image_sha256", "compressed_artifact_sha256"):
+        check_sha256(errors, f"$.{field}", payload.get(field))
     check_string(errors, "$.qemu_version", payload.get("qemu_version"))
     check_string_list(errors, "$.qemu_argv", payload.get("qemu_argv"))
     if isinstance(payload.get("qemu_argv"), list):
@@ -301,6 +307,9 @@ def validate_observation_v2(
     if isinstance(expected_layer, str) and observation.get("observed_layer") != expected_layer:
         error(errors, f"{scenario_path}.observation.observed_layer", f"must be {expected_layer}")
     observation_source = observation.get("source")
+    forbidden_sources = set(OBSERVATION_AUTHORITY.get("forbidden_sources", []))
+    if isinstance(observation_source, str) and observation_source in forbidden_sources:
+        error(errors, f"{scenario_path}.observation.source", "must not derive observed_outcome from expected outcome")
     source_role = OBSERVATION_SOURCE_ROLES.get(observation_source) if isinstance(observation_source, str) else None
     allowed_sources = scenario_contract.get("observation_source", [])
     if isinstance(observation_source, str) and source_role is None:
@@ -420,7 +429,13 @@ def validate(
     expected_version: str | None = None,
     expected_target: str | None = None,
     expected_source_sha: str | None = None,
+    expected_source_run_id: str | None = None,
+    expected_source_run_attempt: str | None = None,
+    expected_defconfig: str | None = None,
     expected_artifact_sha256: str | None = None,
+    expected_raw_image_sha256: str | None = None,
+    expected_compressed_artifact_sha256: str | None = None,
+    expected_release_artifact: str | None = None,
     profile: str = "release-candidate",
 ) -> list[str]:
     root = path.parent
@@ -457,6 +472,29 @@ def validate(
         error(errors, "$.image_sha256", f"must match expected artifact sha256 {expected_artifact_sha256}")
     if is_v2:
         validate_top_level_v2(errors, payload)
+        source_run_id = payload.get("source_run_id")
+        if expected_source_run_id is not None and str(source_run_id) != str(expected_source_run_id):
+            error(errors, "$.source_run_id", f"must match expected source run {expected_source_run_id}")
+        if expected_source_run_attempt is not None and str(payload.get("source_run_attempt")) != str(expected_source_run_attempt):
+            error(errors, "$.source_run_attempt", f"must match expected source run attempt {expected_source_run_attempt}")
+        if expected_defconfig is not None and payload.get("defconfig") != expected_defconfig:
+            error(errors, "$.defconfig", f"must match expected defconfig {expected_defconfig}")
+        if expected_raw_image_sha256 is not None and payload.get("raw_image_sha256") != expected_raw_image_sha256:
+            error(errors, "$.raw_image_sha256", f"must match expected raw image sha256 {expected_raw_image_sha256}")
+        if expected_compressed_artifact_sha256 is not None and payload.get("compressed_artifact_sha256") != expected_compressed_artifact_sha256:
+            error(errors, "$.compressed_artifact_sha256", f"must match expected compressed artifact sha256 {expected_compressed_artifact_sha256}")
+        if expected_release_artifact is not None and payload.get("release_artifact") != expected_release_artifact:
+            error(errors, "$.release_artifact", f"must match expected release artifact {expected_release_artifact}")
+        if isinstance(source_sha, str) and isinstance(source_run_id, str) and isinstance(payload.get("target"), str) and isinstance(payload.get("version"), str):
+            expected_subject = evidence_contract.release_subject_id(
+                version=str(payload["version"]),
+                target=str(payload["target"]),
+                source_sha=source_sha,
+                source_run_id=source_run_id,
+                contract=EVIDENCE_CONTRACT,
+            )
+            if payload.get("subject_id") != expected_subject:
+                error(errors, "$.subject_id", "must match the canonical release subject id")
 
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list) or not scenarios:
@@ -484,7 +522,15 @@ def validate(
                 f"{scenario_path}.expected_outcome",
                 f"must be one of: {', '.join(sorted(EXPECTED_OUTCOMES))}",
             )
-        if scenario.get("observed_outcome") != scenario.get("expected_outcome"):
+        if is_v2:
+            check_string(errors, f"{scenario_path}.observed_outcome", scenario.get("observed_outcome"))
+            if require_pass and scenario.get("observed_outcome") != scenario.get("expected_outcome"):
+                error(
+                    errors,
+                    f"{scenario_path}.observed_outcome",
+                    "passed scenario must match expected_outcome after typed observation and raw replay",
+                )
+        elif scenario.get("observed_outcome") != scenario.get("expected_outcome"):
             error(errors, f"{scenario_path}.observed_outcome", "must match expected_outcome")
         for field in ("command", "started_at", "completed_at", "termination_class", "failure_class"):
             check_string(errors, f"{scenario_path}.{field}", scenario.get(field))
@@ -559,7 +605,13 @@ def main() -> int:
     parser.add_argument("--expected-version")
     parser.add_argument("--expected-target")
     parser.add_argument("--expected-source-sha")
+    parser.add_argument("--expected-source-run-id")
+    parser.add_argument("--expected-source-run-attempt")
+    parser.add_argument("--expected-defconfig")
     parser.add_argument("--expected-artifact-sha256")
+    parser.add_argument("--expected-raw-image-sha256")
+    parser.add_argument("--expected-compressed-artifact-sha256")
+    parser.add_argument("--expected-release-artifact")
     parser.add_argument(
         "--profile",
         choices=("technical-dry-run", "release-candidate", "production-candidate", "production-runtime"),
@@ -573,7 +625,13 @@ def main() -> int:
         expected_version=args.expected_version,
         expected_target=args.expected_target,
         expected_source_sha=args.expected_source_sha,
+        expected_source_run_id=args.expected_source_run_id,
+        expected_source_run_attempt=args.expected_source_run_attempt,
+        expected_defconfig=args.expected_defconfig,
         expected_artifact_sha256=args.expected_artifact_sha256,
+        expected_raw_image_sha256=args.expected_raw_image_sha256,
+        expected_compressed_artifact_sha256=args.expected_compressed_artifact_sha256,
+        expected_release_artifact=args.expected_release_artifact,
         profile=args.profile,
     )
     if errors:

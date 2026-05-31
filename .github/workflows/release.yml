@@ -116,7 +116,6 @@ jobs:
       - name: Collect GitHub governance snapshots
         env:
           GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
-          SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ needs.validate.outputs.version }}/audit-log.json
         run: |
           set -euo pipefail
           python3 scripts/evidence/collect-governance.py \
@@ -131,6 +130,64 @@ jobs:
             --policy ci/github-governance-policy.yml \
             --snapshot-root "release-governance/${{ needs.validate.outputs.version }}" \
             --output "release-governance/${{ needs.validate.outputs.version }}/governance-policy-validation.json"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+        with:
+          cosign-release: 'v2.4.1'
+      - name: Require latest passing governance drift evidence
+        env:
+          GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/governance-drift.yml/runs?status=success&branch=main&per_page=20" \
+            > governance-drift-runs.json
+          python3 - <<'PY' > governance-drift-run-id.txt
+          import json
+          from datetime import datetime, timezone, timedelta
+          from pathlib import Path
+
+          policy = json.loads(Path("ci/github-governance-policy.yml").read_text(encoding="utf-8"))
+          payload = json.loads(Path("governance-drift-runs.json").read_text(encoding="utf-8"))
+          runs = payload.get("workflow_runs") if isinstance(payload, dict) else []
+          max_age = timedelta(days=int(policy.get("audit_log_lookback_days", 30)))
+          now = datetime.now(timezone.utc)
+          for run in runs:
+              if not isinstance(run, dict) or run.get("conclusion") != "success":
+                  continue
+              created = run.get("created_at")
+              try:
+                  created_at = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+              except ValueError:
+                  continue
+              if now - created_at <= max_age:
+                  print(run["id"])
+                  raise SystemExit(0)
+          raise SystemExit("no fresh successful governance drift run found")
+          PY
+          drift_run_id="$(cat governance-drift-run-id.txt)"
+          gh run download "${drift_run_id}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "governance-drift-${drift_run_id}" \
+            --dir "release-governance/${VERSION}/drift"
+          cosign verify-blob \
+            --certificate "release-governance/${VERSION}/drift/governance-policy-validation.json.cert" \
+            --signature "release-governance/${VERSION}/drift/governance-policy-validation.json.sig" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/governance-drift.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "release-governance/${VERSION}/drift/governance-policy-validation.json"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("release-governance") / "${{ needs.validate.outputs.version }}" / "drift" / "governance-policy-validation.json"
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          if payload.get("schema_version") != "suderra.github-governance-validation.v2":
+              raise SystemExit("governance drift evidence schema mismatch")
+          if payload.get("status") != "passed":
+              raise SystemExit("governance drift evidence did not pass")
+          PY
       - name: Upload governance evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -243,6 +300,7 @@ jobs:
           path: |
             release-governance/${{ needs.validate.outputs.version }}/audit-log.json
             release-governance/${{ needs.validate.outputs.version }}/station-registry.json
+            release-governance/${{ needs.validate.outputs.version }}/role-bindings.json
           retention-days: 30
           if-no-files-found: error
       - name: Upload release input bundle for tag workflow
@@ -257,6 +315,9 @@ jobs:
             release-governance/
             release-runtime/
             release-signing/
+            release-retention/
+            release-ota/
+            release-subject-graph/
             release-approvals/
             release-security/
             release-reproducibility/
@@ -569,6 +630,9 @@ jobs:
             release-governance/
             release-runtime/
             release-signing/
+            release-retention/
+            release-ota/
+            release-subject-graph/
             release-approvals/
             release-security/
             release-reproducibility/
@@ -750,7 +814,8 @@ jobs:
               python3 scripts/evidence/release-evidence.py validate "${evidence}" \
                 --release-tier "${tier}" \
                 --require-pass \
-                --check-files
+                --check-files \
+                --validate-subject-graph
             done
 
       - name: Package final release evidence archive

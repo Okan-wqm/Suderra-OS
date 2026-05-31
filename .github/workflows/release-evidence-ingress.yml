@@ -240,6 +240,9 @@ jobs:
             release-governance/
             release-runtime/
             release-signing/
+            release-retention/
+            release-ota/
+            release-security/
             release-approvals/
             release-reproducibility/
             release-ingress/${{ inputs.version }}/evidence-ingress-manifest.json

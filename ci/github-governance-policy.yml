@@ -52,6 +52,30 @@
       "security-owner"
     ]
   },
+  "role_binding_manifest": {
+    "schema_version": "suderra.governance-role-bindings.v1",
+    "path_template": "release-governance/{version}/role-bindings.json",
+    "required_roles": [
+      "release-owner",
+      "security-owner"
+    ],
+    "identity_source": "github-user-or-team",
+    "role_names_are_not_identities": true,
+    "required_identity_fields": [
+      "github_subject",
+      "subject_type",
+      "github_node_id",
+      "source_snapshot_sha256",
+      "permission_snapshot_sha256",
+      "environment_reviewer_binding_sha256",
+      "effective_permission"
+    ]
+  },
+  "drift_monitoring": {
+    "scheduled_check_required": true,
+    "signed_evidence_path": "release-governance/{version}/governance-policy-validation.json",
+    "release_independent": true
+  },
   "required_codeowners_patterns": [
     ".github/workflows/*.yml",
     ".github/CODEOWNERS",

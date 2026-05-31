@@ -3,8 +3,8 @@
   "known_upstream": {
     "owner": "build-platform",
     "expires_at": "2026-11-17T00:00:00Z",
-    "evidence_run_id": "26181114482",
-    "evidence_commit": "c445bfaacc4df5373b76b31e7b8e4937d3dfc1c8",
+    "evidence_run_id": "26714427801",
+    "evidence_commit": "ede3db96bbefc93459b764293109670b0b0b765e",
     "rationale": "Buildroot/toolchain warning fingerprints are allowlisted only after triage against CI build logs; canonical fingerprints intentionally remove output paths and Buildroot package versions while keeping package and warning bodies stable. Expiry forces periodic review.",
     "allowed_fingerprints": [
       "busybox: .config: warning: trying to assign nonexistent symbol ASH_SLEEP",
@@ -62,6 +62,7 @@
       "grub2: configure: WARNING: using cross tools not prefixed with host triplet",
       "grub2: grub-core/lib/libgcrypt-grub/mpi/mpi-internal.h: warning: variable '_ql' set but not used [-Wunused-but-set-variable]",
       "grub2: grub-core/lib/libgcrypt-grub/mpi/mpih-div.c: warning: variable 'dummy' set but not used [-Wunused-but-set-variable]",
+      "grub2: ld: warning: x86_64-buildroot-linux-gnu-gcc links linux16.module from loader/i386/pc/linux16_module-linux.o",
       "grub2: grub-core/script/parser.y: warning: deprecated directive: '%pure-parser', use '%define api.pure' [-Wdeprecated]",
       "host-acl: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-doc, --disable-docs, --disable-documentation, --with-xmlto, --with-fop",
       "host-attr: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-doc, --disable-docs, --disable-documentation, --with-xmlto, --with-fop",

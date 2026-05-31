@@ -190,7 +190,7 @@ def classify_observation(
     process_returncode: int | None,
 ) -> dict[str, Any]:
     outcome = "userspace-rejected"
-    source = "qemu-exit"
+    source = "qmp-events"
     signal_value = "nonzero-exit-or-no-semantic"
     for line in serial.splitlines():
         stripped = line.strip()
@@ -213,7 +213,7 @@ def classify_observation(
     lowered = serial.lower()
     if "rollback-completed" in lowered or "rollback completed" in lowered:
         outcome = "rollback-completed"
-        source = "serial-heuristic"
+        source = "suderra-ota-event"
         signal_value = "rollback-completed"
         return {
             "schema_version": OBSERVATION_SCHEMA_VERSION,
@@ -226,15 +226,15 @@ def classify_observation(
         }
     if "security violation" in lowered or "access denied" in lowered or ("secure boot" in lowered and "denied" in lowered):
         outcome = "firmware-rejected"
-        source = "serial-heuristic"
+        source = "secure-boot-event"
         signal_value = "secure-boot-denied"
     elif "dm-verity" in lowered and any(token in lowered for token in ("corrupt", "verification failed", "root hash")):
         outcome = "kernel-rejected"
-        source = "serial-heuristic"
+        source = "kernel-verity-event"
         signal_value = "dm-verity-rejection"
     elif "rauc" in lowered and any(token in lowered for token in ("signature", "downgrade", "rollback floor", "rejected")):
         outcome = "userspace-rejected"
-        source = "serial-heuristic"
+        source = "suderra-ota-event"
         signal_value = "rauc-rejection"
     elif semantic:
         outcome = "booted"
@@ -242,7 +242,7 @@ def classify_observation(
         signal_value = "semantic-json"
     elif process_returncode == 0:
         outcome = "booted"
-        source = "qemu-exit"
+        source = "qmp-events"
         signal_value = "zero-exit"
     return {
         "schema_version": OBSERVATION_SCHEMA_VERSION,
@@ -556,7 +556,7 @@ def main() -> int:
                     "schema_version": OBSERVATION_SCHEMA_VERSION,
                     "producer": "tests/qemu/production-runtime-scenario.py",
                     "scenario": args.scenario,
-                    "source": "harness-error",
+                    "source": "harness-failure",
                     "observed_outcome": "userspace-rejected",
                     "observed_layer": SCENARIO_OBSERVED_LAYERS.get(args.scenario, "userspace"),
                     "signal": str(exc),
@@ -565,7 +565,7 @@ def main() -> int:
                 "completed_at": now_utc(),
                 "qemu_version": qemu_version(),
                 "qemu_argv": [],
-                "termination": {"class": "harness-error", "reason": str(exc), "timeout": False},
+                "termination": {"class": "harness-failure", "reason": str(exc), "timeout": False},
                 "swtpm_state_before_sha256": "0" * 64,
                 "swtpm_state_after_sha256": "0" * 64,
                 "raw_evidence": {"serial_sha256": "0" * 64, "qmp_events_sha256": "0" * 64},

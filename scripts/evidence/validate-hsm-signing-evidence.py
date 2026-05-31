@@ -11,7 +11,9 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,12 +57,188 @@ def parse_utc(value: Any) -> datetime | None:
         return None
 
 
+def safe_relative_path(value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    rel = Path(value)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    return rel
+
+
+def resolve_ref(base: Path, value: Any) -> Path | None:
+    rel = safe_relative_path(value)
+    if rel is None:
+        return None
+    return base / rel
+
+
+def require_digest_bound_file(
+    failures: list[str],
+    *,
+    base: Path,
+    field_path: str,
+    value: Any,
+    expected_sha256: Any,
+    expected_bytes: Any | None = None,
+) -> Path | None:
+    path = resolve_ref(base, value)
+    if path is None:
+        failures.append(f"{field_path} must be a safe relative path")
+        return None
+    if not path.is_file() or path.stat().st_size <= 0:
+        failures.append(f"{field_path} is missing or empty: {path}")
+        return path
+    if not isinstance(expected_sha256, str) or not SHA256_RE.fullmatch(expected_sha256) or expected_sha256 == "0" * 64:
+        failures.append(f"{field_path}_sha256 must be a non-zero sha256")
+    elif sha256_file(path) != expected_sha256:
+        failures.append(f"{field_path}_sha256 must match referenced file")
+    if expected_bytes is not None:
+        if not isinstance(expected_bytes, int) or expected_bytes <= 0:
+            failures.append(f"{field_path}_bytes must be positive")
+        elif path.stat().st_size != expected_bytes:
+            failures.append(f"{field_path}_bytes must match referenced file")
+    return path
+
+
+def extract_certificate_public_key(certificate: Path) -> tuple[Path | None, str | None]:
+    with tempfile.NamedTemporaryFile(prefix="suderra-hsm-cert-pubkey-", suffix=".pem", delete=False) as handle:
+        pubkey = Path(handle.name)
+    result = subprocess.run(
+        ["openssl", "x509", "-in", str(certificate), "-pubkey", "-noout"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=False,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        pubkey.unlink(missing_ok=True)
+        return None, result.stderr.decode("utf-8", errors="replace").strip() or "cannot extract certificate public key"
+    pubkey.write_bytes(result.stdout)
+    return pubkey, None
+
+
+def verify_signature(public_key: Path, data: Path, signature: Path, algorithm: str) -> str | None:
+    lowered = algorithm.lower()
+    if "ed25519" in lowered or "raw" in lowered:
+        command = [
+            "openssl",
+            "pkeyutl",
+            "-verify",
+            "-rawin",
+            "-pubin",
+            "-inkey",
+            str(public_key),
+            "-sigfile",
+            str(signature),
+            "-in",
+            str(data),
+        ]
+    else:
+        command = [
+            "openssl",
+            "dgst",
+            "-sha256",
+            "-verify",
+            str(public_key),
+            "-signature",
+            str(signature),
+            str(data),
+        ]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    if result.returncode != 0:
+        return result.stderr.strip() or result.stdout.strip() or "signature verification failed"
+    return None
+
+
+def validate_crypto_replay(
+    payload: dict[str, Any],
+    *,
+    evidence_path: Path,
+    certificate: Path,
+    failures: list[str],
+) -> None:
+    base = evidence_path.parent
+    pubkey, error = extract_certificate_public_key(certificate)
+    if pubkey is None:
+        failures.append(f"certificate public key replay failed: {error}")
+        return
+    try:
+        challenge = payload.get("challenge")
+        if not isinstance(challenge, dict):
+            return
+        request = require_digest_bound_file(
+            failures,
+            base=base,
+            field_path="challenge.request_path",
+            value=challenge.get("request_path"),
+            expected_sha256=challenge.get("request_sha256"),
+        )
+        signature = require_digest_bound_file(
+            failures,
+            base=base,
+            field_path="challenge.signature_path",
+            value=challenge.get("signature_path"),
+            expected_sha256=challenge.get("signature_sha256"),
+        )
+        transcript = require_digest_bound_file(
+            failures,
+            base=base,
+            field_path="challenge.transcript_path",
+            value=challenge.get("transcript_path"),
+            expected_sha256=challenge.get("transcript_sha256"),
+        )
+        algorithm = str(challenge.get("algorithm", "openssl-dgst-sha256"))
+        if request is not None and signature is not None and request.is_file() and signature.is_file():
+            verify_error = verify_signature(pubkey, request, signature, algorithm)
+            if verify_error is not None:
+                failures.append(f"challenge signature replay failed: {verify_error}")
+        if transcript is not None and transcript.is_file() and isinstance(challenge.get("transcript_sha256"), str):
+            audit = payload.get("audit") if isinstance(payload.get("audit"), dict) else {}
+            if audit.get("transcript_sha256") != challenge.get("transcript_sha256"):
+                failures.append("audit.transcript_sha256 must match challenge transcript replay")
+        artifacts = payload.get("artifacts")
+        if isinstance(artifacts, list):
+            for idx, artifact in enumerate(artifacts):
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_path = require_digest_bound_file(
+                    failures,
+                    base=base,
+                    field_path=f"artifacts[{idx}].path",
+                    value=artifact.get("path"),
+                    expected_sha256=artifact.get("sha256"),
+                    expected_bytes=artifact.get("bytes"),
+                )
+                signature_path = require_digest_bound_file(
+                    failures,
+                    base=base,
+                    field_path=f"artifacts[{idx}].signature_path",
+                    value=artifact.get("signature_path"),
+                    expected_sha256=artifact.get("signature_sha256") or artifact.get("artifact_signature_sha256"),
+                )
+                artifact_algorithm = str(artifact.get("signature_algorithm", algorithm))
+                if (
+                    artifact_path is not None
+                    and signature_path is not None
+                    and artifact_path.is_file()
+                    and signature_path.is_file()
+                ):
+                    verify_error = verify_signature(pubkey, artifact_path, signature_path, artifact_algorithm)
+                    if verify_error is not None:
+                        failures.append(f"artifacts[{idx}] signature replay failed: {verify_error}")
+    finally:
+        pubkey.unlink(missing_ok=True)
+
+
 def validate(
     payload: dict[str, Any],
     *,
+    evidence_path: Path,
     pkcs11_uri: str,
     certificate: Path,
     require_production: bool,
+    replay_crypto: bool = False,
     artifact_role: str | None = None,
     artifact_sha256: str | None = None,
 ) -> list[str]:
@@ -167,6 +345,10 @@ def validate(
                         failures.append(f"challenge.{field} must be a non-zero sha256")
                 elif is_placeholder(value):
                     failures.append(f"challenge.{field} must be non-placeholder")
+            if require_production:
+                for field in ("request_path", "signature_path", "transcript_path"):
+                    if safe_relative_path(challenge.get(field)) is None:
+                        failures.append(f"challenge.{field} must be a safe relative path for production replay")
         artifacts = payload.get("artifacts")
         if not isinstance(artifacts, list) or not artifacts:
             failures.append("artifacts must be a non-empty list")
@@ -195,12 +377,21 @@ def validate(
                         failures.append(f"artifacts[{idx}].{field} must be non-placeholder")
                 if not isinstance(artifact.get("bytes"), int) or artifact.get("bytes", 0) <= 0:
                     failures.append(f"artifacts[{idx}].bytes must be positive")
+                if require_production:
+                    for field in ("path", "signature_path"):
+                        if safe_relative_path(artifact.get(field)) is None:
+                            failures.append(f"artifacts[{idx}].{field} must be a safe relative path for production replay")
+                    sig_sha = artifact.get("signature_sha256") or artifact.get("artifact_signature_sha256")
+                    if not isinstance(sig_sha, str) or not SHA256_RE.fullmatch(sig_sha) or sig_sha == "0" * 64:
+                        failures.append(f"artifacts[{idx}].signature_sha256 must be a non-zero sha256")
             if artifact_role is not None and not matching_role:
                 failures.append(f"artifacts must include requested role {artifact_role}")
             if artifact_sha256 is not None and not matching_sha:
                 failures.append("artifacts must include requested artifact sha256")
             if artifact_role is not None and artifact_sha256 is not None and not matching_artifact:
                 failures.append("artifacts must bind requested role to requested artifact sha256 in the same record")
+    if (require_production or replay_crypto) and not failures:
+        validate_crypto_replay(payload, evidence_path=evidence_path, certificate=certificate, failures=failures)
     return failures
 
 
@@ -215,9 +406,11 @@ def validate_command(args: argparse.Namespace) -> int:
         return 1
     failures = validate(
         payload,
+        evidence_path=args.evidence,
         pkcs11_uri=args.pkcs11_uri,
         certificate=args.certificate,
         require_production=args.require_production,
+        replay_crypto=args.replay_crypto,
         artifact_role=args.artifact_role,
         artifact_sha256=args.artifact_sha256,
     )
@@ -237,6 +430,7 @@ def main() -> int:
     validate_parser.add_argument("--pkcs11-uri", required=True)
     validate_parser.add_argument("--certificate", type=Path, required=True)
     validate_parser.add_argument("--require-production", action="store_true")
+    validate_parser.add_argument("--replay-crypto", action="store_true")
     validate_parser.add_argument("--artifact-role")
     validate_parser.add_argument("--artifact-sha256")
     validate_parser.set_defaults(func=validate_command)

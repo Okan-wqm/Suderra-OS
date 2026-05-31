@@ -282,7 +282,6 @@ jobs:
         if: ${{ inputs.profile != 'technical-dry-run' }}
         env:
           GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
-          SUDERRA_GOVERNANCE_AUDIT_LOG: release-governance/${{ inputs.version }}/audit-log.json
         run: |
           set -euo pipefail
           python3 scripts/evidence/collect-governance.py \
@@ -301,16 +300,158 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p "release-security/${VERSION}"
+          mkdir -p "release-security/${VERSION}" "release-governance/${VERSION}"
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/commits/${SOURCE_SHA}/check-runs?per_page=100" \
-            > "release-security/${VERSION}/github-check-runs.json"
-          python3 scripts/evidence/collect-ci-check-evidence.py \
+            > "release-governance/${VERSION}/github-check-runs.json"
+          if [ "${PROFILE}" != "production-candidate" ]; then
+            python3 scripts/evidence/collect-ci-check-evidence.py \
+              --version "${VERSION}" \
+              --source-sha "${SOURCE_SHA}" \
+              --source-run-id "${SOURCE_RUN_ID}" \
+              --checks-json "release-governance/${VERSION}/github-check-runs.json" \
+              --output-root release-security
+          fi
+
+      - name: Generate release subject graph
+        if: ${{ inputs.profile != 'technical-dry-run' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "release-subject-graph/${VERSION}"
+          python3 scripts/evidence/prepare-release-inputs.py subject-graph \
+            --binding-manifest "release-inputs/${VERSION}/${PROFILE}.json" \
+            --input-root . \
+            --output "release-subject-graph/${VERSION}/release-subject-graph.json"
+
+      - name: Create scanner-native security evidence
+        if: ${{ inputs.profile == 'production-candidate' }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          version = "${{ inputs.version }}"
+          source_sha = "${{ inputs.source_sha }}"
+          source_run_id = "${{ inputs.source_run_id }}"
+          source_run_attempt = "${{ steps.source.outputs.run_attempt }}"
+          graph = Path("release-subject-graph") / version / "release-subject-graph.json"
+          matrix = json.loads(
+              subprocess.check_output(
+                  [
+                      sys.executable,
+                      "-c",
+                      "import importlib.util,json,pathlib; "
+                      "p=pathlib.Path('scripts/ci/validate-build-matrix.py'); "
+                      "s=importlib.util.spec_from_file_location('m', p); "
+                      "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+                      "print(json.dumps(m.load_matrix(pathlib.Path('ci/build-matrix.yml'))))",
+                  ],
+                  text=True,
+              )
+          )
+          raw_root = Path("release-security")
+          raw_dir = raw_root / version / "raw"
+          for scan in matrix.get("security_scans", []):
+              report = raw_root / version / f"{scan}.json"
+              if report.is_file():
+                  continue
+              raw = raw_dir / f"{scan}.json"
+              meta_path = raw_dir / f"{scan}.metadata.json"
+              if not raw.is_file() or not meta_path.is_file():
+                  raise SystemExit(f"production-candidate scanner-native producer requires raw JSON and metadata for {scan}")
+              meta = json.loads(meta_path.read_text(encoding="utf-8"))
+              with tempfile.TemporaryDirectory() as tmp:
+                  tmp = Path(tmp)
+                  argv_path = tmp / "argv.json"
+                  env_path = tmp / "env.json"
+                  argv_path.write_text(json.dumps(meta["argv"], sort_keys=True), encoding="utf-8")
+                  env_path.write_text(json.dumps(meta.get("env", {}), sort_keys=True), encoding="utf-8")
+                  command = [
+                      sys.executable,
+                      "scripts/evidence/collect-scanner-native-evidence.py",
+                      "create",
+                      "--version",
+                      version,
+                      "--source-sha",
+                      source_sha,
+                      "--source-run-id",
+                      source_run_id,
+                      "--source-run-attempt",
+                      source_run_attempt,
+                      "--scan",
+                      str(scan),
+                      "--tool",
+                      str(meta["tool"]),
+                      "--tool-version",
+                      str(meta["tool_version"]),
+                      "--raw-json",
+                      str(raw),
+                      "--raw-path",
+                      f"{version}/raw/{scan}.json",
+                      "--raw-root",
+                      str(raw_root),
+                      "--scanner-binary-sha256",
+                      str(meta["scanner_binary_sha256"]),
+                      "--scanner-db-type",
+                      str(meta["scanner_db_type"]),
+                      "--scanner-db-version",
+                      str(meta["scanner_db_version"]),
+                      "--scanner-db-created-at",
+                      str(meta["scanner_db_created_at"]),
+                      "--scanner-db-digest",
+                      str(meta["scanner_db_digest"]),
+                      "--subject-id",
+                      str(meta["subject_id"]),
+                      "--subject-name",
+                      str(meta["subject_name"]),
+                      "--subject-role",
+                      str(meta["subject_role"]),
+                      "--subject-path",
+                      str(meta["subject_path"]),
+                      "--subject-sha256",
+                      str(meta["subject_sha256"]),
+                      "--subject-bytes",
+                      str(meta["subject_bytes"]),
+                      "--scan-mode",
+                      str(meta["scan_mode"]),
+                      "--argv-json",
+                      str(argv_path),
+                      "--env-json",
+                      str(env_path),
+                      "--subject-graph",
+                      str(graph),
+                      "--sbom-path",
+                      str(meta["sbom_path"]),
+                      "--sbom-sha256",
+                      str(meta["sbom_sha256"]),
+                      "--vex-path",
+                      str(meta["vex_path"]),
+                      "--vex-sha256",
+                      str(meta["vex_sha256"]),
+                      "--working-dir-policy",
+                      str(meta.get("working_dir_policy", "repo-root")),
+                      "--output-root",
+                      str(raw_root),
+                      "--check-files",
+                  ]
+                  subprocess.run(command, check=True)
+          PY
+
+      - name: Validate scanner-native security evidence
+        if: ${{ inputs.profile == 'production-candidate' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/collect-scanner-native-evidence.py validate-directory \
             --version "${VERSION}" \
             --source-sha "${SOURCE_SHA}" \
             --source-run-id "${SOURCE_RUN_ID}" \
-            --checks-json "release-security/${VERSION}/github-check-runs.json" \
-            --output-root release-security
+            --root release-security \
+            --raw-root release-security \
+            --check-files
 
       - name: Initialize technical dry-run skeletons
         if: ${{ inputs.profile == 'technical-dry-run' }}
@@ -392,6 +533,9 @@ jobs:
             release-governance/
             release-runtime/
             release-signing/
+            release-retention/
+            release-ota/
+            release-subject-graph/
             release-approvals/
             release-security/
             release-reproducibility/

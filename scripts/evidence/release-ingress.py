@@ -39,10 +39,18 @@ SCHEMA_ROLES = {
     "evidence_ingress": "suderra.operator-evidence-ingress.v2",
     "binding_manifest": BINDING_SCHEMA_VERSION,
     "approval": "suderra.release-approval.v2",
+    "governance_role_bindings": evidence_contract.schema_version("governance_role_bindings", EVIDENCE_CONTRACT),
+    "hardware_subject": evidence_contract.schema_version("hardware_subject", EVIDENCE_CONTRACT),
     "qemu_input": "suderra.qemu-acceptance.v4",
     "lab_input": evidence_contract.schema_version("lab_evidence", EVIDENCE_CONTRACT),
     "production_runtime_suite": evidence_contract.schema_version("production_runtime_suite", EVIDENCE_CONTRACT),
     "hsm_signing_session": evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT),
+    "release_subject_graph": evidence_contract.schema_version("release_subject_graph", EVIDENCE_CONTRACT),
+    "retention_manifest": evidence_contract.schema_version("retention_manifest", EVIDENCE_CONTRACT),
+    "release_security_report": evidence_contract.schema_version("release_security_report", EVIDENCE_CONTRACT),
+    "signing_manifest": evidence_contract.schema_version("signing_manifest", EVIDENCE_CONTRACT),
+    "station_acquisition": evidence_contract.schema_version("station_acquisition", EVIDENCE_CONTRACT),
+    "ota_artifacts": evidence_contract.schema_version("ota_artifacts", EVIDENCE_CONTRACT),
     "release_evidence": evidence_contract.schema_version("release_evidence", EVIDENCE_CONTRACT),
 }
 OPTIONAL_EMPTY_INPUT_ROLES = {"qemu-stderr"}
@@ -55,6 +63,9 @@ PREFLIGHT_INPUT_DIRS = (
     "release-reproducibility",
     "release-runtime",
     "release-signing",
+    "release-retention",
+    "release-ota",
+    "release-subject-graph",
     "release-ingress",
 )
 VALID_PREFLIGHT_PROFILES = {"technical-dry-run", "release-candidate", "production-candidate"}
@@ -110,6 +121,16 @@ def load_buildroot_identity_module() -> Any:
 def load_operator_evidence_ingress_module() -> Any:
     script = ROOT / "scripts" / "evidence" / "operator-evidence-ingress.py"
     spec = importlib.util.spec_from_file_location("operator_evidence_ingress", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_validate_release_inputs_module() -> Any:
+    script = ROOT / "scripts" / "evidence" / "validate-release-inputs.py"
+    spec = importlib.util.spec_from_file_location("validate_release_inputs", script)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot import {script}")
     module = importlib.util.module_from_spec(spec)
@@ -234,12 +255,18 @@ def input_role_for_path(rel_path: Path) -> str:
         return "qemu-stderr"
     if parts[0] == "release-lab-input" and rel_path.name == "lab.json":
         return "lab-input"
+    if parts[0] == "release-lab-input" and rel_path.name == "hardware-subject.json":
+        return "hardware-subject"
+    if parts[0] == "release-lab-input" and rel_path.name == "station-acquisition.json":
+        return "station-acquisition"
     if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json":
         return "lab-station-bundle"
     if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json.sig":
         return "lab-station-signature"
     if parts[0] == "release-lab-input" and rel_path.name == "station-public.pem":
         return "lab-station-public-key"
+    if parts[0] == "release-governance" and rel_path.name == "role-bindings.json":
+        return "governance-role-bindings"
     if parts[0] == "release-governance":
         return "governance-snapshot"
     if parts[0] == "release-approvals":
@@ -250,8 +277,16 @@ def input_role_for_path(rel_path: Path) -> str:
         return "reproducibility-report"
     if parts[0] == "release-runtime" and rel_path.name == "production-runtime.json":
         return "production-runtime-suite"
+    if parts[0] == "release-signing" and rel_path.name == "signing-manifest.json":
+        return "signing-manifest"
     if parts[0] == "release-signing" and rel_path.suffix == ".json":
         return "hsm-signing-session"
+    if parts[0] == "release-retention" and rel_path.name == "retention-manifest.json":
+        return "retention-manifest"
+    if parts[0] == "release-ota" and rel_path.name == "ota-artifacts.json":
+        return "ota-artifacts"
+    if parts[0] == "release-subject-graph" and rel_path.name == "release-subject-graph.json":
+        return "release-subject-graph"
     if parts[0] == "release-ingress" and rel_path.name == EVIDENCE_INGRESS_MANIFEST:
         return "evidence-ingress"
     if parts[0] == "release-ingress" and rel_path.name in EVIDENCE_INGRESS_SIGNATURE_SIDECARS:
@@ -704,6 +739,34 @@ def validate_manifest(
                     certificate_oidc_issuer=evidence_ingress_certificate_oidc_issuer,
                 )
             )
+        if (
+            manifest.get("profile") == "production-candidate"
+            and input_root is not None
+            and binding_manifest is not None
+            and isinstance(binding, dict)
+        ):
+            graph_path = input_root / "release-subject-graph" / version / "release-subject-graph.json"
+            if not graph_path.is_file() or graph_path.stat().st_size <= 0:
+                failures.append(f"release ingress missing authoritative preflight subject graph: {graph_path}")
+            else:
+                try:
+                    validate_inputs = load_validate_release_inputs_module()
+                    matrix = validate_inputs.load_matrix(validate_inputs.DEFAULT_MATRIX)
+                    failures.extend(
+                        validate_inputs.validate_subject_graph(
+                            graph_path,
+                            version=version,
+                            profile=str(manifest.get("profile")),
+                            source_sha=str(manifest.get("source_sha")),
+                            source_run_id=str(manifest.get("source_run_id")),
+                            matrix=matrix,
+                            binding=binding,
+                            root=input_root,
+                            check_files=True,
+                        )
+                    )
+                except Exception as exc:
+                    failures.append(f"release subject graph semantic replay failed: {exc}")
     if require_signature:
         failures.extend(verify_manifest_signature(manifest_path, certificate_identity, certificate_oidc_issuer))
     return failures
