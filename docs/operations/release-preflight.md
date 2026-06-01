@@ -14,6 +14,11 @@ and preflight when `origin/main` no longer equals `source_sha`.
 
 - `technical-dry-run`: validates source/run/artifact binding and creates input
   skeletons. It never claims release readiness.
+- `rc-evidence-dry-run`: prerelease-only, non-promotable evidence rehearsal. It
+  emits SSOT plans, artifact digests, subject graph refs, retention plan, and
+  production gap blockers under `release-dry-run/`. The dry-run
+  `bundle-manifest.json` digest-binds every member plus subject graph and
+  governance refs; tag publication rejects this profile.
 - `release-candidate`: fail-closed alpha gate. It requires complete QEMU,
   hardware lab, security scan, reproducibility, approval, and governance input
   evidence bound to the same `source_sha`.
@@ -29,6 +34,19 @@ gh workflow run "Release Preflight" \
   -f source_run_id=<successful-image-build-run-id> \
   -f profile=technical-dry-run
 ```
+
+For the SSOT evidence rehearsal, run the non-promotable RC dry-run profile:
+
+```bash
+gh workflow run "Release Preflight" \
+  -f version=v0.1.0-rc.1 \
+  -f source_sha=<exact-main-commit> \
+  -f source_run_id=<successful-image-build-run-id> \
+  -f profile=rc-evidence-dry-run
+```
+
+The dry-run artifact is retained for operator review only. It cannot satisfy the
+signed tag binding expected by the release workflow.
 
 For a release candidate, do not populate ignored evidence directories in the
 source checkout. Package the operator evidence trees as a tar bundle, publish
@@ -182,8 +200,16 @@ Suderra-Source-Build-Run-Attempt: <build-run-attempt>
 Suderra-Preflight-Run-ID: <successful-release-preflight-run-id>
 Suderra-Preflight-Run-Attempt: <preflight-run-attempt>
 Suderra-Preflight-Artifact-ID: <preflight-artifact-id>
+Suderra-Preflight-Profile: <release-candidate-or-production-candidate>
 Suderra-Ingress-Manifest-SHA256: <ingress-manifest-sha256>
 ```
+
+`Suderra-Preflight-Profile` is mandatory for the live release gate. Pre-release
+tags must bind to `release-candidate`; GA tags must bind to
+`production-candidate`. Tags or archived notes that predate this field are
+legacy archive material only: they may be inspected during offline/archive
+verification, but they do not authorize a current release workflow, draft
+publication, signing, or promotion.
 
 The workflow downloads only the tag-derived preflight artifact name from that
 run: `release-preflight-release-candidate-<version>-<source_sha>` for

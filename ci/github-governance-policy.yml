@@ -76,6 +76,12 @@
     "signed_evidence_path": "release-governance/{version}/governance-policy-validation.json",
     "release_independent": true
   },
+  "release_freeze": {
+    "protected_ref": "refs/heads/main",
+    "ingress_requires_head_sha": true,
+    "preflight_requires_head_sha": true,
+    "supersede_on_main_advance": true
+  },
   "required_codeowners_patterns": [
     ".github/workflows/*.yml",
     ".github/CODEOWNERS",
@@ -96,6 +102,5 @@
     "tag_name": "release-tag-protection",
     "allow_bypass_actors": false
   },
-  "retention_years": 7,
   "audit_log_lookback_days": 30
 }

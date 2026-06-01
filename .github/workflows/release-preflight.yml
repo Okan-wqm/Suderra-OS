@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       evidence_ingress_run_id:
-        description: "Successful Release Evidence Ingress run ID for release-candidate evidence"
+        description: "Successful Release Evidence Ingress run ID for release-authorizing evidence"
         required: false
         type: string
       evidence_ingress_manifest_sha256:
@@ -30,6 +30,7 @@ on:
         type: choice
         options:
           - technical-dry-run
+          - rc-evidence-dry-run
           - release-candidate
           - production-candidate
 
@@ -76,14 +77,16 @@ jobs:
           profile = os.environ["PROFILE"]
           if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?", version):
               raise SystemExit(f"invalid SemVer version: {version}")
-          if profile == "release-candidate" and "-" not in version:
-              raise SystemExit("release-candidate profile requires a prerelease version")
+          if profile in {"rc-evidence-dry-run", "release-candidate"} and "-" not in version:
+              raise SystemExit(f"{profile} profile requires a prerelease version")
           if profile == "production-candidate" and "-" in version:
               raise SystemExit("production-candidate profile requires a GA version")
           if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
               raise SystemExit("source_sha must be a lowercase git commit sha")
           manifest_sha = os.environ.get("EVIDENCE_INGRESS_MANIFEST_SHA256", "")
-          if profile in {"release-candidate", "production-candidate"}:
+          release_authorizing_profiles = {"release-candidate", "production-candidate"}
+          protected_source_profiles = {"rc-evidence-dry-run", "release-candidate", "production-candidate"}
+          if profile in release_authorizing_profiles:
               if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha):
                   raise SystemExit(f"{profile} requires evidence_ingress_manifest_sha256 as a lowercase sha256")
           run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
@@ -95,16 +98,16 @@ jobs:
               raise SystemExit(f"source_run_id head_sha {run.get('head_sha')} does not match {source_sha}")
           if run.get("status") != "completed" or run.get("conclusion") != "success":
               raise SystemExit(f"source Image Build run is not successful: {run.get('status')} {run.get('conclusion')}")
-          if profile in {"release-candidate", "production-candidate"} and run.get("event") != "push":
+          if profile in protected_source_profiles and run.get("event") != "push":
               raise SystemExit(f"{profile} source Image Build run must be a protected main push, got {run.get('event')!r}")
           repo = run.get("head_repository")
-          if profile in {"release-candidate", "production-candidate"} and (
+          if profile in protected_source_profiles and (
               not isinstance(repo, dict) or repo.get("full_name") != os.environ.get("GITHUB_REPOSITORY")
           ):
               raise SystemExit(f"{profile} source Image Build run must come from this repository")
-          if profile in {"release-candidate", "production-candidate"} and run.get("head_branch") != "main":
+          if profile in protected_source_profiles and run.get("head_branch") != "main":
               raise SystemExit(f"{profile} source Image Build run must come from main, got {run.get('head_branch')!r}")
-          if profile in {"release-candidate", "production-candidate"} and os.environ.get("GITHUB_REF") != "refs/heads/main":
+          if profile in protected_source_profiles and os.environ.get("GITHUB_REF") != "refs/heads/main":
               raise SystemExit(f"{profile} preflight must be dispatched from refs/heads/main")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"run_attempt={run.get('run_attempt', 1)}\n")
@@ -132,7 +135,7 @@ jobs:
           test "$(git rev-parse origin/main)" = "${SOURCE_SHA}"
 
       - name: Download operator evidence ingress artifact
-        if: ${{ inputs.profile != 'technical-dry-run' }}
+        if: ${{ inputs.profile == 'release-candidate' || inputs.profile == 'production-candidate' }}
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
@@ -284,6 +287,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -f "release-governance/${VERSION}/audit-log.json" ]; then
+            mkdir -p governance-audit-source
+            cp "release-governance/${VERSION}/audit-log.json" governance-audit-source/audit-log.json
+            export SUDERRA_GOVERNANCE_AUDIT_LOG="${PWD}/governance-audit-source/audit-log.json"
+          fi
           python3 scripts/evidence/collect-governance.py \
             --repo "${GITHUB_REPOSITORY}" \
             --version "${VERSION}" \
@@ -322,6 +330,18 @@ jobs:
             --binding-manifest "release-inputs/${VERSION}/${PROFILE}.json" \
             --input-root . \
             --output "release-subject-graph/${VERSION}/release-subject-graph.json"
+
+      - name: Create RC evidence dry-run bundle
+        if: ${{ inputs.profile == 'rc-evidence-dry-run' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evidence/rc-evidence-dry-run.py create \
+            --binding-manifest "release-inputs/${VERSION}/${PROFILE}.json" \
+            --input-root . \
+            --output-root release-dry-run
+          python3 scripts/evidence/rc-evidence-dry-run.py validate \
+            "release-dry-run/${VERSION}/bundle-manifest.json" \
+            --input-root .
 
       - name: Create scanner-native security evidence
         if: ${{ inputs.profile == 'production-candidate' }}
@@ -508,12 +528,14 @@ jobs:
             --source-run-attempt "${{ steps.source.outputs.run_attempt }}"
             --artifact-root build-artifacts
           )
-          if [ "${PROFILE}" != "technical-dry-run" ]; then
-            evidence_ingress_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-evidence-ingress.yml@refs/heads/main"
-            args+=(--check-files)
+          if [ "${PROFILE}" = "rc-evidence-dry-run" ] || [ "${PROFILE}" = "release-candidate" ] || [ "${PROFILE}" = "production-candidate" ]; then
             args+=(--require-ingress-signature)
             args+=(--ingress-certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-preflight.yml@refs/heads/main")
             args+=(--ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com")
+          fi
+          if [ "${PROFILE}" = "release-candidate" ] || [ "${PROFILE}" = "production-candidate" ]; then
+            evidence_ingress_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-evidence-ingress.yml@refs/heads/main"
+            args+=(--check-files)
             args+=(--require-evidence-ingress-signature)
             args+=(--evidence-ingress-certificate-identity "${evidence_ingress_identity}")
             args+=(--evidence-ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com")
@@ -536,6 +558,7 @@ jobs:
             release-retention/
             release-ota/
             release-subject-graph/
+            release-dry-run/
             release-approvals/
             release-security/
             release-reproducibility/

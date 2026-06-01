@@ -15,6 +15,7 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shlex
 from typing import Any
 
@@ -32,6 +33,38 @@ EXPECTED_OUTCOMES = {
 }
 OBSERVED_LAYERS = {"firmware", "kernel", "runtime", "storage", "userspace"}
 UNSIGNED_SIGNING_MODES = {"unsigned-lab", "unsupported"}
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+PLACEHOLDER_VALUES = {
+    "",
+    "TODO",
+    "TBD",
+    "TO_BE_COLLECTED",
+    "PLACEHOLDER",
+    "not_collected",
+    "NOT_COLLECTED",
+    "pending",
+    "PENDING",
+}
+EXPECTED_PROFILES = {
+    "ci",
+    "dev",
+    "ga",
+    "technical-dry-run",
+    "rc-evidence-dry-run",
+    "release-candidate",
+    "production-candidate",
+}
+PROFILE_BOOL_FIELDS = {
+    "production_candidate",
+    "prerelease_only",
+    "release_authorizing",
+    "publication_allowed",
+    "strict_artifact_binding",
+    "subject_graph_required",
+    "gap_report_required",
+    "operator_ingress_required",
+}
+PROFILE_FIELDS = PROFILE_BOOL_FIELDS | {"required_output_trees"}
 
 
 def load_contract(path: Path = DEFAULT_CONTRACT) -> dict[str, Any]:
@@ -88,6 +121,131 @@ def validate_contract(payload: dict[str, Any]) -> None:
     ):
         if not isinstance(schemas.get(field), str) or not schemas[field]:
             raise ValueError(f"schema_versions.{field} must be a non-empty string")
+    profiles = _object(payload.get("profiles"), "profiles")
+    if set(profiles) != EXPECTED_PROFILES:
+        missing = sorted(EXPECTED_PROFILES - set(profiles))
+        extra = sorted(set(profiles) - EXPECTED_PROFILES)
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(missing))
+        if extra:
+            detail.append("unexpected " + ", ".join(extra))
+        raise ValueError("profiles must match the governed profile catalog: " + "; ".join(detail))
+    for name, profile in profiles.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("profiles keys must be non-empty strings")
+        profile_obj = _object(profile, f"profiles.{name}")
+        unknown_fields = sorted(set(profile_obj) - PROFILE_FIELDS)
+        missing_fields = sorted(PROFILE_FIELDS - set(profile_obj))
+        if unknown_fields:
+            raise ValueError(f"profiles.{name} contains unknown fields: {', '.join(unknown_fields)}")
+        if missing_fields:
+            raise ValueError(f"profiles.{name} missing fields: {', '.join(missing_fields)}")
+        for field in sorted(PROFILE_BOOL_FIELDS):
+            if not isinstance(profile_obj.get(field), bool):
+                raise ValueError(f"profiles.{name}.{field} must be a boolean")
+        _string_sequence(profile_obj.get("required_output_trees"), f"profiles.{name}.required_output_trees")
+    expected_profile_values = {
+        "rc-evidence-dry-run": {
+            "production_candidate": False,
+            "prerelease_only": True,
+            "release_authorizing": False,
+            "publication_allowed": False,
+            "strict_artifact_binding": True,
+            "subject_graph_required": True,
+            "gap_report_required": True,
+            "operator_ingress_required": False,
+        },
+        "release-candidate": {
+            "production_candidate": False,
+            "prerelease_only": True,
+            "release_authorizing": True,
+            "publication_allowed": True,
+            "subject_graph_required": True,
+            "operator_ingress_required": True,
+        },
+        "production-candidate": {
+            "production_candidate": True,
+            "prerelease_only": False,
+            "release_authorizing": True,
+            "publication_allowed": True,
+            "strict_artifact_binding": True,
+            "subject_graph_required": True,
+            "operator_ingress_required": True,
+        },
+    }
+    for name, expected_values in expected_profile_values.items():
+        profile_obj = _object(profiles.get(name), f"profiles.{name}")
+        for field, expected in expected_values.items():
+            if profile_obj.get(field) is not expected:
+                raise ValueError(f"profiles.{name}.{field} must be {expected!r}")
+    output_trees = _object(payload.get("output_trees"), "output_trees")
+    if output_trees.get("schema_version") != "suderra.output-tree-policy.v1":
+        raise ValueError("output_trees.schema_version must be suderra.output-tree-policy.v1")
+    trees = _object(output_trees.get("trees"), "output_trees.trees")
+    required_trees = {
+        "build-artifacts",
+        "release-inputs",
+        "release-ingress",
+        "release-subject-graph",
+        "release-dry-run",
+        "release-lab-input",
+        "release-governance",
+        "release-runtime",
+        "release-signing",
+        "release-retention",
+        "release-ota",
+        "release-approvals",
+        "release-security",
+        "release-reproducibility",
+    }
+    missing_trees = sorted(required_trees - set(trees))
+    if missing_trees:
+        raise ValueError(f"output_trees.trees missing roots: {', '.join(missing_trees)}")
+    seen_templates: set[str] = set()
+    for name, tree in trees.items():
+        tree_obj = _object(tree, f"output_trees.trees.{name}")
+        if not isinstance(name, str) or not name:
+            raise ValueError("output_trees.trees keys must be non-empty strings")
+        path_template = tree_obj.get("path_template")
+        if not isinstance(path_template, str) or not path_template:
+            raise ValueError(f"output_trees.trees.{name}.path_template must be a non-empty string")
+        rendered_template = path_template.replace("{version}", "v0")
+        if safe_relative_path(rendered_template) is None:
+            raise ValueError(f"output_trees.trees.{name}.path_template must be a safe relative path template")
+        if path_template in seen_templates:
+            raise ValueError(f"output_trees.trees.{name}.path_template must be unique")
+        seen_templates.add(path_template)
+        if not isinstance(tree_obj.get("schema_role"), str) or not tree_obj["schema_role"]:
+            raise ValueError(f"output_trees.trees.{name}.schema_role must be a non-empty string")
+        for field in (
+            "required_by_default",
+            "promotable",
+            "operator_ingress_allowed",
+            "release_tag_allowed",
+            "dry_run_input_allowed",
+            "gitignore_required",
+        ):
+            if not isinstance(tree_obj.get(field), bool):
+                raise ValueError(f"output_trees.trees.{name}.{field} must be a boolean")
+        if tree_obj.get("release_tag_allowed") is False and tree_obj.get("promotable") is True:
+            raise ValueError(f"output_trees.trees.{name}: release_tag_allowed=false requires promotable=false")
+    dry_run_tree = _object(trees.get("release-dry-run"), "output_trees.trees.release-dry-run")
+    for field in ("promotable", "operator_ingress_allowed", "release_tag_allowed"):
+        if dry_run_tree.get(field) is not False:
+            raise ValueError(f"output_trees.trees.release-dry-run.{field} must be false")
+    if dry_run_tree.get("gitignore_required") is not True:
+        raise ValueError("output_trees.trees.release-dry-run.gitignore_required must be true")
+    if dry_run_tree.get("dry_run_input_allowed") is not True:
+        raise ValueError("output_trees.trees.release-dry-run.dry_run_input_allowed must be true")
+    for name, profile in profiles.items():
+        for root in _string_sequence(profile.get("required_output_trees"), f"profiles.{name}.required_output_trees"):
+            if root not in trees:
+                raise ValueError(f"profiles.{name}.required_output_trees references unknown output tree {root}")
+        if profile.get("subject_graph_required") is True and "release-subject-graph" not in profile["required_output_trees"]:
+            raise ValueError(f"profiles.{name}.required_output_trees must include release-subject-graph")
+        if profile.get("gap_report_required") is True and "release-dry-run" not in profile["required_output_trees"]:
+            raise ValueError(f"profiles.{name}.required_output_trees must include release-dry-run")
     subjects = _object(payload.get("subjects"), "subjects")
     if subjects.get("schema_version") != schemas["release_subject_graph"]:
         raise ValueError("subjects.schema_version must match schema_versions.release_subject_graph")
@@ -387,6 +545,46 @@ def retention_policy(contract: dict[str, Any] | None = None) -> dict[str, Any]:
     return dict(payload["retention"])
 
 
+def profile_policy(profile: str, contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = contract or load_contract()
+    policy = payload.get("profiles", {}).get(profile)
+    if not isinstance(policy, dict):
+        raise ValueError(f"profile {profile!r} is missing from ci/evidence-contract.yml")
+    return dict(policy)
+
+
+def all_profiles(contract: dict[str, Any] | None = None) -> list[str]:
+    payload = contract or load_contract()
+    return sorted(str(name) for name in payload["profiles"])
+
+
+def release_authorizing_profiles(contract: dict[str, Any] | None = None) -> list[str]:
+    payload = contract or load_contract()
+    return sorted(
+        str(name)
+        for name, profile in payload["profiles"].items()
+        if isinstance(profile, dict) and profile.get("release_authorizing") is True
+    )
+
+
+def publication_allowed_profiles(contract: dict[str, Any] | None = None) -> list[str]:
+    payload = contract or load_contract()
+    return sorted(
+        str(name)
+        for name, profile in payload["profiles"].items()
+        if isinstance(profile, dict) and profile.get("publication_allowed") is True
+    )
+
+
+def operator_ingress_required_profiles(contract: dict[str, Any] | None = None) -> list[str]:
+    payload = contract or load_contract()
+    return sorted(
+        str(name)
+        for name, profile in payload["profiles"].items()
+        if isinstance(profile, dict) and profile.get("operator_ingress_required") is True
+    )
+
+
 def release_subject_id(
     *,
     version: str,
@@ -405,6 +603,19 @@ def release_subject_id(
     )
 
 
+def is_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() in PLACEHOLDER_VALUES
+
+
+def safe_relative_path(value: Any) -> Path | None:
+    if is_placeholder(value) or not isinstance(value, str) or not value.strip():
+        return None
+    rel = Path(value)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    return rel
+
+
 def _matrix_row_for_target(matrix: dict[str, Any], target: str) -> dict[str, Any]:
     for row in matrix.get("defconfigs", []):
         if isinstance(row, dict) and row.get("target") == target:
@@ -414,6 +625,279 @@ def _matrix_row_for_target(matrix: dict[str, Any], target: str) -> dict[str, Any
 
 def _format_subject_export(template: str, *, version: str, target: str, profile: str) -> str:
     return template.format(version=version, target=target, profile=profile, scan="{scan}")
+
+
+def output_tree_policy(contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = contract or load_contract()
+    return payload["output_trees"]
+
+
+def output_tree_roots(*, contract: dict[str, Any] | None = None) -> list[str]:
+    policy = output_tree_policy(contract)
+    return sorted(policy["trees"])
+
+
+def output_tree_for_root(root: str, *, contract: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    policy = output_tree_policy(contract)
+    tree = policy["trees"].get(root)
+    return dict(tree) if isinstance(tree, dict) else None
+
+
+def output_tree_path(root: str, *, version: str, contract: dict[str, Any] | None = None) -> str:
+    tree = output_tree_for_root(root, contract=contract)
+    if tree is None:
+        raise ValueError(f"output tree {root!r} is missing from ci/evidence-contract.yml")
+    return str(tree["path_template"]).format(version=version)
+
+
+def required_output_roots(profile: str, *, contract: dict[str, Any] | None = None) -> list[str]:
+    payload = contract or load_contract()
+    profile_obj = profile_policy(profile, payload)
+    required = {
+        name
+        for name, tree in output_tree_policy(payload)["trees"].items()
+        if isinstance(tree, dict) and tree.get("required_by_default") is True
+    }
+    required.update(str(root) for root in profile_obj.get("required_output_trees", []))
+    return sorted(required)
+
+
+def preflight_input_roots(profile: str, *, contract: dict[str, Any] | None = None) -> list[str]:
+    payload = contract or load_contract()
+    roots = {root for root in required_output_roots(profile, contract=payload) if root != "build-artifacts"}
+    if profile == "rc-evidence-dry-run":
+        roots.update(
+            root
+            for root, tree in output_tree_policy(payload)["trees"].items()
+            if isinstance(tree, dict) and tree.get("dry_run_input_allowed") is True
+        )
+    else:
+        roots.update(
+            root
+            for root, tree in output_tree_policy(payload)["trees"].items()
+            if isinstance(tree, dict) and (tree.get("operator_ingress_allowed") is True or tree.get("required_by_default") is True)
+        )
+    return sorted(roots)
+
+
+def release_tag_allowed_roots(*, contract: dict[str, Any] | None = None) -> list[str]:
+    policy = output_tree_policy(contract)
+    return sorted(
+        root
+        for root, tree in policy["trees"].items()
+        if isinstance(tree, dict) and tree.get("release_tag_allowed") is True
+    )
+
+
+def output_tree_schema_role(root: str, *, contract: dict[str, Any] | None = None) -> str:
+    tree = output_tree_for_root(root, contract=contract)
+    if tree is None:
+        raise ValueError(f"output tree {root!r} is missing from ci/evidence-contract.yml")
+    return str(tree["schema_role"])
+
+
+def preflight_input_role_for_path(rel_path: Path, *, contract: dict[str, Any] | None = None) -> str:
+    parts = rel_path.parts
+    if not parts:
+        return "preflight-input"
+    root = parts[0]
+    if root == "release-inputs":
+        return "binding-manifest"
+    if root == "release-lab-input" and rel_path.name == "qemu.json":
+        return "qemu-input"
+    if root == "release-lab-input" and rel_path.name == "qemu-semantic.json":
+        return "qemu-semantic"
+    if root == "release-lab-input" and rel_path.name in {"qemu-stderr.log", "stderr.log"}:
+        return "qemu-stderr"
+    if root == "release-lab-input" and rel_path.name == "lab.json":
+        return "lab-input"
+    if root == "release-lab-input" and rel_path.name == "hardware-subject.json":
+        return "hardware-subject"
+    if root == "release-lab-input" and rel_path.name == "station-acquisition.json":
+        return "station-acquisition"
+    if root == "release-lab-input" and rel_path.name == "station-bundle.json":
+        return "lab-station-bundle"
+    if root == "release-lab-input" and rel_path.name == "station-bundle.json.sig":
+        return "lab-station-signature"
+    if root == "release-lab-input" and rel_path.name == "station-public.pem":
+        return "lab-station-public-key"
+    if root == "release-governance" and rel_path.name == "role-bindings.json":
+        return "governance-role-bindings"
+    if root == "release-governance":
+        return "governance-snapshot"
+    if root == "release-approvals":
+        return "approval"
+    if root == "release-security":
+        return "security-report"
+    if root == "release-reproducibility":
+        return "reproducibility-report"
+    if root == "release-runtime" and rel_path.name == "production-runtime.json":
+        return "production-runtime-suite"
+    if root == "release-signing" and rel_path.name == "signing-manifest.json":
+        return "signing-manifest"
+    if root == "release-signing" and rel_path.suffix == ".json":
+        return "hsm-signing-session"
+    if root == "release-retention" and rel_path.name == "retention-manifest.json":
+        return "retention-manifest"
+    if root == "release-ota" and rel_path.name == "ota-artifacts.json":
+        return "ota-artifacts"
+    if root == "release-subject-graph" and rel_path.name == "release-subject-graph.json":
+        return "release-subject-graph"
+    if root == "release-ingress" and rel_path.name == "evidence-ingress-manifest.json":
+        return "evidence-ingress"
+    if root == "release-ingress" and rel_path.name in {
+        "evidence-ingress-manifest.json.sig",
+        "evidence-ingress-manifest.json.cert",
+    }:
+        return "evidence-ingress-signature"
+    if root == "release-dry-run":
+        return "rc-evidence-dry-run"
+    return output_tree_schema_role(root, contract=contract) if output_tree_for_root(root, contract=contract) else "preflight-input"
+
+
+def _release_rows(matrix: dict[str, Any]) -> list[dict[str, Any]]:
+    return [row for row in matrix.get("defconfigs", []) if isinstance(row, dict) and row.get("release") is True]
+
+
+def _release_targets_requiring_hardware(matrix: dict[str, Any]) -> set[str]:
+    targets: set[str] = set()
+    for row in _release_rows(matrix):
+        target = str(row.get("target", ""))
+        acceptance = str(row.get("acceptance", ""))
+        if row.get("production_required") or "hardware" in acceptance:
+            targets.add(target)
+    return targets
+
+
+def operator_required_evidence_paths(
+    *,
+    version: str,
+    matrix: dict[str, Any],
+    contract: dict[str, Any] | None = None,
+) -> set[str]:
+    payload = contract or load_contract()
+    required: set[str] = {
+        f"release-governance/{version}/audit-log.json",
+        f"release-governance/{version}/station-registry.json",
+    }
+    production_profile = "-" not in version
+    if production_profile:
+        required.add(f"release-governance/{version}/role-bindings.json")
+        required.add(f"release-retention/{version}/retention-manifest.json")
+        for scan in matrix.get("security_scans", []):
+            required.add(f"release-security/{version}/{scan}.json")
+    hardware_targets = _release_targets_requiring_hardware(matrix)
+    for row in _release_rows(matrix):
+        target = str(row["target"])
+        policy = target_policy(target, payload)
+        if row.get("qemu_test"):
+            required.add(f"release-lab-input/{version}/{target}/qemu.json")
+        if target in hardware_targets:
+            required.add(f"release-lab-input/{version}/{target}/lab.json")
+        if production_profile and policy.get("hardware_required") is True:
+            required.add(f"release-lab-input/{version}/{target}/hardware-subject.json")
+            required.add(f"release-lab-input/{version}/{target}/station-acquisition.json")
+        if production_profile and policy.get("signing_required") is True:
+            required.add(f"release-signing/{version}/{target}/signing-manifest.json")
+        required.add(f"release-approvals/{version}/{target}.json")
+        required.add(f"release-reproducibility/{version}/{target}.json")
+    if production_profile:
+        for target, policy in payload.get("targets", {}).items():
+            if not isinstance(policy, dict) or policy.get("release_public") is True:
+                continue
+            if policy.get("runtime_required") is True:
+                required.add(f"release-runtime/{version}/{target}/production-runtime.json")
+            if policy.get("signing_required") is True:
+                required.add(f"release-signing/{version}/{target}/signing-manifest.json")
+            if policy.get("ota_capable") is True:
+                required.add(f"release-ota/{version}/{target}/ota-artifacts.json")
+    return required
+
+
+def gitignore_required_roots(*, contract: dict[str, Any] | None = None) -> list[str]:
+    policy = output_tree_policy(contract)
+    return sorted(
+        root
+        for root, tree in policy["trees"].items()
+        if isinstance(tree, dict) and tree.get("gitignore_required") is True
+    )
+
+
+def operator_ingress_allowed_roots(*, contract: dict[str, Any] | None = None) -> list[str]:
+    policy = output_tree_policy(contract)
+    return sorted(
+        root
+        for root, tree in policy["trees"].items()
+        if isinstance(tree, dict) and tree.get("operator_ingress_allowed") is True
+    )
+
+
+def non_promotable_roots(*, contract: dict[str, Any] | None = None) -> list[str]:
+    policy = output_tree_policy(contract)
+    return sorted(
+        root
+        for root, tree in policy["trees"].items()
+        if isinstance(tree, dict) and tree.get("promotable") is False
+    )
+
+
+def expected_release_artifact_map(matrix: dict[str, Any], matrix_module: Any) -> dict[tuple[str, str], dict[str, Any]]:
+    return {
+        (str(row["name"]), artifact): row
+        for row in matrix.get("defconfigs", [])
+        if isinstance(row, dict) and row.get("release") is True
+        for artifact in matrix_module.expected_artifacts(row)
+    }
+
+
+def validate_release_artifact_bindings(
+    artifacts: Any,
+    expected_artifacts: dict[tuple[str, str], dict[str, Any]],
+    *,
+    artifact_root: Path | None = None,
+    file_hasher: Any | None = None,
+) -> list[str]:
+    failures: list[str] = []
+    if not isinstance(artifacts, list) or not artifacts:
+        return ["binding artifacts must be a non-empty list"]
+    seen: set[tuple[str, str]] = set()
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
+            failures.append(f"binding artifacts[{index}] must be an object")
+            continue
+        key = (str(artifact.get("defconfig")), str(artifact.get("artifact")))
+        expected_row = expected_artifacts.get(key)
+        if expected_artifacts and expected_row is None:
+            failures.append(f"unexpected binding artifact: {key[0]} {key[1]}")
+        elif expected_row is not None and artifact.get("target") != expected_row.get("target"):
+            failures.append(f"binding artifact {key[0]} {key[1]} target must be {expected_row.get('target')}")
+        if key in seen:
+            failures.append(f"duplicate binding artifact: {key[0]} {key[1]}")
+        seen.add(key)
+        digest = artifact.get("sha256")
+        if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+            failures.append(f"binding artifact {key[0]} {key[1]} has invalid sha256")
+        elif digest == "0" * 64:
+            failures.append(f"binding artifact {key[0]} {key[1]} must not use all-zero sha256")
+        if not isinstance(artifact.get("bytes"), int) or artifact.get("bytes", 0) <= 0:
+            failures.append(f"binding artifact {key[0]} {key[1]} must have positive byte size")
+        rel_path = safe_relative_path(artifact.get("path"))
+        if rel_path is None:
+            failures.append(f"binding artifact {key[0]} {key[1]} path must be a relative non-placeholder path")
+        if artifact_root is not None and rel_path is not None:
+            path = artifact_root / rel_path
+            if not path.is_file():
+                failures.append(f"binding artifact file missing: {path}")
+            elif file_hasher is not None and isinstance(digest, str) and file_hasher(path) != digest:
+                failures.append(f"binding artifact sha mismatch: {path}")
+    if expected_artifacts:
+        missing = sorted(set(expected_artifacts) - seen)
+        if missing:
+            failures.append(
+                "binding artifacts missing matrix-required files: "
+                + ", ".join(f"{defconfig}:{artifact}" for defconfig, artifact in missing)
+            )
+    return failures
 
 
 def subject_plan(
@@ -434,7 +918,14 @@ def subject_plan(
     profiles = payload.get("profiles", {})
     if profile not in profiles:
         raise ValueError(f"profile {profile!r} is missing from ci/evidence-contract.yml")
-    strict_artifacts = bool(isinstance(profiles.get(profile), dict) and profiles[profile].get("production_candidate") is True)
+    profile_obj = profiles.get(profile)
+    strict_artifacts = bool(
+        isinstance(profile_obj, dict)
+        and (
+            profile_obj.get("production_candidate") is True
+            or profile_obj.get("strict_artifact_binding") is True
+        )
+    )
     if strict_artifacts:
         for field, value in (
             ("raw_image_sha256", raw_image_sha256),
@@ -601,6 +1092,48 @@ def retention_plan(
     }
 
 
+def output_tree_plan(
+    *,
+    version: str,
+    profile: str,
+    contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = contract or load_contract()
+    profile_obj = profile_policy(profile, payload)
+    tree_policy = output_tree_policy(payload)
+    required_dirs = set(required_output_roots(profile, contract=payload))
+    outputs = []
+    for name, tree in tree_policy["trees"].items():
+        if not isinstance(tree, dict):
+            continue
+        outputs.append(
+            {
+                "name": name,
+                "path": str(tree["path_template"]).format(version=version),
+                "schema_role": tree["schema_role"],
+                "required": name in required_dirs,
+                "promotable": tree["promotable"],
+                "operator_ingress_allowed": tree["operator_ingress_allowed"],
+                "release_tag_allowed": tree["release_tag_allowed"],
+                "dry_run_input_allowed": tree["dry_run_input_allowed"],
+                "gitignore_required": tree["gitignore_required"],
+            }
+        )
+    return {
+        "schema_version": "suderra.profile-output-tree-plan.v1",
+        "version": version,
+        "profile": profile,
+        "release_authorizing": bool(profile_obj.get("release_authorizing")),
+        "publication_allowed": bool(profile_obj.get("publication_allowed")),
+        "production_candidate": bool(profile_obj.get("production_candidate")),
+        "strict_artifact_binding": bool(profile_obj.get("strict_artifact_binding")),
+        "subject_graph_required": bool(profile_obj.get("subject_graph_required")),
+        "gap_report_required": bool(profile_obj.get("gap_report_required")),
+        "operator_ingress_required": bool(profile_obj.get("operator_ingress_required")),
+        "outputs": sorted(outputs, key=lambda item: (not item["required"], item["name"])),
+    }
+
+
 def runtime_plan(
     *,
     version: str,
@@ -667,6 +1200,94 @@ def runtime_plan(
     }
 
 
+def docs_fragment(fragment: str, *, contract: dict[str, Any] | None = None) -> str:
+    payload = contract or load_contract()
+    if fragment == "schema-versions":
+        lines = ["| Role | Schema Version |", "| --- | --- |"]
+        for key, value in sorted(payload["schema_versions"].items()):
+            lines.append(f"| `{key}` | `{value}` |")
+        return "\n".join(lines)
+    if fragment == "retention-policy":
+        retention = retention_policy(payload)
+        lines = [
+            f"- Policy ID: `{retention['policy_id']}`",
+            f"- Minimum years: `{retention['minimum_years']}`",
+            f"- Store class: `{retention['store_class']}`",
+            f"- Required replay: `{', '.join(retention['required_replay'])}`",
+        ]
+        return "\n".join(lines)
+    if fragment == "runtime-scenarios":
+        lines = ["| Scenario | Required Checks |", "| --- | --- |"]
+        scenario_checks = runtime_scenario_to_checks(payload)
+        for name in runtime_required_scenarios(payload):
+            checks = ", ".join(f"`{check}`" for check in scenario_checks.get(name, ()))
+            lines.append(f"| `{name}` | {checks} |")
+        return "\n".join(lines)
+    if fragment == "signing-roles":
+        return "\n".join(f"- `{name}`" for name in sorted(signed_artifact_roles(payload)))
+    if fragment == "output-trees":
+        lines = [
+            "| Root | Path Template | Schema Role | Required By Default | Promotable | Operator Ingress | Release Tag | Dry-Run Input | Gitignore |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for root, tree in sorted(output_tree_policy(payload)["trees"].items()):
+            lines.append(
+                f"| `{root}` | `{tree['path_template']}` | `{tree['schema_role']}` | "
+                f"`{tree['required_by_default']}` | `{tree['promotable']}` | "
+                f"`{tree['operator_ingress_allowed']}` | `{tree['release_tag_allowed']}` | "
+                f"`{tree['dry_run_input_allowed']}` | "
+                f"`{tree['gitignore_required']}` |"
+            )
+        return "\n".join(lines)
+    if fragment == "profile-gates":
+        lines = [
+            "| Profile | Release Authorizing | Publication Allowed | Operator Ingress Required | Required Output Trees |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for name, profile in sorted(payload["profiles"].items()):
+            roots = ", ".join(f"`{root}`" for root in profile["required_output_trees"]) or "`none`"
+            lines.append(
+                f"| `{name}` | `{profile['release_authorizing']}` | `{profile['publication_allowed']}` | "
+                f"`{profile['operator_ingress_required']}` | {roots} |"
+            )
+        return "\n".join(lines)
+    if fragment == "subject-export-paths":
+        lines = ["| Evidence Root | Path Template |", "| --- | --- |"]
+        for root, template in sorted(subject_policy(payload)["required_subject_exports"].items()):
+            lines.append(f"| `{root}` | `{template}` |")
+        return "\n".join(lines)
+    if fragment == "governance-policy":
+        governance_path = ROOT / "ci" / "github-governance-policy.yml"
+        governance = json.loads(governance_path.read_text(encoding="utf-8"))
+        environments = governance.get("environments", {})
+        rulesets = governance.get("rulesets", {})
+        checks = governance.get("required_checks", {})
+        lines = ["| Category | Name |", "| --- | --- |"]
+        for name in sorted(environments):
+            lines.append(f"| `environment` | `{name}` |")
+        for name in sorted(rulesets):
+            lines.append(f"| `ruleset` | `{name}` |")
+        for name in sorted(checks):
+            lines.append(f"| `required_check` | `{name}` |")
+        return "\n".join(lines)
+    if fragment == "verification-schemas":
+        selected = (
+            "release_evidence",
+            "release_subject_graph",
+            "production_runtime_suite",
+            "runtime_observation",
+            "signing_manifest",
+            "hardware_subject",
+            "release_security_report",
+            "retention_manifest",
+        )
+        lines = ["| Role | Schema Version |", "| --- | --- |"]
+        for key in selected:
+            lines.append(f"| `{key}` | `{payload['schema_versions'][key]}` |")
+        return "\n".join(lines)
+    raise ValueError(f"unknown docs fragment {fragment!r}")
+
+
 def validate_matrix_join(matrix: dict[str, Any], contract: dict[str, Any] | None = None) -> list[str]:
     payload = contract or load_contract()
     rows = {
@@ -705,6 +1326,8 @@ def validate_matrix_join(matrix: dict[str, Any], contract: dict[str, Any] | None
             continue
         if bool(row.get("release")) != bool(policy.get("release_public")):
             errors.append(f"{target}: matrix release must match evidence-contract release_public")
+        if row.get("production_required") is True and row.get("production_ready") is not False:
+            errors.append(f"{target}: production_required targets must keep production_ready=false until retained production evidence closes")
         if policy.get("production_gate") is True and row.get("production_required") is not True:
             errors.append(f"{target}: production_gate requires matrix production_required=true")
         if policy.get("runtime_required") is True:
@@ -779,7 +1402,20 @@ def main() -> int:
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
     parser.add_argument(
         "command",
-        choices=("dump", "validate", "validate-join", "runtime-plan", "subject-plan", "retention-plan"),
+        choices=(
+            "dump",
+            "validate",
+            "validate-join",
+            "runtime-plan",
+            "subject-plan",
+            "retention-plan",
+            "output-tree-plan",
+            "required-output-roots",
+            "preflight-input-roots",
+            "release-authorizing-profiles",
+            "operator-ingress-required-profiles",
+            "docs-fragment",
+        ),
     )
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
     parser.add_argument("--version")
@@ -800,6 +1436,7 @@ def main() -> int:
     parser.add_argument("--compressed-artifact-sha256")
     parser.add_argument("--compressed-artifact-bytes", type=int)
     parser.add_argument("--scenario-command", default="tests/qemu/production-runtime-scenario.sh")
+    parser.add_argument("--fragment")
     args = parser.parse_args()
     try:
         payload = load_contract(args.contract)
@@ -861,7 +1498,7 @@ def main() -> int:
                     sort_keys=True,
                 )
             )
-        else:
+        elif args.command == "retention-plan":
             print(
                 json.dumps(
                     retention_plan(
@@ -874,6 +1511,28 @@ def main() -> int:
                     sort_keys=True,
                 )
             )
+        elif args.command == "output-tree-plan":
+            print(
+                json.dumps(
+                    output_tree_plan(
+                        version=_required_runtime_arg(args, "version"),
+                        profile=args.profile,
+                        contract=payload,
+                    ),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        elif args.command == "required-output-roots":
+            print(json.dumps(required_output_roots(args.profile, contract=payload), indent=2, sort_keys=True))
+        elif args.command == "preflight-input-roots":
+            print(json.dumps(preflight_input_roots(args.profile, contract=payload), indent=2, sort_keys=True))
+        elif args.command == "release-authorizing-profiles":
+            print(json.dumps(release_authorizing_profiles(payload), indent=2, sort_keys=True))
+        elif args.command == "operator-ingress-required-profiles":
+            print(json.dumps(operator_ingress_required_profiles(payload), indent=2, sort_keys=True))
+        else:
+            print(docs_fragment(_required_runtime_arg(args, "fragment"), contract=payload))
     except ValueError as exc:
         parser.error(str(exc))
     return 0

@@ -143,6 +143,94 @@ if python3 "${TOOL}" stage \
 fi
 grep -q "bundle-sha256" "${TMPDIR}/bad-bundle-digest.err"
 
+if python3 "${TOOL}" stage \
+    --bundle "${TMPDIR}/operator-evidence.tar.gz" \
+    --bundle-signature "${TMPDIR}/operator-evidence.tar.gz.sig" \
+    --bundle-certificate "${TMPDIR}/operator-evidence.tar.gz.cert" \
+    --output-root "${TMPDIR}/bad-signature-digest-root" \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-image-build-run-id "${RUN_ID}" \
+    --source-image-build-run-attempt "${RUN_ATTEMPT}" \
+    --repository "Okan-wqm/Suderra-OS" \
+    --workflow "Release Evidence Ingress" \
+    --run-id "987654321" \
+    --run-attempt "1" \
+    --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence.tar.gz" \
+    --bundle-sha256 "${BUNDLE_SHA256}" \
+    --bundle-signature-sha256 "$(printf '1%.0s' {1..64})" \
+    --bundle-certificate-sha256 "${BUNDLE_CERTIFICATE_SHA256}" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
+    >/dev/null 2>"${TMPDIR}/bad-signature-digest.err"; then
+    echo "ERROR: operator evidence ingress accepted a mismatched bundle signature digest" >&2
+    exit 1
+fi
+grep -q "bundle-signature-sha256" "${TMPDIR}/bad-signature-digest.err"
+
+if python3 "${TOOL}" stage \
+    --bundle "${TMPDIR}/operator-evidence.tar.gz" \
+    --bundle-signature "${TMPDIR}/operator-evidence.tar.gz.sig" \
+    --bundle-certificate "${TMPDIR}/operator-evidence.tar.gz.cert" \
+    --output-root "${TMPDIR}/bad-certificate-digest-root" \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-image-build-run-id "${RUN_ID}" \
+    --source-image-build-run-attempt "${RUN_ATTEMPT}" \
+    --repository "Okan-wqm/Suderra-OS" \
+    --workflow "Release Evidence Ingress" \
+    --run-id "987654321" \
+    --run-attempt "1" \
+    --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence.tar.gz" \
+    --bundle-sha256 "${BUNDLE_SHA256}" \
+    --bundle-signature-sha256 "${BUNDLE_SIGNATURE_SHA256}" \
+    --bundle-certificate-sha256 "$(printf '2%.0s' {1..64})" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
+    >/dev/null 2>"${TMPDIR}/bad-certificate-digest.err"; then
+    echo "ERROR: operator evidence ingress accepted a mismatched bundle certificate digest" >&2
+    exit 1
+fi
+grep -q "bundle-certificate-sha256" "${TMPDIR}/bad-certificate-digest.err"
+
+BAD_DRY_RUN_ROOT="${TMPDIR}/bad-dry-run-bundle"
+cp -a "${BUNDLE_ROOT}" "${BAD_DRY_RUN_ROOT}"
+mkdir -p "${BAD_DRY_RUN_ROOT}/release-dry-run/${VERSION}"
+printf '{"schema_version":"suderra.rc-evidence-dry-run.v1"}\n' \
+    >"${BAD_DRY_RUN_ROOT}/release-dry-run/${VERSION}/dry-run-report.json"
+( cd "${BAD_DRY_RUN_ROOT}" && tar -czf "${TMPDIR}/operator-evidence-with-dry-run.tar.gz" . )
+BAD_DRY_RUN_SHA256="$(sha256sum "${TMPDIR}/operator-evidence-with-dry-run.tar.gz" | awk '{print $1}')"
+if python3 "${TOOL}" stage \
+    --bundle "${TMPDIR}/operator-evidence-with-dry-run.tar.gz" \
+    --bundle-signature "${TMPDIR}/operator-evidence.tar.gz.sig" \
+    --bundle-certificate "${TMPDIR}/operator-evidence.tar.gz.cert" \
+    --output-root "${TMPDIR}/bad-dry-run-root" \
+    --version "${VERSION}" \
+    --source-sha "${SOURCE_SHA}" \
+    --source-image-build-run-id "${RUN_ID}" \
+    --source-image-build-run-attempt "${RUN_ATTEMPT}" \
+    --repository "Okan-wqm/Suderra-OS" \
+    --workflow "Release Evidence Ingress" \
+    --run-id "987654321" \
+    --run-attempt "1" \
+    --actor "contract" \
+    --bundle-url "https://operator-evidence.example.test/operator-evidence-with-dry-run.tar.gz" \
+    --bundle-sha256 "${BAD_DRY_RUN_SHA256}" \
+    --bundle-signature-sha256 "${BUNDLE_SIGNATURE_SHA256}" \
+    --bundle-certificate-sha256 "${BUNDLE_CERTIFICATE_SHA256}" \
+    --bundle-certificate-identity "https://github.com/Okan-wqm/Suderra-OS/.github/workflows/operator-evidence.yml@refs/heads/main" \
+    --bundle-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --bundle-allowed-host "operator-evidence.example.test" \
+    >/dev/null 2>"${TMPDIR}/bad-dry-run.err"; then
+    echo "ERROR: operator evidence ingress accepted non-promotable release-dry-run output" >&2
+    exit 1
+fi
+grep -q "release-dry-run" "${TMPDIR}/bad-dry-run.err"
+
 python3 "${TOOL}" validate \
     "${STAGED_ROOT}/release-ingress/${VERSION}/evidence-ingress-manifest.json" \
     --input-root "${STAGED_ROOT}" \
