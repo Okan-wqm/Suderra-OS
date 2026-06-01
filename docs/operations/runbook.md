@@ -28,13 +28,43 @@ ve validator patch'leri merge edildikten sonra tekrar kullanılamaz.
 
    - repository Organization/Enterprise altında olmalı veya kabul edilmiş audit
      export/replay evidence sağlanmalı,
-   - `main-protection`, `release-tag-protection`, `release-sign` ve
-     `release-publish` canlı policy ile uyumlu olmalı,
+   - branch, ruleset, environment ve required check adları aşağıdaki generated
+     governance policy yansımasıyla uyumlu olmalı,
    - `GOVERNANCE_READ_TOKEN`, release tag signing trust vars/secrets,
      `SUDERRA_OPERATOR_BUNDLE_ALLOWED_HOST`,
      `SUDERRA_OPERATOR_BUNDLE_CERTIFICATE_IDENTITY`,
      `SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64` ve
      `SUDERRA_CI_INSTALLER_PAYLOAD_PRIVATE_KEY_B64` tanımlı olmalı.
+
+   <!-- suderra-generated: governance-policy -->
+   | Category | Name |
+   | --- | --- |
+   | `required_check` | `Build / Build matrix contract` |
+   | `required_check` | `Build / Buildroot defconfig parse smoke (pi-cm4-revpi-usb-installer)` |
+   | `required_check` | `Build / Buildroot defconfig parse smoke (qemu-x86_64)` |
+   | `required_check` | `Build / Buildroot defconfig parse smoke (revpi4)` |
+   | `required_check` | `Build / Buildroot defconfig parse smoke (rpi4)` |
+   | `required_check` | `Build / Syntax and workflow contracts` |
+   | `required_check` | `Hadolint (Dockerfile lint) / Hadolint` |
+   | `required_check` | `Lint / Build Matrix Contract` |
+   | `required_check` | `Lint / DCO (Signed-off-by) Check` |
+   | `required_check` | `Lint / GitHub Actions Lint` |
+   | `required_check` | `Lint / Image Contract + Installer Tests` |
+   | `required_check` | `Lint / Markdown Lint` |
+   | `required_check` | `Lint / Secret Scan (gitleaks)` |
+   | `required_check` | `Lint / ShellCheck` |
+   | `required_check` | `Lint / YAML Lint` |
+   | `required_check` | `Rust Userspace / Build (aarch64-unknown-linux-musl)` |
+   | `required_check` | `Rust Userspace / Build (x86_64-unknown-linux-musl)` |
+   | `required_check` | `Rust Userspace / Format + Clippy + Test` |
+   | `required_check` | `Rust Userspace / MSRV check (Rust 1.86)` |
+   | `required_check` | `Rust Userspace / Security (audit + deny)` |
+   | `required_check` | `Security Scan / Gitleaks (secret scan)` |
+   | `required_check` | `Security Scan / Grype (filesystem)` |
+   | `required_check` | `Security Scan / Trivy (config / Dockerfile)` |
+   | `required_check` | `Security Scan / Trivy (filesystem)` |
+   | `required_check` | `Security Scan / VEX JSON syntax` |
+   <!-- /suderra-generated -->
 
 3. Yeni `origin/main` SHA için push kaynaklı Image Build'i yakala:
 
@@ -97,8 +127,15 @@ ve validator patch'leri merge edildikten sonra tekrar kullanılamaz.
    doğrulamadan undraft yapmaz.
 
 8. Abort durumunda tag ve draft release'i silmeden önce ingress, preflight,
-   tag-binding, draft asset listesi ve failure loglarını 7 yıl saklanacak
-   durable evidence store'a export et.
+   tag-binding, draft asset listesi ve failure loglarını generated retention
+   policy'deki durable evidence store'a export et.
+
+   <!-- suderra-generated: retention-policy -->
+   - Policy ID: `suderra-enterprise-7y-immutable-evidence`
+   - Minimum years: `7`
+   - Store class: `immutable-encrypted-evidence-archive`
+   - Required replay: `release-input-binding, runtime-suite, hsm-signing-manifest, station-acquisition, scanner-raw-replay, governance-snapshot, publication-manifest`
+   <!-- /suderra-generated -->
 
 ## Saha Operasyon Runbook
 

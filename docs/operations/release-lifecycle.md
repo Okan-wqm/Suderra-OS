@@ -17,7 +17,7 @@ does not create a production claim.
 The RC lifecycle is:
 
 ```text
-technical-dry-run -> evidence-ingress -> release-candidate preflight -> signed tag -> draft prerelease -> verified undraft -> stable promotion
+technical-dry-run -> rc-evidence-dry-run -> evidence-ingress -> release-candidate preflight -> signed tag -> draft prerelease -> verified undraft -> stable promotion
 ```
 
 Before evidence collection starts, freeze `main` for the RC window or create an
@@ -28,6 +28,12 @@ workflows require the bound `source_sha` to equal `origin/main`; any merge to
 Technical dry runs may be used to debug source/run/artifact binding. They do
 not prove release readiness, do not authorize tagging, and do not support a
 production-ready or enterprise-ready claim.
+
+`rc-evidence-dry-run` is the SSOT rehearsal step between plumbing and real
+evidence ingress. It emits canonical
+`release-dry-run/<version>/bundle-manifest.json`, a summary
+`dry-run-report.json`, and `gaps.json`, but the tag workflow rejects it as
+non-promotable evidence.
 
 ## Candidate / Alpha
 
@@ -158,6 +164,7 @@ Suderra-Source-Build-Run-Attempt: <image-build-run-attempt>
 Suderra-Preflight-Run-ID: <preflight-run-id>
 Suderra-Preflight-Run-Attempt: <preflight-run-attempt>
 Suderra-Preflight-Artifact-ID: <preflight-artifact-id>
+Suderra-Preflight-Profile: release-candidate
 Suderra-Ingress-Manifest-SHA256: <release-ingress-manifest-sha256>'
 git push origin v0.1.0-rc.1
 ```

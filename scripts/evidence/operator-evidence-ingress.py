@@ -44,23 +44,19 @@ GOVERNANCE_ROLE_BINDINGS_SCHEMA_VERSION = evidence_contract.schema_version("gove
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$")
-ALLOWED_INPUT_DIRS = (
-    "release-lab-input",
-    "release-approvals",
-    "release-reproducibility",
-    "release-governance",
-    "release-runtime",
-    "release-signing",
-    "release-retention",
-    "release-security",
-    "release-ota",
-)
-FORBIDDEN_INPUT_DIRS = (
-    "build-artifacts",
-    "release-inputs",
-    "release-subject-graph",
-    "release-evidence-generated",
-    "signed-release",
+ALLOWED_INPUT_DIRS = tuple(evidence_contract.operator_ingress_allowed_roots(contract=EVIDENCE_CONTRACT))
+FORBIDDEN_INPUT_DIRS = tuple(
+    sorted(
+        {
+            root
+            for root in evidence_contract.output_tree_roots(contract=EVIDENCE_CONTRACT)
+            if root not in ALLOWED_INPUT_DIRS
+        }
+        | {
+            "release-evidence-generated",
+            "signed-release",
+        }
+    )
 )
 
 
@@ -262,42 +258,11 @@ def release_targets_requiring_hardware(matrix: dict[str, Any]) -> set[str]:
 
 def required_evidence_paths(version: str, matrix_path: Path) -> set[str]:
     matrix = load_matrix(matrix_path)
-    required: set[str] = {
-        f"release-governance/{version}/audit-log.json",
-        f"release-governance/{version}/station-registry.json",
-    }
-    production_profile = "-" not in version
-    if production_profile:
-        required.add(f"release-governance/{version}/role-bindings.json")
-        required.add(f"release-retention/{version}/retention-manifest.json")
-        for scan in matrix.get("security_scans", []):
-            required.add(f"release-security/{version}/{scan}.json")
-    hardware_targets = release_targets_requiring_hardware(matrix)
-    for row in release_rows(matrix):
-        target = str(row["target"])
-        policy = evidence_contract.target_policy(target, EVIDENCE_CONTRACT)
-        if row.get("qemu_test"):
-            required.add(f"release-lab-input/{version}/{target}/qemu.json")
-        if target in hardware_targets:
-            required.add(f"release-lab-input/{version}/{target}/lab.json")
-        if production_profile and policy.get("hardware_required") is True:
-            required.add(f"release-lab-input/{version}/{target}/hardware-subject.json")
-            required.add(f"release-lab-input/{version}/{target}/station-acquisition.json")
-        if production_profile and policy.get("signing_required") is True:
-            required.add(f"release-signing/{version}/{target}/signing-manifest.json")
-        required.add(f"release-approvals/{version}/{target}.json")
-        required.add(f"release-reproducibility/{version}/{target}.json")
-    if production_profile:
-        for target, policy in EVIDENCE_CONTRACT.get("targets", {}).items():
-            if not isinstance(policy, dict) or policy.get("release_public") is True:
-                continue
-            if policy.get("runtime_required") is True:
-                required.add(f"release-runtime/{version}/{target}/production-runtime.json")
-            if policy.get("signing_required") is True:
-                required.add(f"release-signing/{version}/{target}/signing-manifest.json")
-            if policy.get("ota_capable") is True:
-                required.add(f"release-ota/{version}/{target}/ota-artifacts.json")
-    return required
+    return evidence_contract.operator_required_evidence_paths(
+        version=version,
+        matrix=matrix,
+        contract=EVIDENCE_CONTRACT,
+    )
 
 
 def role_for_path(rel: Path) -> str:
@@ -677,6 +642,8 @@ def validate_manifest(args: argparse.Namespace) -> list[str]:
         if missing_on_disk:
             failures.append("operator evidence manifest lists files missing from artifact: " + ", ".join(missing_on_disk))
         for dirname in FORBIDDEN_INPUT_DIRS:
+            if dirname == "release-ingress":
+                continue
             forbidden = args.input_root / dirname
             if forbidden.exists() and not getattr(args, "allow_preflight_context", False):
                 failures.append(f"{dirname}: must not be supplied through operator evidence ingress")

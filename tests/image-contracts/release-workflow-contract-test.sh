@@ -11,6 +11,8 @@ BUILD_WORKFLOW="${PROJECT_ROOT}/.github/workflows/build.yml"
 IMAGE_WORKFLOW="${PROJECT_ROOT}/.github/workflows/image-build.yml"
 PRODUCTION_RUNTIME_WORKFLOW="${PROJECT_ROOT}/.github/workflows/production-runtime-qemu.yml"
 
+python3 "${PROJECT_ROOT}/scripts/ci/verify-release-workflow-contract.py" --root "${PROJECT_ROOT}" >/dev/null
+
 grep -q '^concurrency:' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must have a release-tag concurrency guard" >&2
     exit 1
@@ -160,6 +162,212 @@ grep -Fq 'release-preflight-${{ inputs.profile }}-${{ inputs.version }}-${{ inpu
     echo "ERROR: release preflight artifact name must include profile, version, and source_sha" >&2
     exit 1
 }
+grep -q 'rc-evidence-dry-run' "${PREFLIGHT_WORKFLOW}" &&
+    grep -q 'rc-evidence-dry-run.py create' "${PREFLIGHT_WORKFLOW}" &&
+    grep -q -- '--input-root .' "${PREFLIGHT_WORKFLOW}" &&
+    grep -q 'rc-evidence-dry-run.py validate' "${PREFLIGHT_WORKFLOW}" &&
+    grep -q 'release-dry-run/' "${PREFLIGHT_WORKFLOW}" || {
+        echo "ERROR: release preflight must support non-promotable RC evidence dry-run bundles" >&2
+        exit 1
+    }
+grep -q 'rc-evidence-dry-run preflight artifacts are non-promotable' \
+    "${PROJECT_ROOT}/scripts/evidence/validate-release-tag-binding.py" || {
+        echo "ERROR: release tag binding must explicitly reject rc-evidence-dry-run artifacts" >&2
+        exit 1
+    }
+TAG_TMP="$(mktemp -d)"
+trap 'rm -rf "${TAG_TMP}"' EXIT
+cat >"${TAG_TMP}/binding.json" <<'JSON'
+{
+  "schema_version": "suderra.release-tag-binding.v1",
+  "version": "v9.9.9-rc.1",
+  "source_sha": "0123456789abcdef0123456789abcdef01234567",
+  "source_build_run_id": "11",
+  "source_build_run_attempt": "1",
+  "preflight_run_id": "22",
+  "preflight_run_attempt": "1",
+  "preflight_artifact_id": "33",
+  "preflight_profile": "release-candidate",
+  "ingress_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+JSON
+cat >"${TAG_TMP}/run.json" <<'JSON'
+{
+  "id": 22,
+  "run_attempt": 1,
+  "head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "head_branch": "main",
+  "status": "completed",
+  "conclusion": "success",
+  "name": "Release Preflight",
+  "event": "workflow_dispatch",
+  "path": ".github/workflows/release-preflight.yml",
+  "head_repository": {"full_name": "Okan-wqm/Suderra-OS"}
+}
+JSON
+cat >"${TAG_TMP}/artifacts.json" <<'JSON'
+{
+  "artifacts": [
+    {
+      "id": 33,
+      "name": "release-preflight-rc-evidence-dry-run-v9.9.9-rc.1-0123456789abcdef0123456789abcdef01234567",
+      "expired": false,
+      "size_in_bytes": 100
+    }
+  ]
+}
+JSON
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-release-tag-binding.py" validate-run \
+    --binding "${TAG_TMP}/binding.json" \
+    --run-json "${TAG_TMP}/run.json" \
+    --artifacts-json "${TAG_TMP}/artifacts.json" \
+    --repository Okan-wqm/Suderra-OS >/dev/null 2>&1; then
+    echo "ERROR: release tag binding accepted a non-promotable rc-evidence-dry-run artifact" >&2
+    exit 1
+fi
+python3 - "${TAG_TMP}" <<'PY'
+import hashlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+tmp = Path(sys.argv[1])
+policy = {"audit_log_lookback_days": 30}
+(tmp / "policy.json").write_text(json.dumps(policy) + "\n", encoding="utf-8")
+runs = {
+    "workflow_runs": [
+        {
+            "id": 44,
+            "run_attempt": 2,
+            "status": "completed",
+            "conclusion": "success",
+            "head_branch": "main",
+            "head_sha": "b" * 40,
+            "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        }
+    ]
+}
+(tmp / "drift-runs.json").write_text(json.dumps(runs) + "\n", encoding="utf-8")
+(tmp / "selected-drift-run.json").write_text(json.dumps(runs["workflow_runs"][0]) + "\n", encoding="utf-8")
+(tmp / "base-selected-drift-run.json").write_text(json.dumps(runs["workflow_runs"][0]) + "\n", encoding="utf-8")
+artifact = tmp / "drift"
+artifact.mkdir()
+validation = {"schema_version": "suderra.github-governance-validation.v2", "status": "passed"}
+snapshot = {"schema_version": "suderra.github-governance-snapshot-manifest.v1", "files": []}
+(artifact / "governance-policy-validation.json").write_text(json.dumps(validation) + "\n", encoding="utf-8")
+(artifact / "snapshot-manifest.json").write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+manifest = {
+    "schema_version": "suderra.governance-drift-run-manifest.v1",
+    "run_id": "44",
+    "run_attempt": "2",
+    "workflow_path": ".github/workflows/governance-drift.yml",
+    "branch": "main",
+    "head_sha": "b" * 40,
+    "policy_sha256": sha256(tmp / "policy.json"),
+    "snapshot_manifest_sha256": sha256(artifact / "snapshot-manifest.json"),
+    "governance_validation_sha256": sha256(artifact / "governance-policy-validation.json"),
+}
+(artifact / "drift-run-manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+(artifact / "base-drift-run-manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+PY
+python3 "${PROJECT_ROOT}/scripts/evidence/validate-governance-drift-replay.py" select-run \
+    --runs-json "${TAG_TMP}/drift-runs.json" \
+    --policy "${TAG_TMP}/policy.json" \
+    --expected-branch main \
+    --output "${TAG_TMP}/selected-drift-run-id.txt" >/dev/null
+python3 - "${TAG_TMP}/drift-runs.json" "${TAG_TMP}/stale-drift-runs.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+payload = json.loads(source.read_text(encoding="utf-8"))
+payload["workflow_runs"][0]["created_at"] = "2020-01-01T00:00:00Z"
+destination.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+PY
+if python3 "${PROJECT_ROOT}/scripts/evidence/validate-governance-drift-replay.py" select-run \
+    --runs-json "${TAG_TMP}/stale-drift-runs.json" \
+    --policy "${TAG_TMP}/policy.json" \
+    --expected-branch main \
+    --output "${TAG_TMP}/stale-selected-drift-run-id.txt" >/dev/null 2>&1; then
+    echo "ERROR: governance drift replay selected a stale run" >&2
+    exit 1
+fi
+python3 "${PROJECT_ROOT}/scripts/evidence/validate-governance-drift-replay.py" validate \
+    --selected-run-json "${TAG_TMP}/selected-drift-run.json" \
+    --artifact-root "${TAG_TMP}/drift" \
+    --policy "${TAG_TMP}/policy.json" >/dev/null
+
+assert_drift_manifest_rejected() {
+    local label="$1"
+    local field="$2"
+    local value="$3"
+    cp "${TAG_TMP}/drift/base-drift-run-manifest.json" "${TAG_TMP}/drift/drift-run-manifest.json"
+    python3 - "${TAG_TMP}/drift/drift-run-manifest.json" "${field}" "${value}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+field = sys.argv[2]
+value = sys.argv[3]
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload[field] = value
+path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+PY
+    if python3 "${PROJECT_ROOT}/scripts/evidence/validate-governance-drift-replay.py" validate \
+        --selected-run-json "${TAG_TMP}/selected-drift-run.json" \
+        --artifact-root "${TAG_TMP}/drift" \
+        --policy "${TAG_TMP}/policy.json" >/dev/null 2>&1; then
+        echo "ERROR: governance drift replay accepted ${label}" >&2
+        exit 1
+    fi
+}
+
+assert_drift_manifest_rejected "a run id mismatch" "run_id" "45"
+assert_drift_manifest_rejected "a run attempt mismatch" "run_attempt" "3"
+assert_drift_manifest_rejected "a branch mismatch" "branch" "release"
+assert_drift_manifest_rejected "a head SHA mismatch" "head_sha" "cccccccccccccccccccccccccccccccccccccccc"
+assert_drift_manifest_rejected "a policy digest mismatch" "policy_sha256" "0000000000000000000000000000000000000000000000000000000000000000"
+cp "${TAG_TMP}/drift/base-drift-run-manifest.json" "${TAG_TMP}/drift/drift-run-manifest.json"
+
+assert_selected_run_rejected() {
+    local label="$1"
+    local field="$2"
+    local value="$3"
+    cp "${TAG_TMP}/base-selected-drift-run.json" "${TAG_TMP}/selected-drift-run.json"
+    python3 - "${TAG_TMP}/selected-drift-run.json" "${field}" "${value}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+field = sys.argv[2]
+value = sys.argv[3]
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload[field] = value
+path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+PY
+    if python3 "${PROJECT_ROOT}/scripts/evidence/validate-governance-drift-replay.py" validate \
+        --selected-run-json "${TAG_TMP}/selected-drift-run.json" \
+        --artifact-root "${TAG_TMP}/drift" \
+        --policy "${TAG_TMP}/policy.json" >/dev/null 2>&1; then
+        echo "ERROR: governance drift replay accepted selected-run API ${label}" >&2
+        exit 1
+    fi
+}
+
+assert_selected_run_rejected "branch mismatch" "head_branch" "release"
+assert_selected_run_rejected "head SHA mismatch" "head_sha" "dddddddddddddddddddddddddddddddddddddddd"
+assert_selected_run_rejected "status mismatch" "status" "in_progress"
+assert_selected_run_rejected "conclusion mismatch" "conclusion" "failure"
+cp "${TAG_TMP}/base-selected-drift-run.json" "${TAG_TMP}/selected-drift-run.json"
 grep -q 'validate-release-tag-binding.py validate-run' "${RELEASE_WORKFLOW}" || {
     echo "ERROR: release workflow must validate the tag-bound preflight run and artifact" >&2
     exit 1
@@ -210,7 +418,7 @@ for workflow in "${PREFLIGHT_WORKFLOW}" "${EVIDENCE_INGRESS_WORKFLOW}" "${RELEAS
         }
 done
 grep -q 'collect-ci-check-evidence.py' "${PREFLIGHT_WORKFLOW}" || {
-    echo "ERROR: release preflight must convert exact source_sha CI checks into release security evidence" >&2
+    echo "ERROR: release preflight must preserve exact source_sha CI check-run governance evidence for non-production profiles" >&2
     exit 1
 }
 grep -q 'prepare-release-inputs.py subject-graph' "${PREFLIGHT_WORKFLOW}" &&
@@ -249,6 +457,18 @@ grep -q -- '--validate-subject-graph' "${RELEASE_WORKFLOW}" || {
 grep -q 'governance-drift.yml' "${RELEASE_WORKFLOW}" &&
     grep -q 'governance-drift-${drift_run_id}' "${RELEASE_WORKFLOW}" || {
         echo "ERROR: release workflow must require the latest signed governance drift evidence" >&2
+        exit 1
+    }
+grep -q 'drift-run-manifest.json' "${PROJECT_ROOT}/.github/workflows/governance-drift.yml" &&
+    grep -q 'suderra.governance-drift-run-manifest.v1' "${PROJECT_ROOT}/.github/workflows/governance-drift.yml" &&
+    grep -q 'drift-run-manifest.json.sig' "${PROJECT_ROOT}/.github/workflows/governance-drift.yml" || {
+        echo "ERROR: governance drift workflow must produce a signed run manifest" >&2
+        exit 1
+    }
+grep -q 'selected-governance-drift-run.json' "${RELEASE_WORKFLOW}" &&
+    grep -q 'drift-run-manifest.json' "${RELEASE_WORKFLOW}" &&
+    grep -q 'validate-governance-drift-replay.py validate' "${RELEASE_WORKFLOW}" || {
+        echo "ERROR: release workflow must replay governance drift run manifest bindings" >&2
         exit 1
     }
 grep -q 'Image Build' "${PREFLIGHT_WORKFLOW}" || {

@@ -54,22 +54,9 @@ SCHEMA_ROLES = {
     "release_evidence": evidence_contract.schema_version("release_evidence", EVIDENCE_CONTRACT),
 }
 OPTIONAL_EMPTY_INPUT_ROLES = {"qemu-stderr"}
-PREFLIGHT_INPUT_DIRS = (
-    "release-inputs",
-    "release-lab-input",
-    "release-governance",
-    "release-approvals",
-    "release-security",
-    "release-reproducibility",
-    "release-runtime",
-    "release-signing",
-    "release-retention",
-    "release-ota",
-    "release-subject-graph",
-    "release-ingress",
-)
-VALID_PREFLIGHT_PROFILES = {"technical-dry-run", "release-candidate", "production-candidate"}
-STRICT_PREFLIGHT_PROFILES = {"release-candidate", "production-candidate"}
+PREFLIGHT_INPUT_DIRS = tuple(evidence_contract.output_tree_roots(contract=EVIDENCE_CONTRACT))
+VALID_PREFLIGHT_PROFILES = set(evidence_contract.all_profiles(EVIDENCE_CONTRACT))
+STRICT_PREFLIGHT_PROFILES = set(evidence_contract.operator_ingress_required_profiles(EVIDENCE_CONTRACT))
 EVIDENCE_INGRESS_MANIFEST = "evidence-ingress-manifest.json"
 EVIDENCE_INGRESS_SIGNATURE_SIDECARS = (
     "evidence-ingress-manifest.json.sig",
@@ -242,56 +229,7 @@ def append_file_record(
 
 
 def input_role_for_path(rel_path: Path) -> str:
-    parts = rel_path.parts
-    if not parts:
-        return "preflight-input"
-    if parts[0] == "release-inputs":
-        return "binding-manifest"
-    if parts[0] == "release-lab-input" and rel_path.name == "qemu.json":
-        return "qemu-input"
-    if parts[0] == "release-lab-input" and rel_path.name == "qemu-semantic.json":
-        return "qemu-semantic"
-    if parts[0] == "release-lab-input" and rel_path.name in {"qemu-stderr.log", "stderr.log"}:
-        return "qemu-stderr"
-    if parts[0] == "release-lab-input" and rel_path.name == "lab.json":
-        return "lab-input"
-    if parts[0] == "release-lab-input" and rel_path.name == "hardware-subject.json":
-        return "hardware-subject"
-    if parts[0] == "release-lab-input" and rel_path.name == "station-acquisition.json":
-        return "station-acquisition"
-    if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json":
-        return "lab-station-bundle"
-    if parts[0] == "release-lab-input" and rel_path.name == "station-bundle.json.sig":
-        return "lab-station-signature"
-    if parts[0] == "release-lab-input" and rel_path.name == "station-public.pem":
-        return "lab-station-public-key"
-    if parts[0] == "release-governance" and rel_path.name == "role-bindings.json":
-        return "governance-role-bindings"
-    if parts[0] == "release-governance":
-        return "governance-snapshot"
-    if parts[0] == "release-approvals":
-        return "approval"
-    if parts[0] == "release-security":
-        return "security-report"
-    if parts[0] == "release-reproducibility":
-        return "reproducibility-report"
-    if parts[0] == "release-runtime" and rel_path.name == "production-runtime.json":
-        return "production-runtime-suite"
-    if parts[0] == "release-signing" and rel_path.name == "signing-manifest.json":
-        return "signing-manifest"
-    if parts[0] == "release-signing" and rel_path.suffix == ".json":
-        return "hsm-signing-session"
-    if parts[0] == "release-retention" and rel_path.name == "retention-manifest.json":
-        return "retention-manifest"
-    if parts[0] == "release-ota" and rel_path.name == "ota-artifacts.json":
-        return "ota-artifacts"
-    if parts[0] == "release-subject-graph" and rel_path.name == "release-subject-graph.json":
-        return "release-subject-graph"
-    if parts[0] == "release-ingress" and rel_path.name == EVIDENCE_INGRESS_MANIFEST:
-        return "evidence-ingress"
-    if parts[0] == "release-ingress" and rel_path.name in EVIDENCE_INGRESS_SIGNATURE_SIDECARS:
-        return "evidence-ingress-signature"
-    return "preflight-input"
+    return evidence_contract.preflight_input_role_for_path(rel_path, contract=EVIDENCE_CONTRACT)
 
 
 def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]]:
@@ -365,7 +303,14 @@ def create_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
             )
     if args.input_root is not None:
         input_root = args.input_root
-        for dirname in PREFLIGHT_INPUT_DIRS:
+        profile = str(binding.get("profile", ""))
+        allowed_input_dirs = set(evidence_contract.preflight_input_roots(profile, contract=EVIDENCE_CONTRACT))
+        for dirname in evidence_contract.output_tree_roots(contract=EVIDENCE_CONTRACT):
+            if dirname == "build-artifacts":
+                continue
+            if dirname not in allowed_input_dirs and (input_root / dirname).exists():
+                failures.append(f"{dirname}: must not be present for preflight profile {profile}")
+        for dirname in sorted(allowed_input_dirs):
             root = input_root / dirname
             if not root.is_dir():
                 continue
@@ -544,7 +489,10 @@ def validate_manifest(
     if manifest.get("build_workflow_path") != IMAGE_BUILD_WORKFLOW_PATH:
         failures.append(f"$.build_workflow_path: must be {IMAGE_BUILD_WORKFLOW_PATH}")
     if manifest.get("profile") not in VALID_PREFLIGHT_PROFILES:
-        failures.append("$.profile: must be technical-dry-run, release-candidate, or production-candidate")
+        failures.append(
+            "$.profile: must be technical-dry-run, rc-evidence-dry-run, "
+            "release-candidate, or production-candidate"
+        )
     if expected_version is not None and manifest.get("version") != expected_version:
         failures.append(f"$.version: must match {expected_version}")
     binding = None
@@ -686,7 +634,10 @@ def validate_manifest(
                 failures.append(f"{path}.path: must be unique")
             seen_paths.add(rel)
             if source == "preflight-input":
-                if not rel_path.parts or rel_path.parts[0] not in PREFLIGHT_INPUT_DIRS:
+                allowed_input_dirs = set(
+                    evidence_contract.preflight_input_roots(str(manifest.get("profile", "")), contract=EVIDENCE_CONTRACT)
+                )
+                if not rel_path.parts or rel_path.parts[0] not in allowed_input_dirs:
                     failures.append(f"{path}.path: preflight input must be under an allowed input tree")
                 expected_role = input_role_for_path(rel_path)
                 if item.get("role") != expected_role:
@@ -702,6 +653,29 @@ def validate_manifest(
                         failures.append(f"{path}.bytes: does not match referenced file size")
                     if sha256_file(actual) != item.get("sha256"):
                         failures.append(f"{path}.sha256: does not match referenced file sha256")
+    dry_run_records = [
+        item
+        for item in files
+        if isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and Path(item["path"]).parts[:1] == ("release-dry-run",)
+    ]
+    if dry_run_records and manifest.get("profile") != "rc-evidence-dry-run":
+        failures.append("$.files: release-dry-run inputs are only valid for rc-evidence-dry-run")
+    if manifest.get("profile") == "rc-evidence-dry-run":
+        version = str(manifest.get("version", ""))
+        required_dry_run_paths = {
+            f"release-dry-run/{version}/dry-run-report.json",
+            f"release-dry-run/{version}/bundle-manifest.json",
+            f"release-dry-run/{version}/gaps.json",
+        }
+        present_dry_run_paths = {str(item.get("path")) for item in dry_run_records}
+        missing_dry_run_paths = sorted(required_dry_run_paths - present_dry_run_paths)
+        if missing_dry_run_paths:
+            failures.append(
+                "$.files: rc-evidence-dry-run must preserve dry-run report, bundle manifest, and gap report: "
+                + ", ".join(missing_dry_run_paths)
+            )
     if not has_image_build_contract:
         failures.append("$.files: must include image-build-contract evidence")
     if manifest.get("profile") in STRICT_PREFLIGHT_PROFILES:

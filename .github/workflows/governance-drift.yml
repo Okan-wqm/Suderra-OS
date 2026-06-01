@@ -44,11 +44,52 @@ jobs:
             --policy ci/github-governance-policy.yml \
             --snapshot-root "${root}" \
             --output "${root}/governance-policy-validation.json"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path("release-governance/drift") / os.environ["GITHUB_RUN_ID"]
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          payload = {
+              "schema_version": "suderra.governance-drift-run-manifest.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "Governance Drift Evidence",
+              "workflow_path": ".github/workflows/governance-drift.yml",
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "head_sha": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"],
+              "branch": os.environ.get("GITHUB_REF_NAME", ""),
+              "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "policy_sha256": sha256(Path("ci/github-governance-policy.yml")),
+              "snapshot_manifest_sha256": sha256(root / "snapshot-manifest.json"),
+              "governance_validation_sha256": sha256(root / "governance-policy-validation.json"),
+          }
+          (root / "drift-run-manifest.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
           cosign sign-blob \
             --yes \
             --output-signature="${root}/governance-policy-validation.json.sig" \
             --output-certificate="${root}/governance-policy-validation.json.cert" \
             "${root}/governance-policy-validation.json"
+          cosign sign-blob \
+            --yes \
+            --output-signature="${root}/drift-run-manifest.json.sig" \
+            --output-certificate="${root}/drift-run-manifest.json.cert" \
+            "${root}/drift-run-manifest.json"
 
       - name: Upload governance drift evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

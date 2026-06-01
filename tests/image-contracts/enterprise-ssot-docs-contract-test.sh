@@ -6,7 +6,11 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 for doc in \
     docs/operations/operator-lifecycle.md \
+    docs/operations/rc-evidence-dry-run.md \
     docs/operations/evidence-retention.md \
+    docs/operations/verify-release.md \
+    docs/operations/release-evidence.md \
+    docs/operations/runbook.md \
     docs/security/key-ceremony.md \
     docs/assessments/INDEX.md
 do
@@ -20,10 +24,17 @@ grep -q 'ci/build-matrix.yml' "${ROOT}/docs/operations/operator-lifecycle.md"
 grep -q 'ci/evidence-contract.yml' "${ROOT}/docs/operations/operator-lifecycle.md"
 grep -q 'ci/github-governance-policy.yml' "${ROOT}/docs/operations/operator-lifecycle.md"
 grep -q 'Schema versions, retention years, replay names, signing roles' "${ROOT}/docs/README.md"
-grep -q 'suderra.retention-manifest.v1' "${ROOT}/docs/operations/evidence-retention.md"
+grep -q 'rc-evidence-dry-run' "${ROOT}/docs/operations/rc-evidence-dry-run.md"
+grep -q 'non-promotable' "${ROOT}/docs/operations/rc-evidence-dry-run.md"
+grep -q 'production_ready=false' "${ROOT}/docs/operations/rc-evidence-dry-run.md"
+grep -q 'Suderra-Preflight-Profile' "${ROOT}/docs/operations/rc-evidence-dry-run.md"
+grep -q 'offline/archive verification' "${ROOT}/docs/operations/rc-evidence-dry-run.md"
+grep -q 'Suderra-Preflight-Profile' "${ROOT}/docs/operations/release-preflight.md"
+grep -q 'legacy archive material only' "${ROOT}/docs/operations/release-preflight.md"
+grep -q 'Suderra-Preflight-Profile' "${ROOT}/docs/operations/verify-release.md"
+grep -q 'offline/archive verification' "${ROOT}/docs/operations/verify-release.md"
+grep -q 'release-dry-run/<version>/gaps.json' "${ROOT}/docs/operations/operator-lifecycle.md"
 grep -q 'suderra.signing-manifest.v2' "${ROOT}/docs/security/key-ceremony.md"
-grep -q 'suderra.release-subject-graph.v1' "${ROOT}/docs/operations/verify-release.md"
-grep -q 'suderra.retention-manifest.v1' "${ROOT}/docs/operations/verify-release.md"
 grep -q -- '--validate-subject-graph' "${ROOT}/docs/operations/verify-release.md"
 if grep -n 'production-candidate' "${ROOT}/docs/operations/verify-release.md" | grep -q 'release-candidate.json'; then
     echo "ERROR: production-candidate verification docs must not use release-candidate.json" >&2
@@ -43,10 +54,82 @@ import re
 import sys
 import importlib.util
 import json
+import subprocess
 import tempfile
+import textwrap
 from pathlib import Path
 
 root = Path(sys.argv[1])
+
+def generated_block(path: Path, name: str) -> str:
+    start = f"<!-- suderra-generated: {name} -->"
+    end = "<!-- /suderra-generated -->"
+    text = path.read_text(encoding="utf-8")
+    if start not in text or end not in text:
+        raise SystemExit(f"{path}: missing generated block {name}")
+    return textwrap.dedent(text.split(start, 1)[1].split(end, 1)[0]).strip()
+
+def fragment(name: str) -> str:
+    return subprocess.check_output(
+        [
+            "python3",
+            str(root / "scripts/evidence/evidence_contract.py"),
+            "docs-fragment",
+            "--fragment",
+            name,
+        ],
+        text=True,
+    ).strip()
+
+expected_blocks = {
+    "docs/operations/rc-evidence-dry-run.md": ("output-trees", "profile-gates"),
+    "docs/operations/evidence-retention.md": ("retention-policy",),
+    "docs/operations/verify-release.md": ("verification-schemas",),
+    "docs/operations/release-evidence.md": ("schema-versions", "runtime-scenarios"),
+    "docs/operations/runbook.md": ("governance-policy", "retention-policy"),
+}
+for rel, names in expected_blocks.items():
+    path = root / rel
+    for name in names:
+        if generated_block(path, name) != fragment(name):
+            raise SystemExit(f"{rel} generated block {name} is stale")
+
+verify_text = (root / "docs/operations/verify-release.md").read_text(encoding="utf-8")
+if "protected `publish`" in verify_text:
+    raise SystemExit("verify-release docs must not use stale protected publish environment name")
+
+def strip_generated_blocks(text: str) -> str:
+    return re.sub(
+        r"<!-- suderra-generated: .*?<!-- /suderra-generated -->",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+
+rc_doc = strip_generated_blocks((root / "docs/operations/rc-evidence-dry-run.md").read_text(encoding="utf-8"))
+for paragraph in re.split(r"\n\s*\n", rc_doc):
+    lowered = " ".join(paragraph.lower().split())
+    if "rc-evidence-dry-run" not in lowered and "dry-run" not in lowered:
+        continue
+    forbidden_claims = {
+        "authorize publication",
+        "authorizes publication",
+        "publication allowed",
+        "promotion allowed",
+        "production readiness evidence",
+        "release gate input",
+        "satisfies release-candidate",
+        "satisfies production-candidate",
+        "can publish",
+        "may publish",
+    }
+    matched = sorted(claim for claim in forbidden_claims if claim in lowered)
+    if matched:
+        raise SystemExit(
+            "rc-evidence-dry-run docs contain forbidden production/publication claim: "
+            + ", ".join(matched)
+        )
+
 index = root / "docs/assessments/INDEX.md"
 rows = [
     line

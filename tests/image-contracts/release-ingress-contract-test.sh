@@ -244,6 +244,130 @@ python3 "${TOOL}" validate \
     --expected-source-sha "${SOURCE_SHA}" \
     >/dev/null
 
+for forbidden_profile in release-candidate production-candidate; do
+    if [ "${forbidden_profile}" != "release-candidate" ]; then
+        python3 - \
+            "${TMPDIR}/release-inputs/${VERSION}/release-candidate.json" \
+            "${TMPDIR}/release-inputs/${VERSION}/${forbidden_profile}.json" \
+            "${forbidden_profile}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+profile = sys.argv[3]
+payload = json.loads(source.read_text(encoding="utf-8"))
+payload["profile"] = profile
+destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    fi
+    mkdir -p "${TMPDIR}/release-dry-run/${VERSION}"
+    printf '{"schema_version":"suderra.rc-evidence-dry-run.v1"}\n' \
+        >"${TMPDIR}/release-dry-run/${VERSION}/dry-run-report.json"
+    if python3 "${TOOL}" create \
+        --binding-manifest "${TMPDIR}/release-inputs/${VERSION}/${forbidden_profile}.json" \
+        --artifact-root "${TMPDIR}/build-artifacts" \
+        --input-root "${TMPDIR}" \
+        --output "${TMPDIR}/release-ingress/${VERSION}/dry-run-forbidden-${forbidden_profile}.json" \
+        --repository "Okan-wqm/Suderra-OS" \
+        --workflow "Release Preflight" \
+        --run-id "987654321" \
+        --run-attempt "1" \
+        --actor "contract" \
+        2>"${TMPDIR}/dry-run-forbidden-${forbidden_profile}.err"; then
+        echo "ERROR: ${forbidden_profile} ingress accepted release-dry-run input tree" >&2
+        exit 1
+    fi
+    grep -q "release-dry-run" "${TMPDIR}/dry-run-forbidden-${forbidden_profile}.err" || {
+        echo "ERROR: forbidden dry-run create failure did not cite release-dry-run for ${forbidden_profile}" >&2
+        cat "${TMPDIR}/dry-run-forbidden-${forbidden_profile}.err" >&2
+        exit 1
+    }
+    rm -rf "${TMPDIR}/release-dry-run"
+done
+
+RC_BINDING_SOURCE="${TMPDIR}/release-inputs/${VERSION}/release-candidate.json"
+for forbidden_root in \
+    release-runtime \
+    release-signing \
+    release-retention \
+    release-lab-input \
+    release-ota \
+    release-reproducibility \
+    release-approvals
+do
+    RC_TMP="${TMPDIR}/rc-dry-run-forbidden-${forbidden_root}"
+    mkdir -p "${RC_TMP}/release-inputs/${VERSION}"
+    cp -R "${TMPDIR}/build-artifacts" "${RC_TMP}/build-artifacts"
+    python3 - "${RC_BINDING_SOURCE}" "${RC_TMP}/release-inputs/${VERSION}/rc-evidence-dry-run.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+payload = json.loads(source.read_text(encoding="utf-8"))
+payload["profile"] = "rc-evidence-dry-run"
+destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    case "${forbidden_root}" in
+        release-runtime)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/qemu-x86_64/production-runtime.json"
+            schema="suderra.production-runtime-suite.v2"
+            ;;
+        release-signing)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/qemu-x86_64/signing-manifest.json"
+            schema="suderra.signing-manifest.v2"
+            ;;
+        release-retention)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/retention-manifest.json"
+            schema="suderra.retention-manifest.v1"
+            ;;
+        release-lab-input)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/qemu-x86_64/hardware-subject.json"
+            schema="suderra.hardware-subject.v1"
+            ;;
+        release-ota)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/qemu-x86_64/ota-artifacts.json"
+            schema="suderra.ota-artifacts.v1"
+            ;;
+        release-reproducibility)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/qemu-x86_64.json"
+            schema="suderra.reproducibility.v1"
+            ;;
+        release-approvals)
+            forbidden_path="${RC_TMP}/${forbidden_root}/${VERSION}/qemu-x86_64.json"
+            schema="suderra.release-approval.v2"
+            ;;
+        *)
+            echo "ERROR: unhandled forbidden root ${forbidden_root}" >&2
+            exit 1
+            ;;
+    esac
+    mkdir -p "$(dirname "${forbidden_path}")"
+    printf '{"schema_version":"%s"}\n' "${schema}" >"${forbidden_path}"
+    if python3 "${TOOL}" create \
+        --binding-manifest "${RC_TMP}/release-inputs/${VERSION}/rc-evidence-dry-run.json" \
+        --artifact-root "${RC_TMP}/build-artifacts" \
+        --input-root "${RC_TMP}" \
+        --output "${RC_TMP}/release-ingress/${VERSION}/ingress-manifest.json" \
+        --repository "Okan-wqm/Suderra-OS" \
+        --workflow "Release Preflight" \
+        --run-id "987654321" \
+        --run-attempt "1" \
+        --actor "contract" \
+        2>"${TMPDIR}/rc-forbidden-${forbidden_root}.err"; then
+        echo "ERROR: rc-evidence-dry-run ingress accepted forbidden input tree ${forbidden_root}" >&2
+        exit 1
+    fi
+    grep -q "${forbidden_root}" "${TMPDIR}/rc-forbidden-${forbidden_root}.err" || {
+        echo "ERROR: forbidden input failure did not cite ${forbidden_root}" >&2
+        cat "${TMPDIR}/rc-forbidden-${forbidden_root}.err" >&2
+        exit 1
+    }
+done
+
 cp "${TMPDIR}/release-ingress/${VERSION}/ingress-manifest.json" \
     "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json"
 python3 - "${TMPDIR}/release-ingress/${VERSION}/missing-evidence-ingress.json" "${VERSION}" <<'PY'

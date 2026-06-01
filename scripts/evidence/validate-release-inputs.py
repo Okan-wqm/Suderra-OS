@@ -255,12 +255,20 @@ def validate_subject_graph(
         return failures
     subject_ids = {str(node.get("subject_id")) for node in nodes if isinstance(node.get("subject_id"), str)}
     by_target = {str(node.get("target")): node for node in nodes if isinstance(node.get("target"), str)}
+    profile_policy = evidence_contract.profile_policy(profile, EVIDENCE_CONTRACT)
+    strict_nonproduction_artifacts = (
+        profile_policy.get("strict_artifact_binding") is True
+        and profile_policy.get("production_candidate") is not True
+    )
     for row in matrix.get("defconfigs", []):
         if not isinstance(row, dict) or not row.get("target"):
             continue
         target = str(row["target"])
         policy = evidence_contract.target_policy(target, EVIDENCE_CONTRACT)
         if not policy or not (policy.get("production_gate") or policy.get("release_public")):
+            continue
+        refs = binding_artifact_refs_for_target(binding, target)
+        if strict_nonproduction_artifacts and row.get("release") is not True and not refs:
             continue
         node = by_target.get(target)
         if not isinstance(node, dict):
@@ -288,7 +296,6 @@ def validate_subject_graph(
                 failures.append(f"release subject graph raw_image_sha256 must be bound for {target}: {path}")
             if not isinstance(raw_bytes, int) or raw_bytes <= 0:
                 failures.append(f"release subject graph raw_image_bytes must be bound for {target}: {path}")
-        refs = binding_artifact_refs_for_target(binding, target)
         artifact_digests = {str(item.get("sha256")) for item in refs}
         compressed = node.get("compressed_artifact_sha256")
         compressed_bytes = node.get("compressed_artifact_bytes")
@@ -993,7 +1000,7 @@ def validate_binding(
     matrix_path: Path,
 ) -> list[str]:
     if binding is None:
-        if args.profile in {"release-candidate", "production-candidate"}:
+        if args.profile in {"rc-evidence-dry-run", "release-candidate", "production-candidate"}:
             return [f"{args.profile} profile requires --binding-manifest"]
         return []
     failures: list[str] = []
@@ -1049,57 +1056,19 @@ def validate_binding(
     try:
         matrix, matrix_module = load_matrix_with_module(matrix_path)
         expected_rows = [row for row in matrix.get("defconfigs", []) if row.get("release")]
-        expected_artifacts: dict[tuple[str, str], dict[str, Any]] = {
-            (str(row["name"]), artifact): row
-            for row in expected_rows
-            for artifact in matrix_module.expected_artifacts(row)
-        }
+        expected_artifacts = evidence_contract.expected_release_artifact_map(matrix, matrix_module)
     except Exception as exc:
         failures.append(f"cannot load expected release artifact contract: {exc}")
         expected_artifacts = {}
 
-    artifacts = binding.get("artifacts")
-    if not isinstance(artifacts, list) or not artifacts:
-        failures.append("binding artifacts must be a non-empty list")
-    else:
-        seen: set[tuple[str, str]] = set()
-        artifact_root = args.artifact_root
-        for index, artifact in enumerate(artifacts):
-            if not isinstance(artifact, dict):
-                failures.append(f"binding artifacts[{index}] must be an object")
-                continue
-            key = (str(artifact.get("defconfig")), str(artifact.get("artifact")))
-            expected_row = expected_artifacts.get(key)
-            if expected_artifacts and expected_row is None:
-                failures.append(f"unexpected binding artifact: {key[0]} {key[1]}")
-            elif expected_row is not None and artifact.get("target") != expected_row.get("target"):
-                failures.append(f"binding artifact {key[0]} {key[1]} target must be {expected_row.get('target')}")
-            if key in seen:
-                failures.append(f"duplicate binding artifact: {key[0]} {key[1]}")
-            seen.add(key)
-            digest = artifact.get("sha256")
-            if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
-                failures.append(f"binding artifact {key[0]} {key[1]} has invalid sha256")
-            elif digest == "0" * 64:
-                failures.append(f"binding artifact {key[0]} {key[1]} must not use all-zero sha256")
-            if not isinstance(artifact.get("bytes"), int) or artifact.get("bytes", 0) <= 0:
-                failures.append(f"binding artifact {key[0]} {key[1]} must have positive byte size")
-            rel = artifact.get("path")
-            if not isinstance(rel, str) or Path(rel).is_absolute() or ".." in Path(rel).parts or is_placeholder(rel):
-                failures.append(f"binding artifact {key[0]} {key[1]} path must be a relative non-placeholder path")
-            if artifact_root is not None and isinstance(rel, str):
-                path = artifact_root / rel
-                if not path.is_file():
-                    failures.append(f"binding artifact file missing: {path}")
-                elif isinstance(digest, str) and sha256_file(path) != digest:
-                    failures.append(f"binding artifact sha mismatch: {path}")
-        if expected_artifacts:
-            missing = sorted(set(expected_artifacts) - seen)
-            if missing:
-                failures.append(
-                    "binding artifacts missing matrix-required files: "
-                    + ", ".join(f"{defconfig}:{artifact}" for defconfig, artifact in missing)
-                )
+    failures.extend(
+        evidence_contract.validate_release_artifact_bindings(
+            binding.get("artifacts"),
+            expected_artifacts,
+            artifact_root=args.artifact_root,
+            file_hasher=sha256_file,
+        )
+    )
     expected_build_evidence: set[tuple[str, str]] = set()
     if "expected_rows" in locals():
         for row in expected_rows:
@@ -1515,7 +1484,7 @@ def main() -> int:
     parser.add_argument("--release-tier", choices=("alpha", "production"), required=True)
     parser.add_argument(
         "--profile",
-        choices=("technical-dry-run", "release-candidate", "production-candidate"),
+        choices=("technical-dry-run", "rc-evidence-dry-run", "release-candidate", "production-candidate"),
         default="release-candidate",
     )
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
@@ -1544,7 +1513,7 @@ def main() -> int:
         failures.append(f"release tier must be {inferred_tier} for version {args.version}")
     binding = load_binding(args.binding_manifest, failures)
     failures.extend(validate_binding(binding, args, args.matrix))
-    if args.profile in {"release-candidate", "production-candidate"}:
+    if args.profile in {"rc-evidence-dry-run", "release-candidate", "production-candidate"}:
         if args.ingress_manifest is None:
             failures.append(f"{args.profile} profile requires --ingress-manifest")
         else:
@@ -1596,6 +1565,26 @@ def main() -> int:
                 print(f"ERROR: {failure}", file=sys.stderr)
             return 1
         print(f"validated technical dry-run release inputs for {args.version}")
+        return 0
+    if args.profile == "rc-evidence-dry-run":
+        dry_run_bundle = args.root / "release-dry-run" / args.version / "bundle-manifest.json"
+        failures.extend(
+            run(
+                [
+                    sys.executable,
+                    "scripts/evidence/rc-evidence-dry-run.py",
+                    "validate",
+                    str(dry_run_bundle),
+                    "--input-root",
+                    str(args.root),
+                ]
+            )
+        )
+        if failures:
+            for failure in failures:
+                print(f"ERROR: {failure}", file=sys.stderr)
+            return 1
+        print(f"validated RC evidence dry-run inputs for {args.version}")
         return 0
     governance_report = args.root / "release-governance" / args.version / "governance-policy-validation.json"
     governance = read_json(governance_report)

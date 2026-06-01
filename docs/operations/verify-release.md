@@ -7,20 +7,32 @@ Alpha/pre-release artifact'leri lab validation içindir. Production doğrulama
 akışı ancak `production-readiness` ve production-tier release evidence geçtiğinde
 tamamlanmış sayılır.
 
+`rc-evidence-dry-run` artifact'leri release doğrulama girdisi değildir. Bu
+profil yalnız SSOT planlarını ve production gap raporunu prova eder; signed tag
+ve yayın doğrulaması için `release-candidate` veya `production-candidate`
+preflight artifact'i gerekir.
+
+Live release gate, signed annotated tag içinde `Suderra-Preflight-Profile`
+alanını zorunlu tutar. Pre-release tag'ler yalnız `release-candidate`, GA tag'ler
+yalnız `production-candidate` preflight artifact'iyle yayın yetkisi alır. Bu
+alanı taşımayan legacy tag metadata'sı sadece offline/archive verification
+bağlamında incelenebilir; güncel release authorization veya promotion sağlamaz.
+
 Enterprise production doğrulaması aynı release subject graph'a bağlı şu güncel
 şemaları bekler:
 
-| Kanıt | Şema |
-|---|---|
-| Release evidence | `suderra.release-evidence.v6` |
-| Subject graph | `suderra.release-subject-graph.v1` |
-| Runtime suite | `suderra.qemu-production-runtime-suite.v2` |
-| Runtime observation | `suderra.runtime-observation.v1` |
-| Signing manifest | `suderra.signing-manifest.v2` |
-| Hardware subject | `suderra.hardware-subject.v1` |
-| OTA artifacts | Contract-owned `release-ota/<version>/<target>/ota-artifacts.json` |
-| Security report | `suderra.release-security-report.v2` |
-| Retention manifest | `suderra.retention-manifest.v1` |
+<!-- suderra-generated: verification-schemas -->
+| Role | Schema Version |
+| --- | --- |
+| `release_evidence` | `suderra.release-evidence.v6` |
+| `release_subject_graph` | `suderra.release-subject-graph.v1` |
+| `production_runtime_suite` | `suderra.qemu-production-runtime-suite.v2` |
+| `runtime_observation` | `suderra.runtime-observation.v1` |
+| `signing_manifest` | `suderra.signing-manifest.v2` |
+| `hardware_subject` | `suderra.hardware-subject.v1` |
+| `release_security_report` | `suderra.release-security-report.v2` |
+| `retention_manifest` | `suderra.retention-manifest.v1` |
+<!-- /suderra-generated -->
 
 Örnekler `v1.0.0` ve Raspberry Pi 4 artifact'i içindir. Diğer imajlar
 `ci/build-matrix.yml` içindeki `release_artifact` değerleriyle aynı adları
@@ -108,8 +120,8 @@ cosign verify-blob \
 
 `manifest.json` `suderra-installer` tarafından tüketilen release manifest'idir.
 `SHA256SUMS` toplu hash dosyasıdır. İkisi de protected `release-sign` job'ında
-cosign keyless ile imzalanır; GitHub Release yayını ayrı protected `publish`
-job'ında yapılır.
+cosign keyless ile imzalanır; GitHub Release yayını protected
+`release-publish` environment'ına bağlı publish job'ında yapılır.
 
 ```bash
 for f in manifest.json SHA256SUMS; do

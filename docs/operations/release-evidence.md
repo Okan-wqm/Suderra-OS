@@ -80,6 +80,44 @@ must use the production tier and cannot validate as alpha.
 
 ## Schema
 
+Schema version değerleri SSOT'tan üretilir:
+
+<!-- suderra-generated: schema-versions -->
+| Role | Schema Version |
+| --- | --- |
+| `governance_role_bindings` | `suderra.governance-role-bindings.v1` |
+| `hardware_subject` | `suderra.hardware-subject.v1` |
+| `hsm_signing_session` | `suderra.hsm-signing-session.v2` |
+| `lab_evidence` | `suderra.lab-evidence.v3` |
+| `machine_verification` | `suderra.machine-verification.v3` |
+| `ota_artifacts` | `suderra.ota-artifacts.v1` |
+| `ota_target_contract` | `suderra.ota-target-contract.v1` |
+| `production_runtime_suite` | `suderra.qemu-production-runtime-suite.v2` |
+| `release_evidence` | `suderra.release-evidence.v6` |
+| `release_security_report` | `suderra.release-security-report.v2` |
+| `release_subject_graph` | `suderra.release-subject-graph.v1` |
+| `retention_manifest` | `suderra.retention-manifest.v1` |
+| `runtime_observation` | `suderra.runtime-observation.v1` |
+| `signing_manifest` | `suderra.signing-manifest.v2` |
+| `station_acquisition` | `suderra.station-acquisition.v2` |
+<!-- /suderra-generated -->
+
+Runtime scenario/check eşleşmeleri de SSOT'tan üretilir:
+
+<!-- suderra-generated: runtime-scenarios -->
+| Scenario | Required Checks |
+| --- | --- |
+| `signed-boot` | `secure_boot`, `dm_verity`, `lockdown`, `nmap`, `systemd_security` |
+| `unsigned-boot-rejection` |  |
+| `cmdline-tamper-rejection` |  |
+| `dm-verity-rootfs-tamper-rejection` | `dm_verity_tamper` |
+| `rauc-good-update` | `rauc_good_update` |
+| `rauc-bad-signature-rejection` | `rauc_bad_signature` |
+| `rauc-health-rollback` | `rauc_health_rollback` |
+| `anti-rollback-downgrade-rejection` | `anti_rollback` |
+| `data-luks-swtpm` | `data_luks` |
+<!-- /suderra-generated -->
+
 Required top-level fields:
 
 | Field | Purpose |
@@ -110,7 +148,7 @@ Required top-level fields:
 | `ota_artifacts` | Target-named RAUC bundle and `suderra-os-update-manifest.json` records produced from the subject plan for OTA-capable targets. |
 | `release_image_scan_reports`, `scanner_native_reports` | Scanner-native rootfs/image/SBOM reports bound to release subjects and raw scanner bytes. |
 | `retention_manifest` | Immutable archive receipt and restore/replay manifest for the same release subject graph. |
-| `runtime_checks` | `secure_boot`, `dm_verity`, `dm_verity_tamper`, `rauc_good_update`, `rauc_bad_signature`, `rauc_health_rollback`, `anti_rollback`, `data_luks`, `lockdown`, `nmap`, and `systemd_security`. |
+| `runtime_checks` | Runtime scenario/check set is generated from `ci/evidence-contract.yml` above. |
 | `approvals` | Release-owner or security approvals. |
 | `residual_risk` | Accepted or blocking residual risk records. |
 | `release_decision` | `blocked`, `approved`, or `approved_with_residual_risk`. |

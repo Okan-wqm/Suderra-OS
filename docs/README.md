@@ -54,6 +54,7 @@ docs/
 - [evidence-retention.md](operations/evidence-retention.md) — contract-governed immutable evidence retention ve restore/replay testleri
 - [release-lifecycle.md](operations/release-lifecycle.md) — alpha ve production release kapıları
 - [release-evidence.md](operations/release-evidence.md) — SSOT release evidence contract, subject graph, governance, QEMU ve lab input akışı
+- [rc-evidence-dry-run.md](operations/rc-evidence-dry-run.md) — non-promotable RC evidence dry-run ve production gap handoff
 - [release-preflight.md](operations/release-preflight.md) — source/run/artifact binding ile release-candidate preflight
 - [ci-log-and-warning-triage.md](operations/ci-log-and-warning-triage.md) — build warning/SARIF governance
 - [ota.md](operations/ota.md) — RAUC bundle oluştur, sun, rollback
