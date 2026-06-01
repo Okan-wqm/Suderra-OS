@@ -27,7 +27,9 @@ REQUIRED_FIELDS = {
     "preflight_run_attempt": "Suderra-Preflight-Run-Attempt",
     "preflight_artifact_id": "Suderra-Preflight-Artifact-ID",
     "ingress_manifest_sha256": "Suderra-Ingress-Manifest-SHA256",
+    "preflight_profile": "Suderra-Preflight-Profile",
 }
+OPTIONAL_FIELDS: dict[str, str] = {}
 
 
 def git(args: list[str]) -> str:
@@ -72,7 +74,7 @@ def parse_annotation(text: str) -> dict[str, str]:
             if value != "v1":
                 fail("Suderra-Release-Binding must be v1")
             continue
-        for field, annotation_key in REQUIRED_FIELDS.items():
+        for field, annotation_key in {**REQUIRED_FIELDS, **OPTIONAL_FIELDS}.items():
             if key == annotation_key:
                 if field in values:
                     fail(f"duplicate tag binding field: {annotation_key}")
@@ -216,7 +218,19 @@ def validate_run_command(args: argparse.Namespace) -> int:
     if not isinstance(items, list):
         fail(f"invalid preflight artifacts JSON: {args.artifacts_json}")
     preflight_profile = "release-candidate" if "-" in binding["version"] else "production-candidate"
+    if "preflight_profile" in binding and binding["preflight_profile"] != preflight_profile:
+        fail(f"Suderra-Preflight-Profile must be {preflight_profile}")
     expected_name = f"release-preflight-{preflight_profile}-{binding['version']}-{binding['source_sha']}"
+    forbidden_name = f"release-preflight-rc-evidence-dry-run-{binding['version']}-{binding['source_sha']}"
+    forbidden_matches = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and item.get("name") == forbidden_name
+        and int(item.get("id", 0)) == int(binding["preflight_artifact_id"])
+    ]
+    if forbidden_matches:
+        fail("rc-evidence-dry-run preflight artifacts are non-promotable and cannot authorize release tags")
     matches = [item for item in items if isinstance(item, dict) and item.get("name") == expected_name]
     if len(matches) != 1:
         fail(f"expected exactly one preflight artifact named {expected_name}, got {len(matches)}")
@@ -271,6 +285,8 @@ def validate_cross_binding_command(args: argparse.Namespace) -> int:
         if str(ingress.get(release_field)) != expected:
             failures.append(f"ingress {release_field} must match tag {tag_field}")
     profile = "release-candidate" if "-" in str(binding.get("version", "")) else "production-candidate"
+    if binding.get("preflight_profile") not in (None, profile):
+        failures.append(f"tag binding preflight_profile must be {profile}")
     if release_input.get("profile") != profile:
         failures.append(f"release input profile must be {profile}")
     if ingress.get("profile") != profile:

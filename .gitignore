@@ -83,5 +83,11 @@ test-results/
 /release-approvals/
 /release-governance/
 /release-ingress/
+/release-subject-graph/
+/release-dry-run/
+/release-runtime/
+/release-signing/
+/release-retention/
+/release-ota/
 /release-evidence-generated/
 /signed-release/

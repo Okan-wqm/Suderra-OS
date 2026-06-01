@@ -349,8 +349,8 @@ def binding_payload(args: argparse.Namespace) -> tuple[dict[str, Any], list[str]
     errors: list[str] = []
     if not SEMVER_RE.fullmatch(args.version):
         errors.append(f"version is not SemVer tag format: {args.version}")
-    if args.profile == "release-candidate" and "-" not in args.version:
-        errors.append("release-candidate profile requires a prerelease SemVer tag")
+    if args.profile in {"rc-evidence-dry-run", "release-candidate"} and "-" not in args.version:
+        errors.append(f"{args.profile} profile requires a prerelease SemVer tag")
     if args.profile == "production-candidate" and "-" in args.version:
         errors.append("production-candidate profile requires a GA SemVer tag")
     if not SOURCE_SHA_RE.fullmatch(args.source_sha):
@@ -450,6 +450,14 @@ def artifact_ref(binding: dict[str, Any], target: str, artifact: str) -> dict[st
     return None
 
 
+def artifact_ref_any(binding: dict[str, Any], target: str, artifacts: list[str]) -> dict[str, Any] | None:
+    for artifact in artifacts:
+        ref = artifact_ref(binding, target, artifact)
+        if ref is not None:
+            return ref
+    return None
+
+
 def relative_path(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -541,6 +549,9 @@ def subject_graph_payload(
     profile = str(binding.get("profile"))
     source_sha = str(binding.get("source_sha"))
     source_run_id = str(binding.get("source_run_id"))
+    profile_policy = evidence_contract.profile_policy(profile, contract)
+    strict_artifact_binding = bool(profile_policy.get("strict_artifact_binding"))
+    production_candidate = bool(profile_policy.get("production_candidate"))
     subjects: list[dict[str, Any]] = []
     evidence_nodes: list[dict[str, Any]] = []
     evidence_edges: list[dict[str, Any]] = []
@@ -554,7 +565,21 @@ def subject_graph_payload(
             continue
         production_candidate = profile == "production-candidate"
         raw_ref = artifact_ref(binding, target, str(row.get("artifact")))
-        compressed_ref = artifact_ref(binding, target, str(row.get("release_artifact")))
+        compressed_ref = artifact_ref_any(
+            binding,
+            target,
+            [
+                str(row.get("release_artifact")),
+                f"{row.get('artifact')}.xz",
+            ],
+        )
+        if (
+            strict_artifact_binding
+            and not production_candidate
+            and row.get("release") is not True
+            and (not isinstance(raw_ref, dict) or not isinstance(compressed_ref, dict))
+        ):
+            continue
         subject_id = evidence_contract.release_subject_id(
             version=version,
             target=target,
@@ -1004,7 +1029,7 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--build-workflow-path", default=".github/workflows/image-build.yml")
     parser.add_argument(
         "--profile",
-        choices=("technical-dry-run", "release-candidate", "production-candidate"),
+        choices=("technical-dry-run", "rc-evidence-dry-run", "release-candidate", "production-candidate"),
         default="release-candidate",
     )
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)

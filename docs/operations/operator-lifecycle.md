@@ -27,18 +27,20 @@ change proves all production evidence.
 
 1. Freeze source at the intended `version`, `source_sha`, and Image Build
    `source_run_id`.
-2. Generate the canonical subject plan with
+2. For a non-promotable rehearsal, run `rc-evidence-dry-run` and review
+   `release-dry-run/<version>/gaps.json`; do not tag from this artifact.
+3. Generate the canonical subject plan with
    `scripts/evidence/evidence_contract.py subject-plan`.
-3. Ingest `release-inputs`, `release-runtime`, `release-signing`,
+4. Ingest `release-inputs`, `release-runtime`, `release-signing`,
    `release-lab-input`, `release-security`, and `release-governance` under the
    same subject identity.
-4. Run release input preflight. Production-candidate validation must fail if
+5. Run release input preflight. Production-candidate validation must fail if
    signing manifests, hardware subjects, governance role bindings, or retention
    manifests are missing.
-5. Enter the protected signing environment only after preflight passes.
-6. Publish only from protected release jobs after publication manifest and
+6. Enter the protected signing environment only after preflight passes.
+7. Publish only from protected release jobs after publication manifest and
    post-publication verification pass.
-7. On abort, preserve failed evidence under retention policy and record the
+8. On abort, preserve failed evidence under retention policy and record the
    superseding run if retried.
-8. On supersede, keep the prior subject graph immutable and publish a new
+9. On supersede, keep the prior subject graph immutable and publish a new
    subject graph for the replacement release.

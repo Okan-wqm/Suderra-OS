@@ -118,9 +118,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GOVERNANCE_READ_TOKEN }}
         run: |
           set -euo pipefail
+          version="${{ needs.validate.outputs.version }}"
+          if [ -f "release-governance/${version}/audit-log.json" ]; then
+            mkdir -p governance-audit-source
+            cp "release-governance/${version}/audit-log.json" governance-audit-source/audit-log.json
+            export SUDERRA_GOVERNANCE_AUDIT_LOG="${PWD}/governance-audit-source/audit-log.json"
+          fi
           python3 scripts/evidence/collect-governance.py \
             --repo "${GITHUB_REPOSITORY}" \
-            --version "${{ needs.validate.outputs.version }}" \
+            --version "${version}" \
             --output-root release-governance \
             --repo-root .
       - name: Validate GitHub governance policy
@@ -143,30 +149,13 @@ jobs:
           gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/governance-drift.yml/runs?status=success&branch=main&per_page=20" \
             > governance-drift-runs.json
-          python3 - <<'PY' > governance-drift-run-id.txt
-          import json
-          from datetime import datetime, timezone, timedelta
-          from pathlib import Path
-
-          policy = json.loads(Path("ci/github-governance-policy.yml").read_text(encoding="utf-8"))
-          payload = json.loads(Path("governance-drift-runs.json").read_text(encoding="utf-8"))
-          runs = payload.get("workflow_runs") if isinstance(payload, dict) else []
-          max_age = timedelta(days=int(policy.get("audit_log_lookback_days", 30)))
-          now = datetime.now(timezone.utc)
-          for run in runs:
-              if not isinstance(run, dict) or run.get("conclusion") != "success":
-                  continue
-              created = run.get("created_at")
-              try:
-                  created_at = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
-              except ValueError:
-                  continue
-              if now - created_at <= max_age:
-                  print(run["id"])
-                  raise SystemExit(0)
-          raise SystemExit("no fresh successful governance drift run found")
-          PY
+          python3 scripts/evidence/validate-governance-drift-replay.py select-run \
+            --runs-json governance-drift-runs.json \
+            --policy ci/github-governance-policy.yml \
+            --expected-branch main \
+            --output governance-drift-run-id.txt
           drift_run_id="$(cat governance-drift-run-id.txt)"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${drift_run_id}" > selected-governance-drift-run.json
           gh run download "${drift_run_id}" \
             --repo "${GITHUB_REPOSITORY}" \
             --name "governance-drift-${drift_run_id}" \
@@ -177,17 +166,18 @@ jobs:
             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/governance-drift.yml@refs/heads/main" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "release-governance/${VERSION}/drift/governance-policy-validation.json"
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          path = Path("release-governance") / "${{ needs.validate.outputs.version }}" / "drift" / "governance-policy-validation.json"
-          payload = json.loads(path.read_text(encoding="utf-8"))
-          if payload.get("schema_version") != "suderra.github-governance-validation.v2":
-              raise SystemExit("governance drift evidence schema mismatch")
-          if payload.get("status") != "passed":
-              raise SystemExit("governance drift evidence did not pass")
-          PY
+          cosign verify-blob \
+            --certificate "release-governance/${VERSION}/drift/drift-run-manifest.json.cert" \
+            --signature "release-governance/${VERSION}/drift/drift-run-manifest.json.sig" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/governance-drift.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "release-governance/${VERSION}/drift/drift-run-manifest.json"
+          python3 scripts/evidence/validate-governance-drift-replay.py validate \
+            --selected-run-json selected-governance-drift-run.json \
+            --artifact-root "release-governance/${VERSION}/drift" \
+            --policy ci/github-governance-policy.yml \
+            --expected-workflow-path .github/workflows/governance-drift.yml \
+            --expected-branch main
       - name: Upload governance evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

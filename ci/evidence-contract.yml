@@ -18,11 +18,228 @@
     "station_acquisition": "suderra.station-acquisition.v2"
   },
   "profiles": {
-    "ci": {"production_candidate": false},
-    "dev": {"production_candidate": false},
-    "ga": {"production_candidate": true},
-    "release-candidate": {"production_candidate": false},
-    "production-candidate": {"production_candidate": true}
+    "ci": {
+      "production_candidate": false,
+      "prerelease_only": false,
+      "release_authorizing": false,
+      "publication_allowed": false,
+      "strict_artifact_binding": false,
+      "subject_graph_required": false,
+      "gap_report_required": false,
+      "operator_ingress_required": false,
+      "required_output_trees": []
+    },
+    "dev": {
+      "production_candidate": false,
+      "prerelease_only": false,
+      "release_authorizing": false,
+      "publication_allowed": false,
+      "strict_artifact_binding": false,
+      "subject_graph_required": false,
+      "gap_report_required": false,
+      "operator_ingress_required": false,
+      "required_output_trees": []
+    },
+    "ga": {
+      "production_candidate": true,
+      "prerelease_only": false,
+      "release_authorizing": true,
+      "publication_allowed": true,
+      "strict_artifact_binding": true,
+      "subject_graph_required": true,
+      "gap_report_required": false,
+      "operator_ingress_required": true,
+      "required_output_trees": ["release-subject-graph"]
+    },
+    "technical-dry-run": {
+      "production_candidate": false,
+      "prerelease_only": false,
+      "release_authorizing": false,
+      "publication_allowed": false,
+      "strict_artifact_binding": false,
+      "subject_graph_required": false,
+      "gap_report_required": false,
+      "operator_ingress_required": false,
+      "required_output_trees": []
+    },
+    "rc-evidence-dry-run": {
+      "production_candidate": false,
+      "prerelease_only": true,
+      "release_authorizing": false,
+      "publication_allowed": false,
+      "strict_artifact_binding": true,
+      "subject_graph_required": true,
+      "gap_report_required": true,
+      "operator_ingress_required": false,
+      "required_output_trees": ["release-subject-graph", "release-dry-run"]
+    },
+    "release-candidate": {
+      "production_candidate": false,
+      "prerelease_only": true,
+      "release_authorizing": true,
+      "publication_allowed": true,
+      "strict_artifact_binding": false,
+      "subject_graph_required": true,
+      "gap_report_required": false,
+      "operator_ingress_required": true,
+      "required_output_trees": ["release-subject-graph"]
+    },
+    "production-candidate": {
+      "production_candidate": true,
+      "prerelease_only": false,
+      "release_authorizing": true,
+      "publication_allowed": true,
+      "strict_artifact_binding": true,
+      "subject_graph_required": true,
+      "gap_report_required": false,
+      "operator_ingress_required": true,
+      "required_output_trees": ["release-subject-graph"]
+    }
+  },
+  "output_trees": {
+    "schema_version": "suderra.output-tree-policy.v1",
+    "trees": {
+      "build-artifacts": {
+        "path_template": "build-artifacts",
+        "schema_role": "image_build_artifacts",
+        "required_by_default": true,
+        "promotable": true,
+        "operator_ingress_allowed": false,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": false
+      },
+      "release-inputs": {
+        "path_template": "release-inputs/{version}",
+        "schema_role": "release_input_binding",
+        "required_by_default": true,
+        "promotable": true,
+        "operator_ingress_allowed": false,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": true,
+        "gitignore_required": false
+      },
+      "release-ingress": {
+        "path_template": "release-ingress/{version}",
+        "schema_role": "release_ingress",
+        "required_by_default": true,
+        "promotable": true,
+        "operator_ingress_allowed": false,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": true,
+        "gitignore_required": true
+      },
+      "release-subject-graph": {
+        "path_template": "release-subject-graph/{version}",
+        "schema_role": "release_subject_graph",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": false,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": true,
+        "gitignore_required": true
+      },
+      "release-dry-run": {
+        "path_template": "release-dry-run/{version}",
+        "schema_role": "rc_evidence_dry_run",
+        "required_by_default": false,
+        "promotable": false,
+        "operator_ingress_allowed": false,
+        "release_tag_allowed": false,
+        "dry_run_input_allowed": true,
+        "gitignore_required": true
+      },
+      "release-lab-input": {
+        "path_template": "release-lab-input/{version}",
+        "schema_role": "lab_input",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      },
+      "release-governance": {
+        "path_template": "release-governance/{version}",
+        "schema_role": "governance_snapshot",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": true,
+        "gitignore_required": true
+      },
+      "release-runtime": {
+        "path_template": "release-runtime/{version}",
+        "schema_role": "production_runtime",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      },
+      "release-signing": {
+        "path_template": "release-signing/{version}",
+        "schema_role": "signing_evidence",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      },
+      "release-retention": {
+        "path_template": "release-retention/{version}",
+        "schema_role": "retention_evidence",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      },
+      "release-ota": {
+        "path_template": "release-ota/{version}",
+        "schema_role": "ota_evidence",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      },
+      "release-approvals": {
+        "path_template": "release-approvals/{version}",
+        "schema_role": "release_approval",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      },
+      "release-security": {
+        "path_template": "release-security/{version}",
+        "schema_role": "security_evidence",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": true,
+        "gitignore_required": true
+      },
+      "release-reproducibility": {
+        "path_template": "release-reproducibility/{version}",
+        "schema_role": "reproducibility_evidence",
+        "required_by_default": false,
+        "promotable": true,
+        "operator_ingress_allowed": true,
+        "release_tag_allowed": true,
+        "dry_run_input_allowed": false,
+        "gitignore_required": true
+      }
+    }
   },
   "subjects": {
     "schema_version": "suderra.release-subject-graph.v1",
