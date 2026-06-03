@@ -54,7 +54,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && steps.validate_trivy_fs_sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463
         with:
           sarif_file: 'trivy-fs.sarif'
           category: 'trivy-fs'
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && steps.validate_trivy_config_sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463
         with:
           sarif_file: 'trivy-config.sarif'
           category: 'trivy-config'
@@ -170,7 +170,7 @@ jobs:
         run: python3 scripts/ci/validate-sarif.py results.sarif
       - name: Upload SARIF
         if: always() && steps.validate_grype_sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463
         with:
           sarif_file: results.sarif
           category: grype-fs
