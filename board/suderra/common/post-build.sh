@@ -266,4 +266,29 @@ EOF
 
 fi
 
+# 8. Root credential guardrail (C1 regresyon koruması)
+# Hiçbir imaj, repo'da paylaşılan/gömülü bir root parolası ile SEVK EDİLMEMELİDİR.
+# Root shadow alanı kilitli olmalı (`!`, `*` veya "!..." formu) — yani password
+# login imkânsız. Bilinçli dev-debug için SUDERRA_ALLOW_ROOT_PASSWORD=1 escape
+# hatch'i gerekir; aksi halde gömülü bir crypt hash (ör. eski "$6$suderra$...")
+# build'i fail eder.
+if [ -f "${TARGET_DIR}/etc/shadow" ]; then
+    root_secret="$(awk -F: '$1=="root"{print $2}' "${TARGET_DIR}/etc/shadow")"
+    case "${root_secret}" in
+        ""|"*"|"!"|"!!"|"!"*)
+            : # kilitli — güvenli
+            ;;
+        *)
+            if [ "${SUDERRA_ALLOW_ROOT_PASSWORD:-0}" = "1" ]; then
+                echo "WARNING: root parolası ayarlı (SUDERRA_ALLOW_ROOT_PASSWORD=1 ile izin verildi) — bu imajı DAĞITMAYIN"
+            else
+                echo "ERROR: root shadow alanı bir parola hash'i taşıyor; sevk edilen imajlarda root login kilitli olmalı."
+                echo "       Bir defconfig'te BR2_TARGET_GENERIC_ROOT_PASSWD ayarlı olabilir — kaldırın."
+                echo "       Bilinçli dev-debug için SUDERRA_ALLOW_ROOT_PASSWORD=1 verin (dağıtmayın)."
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
 echo "==> post-build tamamlandı"
