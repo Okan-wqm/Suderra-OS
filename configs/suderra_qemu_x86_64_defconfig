@@ -118,8 +118,13 @@ BR2_PACKAGE_CHRONY=y
 # Build optimizations
 BR2_TARGET_GENERIC_HOSTNAME="suderra"
 BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
-BR2_TARGET_ENABLE_ROOT_LOGIN=y
-BR2_TARGET_GENERIC_ROOT_PASSWD="$$6$$suderra$$WEUTfdUxSdlVhtgwmC7hEqyXOBfFi5C99pczs8i8bnKiPd/wwrAntaBnNj1jeErSB260adcV1QZbYhFCSOyRI0"
+# Root login: interaktif password login KAPALI. Daha önce buraya repo'da
+# paylaşılan sabit bir SHA-512 hash (plaintext "suderra") gömülüydü; bu, indirilen
+# release imajını (release_source=true) console'dan root'a açan bir güvenlik açığıydı.
+# Root artık kilitli (shadow `!`); erişim yalnız provisioning akışı (firstboot
+# tek-kullanımlık parola + forced-command `provision` kullanıcısı) üzerinden.
+# Diğer board defconfig'leriyle (rpi4/revpi4) tutarlı.
+# BR2_TARGET_ENABLE_ROOT_LOGIN is not set
 BR2_TARGET_GENERIC_GETTY=y
 BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y

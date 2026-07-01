@@ -99,8 +99,10 @@ BR2_PACKAGE_CHRONY=y
 # Build optimizations
 BR2_TARGET_GENERIC_HOSTNAME="suderra"
 BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
-BR2_TARGET_ENABLE_ROOT_LOGIN=y
-BR2_TARGET_GENERIC_ROOT_PASSWD="$$6$$suderra$$WEUTfdUxSdlVhtgwmC7hEqyXOBfFi5C99pczs8i8bnKiPd/wwrAntaBnNj1jeErSB260adcV1QZbYhFCSOyRI0"
+# Root login: interaktif password login KAPALI. Repo'da paylaşılan sabit parola
+# hash'i (plaintext "suderra") kaldırıldı — güvenlik açığıydı. Root kilitli;
+# erişim provisioning akışı üzerinden. Diğer board defconfig'leriyle tutarlı.
+# BR2_TARGET_ENABLE_ROOT_LOGIN is not set
 BR2_TARGET_GENERIC_GETTY=y
 BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
