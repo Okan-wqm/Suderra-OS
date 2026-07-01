@@ -406,10 +406,18 @@ fn verify_manifest_policy(manifest: &SignedManifest, state: &OtaState) -> Result
             device_target
         );
     }
+    // Anahtar epoch tabanı: env ile YÜKSELTİLEBİLİR ama prod'da 1'in altına
+    // İNDİRİLEMEZ (saldırgan SUDERRA_OTA_MIN_KEY_EPOCH=0 ile revoke edilmiş
+    // eski anahtarı geçemesin).
     let minimum_epoch = std::env::var("SUDERRA_OTA_MIN_KEY_EPOCH")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(1);
+    let minimum_epoch = if is_production() {
+        minimum_epoch.max(1)
+    } else {
+        minimum_epoch
+    };
     if manifest.key_epoch < minimum_epoch {
         bail!(
             "manifest key_epoch {} is below required epoch {}",
@@ -493,7 +501,7 @@ fn run_rauc(args: &[&str]) -> Result<()> {
 }
 
 fn run_rauc_output(args: &[&str]) -> Result<String> {
-    let rauc = std::env::var("SUDERRA_OTA_RAUC").unwrap_or_else(|_| "rauc".to_string());
+    let rauc = dev_override("SUDERRA_OTA_RAUC").unwrap_or_else(|| "rauc".to_string());
     let output = Command::new(&rauc)
         .args(args)
         .output()
@@ -514,7 +522,7 @@ fn request_reboot(reason: &str) -> Result<()> {
     if std::env::var("SUDERRA_OTA_NO_REBOOT").ok().as_deref() == Some("1") {
         return Ok(());
     }
-    let reboot = std::env::var("SUDERRA_OTA_REBOOT").unwrap_or_else(|_| "/sbin/reboot".to_string());
+    let reboot = dev_override("SUDERRA_OTA_REBOOT").unwrap_or_else(|| "/sbin/reboot".to_string());
     let output = Command::new(&reboot)
         .arg(reason)
         .output()
@@ -533,28 +541,49 @@ fn request_reboot(reason: &str) -> Result<()> {
 fn load_state() -> Result<OtaState> {
     production_rollback_floor_requires_monotonic_state()?;
     let path = state_path();
-    if !path.exists() {
-        let fallback_floor = std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR")
-            .unwrap_or_else(|_| "v0.1.0-alpha".to_string());
-        return Ok(OtaState {
+    let mut state = if path.exists() {
+        let state: OtaState = serde_json::from_str(
+            &fs::read_to_string(&path)
+                .with_context(|| format!("cannot read {}", path.display()))?,
+        )
+        .with_context(|| format!("invalid OTA state JSON: {}", path.display()))?;
+        if state.schema_version != STATE_SCHEMA {
+            bail!("OTA state schema_version must be {STATE_SCHEMA}");
+        }
+        state
+    } else {
+        // State dosyası yok (ilk boot ya da /data sıfırlandı). Fallback floor'u
+        // env'den (yalnız dev) veya /data'daki floor aynasından seed'liyoruz;
+        // prod'da bunların ikisi de güvenilmezdir ama aşağıdaki trusted-floor
+        // alt sınırı state'i yine de gerçek monotonic floor'a çeker.
+        let fallback_floor = dev_override("SUDERRA_OTA_ROLLBACK_FLOOR")
+            .or_else(read_rollback_floor)
+            .unwrap_or_else(|| "v0.1.0-alpha".to_string());
+        let current_version = dev_override("SUDERRA_OTA_CURRENT_VERSION")
+            .or_else(running_image_version)
+            .unwrap_or_else(|| fallback_floor.clone());
+        OtaState {
             schema_version: STATE_SCHEMA.to_string(),
             target: device_target(),
-            current_version: std::env::var("SUDERRA_OTA_CURRENT_VERSION")
-                .unwrap_or_else(|_| fallback_floor.clone()),
-            rollback_floor: read_rollback_floor().unwrap_or(fallback_floor),
+            current_version,
+            rollback_floor: fallback_floor,
             pending_version: None,
             pending_boot_slot: None,
             reboot_required: false,
             last_event: None,
             last_error: None,
-        });
-    }
-    let state: OtaState = serde_json::from_str(
-        &fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?,
-    )
-    .with_context(|| format!("invalid OTA state JSON: {}", path.display()))?;
-    if state.schema_version != STATE_SCHEMA {
-        bail!("OTA state schema_version must be {STATE_SCHEMA}");
+        }
+    };
+
+    // Güvenilir (TPM NV / bootloader monotonic) floor bir ALT SINIRDIR: state'teki
+    // floor bunun altına ASLA inemez. Böylece saldırgan /data'daki state.json ve
+    // floor aynasını silse/düşürse bile downgrade koruması korunur. Prod'da
+    // production_rollback_floor_requires_monotonic_state() bu kaynağın varlığını
+    // ve okunabilirliğini zaten garanti eder.
+    if let Some(trusted) = trusted_rollback_floor()? {
+        if compare_versions(&trusted, &state.rollback_floor)? == Ordering::Greater {
+            state.rollback_floor = trusted;
+        }
     }
     Ok(state)
 }
@@ -608,24 +637,103 @@ fn read_rollback_floor() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Prod binary'de güvenlik-kritik davranış env ile DEĞİŞTİRİLEMEZ. Bu bayrak
+/// açıkken tüm test/dev override'ları yok sayılır (fail-closed). Non-prod (dev,
+/// lab, CI-smoke) binary'lerde override'lar test kolaylığı için etkindir.
+fn is_production() -> bool {
+    std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1")
+}
+
+/// Test/dev-only env override okuyucu. Prod'da `None` döner; böylece expiry,
+/// slot ispatı, rauc/reboot binary'si, rollback floor gibi güvenlik davranışları
+/// prod'da environment ile geçilemez.
+fn dev_override(key: &str) -> Option<String> {
+    if is_production() {
+        None
+    } else {
+        std::env::var(key).ok()
+    }
+}
+
+/// Prod'da anti-rollback floor'un okunacağı GÜVENİLİR kaynak yolu. Bu yol
+/// yazılabilir state dizininin (`/data/...`) DIŞINDA olmalı ve platform (TPM NV
+/// aynası veya bootloader monotonic counter) tarafından doldurulmalıdır. Değer
+/// buradan okunur; yazılabilir `/data` üzerindeki floor dosyası prod'da yalnız
+/// bir ayna/cache'tir, güven çıpası DEĞİLDİR.
+fn trusted_floor_path() -> Option<PathBuf> {
+    std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")
+        .ok()
+        .map(PathBuf::from)
+}
+
+/// Güvenilir kaynaktan floor değerini okur ve SemVer olarak doğrular. Kaynak yolu
+/// yoksa `None`; ayarlı ama okunamıyorsa/boşsa/geçersizse hata (prod fail-closed).
+fn trusted_rollback_floor() -> Result<Option<String>> {
+    let Some(path) = trusted_floor_path() else {
+        return Ok(None);
+    };
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("cannot read trusted rollback floor {}", path.display()))?;
+    let value = raw.trim().to_string();
+    if value.is_empty() {
+        bail!("trusted rollback floor {} is empty", path.display());
+    }
+    ParsedVersion::parse(&value)
+        .with_context(|| format!("trusted rollback floor {value} is not valid SemVer"))?;
+    Ok(Some(value))
+}
+
+/// Çalışan imajın sürümünü `/etc/os-release`'ten okur (prod'da güvenilir
+/// `current_version` tohumu — env yerine gerçekten boot edilen imaj).
+fn running_image_version() -> Option<String> {
+    let content = fs::read_to_string("/etc/os-release").ok()?;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("VERSION_ID=") {
+            let v = rest.trim().trim_matches('"').trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
-    let production = std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1");
-    if !production {
+    if !is_production() {
         return Ok(());
     }
     match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE").ok().as_deref() {
-        Some("tpm-nv") | Some("bootloader-monotonic") => Ok(()),
+        Some("tpm-nv") | Some("bootloader-monotonic") => {}
         Some(other) => bail!(
             "production anti-rollback requires TPM NV or bootloader monotonic state, got {other}"
         ),
         None => bail!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE=tpm-nv or bootloader-monotonic"),
     }
+    // Floor'un GERÇEKTEN okunacağı kaynak yolu zorunlu olmalı ve yazılabilir
+    // state dizininin dışında yaşamalı — yoksa "TPM-destekli" iddiası teatral
+    // kalır (saldırgan /data'daki dosyayı silip floor'u düşürebilir).
+    let path = trusted_floor_path().ok_or_else(|| {
+        anyhow!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH backed by the declared monotonic source")
+    })?;
+    let sdir = state_dir();
+    if path.starts_with(&sdir) {
+        bail!(
+            "rollback floor source path {} must not live under the writable state dir {}",
+            path.display(),
+            sdir.display()
+        );
+    }
+    // Kaynak okunabilir ve geçerli olmalı (fail-closed).
+    trusted_rollback_floor()?
+        .ok_or_else(|| anyhow!("production rollback floor source is configured but produced no value"))?;
+    Ok(())
 }
 
 fn state_dir() -> PathBuf {
-    std::env::var("SUDERRA_OTA_STATE_DIR")
+    // Prod'da state konumu sabittir; dev/CI'de SUDERRA_OTA_STATE_DIR ile taşınabilir.
+    dev_override("SUDERRA_OTA_STATE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/data/suderra/ota"))
+        .unwrap_or_else(|| PathBuf::from("/data/suderra/ota"))
 }
 
 fn state_path() -> PathBuf {
@@ -641,8 +749,7 @@ fn device_target() -> String {
 }
 
 fn configured_pending_boot_slot() -> Option<String> {
-    std::env::var("SUDERRA_OTA_PENDING_BOOT_SLOT")
-        .ok()
+    dev_override("SUDERRA_OTA_PENDING_BOOT_SLOT")
         .map(|value| value.trim().to_string())
         .filter(|value| matches!(value.as_str(), "A" | "B"))
 }
@@ -686,7 +793,7 @@ fn find_slot_value(value: &Value, names: &[&str]) -> Option<String> {
 }
 
 fn active_boot_slot() -> Option<String> {
-    if let Ok(value) = std::env::var("SUDERRA_OTA_ACTIVE_BOOT_SLOT") {
+    if let Some(value) = dev_override("SUDERRA_OTA_ACTIVE_BOOT_SLOT") {
         let slot = value.trim();
         if matches!(slot, "A" | "B") {
             return Some(slot.to_string());
@@ -733,7 +840,9 @@ fn sha256_file(path: &Path) -> Result<String> {
 }
 
 fn now_utc() -> Result<DateTime<Utc>> {
-    if let Ok(value) = std::env::var("SUDERRA_OTA_NOW") {
+    // SUDERRA_OTA_NOW yalnız test/dev'de saat sabitlemek içindir; prod'da yok
+    // sayılır ki süresi geçmiş/imzalı bir manifest replay edilemesin.
+    if let Some(value) = dev_override("SUDERRA_OTA_NOW") {
         return Ok(DateTime::parse_from_rfc3339(&value)
             .with_context(|| format!("invalid SUDERRA_OTA_NOW {value}"))?
             .with_timezone(&Utc));
@@ -862,6 +971,66 @@ fn compare_prerelease(left: &[PrereleaseIdentifier], right: &[PrereleaseIdentifi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Env değiştiren testleri serileştir (process-global env yarışlarını önle).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn dev_override_ignored_in_production() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        std::env::set_var("SUDERRA_OTA_NOW", "2000-01-01T00:00:00Z");
+        assert!(
+            dev_override("SUDERRA_OTA_NOW").is_none(),
+            "prod'da test override yok sayılmalı"
+        );
+        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        assert_eq!(
+            dev_override("SUDERRA_OTA_NOW").as_deref(),
+            Some("2000-01-01T00:00:00Z"),
+            "non-prod'da override etkin olmalı"
+        );
+        std::env::remove_var("SUDERRA_OTA_NOW");
+    }
+
+    #[test]
+    fn trusted_floor_read_and_validated() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let path = std::env::temp_dir().join(format!("suderra-ota-floor-{}", std::process::id()));
+        std::fs::write(&path, "v2.3.4\n").unwrap();
+        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH", path.to_str().unwrap());
+        assert_eq!(trusted_rollback_floor().unwrap().as_deref(), Some("v2.3.4"));
+
+        std::fs::write(&path, "not-a-version\n").unwrap();
+        assert!(
+            trusted_rollback_floor().is_err(),
+            "geçersiz SemVer floor reddedilmeli"
+        );
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+        std::fs::remove_file(&path).ok();
+        assert!(trusted_rollback_floor().unwrap().is_none());
+    }
+
+    #[test]
+    fn production_gate_rejects_writable_floor_source() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "tpm-nv");
+        // Floor kaynağı yazılabilir state dizininin altında → reddedilmeli.
+        let inside = state_dir().join("rollback-floor");
+        std::env::set_var(
+            "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH",
+            inside.to_str().unwrap(),
+        );
+        assert!(
+            production_rollback_floor_requires_monotonic_state().is_err(),
+            "yazılabilir state dizinindeki floor kaynağı prod'da reddedilmeli"
+        );
+        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+    }
 
     #[test]
     fn version_order_handles_prerelease_floor() {
