@@ -118,6 +118,25 @@ pub struct InstalledPackage {
     /// Cosign verify edildi mi?
     #[serde(default)]
     pub signature_verified: bool,
+    /// Kurulum yöntemi: gerçek RAUC kurulumu mu yoksa yalnız lab-copy mi?
+    /// `status`/`list`/`upgrade`/`rollback` kararları için bu ayrım kritiktir:
+    /// lab-copy GERÇEK bir kurulum değildir (RAUC yok, servis etkinleştirilmez).
+    #[serde(default)]
+    pub install_method: InstallMethod,
+}
+
+/// Bir paketin nasıl kurulduğu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallMethod {
+    /// Yöntem bilinmiyor (eski kayıt / migrasyon).
+    #[default]
+    Unknown,
+    /// Gerçek RAUC-backed kurulum.
+    Rauc,
+    /// Yalnız lab: bundle bir dizine kopyalandı; RAUC yok, servis
+    /// etkinleştirilmedi. Üretimde kullanılamaz.
+    LabCopy,
 }
 
 impl InstalledState {
@@ -212,6 +231,7 @@ mod tests {
             installed_at: chrono::Utc::now(),
             sha256: "abc".into(),
             signature_verified: true,
+            install_method: InstallMethod::Rauc,
         });
         state.save().unwrap();
 
