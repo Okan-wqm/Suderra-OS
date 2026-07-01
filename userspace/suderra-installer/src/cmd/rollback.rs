@@ -61,12 +61,19 @@ pub async fn run(args: RollbackArgs) -> Result<()> {
         }
     }
 
-    // Faz 2-D MVP: install komutu ile target_version yükle
-    // Faz 4: RAUC mark-bad + reboot to previous slot
+    // Faz 4: RAUC mark-bad + reboot to previous slot. Motor henüz yok; rollback
+    // GERÇEKLEŞTİRİLMEDİĞİNİ audit'e açıkça yaz (Success sanılmasın) ve fail-closed dur.
+    Event::new(EventKind::Rollback, &args.package, EventResult::Failure)
+        .with_meta("from", current.version.clone())
+        .with_meta("to", target_version.clone())
+        .with_meta("reason", "rauc-rollback-not-implemented")
+        .record()
+        .ok();
 
     bail!(
-        "Rollback şu an placeholder — Faz 4 RAUC integration sonrası tam çalışır.\n\
-         Şimdilik manuel: suderra-installer install {} --version {target_version}",
+        "Rollback şu an implemente değil — Faz 4 RAUC integration sonrası çalışır.\n\
+         Hiçbir değişiklik yapılmadı. Şimdilik manuel: \
+         suderra-installer install {} --version {target_version}",
         args.package
     );
 }
