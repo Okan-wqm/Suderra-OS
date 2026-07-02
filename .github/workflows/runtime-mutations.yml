@@ -1,0 +1,48 @@
+name: Runtime Mutations
+
+# Production-runtime senaryo mutasyon üreticilerinin GERÇEK, hızlı bileşen
+# testi. 285 dakikalık tam suite'i beklemeden, her negatif senaryonun gerçek
+# bir mutasyon ürettiğini (imza sökme, cmdline tamper, rootfs byte-flip,
+# downgrade manifest, swtpm snapshot) gerçek araçlarla her PR'da kanıtlar.
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - tests/qemu/runtime_mutations.py
+      - tests/qemu/runtime-mutations-component-test.sh
+      - .github/workflows/runtime-mutations.yml
+  pull_request:
+    branches: [main, "claude/**"]
+    paths:
+      - tests/qemu/runtime_mutations.py
+      - tests/qemu/runtime-mutations-component-test.sh
+      - .github/workflows/runtime-mutations.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-mutations-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  producers:
+    name: Mutation producers component test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install mutation tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            sbsigntool \
+            binutils \
+            e2fsprogs \
+            openssl \
+            grub-efi-amd64-bin
+
+      - name: Run mutation producers component test
+        run: bash tests/qemu/runtime-mutations-component-test.sh
