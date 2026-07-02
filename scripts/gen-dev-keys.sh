@@ -23,7 +23,11 @@ if [ -d "${KEYS_DIR}" ] && [ -n "$(ls -A "${KEYS_DIR}" 2>/dev/null)" ]; then
     fi
 fi
 
+# Anahtarlar doğduğu andan itibaren yalnız sahibine açık olsun — sondaki
+# chmod'a kadar grup/dünya-okunur pencere bırakma.
+umask 077
 mkdir -p "${KEYS_DIR}"
+chmod 0700 "${KEYS_DIR}"
 cd "${KEYS_DIR}"
 
 echo "==> Geliştirme anahtarları üretiliyor: ${KEYS_DIR}"
