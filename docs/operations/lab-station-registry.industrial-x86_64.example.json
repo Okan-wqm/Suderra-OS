@@ -1,0 +1,29 @@
+{
+  "_comment": "TEMPLATE — copy to your operator-controlled release-lab-input/station-registry.json and replace every REPLACE-* id and every 64-hex *_sha256 placeholder with the real station values. Do NOT commit the filled-in registry (it is operator/lab-controlled evidence). Schema: suderra.lab-station-registry.v1. See docs/operations/x86-hardware-lab.md.",
+  "schema_version": "suderra.lab-station-registry.v1",
+  "stations": [
+    {
+      "station_id": "REPLACE-WITH-STATION-ID",
+      "fixture_id": "REPLACE-WITH-FIXTURE-ID",
+      "public_key_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "allowed_targets": ["x86_64"],
+      "allowed_storage_by_id": [
+        "/dev/disk/by-id/REPLACE-WITH-INDUSTRIAL-X86-STORAGE-ID"
+      ],
+      "calibration_expires_at": "2099-01-01T00:00:00Z",
+      "adapter_inventory": {
+        "flash": {"role": "flash", "id": "REPLACE-WITH-FLASH-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "1111111111111111111111111111111111111111111111111111111111111111", "command_schema_id": "suderra.flash.v1"},
+        "readback": {"role": "readback", "id": "REPLACE-WITH-READBACK-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "2222222222222222222222222222222222222222222222222222222222222222", "command_schema_id": "suderra.readback.v1"},
+        "uart": {"role": "uart", "id": "REPLACE-WITH-UART-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "3333333333333333333333333333333333333333333333333333333333333333", "command_schema_id": "suderra.uart.v1"},
+        "power": {"role": "power", "id": "REPLACE-WITH-POWER-CYCLE-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "4444444444444444444444444444444444444444444444444444444444444444", "command_schema_id": "suderra.power.v1"},
+        "storage": {"role": "storage", "id": "REPLACE-WITH-STORAGE-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "5555555555555555555555555555555555555555555555555555555555555555", "command_schema_id": "suderra.storage.v1"},
+        "tpm": {"role": "tpm", "id": "REPLACE-WITH-TPM-PROBE-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "6666666666666666666666666666666666666666666666666666666666666666", "command_schema_id": "suderra.tpm.v1"},
+        "secure-boot": {"role": "secure-boot", "id": "REPLACE-WITH-SECURE-BOOT-PROBE-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "7777777777777777777777777777777777777777777777777777777777777777", "command_schema_id": "suderra.secure-boot.v1"},
+        "rauc": {"role": "rauc", "id": "REPLACE-WITH-RAUC-PROBE-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "8888888888888888888888888888888888888888888888888888888888888888", "command_schema_id": "suderra.rauc.v1"},
+        "tamper": {"role": "tamper", "id": "REPLACE-WITH-TAMPER-INJECT-ADAPTER-ID", "version": "REPLACE", "binary_sha256": "9999999999999999999999999999999999999999999999999999999999999999", "command_schema_id": "suderra.tamper.v1"}
+      },
+      "operator_roles": ["release-lab-operator", "release-lab-witness"],
+      "operator_authorization": "REPLACE-WITH-SIGNED-OPERATOR-AUTHORIZATION-REFERENCE"
+    }
+  ]
+}
