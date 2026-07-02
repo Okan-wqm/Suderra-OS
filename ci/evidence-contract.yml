@@ -550,7 +550,17 @@
       "challenge_signature_replay_required": true,
       "artifact_signature_replay_required": true,
       "transcript_digest_replay_required": true,
-      "software_hsm_rejected_for_production": true
+      "software_hsm_rejected_for_production": true,
+      "approved_provider_allowlist_enforced": true,
+      "approved_provider_allowlist": [
+        "yubihsm",
+        "thales luna",
+        "entrust nshield",
+        "utimaco",
+        "aws cloudhsm",
+        "nitrokey hsm",
+        "marvell liquidsecurity"
+      ]
     },
     "role_bindings": {
       "os-update-manifest": {
