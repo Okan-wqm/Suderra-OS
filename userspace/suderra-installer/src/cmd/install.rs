@@ -59,17 +59,22 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     tokio::fs::create_dir_all(&manifest_cache_dir).await?;
     let manifest_path = manifest_cache_dir.join(format!("{}-{}.json", args.package, version));
     info!("manifest indiriliyor: {manifest_url}");
-    download_file(&manifest_url, &manifest_path, None, crate::download::METADATA_MAX_BYTES)
-        .await
-        .with_context(|| {
-            format!(
-                "manifest indirilemedi: {manifest_url}\n\
+    download_file(
+        &manifest_url,
+        &manifest_path,
+        None,
+        crate::download::METADATA_MAX_BYTES,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "manifest indirilemedi: {manifest_url}\n\
                  - Paket adı doğru mu? '{}'\n\
                  - Sürüm doğru mu? '{}'\n\
                  - GitHub Releases'ta release yayınlandı mı?",
-                args.package, version
-            )
-        })?;
+            args.package, version
+        )
+    })?;
 
     if args.verify_signature {
         let manifest_sig_url = release.manifest_signature_url(args.mirror);
@@ -79,23 +84,33 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         let manifest_cert_path =
             manifest_cache_dir.join(format!("{}-{}.json.cert", args.package, version));
         info!("manifest signature indiriliyor: {manifest_sig_url}");
-        download_file(&manifest_sig_url, &manifest_sig_path, None, crate::download::METADATA_MAX_BYTES)
-            .await
-            .with_context(|| {
-                format!(
-                    "manifest signature indirilemedi: {manifest_sig_url}\n\
+        download_file(
+            &manifest_sig_url,
+            &manifest_sig_path,
+            None,
+            crate::download::METADATA_MAX_BYTES,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "manifest signature indirilemedi: {manifest_sig_url}\n\
                      Manifest doğrulanmadan paket kurulamaz."
-                )
-            })?;
+            )
+        })?;
         info!("manifest certificate indiriliyor: {manifest_cert_url}");
-        download_file(&manifest_cert_url, &manifest_cert_path, None, crate::download::METADATA_MAX_BYTES)
-            .await
-            .with_context(|| {
-                format!(
-                    "manifest certificate indirilemedi: {manifest_cert_url}\n\
+        download_file(
+            &manifest_cert_url,
+            &manifest_cert_path,
+            None,
+            crate::download::METADATA_MAX_BYTES,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "manifest certificate indirilemedi: {manifest_cert_url}\n\
                      Manifest doğrulanmadan paket kurulamaz."
-                )
-            })?;
+            )
+        })?;
         verify::verify_keyless(&manifest_path, &manifest_sig_path, &manifest_cert_path)
             .with_context(|| {
                 // Tampered manifest is not safe to leave on disk
@@ -182,7 +197,13 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
                         arch,
                     };
                     let fallback_url = release2.artifact_url(fallback);
-                    download_file(&fallback_url, &target, Some(&package_info.sha256), bundle_cap).await?
+                    download_file(
+                        &fallback_url,
+                        &target,
+                        Some(&package_info.sha256),
+                        bundle_cap,
+                    )
+                    .await?
                 } else {
                     return Err(e);
                 }
@@ -206,17 +227,29 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         let cert_path = target_dir.join(format!("{}.cert", &package_info.file));
         info!("signature indiriliyor: {sig_url}");
 
-        match download_file(&sig_url, &sig_path, None, crate::download::METADATA_MAX_BYTES).await {
+        match download_file(
+            &sig_url,
+            &sig_path,
+            None,
+            crate::download::METADATA_MAX_BYTES,
+        )
+        .await
+        {
             Ok(_) => {
                 info!("certificate indiriliyor: {cert_url}");
-                download_file(&cert_url, &cert_path, None, crate::download::METADATA_MAX_BYTES)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "certificate indirilemedi: {cert_url}\n\
+                download_file(
+                    &cert_url,
+                    &cert_path,
+                    None,
+                    crate::download::METADATA_MAX_BYTES,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "certificate indirilemedi: {cert_url}\n\
                          Artifact doğrulanmadan paket kurulamaz."
-                        )
-                    })?;
+                    )
+                })?;
                 match verify::verify_keyless(&target, &sig_path, &cert_path) {
                     Ok(_outcome) => {
                         signature_verified = true;
@@ -282,7 +315,12 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         .record()
         .ok();
 
-    report_outcome(outcome, &args.package, &manifest.version, package_info.name == "edge");
+    report_outcome(
+        outcome,
+        &args.package,
+        &manifest.version,
+        package_info.name == "edge",
+    );
     Ok(())
 }
 
@@ -381,7 +419,12 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
         .record()
         .ok();
 
-    report_outcome(outcome, &args.package, "local", package_kind_is_edge(&args.package));
+    report_outcome(
+        outcome,
+        &args.package,
+        "local",
+        package_kind_is_edge(&args.package),
+    );
     Ok(())
 }
 

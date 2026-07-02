@@ -724,8 +724,9 @@ fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
         );
     }
     // Kaynak okunabilir ve geçerli olmalı (fail-closed).
-    trusted_rollback_floor()?
-        .ok_or_else(|| anyhow!("production rollback floor source is configured but produced no value"))?;
+    trusted_rollback_floor()?.ok_or_else(|| {
+        anyhow!("production rollback floor source is configured but produced no value")
+    })?;
     Ok(())
 }
 
@@ -999,7 +1000,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let path = std::env::temp_dir().join(format!("suderra-ota-floor-{}", std::process::id()));
         std::fs::write(&path, "v2.3.4\n").unwrap();
-        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH", path.to_str().unwrap());
+        std::env::set_var(
+            "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH",
+            path.to_str().unwrap(),
+        );
         assert_eq!(trusted_rollback_floor().unwrap().as_deref(), Some("v2.3.4"));
 
         std::fs::write(&path, "not-a-version\n").unwrap();

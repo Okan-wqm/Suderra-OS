@@ -47,7 +47,8 @@ const WDIOC_GETTIMEOUT: u32 = 0x8004_5707;
 /// Watchdog cihazına heartbeat gönderir. Kernel dokümantasyonuna göre cihaza
 /// yapılan herhangi bir `write()` bir keepalive ping'idir.
 fn kick(dev: &mut File) -> Result<()> {
-    dev.write_all(b"\0").context("watchdog kick (write) başarısız")?;
+    dev.write_all(b"\0")
+        .context("watchdog kick (write) başarısız")?;
     dev.flush().ok();
     Ok(())
 }
@@ -136,11 +137,16 @@ async fn main() -> Result<()> {
         .json()
         .init();
 
-    info!("suderra-watchdog v{} başlatılıyor", env!("CARGO_PKG_VERSION"));
+    info!(
+        "suderra-watchdog v{} başlatılıyor",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let dev_path =
         std::env::var("SUDERRA_WATCHDOG_DEV").unwrap_or_else(|_| "/dev/watchdog".to_string());
-    let timeout_secs = env_u64("SUDERRA_WATCHDOG_TIMEOUT_SECS").unwrap_or(60).clamp(2, 3600) as i32;
+    let timeout_secs = env_u64("SUDERRA_WATCHDOG_TIMEOUT_SECS")
+        .unwrap_or(60)
+        .clamp(2, 3600) as i32;
     let interval_secs = env_u64("SUDERRA_WATCHDOG_INTERVAL_SECS")
         .unwrap_or((timeout_secs as u64) / 3)
         .max(1);
@@ -155,12 +161,17 @@ async fn main() -> Result<()> {
             bail!("SUDERRA_WATCHDOG_HEALTH_UNIT geçersiz unit adı: {unit:?}");
         }
     }
-    let restart_after = env_u64("SUDERRA_WATCHDOG_RESTART_AFTER").unwrap_or(3).max(1);
-    let reboot_after = env_u64("SUDERRA_WATCHDOG_REBOOT_AFTER").unwrap_or(10).max(restart_after + 1);
+    let restart_after = env_u64("SUDERRA_WATCHDOG_RESTART_AFTER")
+        .unwrap_or(3)
+        .max(1);
+    let reboot_after = env_u64("SUDERRA_WATCHDOG_REBOOT_AFTER")
+        .unwrap_or(10)
+        .max(restart_after + 1);
 
     // Donanım watchdog cihazını aç. Yoksa: prod'da fail-closed (REQUIRE_HW),
     // dev/QEMU'da yalnız systemd yazılım watchdog'una düşerek çalışmaya devam.
-    let mut hw_dev: Option<File> = match OpenOptions::new().read(false).write(true).open(&dev_path) {
+    let mut hw_dev: Option<File> = match OpenOptions::new().read(false).write(true).open(&dev_path)
+    {
         Ok(dev) => {
             match set_timeout(&dev, timeout_secs) {
                 Ok(applied) => info!(
@@ -170,7 +181,9 @@ async fn main() -> Result<()> {
                     reported = ?get_timeout(&dev),
                     "donanım watchdog açıldı, timeout ayarlandı"
                 ),
-                Err(err) => warn!(device = %dev_path, %err, "timeout ayarlanamadı; cihaz varsayılan timeout ile beslenecek"),
+                Err(err) => {
+                    warn!(device = %dev_path, %err, "timeout ayarlanamadı; cihaz varsayılan timeout ile beslenecek")
+                }
             }
             Some(dev)
         }

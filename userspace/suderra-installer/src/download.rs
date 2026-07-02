@@ -170,9 +170,7 @@ pub async fn fetch_text(url: &str) -> Result<String> {
     let mut body: Vec<u8> = Vec::new();
     while let Some(chunk) = response.chunk().await.context("metadata chunk hatası")? {
         if body.len() as u64 + chunk.len() as u64 > METADATA_MAX_BYTES {
-            bail!(
-                "metadata iptal: gövde sınır {METADATA_MAX_BYTES} bytes'ı aştı ({url})"
-            );
+            bail!("metadata iptal: gövde sınır {METADATA_MAX_BYTES} bytes'ı aştı ({url})");
         }
         body.extend_from_slice(&chunk);
     }
