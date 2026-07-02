@@ -228,9 +228,18 @@ generate_verity() {
     veritysetup verify "${rootfs}" "${hash}" "${root_hash}" >/dev/null
 }
 
-write_x86_verity_cmdline() {
+# Arch-agnostic dm-verity bootargs emitter. Writes suderra-<slot>.cmdline as:
+#   <console_and_root> rauc.slot=.. suderra.slot=.. <suderra.verity.* tokens> <hardening_tail>
+# The verity token block is identical across architectures (partlabel-based,
+# parsed by the shared verity initramfs); the console/root prefix and the
+# hardening tail are arch-specific (x86 enforces module.sig_enforce=1; ARM, with
+# modules enabled pending signed-FIT, must not). ARM (PR-A3) supplies its own
+# prefix/tail and reuses this emitter so the verity contract never diverges.
+emit_verity_bootargs() {
     local binaries_dir="$1"
     local slot="$2"
+    local console_and_root="$3"
+    local hardening_tail="$4"
     local slot_lower
     local root_partlabel
     local verity_partlabel
@@ -246,8 +255,14 @@ write_x86_verity_cmdline() {
 
     data_sectors=$((DATA_BLOCKS * DATA_BLOCK_SIZE / 512))
     printf '%s\n' \
-        "console=ttyS0,115200n8 console=tty0 root=/dev/mapper/suderra-root ro rootwait rauc.slot=${slot} suderra.slot=${slot} suderra.verity.root_partlabel=${root_partlabel} suderra.verity.hash_partlabel=${verity_partlabel} suderra.verity.data_sectors=${data_sectors} suderra.verity.data_blocks=${DATA_BLOCKS} suderra.verity.data_block_size=${DATA_BLOCK_SIZE} suderra.verity.hash_block_size=${HASH_BLOCK_SIZE} suderra.verity.hash_start_block=${HASH_START_BLOCK} suderra.verity.hash_algorithm=${HASH_ALGORITHM} suderra.verity.root_hash=${ROOT_HASH} suderra.verity.salt=${SALT} lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 vsyscall=none debugfs=off oops=panic panic=10 module.sig_enforce=1 quiet" \
+        "${console_and_root} rauc.slot=${slot} suderra.slot=${slot} suderra.verity.root_partlabel=${root_partlabel} suderra.verity.hash_partlabel=${verity_partlabel} suderra.verity.data_sectors=${data_sectors} suderra.verity.data_blocks=${DATA_BLOCKS} suderra.verity.data_block_size=${DATA_BLOCK_SIZE} suderra.verity.hash_block_size=${HASH_BLOCK_SIZE} suderra.verity.hash_start_block=${HASH_START_BLOCK} suderra.verity.hash_algorithm=${HASH_ALGORITHM} suderra.verity.root_hash=${ROOT_HASH} suderra.verity.salt=${SALT} ${hardening_tail}" \
         > "${cmdline}"
+}
+
+write_x86_verity_cmdline() {
+    emit_verity_bootargs "$1" "$2" \
+        "console=ttyS0,115200n8 console=tty0 root=/dev/mapper/suderra-root ro rootwait" \
+        "lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 vsyscall=none debugfs=off oops=panic panic=10 module.sig_enforce=1 quiet"
 }
 
 copy_target_binary() {
@@ -288,7 +303,12 @@ copy_target_runtime_libs() {
     done
 }
 
-build_x86_verity_initramfs() {
+# Arch-agnostic verity initramfs builder. The generated /init reads the
+# dm-verity parameters from the kernel cmdline (suderra.verity.*) and resolves
+# partitions by PARTLABEL, so it is identical for x86 and arm64 (both ship an
+# ext4 rootfs behind dm-verity). build_x86_verity_initramfs is a thin wrapper
+# kept for the existing x86 callers/contracts; ARM (PR-A3) calls this directly.
+build_verity_initramfs() {
     local binaries_dir="$1"
     local target_dir="$2"
     local slot="$3"
@@ -407,6 +427,11 @@ EOF
     need_file "${output}"
     rm -rf "${work}"
     echo "==> ${slot} slot verity initramfs: ${output}"
+}
+
+build_x86_verity_initramfs() {
+    # x86 wrapper; arch-agnostic body is build_verity_initramfs.
+    build_verity_initramfs "$@"
 }
 
 build_signed_slot_uki() {
