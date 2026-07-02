@@ -12,7 +12,15 @@ usage() {
     cat <<'EOF'
 Usage:
   production-artifacts.sh x86-pre-genimage <BINARIES_DIR> <TARGET_DIR>
+  production-artifacts.sh arm-pre-genimage <BINARIES_DIR> <TARGET_DIR>
   production-artifacts.sh sign-image <BINARIES_DIR> <IMAGE_NAME>
+
+Required for arm-pre-genimage (ADR-0007 signed FIT, gates G1/G2):
+  SUDERRA_FIT_KEYS_DIR or SUDERRA_KEYS_DIR   dir with fit-signing.{key,crt}
+  SUDERRA_FIT_SIGNING_KEY                     prod HSM PKCS#11 URI (file key
+                                              rejected in production mode)
+  BINARIES_DIR must contain Image, a board *.dtb, u-boot.dtb, rootfs.ext4
+  target rootfs must contain busybox, blkid, dmsetup, mount, sleep, switch_root
 
 Required for x86-pre-genimage:
   SUDERRA_UKI_STUB                         EFI stub used to build signed UKI
@@ -556,8 +564,132 @@ sign_image() {
     install -m 0644 "${cert}" "${image}.cert"
 }
 
+# ---------------------------------------------------------------------------
+# ARM signed-FIT producer (ADR-0007, gates G1/G2)
+# ---------------------------------------------------------------------------
+write_arm_verity_cmdline() {
+    # ARM bootargs reuse the shared verity emitter (A1). Arch-specific: serial
+    # console ttyAMA0/tty1, and NO module.sig_enforce (kernel modules stay
+    # enabled on ARM until signed-FIT hardware evidence, unlike x86).
+    emit_verity_bootargs "$1" "$2" \
+        "console=ttyAMA0,115200 console=tty1 root=/dev/mapper/suderra-root ro rootwait" \
+        "lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 oops=panic panic=10 quiet"
+}
+
+resolve_fit_signing_material() {
+    # Emits "<key>\t<cert>". Dev: file key under the keys dir. Prod: the private
+    # key MUST be an HSM PKCS#11 URI (file keys rejected via need_signing_key),
+    # mirroring the x86 signing path.
+    local dir="${SUDERRA_FIT_KEYS_DIR:-${SUDERRA_KEYS_DIR:-}}"
+    local key="${SUDERRA_FIT_SIGNING_KEY:-}"
+    local cert="${SUDERRA_FIT_SIGNING_CERT:-}"
+    if [ -z "${key}" ] && [ -n "${dir}" ]; then key="${dir}/fit-signing.key"; fi
+    if [ -z "${cert}" ] && [ -n "${dir}" ]; then cert="${dir}/fit-signing.crt"; fi
+    [ -n "${key}" ] || die "SUDERRA_FIT_SIGNING_KEY or SUDERRA_FIT_KEYS_DIR must be set"
+    [ -n "${cert}" ] || die "SUDERRA_FIT_SIGNING_CERT or SUDERRA_FIT_KEYS_DIR must be set"
+    need_signing_key "FIT" "${key}"
+    need_file "${cert}"
+    printf '%s\t%s\n' "${key}" "${cert}"
+}
+
+build_signed_slot_fit() {
+    local binaries_dir="$1"
+    local target_dir="$2"
+    local slot="$3"
+    local uboot_dtb="${binaries_dir}/u-boot.dtb"
+    local kernel="${binaries_dir}/Image"
+    local initrd="${binaries_dir}/suderra-${slot}.initrd"
+    local its="${binaries_dir}/suderra-${slot}.its"
+    local fit="${binaries_dir}/suderra-${slot}.fit"
+    local keydir dtb cmdline key cert material
+
+    need_cmd mkimage
+    need_cmd dtc
+    need_cmd openssl
+    need_file "${kernel}"
+    need_file "${uboot_dtb}"
+    # mkimage -k needs a directory containing <key-name-hint>.{key,crt}.
+    material="$(resolve_fit_signing_material)"
+    key="${material%$'\t'*}"
+    cert="${material#*$'\t'}"
+    keydir="${SUDERRA_FIT_KEYS_DIR:-${SUDERRA_KEYS_DIR:-}}"
+    [ -n "${keydir}" ] || die "SUDERRA_FIT_KEYS_DIR (or SUDERRA_KEYS_DIR) required for mkimage -k"
+
+    dtb="$(find "${binaries_dir}" -maxdepth 1 -name '*.dtb' ! -name 'u-boot.dtb' | sort | head -n 1)"
+    [ -n "${dtb}" ] || die "no board DTB found in ${binaries_dir}"
+
+    write_arm_verity_cmdline "${binaries_dir}" "${slot}"
+    build_verity_initramfs "${binaries_dir}" "${target_dir}" "${slot}" "${initrd}"
+    cmdline="$(cat "${binaries_dir}/suderra-${slot}.cmdline")"
+
+    cat > "${its}" <<ITS
+/dts-v1/;
+/ {
+    description = "Suderra signed FIT (slot ${slot})";
+    #address-cells = <1>;
+    images {
+        kernel {
+            data = /incbin/("${kernel}");
+            type = "kernel"; arch = "arm64"; os = "linux"; compression = "none";
+            load = <0x00080000>; entry = <0x00080000>;
+            hash-1 { algo = "sha256"; };
+        };
+        fdt-1 {
+            data = /incbin/("${dtb}");
+            type = "flat_dt"; arch = "arm64"; compression = "none";
+            hash-1 { algo = "sha256"; };
+        };
+        ramdisk-1 {
+            data = /incbin/("${initrd}");
+            type = "ramdisk"; arch = "arm64"; os = "linux"; compression = "gzip";
+            hash-1 { algo = "sha256"; };
+        };
+    };
+    configurations {
+        default = "conf-${slot}";
+        conf-${slot} {
+            description = "slot ${slot}";
+            kernel = "kernel"; fdt = "fdt-1"; ramdisk = "ramdisk-1";
+            bootargs = "${cmdline}";
+            signature-1 {
+                algo = "sha256,rsa2048";
+                key-name-hint = "fit-signing";
+                sign-images = "kernel", "fdt", "ramdisk";
+            };
+        };
+    };
+};
+ITS
+
+    # Sign the FIT and insert the verification pubkey into the U-Boot control
+    # DTB (-K). Prod uses the HSM PKCS#11 key via the openssl engine; dev uses
+    # the file key in keydir.
+    if is_pkcs11_uri "${key}"; then
+        validate_hsm_role "signed-fit" "${key}" "${cert}" "${fit}"
+        mkimage -f "${its}" -k "${keydir}" -N "$(pkcs11_engine)" -K "${uboot_dtb}" -r "${fit}" >/dev/null
+    else
+        mkimage -f "${its}" -k "${keydir}" -K "${uboot_dtb}" -r "${fit}" >/dev/null
+    fi
+    need_file "${fit}"
+
+    # Detached sidecars mirror the x86 UKI contract (enforce_production_contract
+    # requires suderra-<slot>.fit + .sig + .cert).
+    openssl_sign_artifact "signed-fit-sidecar" "${key}" "${cert}" "${fit}" "${fit}.sig"
+    install -m 0644 "${cert}" "${fit}.cert"
+    echo "==> ${slot} slot signed FIT: ${fit}"
+}
+
 command="${1:-}"
 case "${command}" in
+    arm-pre-genimage)
+        [ "$#" -eq 3 ] || {
+            usage >&2
+            exit 2
+        }
+        generate_verity "$2"
+        build_signed_slot_fit "$2" "$3" A
+        build_signed_slot_fit "$2" "$3" B
+        ;;
     x86-pre-genimage)
         [ "$#" -eq 3 ] || {
             usage >&2
