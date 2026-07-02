@@ -84,11 +84,13 @@ virt-fw-vars \
 [ -s "${OUTPUT}" ] || die "enroll edilmiş varstore üretilemedi"
 
 # Fail-closed doğrulama: enroll edilen depo Secure Boot açık + PK/KEK/db içermeli.
+# virt-fw-vars --print (compact) her değişkeni "<isim> : <özet>" satırıyla verir;
+# --secure-boot 'SecureBootEnable : bool: ON' yapar.
 print_out="$(virt-fw-vars --input "${OUTPUT}" --print 2>/dev/null || true)"
-printf '%s\n' "${print_out}" | grep -qi 'secure boot' \
-    || die "enroll edilen varstore'da Secure Boot durumu görünmüyor"
+printf '%s\n' "${print_out}" | grep -Eq '^SecureBootEnable +: bool: ON' \
+    || die "enroll edilen varstore'da Secure Boot (SecureBootEnable) etkin değil"
 for var in PK KEK db; do
-    printf '%s\n' "${print_out}" | grep -qw "${var}" \
+    printf '%s\n' "${print_out}" | grep -Eq "^${var} +:" \
         || die "enroll edilen varstore'da ${var} yok"
 done
 
