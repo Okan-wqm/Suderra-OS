@@ -96,6 +96,12 @@ Olasılık ↑
             Düşük Etki     Orta Etki          Yüksek Etki
 ```
 
+## Kabul Edilen Riskler (residual)
+
+| # | Risk | Kapsam | Gerekçe / hafifletme |
+|---|---|---|---|
+| R1 | ARM hattında boot zincirinin ilk aşaması (Pi GPU firmware + EEPROM) imzasız; fiziksel erişimli saldırgan SD/EEPROM değişimiyle ilk aşamayı değiştirebilir | rpi4, revpi4, usb-installer | BCM2711'de vendor secure-boot pratikte yok. U-Boot'tan itibaren zincir imzalı olacak (ADR-0007, G1-G4 kanıt kapıları); tam ilk-aşama koruması gereken saha için x86 UEFI hattı önerilir |
+
 ## Açık Konular (Faz 3'te detaylanacak)
 
 - [ ] Her tehdide STRIDE-per-element mapping (her Suderra bileşeni için)
