@@ -70,7 +70,8 @@ jobs:
             qemu-system-x86 \
             swtpm \
             sbsigntool \
-            cryptsetup-bin
+            cryptsetup-bin \
+            python3-virt-firmware
 
       - name: Build production-runtime image
         env:
@@ -82,11 +83,41 @@ jobs:
           ./scripts/build.sh suderra_qemu_x86_64_prod_ab_defconfig
 
       - name: Provision enrolled OVMF and swtpm state
+        env:
+          SUDERRA_SECUREBOOT_SIGNING_CERT: ${{ secrets.SUDERRA_SECUREBOOT_SIGNING_CERT_PEM }}
         run: |
           set -euo pipefail
-          mkdir -p runtime-inputs/swtpm-state
+          mkdir -p runtime-inputs/swtpm-state runtime-inputs/sb-keys
           cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd runtime-inputs/OVMF_CODE.secboot.fd
           cp /usr/share/OVMF/OVMF_VARS_4M.fd runtime-inputs/OVMF_VARS.fd
+
+          # db = UKI'yi imzalayan sertifika. Prod'da imzalama sertifikası (public)
+          # secret'tan gelir; yoksa build'in imzaladığı cert'i kullan.
+          db_cert="runtime-inputs/sb-keys/db.crt"
+          if [ -n "${SUDERRA_SECUREBOOT_SIGNING_CERT:-}" ]; then
+            printf '%s\n' "${SUDERRA_SECUREBOOT_SIGNING_CERT}" > "${db_cert}"
+          elif [ -f "${SUDERRA_SECUREBOOT_SIGNING_CERT_FILE:-/nonexistent}" ]; then
+            cp "${SUDERRA_SECUREBOOT_SIGNING_CERT_FILE}" "${db_cert}"
+          else
+            echo "ERROR: SUDERRA_SECUREBOOT_SIGNING_CERT(_FILE) sağlanmalı — enrollment db cert'i imzalama cert'iyle eşleşmeli" >&2
+            exit 1
+          fi
+
+          # PK/KEK: sanal firmware'in güven deposunu yöneten platform anahtarları;
+          # bu test firmware'i için efemer self-signed yeterli (db güven kökünü korurlar).
+          openssl req -newkey rsa:3072 -nodes -keyout runtime-inputs/sb-keys/pk.key \
+            -x509 -sha256 -days 3 -out runtime-inputs/sb-keys/pk.crt -subj "/CN=Suderra QEMU PK/" 2>/dev/null
+          openssl req -newkey rsa:3072 -nodes -keyout runtime-inputs/sb-keys/kek.key \
+            -x509 -sha256 -days 3 -out runtime-inputs/sb-keys/kek.crt -subj "/CN=Suderra QEMU KEK/" 2>/dev/null
+
+          ./scripts/qemu/enroll-secureboot-vars \
+            --input runtime-inputs/OVMF_VARS.fd \
+            --output runtime-inputs/OVMF_VARS.enrolled.fd \
+            --pk runtime-inputs/sb-keys/pk.crt \
+            --kek runtime-inputs/sb-keys/kek.crt \
+            --db "${db_cert}" \
+            --manifest runtime-inputs/ovmf-enrollment.json
+
           swtpm socket \
             --tpm2 \
             --tpmstate dir=runtime-inputs/swtpm-state \
@@ -99,6 +130,9 @@ jobs:
           set -euo pipefail
           mkdir -p "release-runtime/${{ inputs.version }}/qemu-x86_64-prod-ab"
           test "$(sha256sum output/suderra_qemu_x86_64_prod_ab_defconfig/images/disk.img | awk '{print $1}')" = "${RAW_IMAGE_SHA256}"
+          enrolled_vars_sha256="$(python3 -c 'import json,sys;print(json.load(open("runtime-inputs/ovmf-enrollment.json"))["enrolled_vars_sha256"])')"
+          secure_boot_db_sha256="$(python3 -c 'import json,sys;print(json.load(open("runtime-inputs/ovmf-enrollment.json"))["secure_boot_db_sha256"])')"
+          enrollment_mode="$(python3 -c 'import json,sys;print(json.load(open("runtime-inputs/ovmf-enrollment.json"))["mode"])')"
           python3 scripts/evidence/evidence_contract.py runtime-plan \
             --version "${VERSION}" \
             --target qemu-x86_64-prod-ab \
@@ -111,7 +145,10 @@ jobs:
             --compressed-artifact-sha256 "${COMPRESSED_ARTIFACT_SHA256}" \
             --release-artifact "${RELEASE_ARTIFACT}" \
             --ovmf-code runtime-inputs/OVMF_CODE.secboot.fd \
-            --ovmf-vars runtime-inputs/OVMF_VARS.fd \
+            --ovmf-vars runtime-inputs/OVMF_VARS.enrolled.fd \
+            --ovmf-enrollment-mode "${enrollment_mode}" \
+            --ovmf-enrolled-vars-sha256 "${enrolled_vars_sha256}" \
+            --secure-boot-db-sha256 "${secure_boot_db_sha256}" \
             --swtpm-state runtime-inputs/swtpm-state \
             --scenario-command tests/qemu/production-runtime-scenario.sh \
             > runtime-plan.json

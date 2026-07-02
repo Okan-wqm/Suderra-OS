@@ -32,11 +32,26 @@ cd "${KEYS_DIR}"
 
 echo "==> Geliştirme anahtarları üretiliyor: ${KEYS_DIR}"
 
-# UEFI db key
+# UEFI Secure Boot hiyerarşisi: PK -> KEK -> db.
+#   - PK  (Platform Key): platform sahibi; KEK'i yetkilendirir.
+#   - KEK (Key Exchange Key): db/dbx güncellemelerini yetkilendirir.
+#   - db  (Signature DB): boot binary'lerini (UKI/GRUB) doğrulayan güven kökü.
+# db, UKI'yi imzalayan sertifikayla AYNI olmalı (SUDERRA_SECUREBOOT_SIGNING_CERT
+# dev'de bu uefi-db.crt'yi gösterir); aksi halde imzalı-boot firmware'de reddedilir.
+echo "==> UEFI PK — Platform Key (RSA-3072, 1 yıl)"
+openssl req -newkey rsa:3072 -nodes -keyout uefi-pk.key \
+    -x509 -sha256 -days 365 -out uefi-pk.crt \
+    -subj "/CN=Suderra Dev UEFI PK/" 2>/dev/null
+
+echo "==> UEFI KEK — Key Exchange Key (RSA-3072, 1 yıl)"
+openssl req -newkey rsa:3072 -nodes -keyout uefi-kek.key \
+    -x509 -sha256 -days 365 -out uefi-kek.crt \
+    -subj "/CN=Suderra Dev UEFI KEK/" 2>/dev/null
+
 echo "==> UEFI db key (RSA-3072, 1 yıl)"
 openssl req -newkey rsa:3072 -nodes -keyout uefi-db.key \
     -x509 -sha256 -days 365 -out uefi-db.crt \
-    -subj "/CN=Suderra Dev UEFI/" 2>/dev/null
+    -subj "/CN=Suderra Dev UEFI db/" 2>/dev/null
 
 # Kernel signing
 echo "==> Kernel signing key (RSA-3072)"
@@ -88,6 +103,10 @@ echo ""
 echo "Kullanım:"
 echo "  export SUDERRA_TRUST_ROOTS_DIR='${KEYS_DIR}'"
 echo "  export SUDERRA_KEYS_DIR='${KEYS_DIR}'"
+echo "  export SUDERRA_SECUREBOOT_SIGNING_KEY='${KEYS_DIR}/uefi-db.key'"
+echo "  export SUDERRA_SECUREBOOT_SIGNING_CERT='${KEYS_DIR}/uefi-db.crt'"
+echo "  export SUDERRA_SB_PK_CERT='${KEYS_DIR}/uefi-pk.crt'"
+echo "  export SUDERRA_SB_KEK_CERT='${KEYS_DIR}/uefi-kek.crt'"
 echo "  export SUDERRA_INSTALLER_PAYLOAD_SIGN_KEY='${KEYS_DIR}/installer-payload.key'"
 echo "  export SUDERRA_INSTALLER_PAYLOAD_PUBKEY='${KEYS_DIR}/installer-payload.ed25519.pub'"
 echo "  ./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig"

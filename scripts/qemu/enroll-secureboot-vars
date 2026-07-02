@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# Suderra OS — OVMF Secure Boot değişken deposu (varstore) enrollment.
+#
+# QEMU production-runtime kanıt suite'i, Secure Boot'un GERÇEKTEN zorlandığı
+# bir firmware ister: imzalı UKI boot etmeli, imzasız UKI firmware tarafından
+# reddedilmeli. Bunun için OVMF_VARS deposuna PK/KEK/db enroll edilip Secure
+# Boot açılmalıdır. Bu betik bunu OFFLINE ve DETERMİNİSTİK yapar (boot yok) —
+# virt-fw-vars (virt-firmware) ile. Enroll edilmemiş düz OVMF_VARS kopyalamak
+# (eski davranış) Secure Boot ölçümünü anlamsız kılardı; bu betik onun yerine
+# geçer.
+#
+# db sertifikası, UKI'yi imzalayan sertifikayla AYNI olmalıdır
+# (SUDERRA_SECUREBOOT_SIGNING_CERT). PK/KEK yalnız sanal firmware'in güven
+# deposunu yönetir; sabit test için self-signed olabilirler.
+#
+# Kullanım:
+#   enroll-secureboot-vars \
+#       --input  OVMF_VARS.fd \
+#       --output OVMF_VARS.enrolled.fd \
+#       --pk  uefi-pk.crt \
+#       --kek uefi-kek.crt \
+#       --db  uefi-db.crt \
+#       --manifest ovmf-enrollment.json
+#
+# Çıktı manifest'i (validate-production-runtime-suite.py ovmf_enrollment ile
+# birebir): {"mode","enrolled_vars_sha256","secure_boot_db_sha256"}.
+#
+set -euo pipefail
+IFS=$'\n\t'
+
+# Suderra Secure Boot imza sahibi GUID'i (sabit — enroll edilen imza sahibinin
+# kimliği). Rastgele ama kararlı; kanıt tekrar üretilebilirliği için sabittir.
+SUDERRA_SB_OWNER_GUID="7b8c9da0-1e2f-4a3b-8c5d-6e7f8091a2b3"
+
+INPUT=""
+OUTPUT=""
+PK_CERT=""
+KEK_CERT=""
+DB_CERT=""
+MANIFEST=""
+
+die() {
+    echo "enroll-secureboot-vars: $*" >&2
+    exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --input) INPUT="$2"; shift 2 ;;
+        --output) OUTPUT="$2"; shift 2 ;;
+        --pk) PK_CERT="$2"; shift 2 ;;
+        --kek) KEK_CERT="$2"; shift 2 ;;
+        --db) DB_CERT="$2"; shift 2 ;;
+        --manifest) MANIFEST="$2"; shift 2 ;;
+        *) die "bilinmeyen argüman: $1" ;;
+    esac
+done
+
+[ -n "${INPUT}" ] || die "--input zorunlu"
+[ -n "${OUTPUT}" ] || die "--output zorunlu"
+[ -n "${PK_CERT}" ] || die "--pk zorunlu"
+[ -n "${KEK_CERT}" ] || die "--kek zorunlu"
+[ -n "${DB_CERT}" ] || die "--db zorunlu"
+[ -f "${INPUT}" ] || die "girdi varstore yok: ${INPUT}"
+for cert in "${PK_CERT}" "${KEK_CERT}" "${DB_CERT}"; do
+    [ -f "${cert}" ] || die "sertifika yok: ${cert}"
+done
+command -v virt-fw-vars >/dev/null 2>&1 || die "virt-fw-vars bulunamadı (apt: python3-virt-firmware)"
+command -v openssl >/dev/null 2>&1 || die "openssl bulunamadı"
+command -v sha256sum >/dev/null 2>&1 || die "sha256sum bulunamadı"
+
+blank_sha256="$(sha256sum "${INPUT}" | awk '{print $1}')"
+
+# PK/KEK/db enroll et ve Secure Boot'u aç. virt-fw-vars deterministiktir.
+virt-fw-vars \
+    --input "${INPUT}" \
+    --output "${OUTPUT}" \
+    --set-pk  "${SUDERRA_SB_OWNER_GUID}" "${PK_CERT}" \
+    --add-kek "${SUDERRA_SB_OWNER_GUID}" "${KEK_CERT}" \
+    --add-db  "${SUDERRA_SB_OWNER_GUID}" "${DB_CERT}" \
+    --secure-boot >/dev/null
+
+[ -s "${OUTPUT}" ] || die "enroll edilmiş varstore üretilemedi"
+
+# Fail-closed doğrulama: enroll edilen depo Secure Boot açık + PK/KEK/db içermeli.
+print_out="$(virt-fw-vars --input "${OUTPUT}" --print 2>/dev/null || true)"
+printf '%s\n' "${print_out}" | grep -qi 'secure boot' \
+    || die "enroll edilen varstore'da Secure Boot durumu görünmüyor"
+for var in PK KEK db; do
+    printf '%s\n' "${print_out}" | grep -qw "${var}" \
+        || die "enroll edilen varstore'da ${var} yok"
+done
+
+enrolled_sha256="$(sha256sum "${OUTPUT}" | awk '{print $1}')"
+[ "${enrolled_sha256}" != "${blank_sha256}" ] \
+    || die "enroll edilen varstore boş depoyla aynı — enrollment etkisiz"
+
+# db güven kökünün kanonik (DER) digest'i — PEM boşluklarından bağımsız.
+db_sha256="$(openssl x509 -in "${DB_CERT}" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')"
+[ -n "${db_sha256}" ] || die "db sertifikası DER digest'i hesaplanamadı"
+
+echo "enroll-secureboot-vars: enrolled ${OUTPUT}" >&2
+echo "  mode=secure-boot-enrolled enrolled_vars_sha256=${enrolled_sha256} secure_boot_db_sha256=${db_sha256}" >&2
+
+if [ -n "${MANIFEST}" ]; then
+    umask 022
+    cat > "${MANIFEST}" <<JSON
+{
+  "mode": "secure-boot-enrolled",
+  "enrolled_vars_sha256": "${enrolled_sha256}",
+  "secure_boot_db_sha256": "${db_sha256}"
+}
+JSON
+    echo "enroll-secureboot-vars: manifest ${MANIFEST}" >&2
+fi
