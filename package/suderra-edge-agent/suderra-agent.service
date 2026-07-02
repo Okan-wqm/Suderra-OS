@@ -67,7 +67,10 @@ DeviceAllow=/dev/spidev0.0 rw
 DeviceAllow=/dev/spidev0.1 rw
 DeviceAllow=/dev/ttyAMA0 rw
 DeviceAllow=/dev/ttyUSB0 rw
-DeviceAllow=/dev/watchdog rw
+# /dev/watchdog BİLEREK yok: donanım watchdog'unun tek sahibi suderra-watchdog
+# daemon'udur; agent sd-notify (WatchdogSec) kullanır. Agent'a watchdog erişimi
+# vermek, ele geçirilmiş bir agent'ın magic-close'suz open/close ile cihazı
+# resetlemesine izin verirdi.
 DeviceAllow=/dev/tpm0 rw
 DeviceAllow=/dev/tpmrm0 rw
 DeviceAllow=char-rtc r
