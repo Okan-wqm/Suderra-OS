@@ -22,6 +22,16 @@ grep -q 'suderra.verity.root_hash' "${PRODUCTION_ARTIFACTS}" || {
     echo "ERROR: signed UKI cmdline must bind the dm-verity roothash" >&2
     exit 1
 }
+# Verity bootargs + initramfs builders must stay arch-agnostic so ARM (PR-A3)
+# reuses the exact same verity contract instead of forking it.
+grep -q 'emit_verity_bootargs()' "${PRODUCTION_ARTIFACTS}" || {
+    echo "ERROR: production artifacts must expose an arch-agnostic emit_verity_bootargs" >&2
+    exit 1
+}
+grep -q 'build_verity_initramfs()' "${PRODUCTION_ARTIFACTS}" || {
+    echo "ERROR: production artifacts must expose an arch-agnostic build_verity_initramfs" >&2
+    exit 1
+}
 if grep -qE 'exec (/bin/)?sh' "${PRODUCTION_ARTIFACTS}"; then
     echo "ERROR: verity initramfs must fail secure — no shell drop on verification failure" >&2
     exit 1
