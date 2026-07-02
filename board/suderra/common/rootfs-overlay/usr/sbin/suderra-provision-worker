@@ -30,8 +30,22 @@ mkdir -p "${TRANSACTION_DIR}"
 chown root:root "${TRANSACTION_DIR}" 2>/dev/null || true
 chmod 0700 "${TRANSACTION_DIR}"
 
-if [ -s "${REQUEST_DIR}/manifest-url" ]; then
-    cp "${REQUEST_DIR}/manifest-url" "${TRANSACTION_DIR}/manifest-url"
+# inbox provision kullanıcısına ait (0700, uid 201): dosyayı önce root'a ait
+# transaction dizinine mv ile taşı (rename symlink'i DEREF ETMEZ ve atomiktir),
+# tür kontrolünü taşınmış kopya üzerinde yap. Bu sıra, kontrol-sonrası-değiştir
+# (TOCTOU) yarışını ve root'un saldırgan symlink/fifo'sunu okumasını engeller.
+claim_request() {
+    name="$1"
+    [ -e "${REQUEST_DIR}/${name}" ] || [ -h "${REQUEST_DIR}/${name}" ] || return 1
+    mv -f "${REQUEST_DIR}/${name}" "${TRANSACTION_DIR}/${name}" 2>/dev/null || return 1
+    if [ -h "${TRANSACTION_DIR}/${name}" ] || [ ! -f "${TRANSACTION_DIR}/${name}" ] \
+        || [ ! -s "${TRANSACTION_DIR}/${name}" ]; then
+        return 1
+    fi
+    return 0
+}
+
+if claim_request manifest-url; then
     rm -f "${REQUEST_DIR}/manifest-url" "${REQUEST_DIR}/manifest.json" "${REQUEST_DIR}/trigger"
     manifest_url="$(head -n 1 "${TRANSACTION_DIR}/manifest-url")"
     if /usr/sbin/suderra-edge-install --manifest-url "${manifest_url}"; then
@@ -40,8 +54,7 @@ if [ -s "${REQUEST_DIR}/manifest-url" ]; then
     else
         write_result error "edge install failed"
     fi
-elif [ -s "${REQUEST_DIR}/manifest.json" ]; then
-    cp "${REQUEST_DIR}/manifest.json" "${TRANSACTION_DIR}/manifest.json"
+elif claim_request manifest.json; then
     rm -f "${REQUEST_DIR}/manifest-url" "${REQUEST_DIR}/manifest.json" "${REQUEST_DIR}/trigger"
     if /usr/sbin/suderra-edge-install --manifest "${TRANSACTION_DIR}/manifest.json"; then
         write_result ok "edge install completed"
