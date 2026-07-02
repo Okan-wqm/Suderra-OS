@@ -324,6 +324,48 @@ def snapshot_drive(image: Path, scenario_dir: Path) -> tuple[list[str], dict[str
     }
 
 
+# Mutation role -> how the artifact reaches the guest.
+# Disk-image roles boot from the mutated image (rootfs byte-flip, or a full
+# image whose ESP UKI was replaced). Payload roles attach as a labelled RO
+# drive the guest reads at /dev/disk/by-id/virtio-suderra-scenario-payload.
+DISK_IMAGE_ROLES = frozenset({"rootfs", "uki", "uki-cmdline"})
+PAYLOAD_ROLES = frozenset({"bundle", "inactive-slot", "health-gate", "manifest"})
+PAYLOAD_SERIAL = "suderra-scenario-payload"
+
+
+def mutation_boot_plan(role: str, artifact: Path | None) -> dict[str, Any]:
+    """Decide how a scenario mutation reaches the guest without booting.
+
+    Returns {"boot_image": Path|None, "extra_drives": [qemu args]}. Fail-closed:
+    a disk-image or payload role with a missing artifact raises rather than
+    silently booting the pristine image (which would fake a rejection)."""
+    if not role or artifact is None:
+        return {"boot_image": None, "extra_drives": []}
+    if role in DISK_IMAGE_ROLES:
+        if not artifact.is_file():
+            raise RuntimeError(
+                f"disk-image mutation role '{role}' needs a full disk image artifact: {artifact}"
+            )
+        return {"boot_image": artifact, "extra_drives": []}
+    if role in PAYLOAD_ROLES:
+        if not artifact.is_file():
+            raise RuntimeError(
+                f"payload mutation role '{role}' needs an artifact file: {artifact}"
+            )
+        return {
+            "boot_image": None,
+            "extra_drives": [
+                "-drive",
+                f"file={artifact},if=none,format=raw,readonly=on,id=scenariopayload",
+                "-device",
+                f"virtio-blk-pci,drive=scenariopayload,serial={PAYLOAD_SERIAL}",
+            ],
+        }
+    # data (swtpm) and unknown roles boot pristine; divergence is measured
+    # from the swtpm before/after state, not a disk/payload artifact.
+    return {"boot_image": None, "extra_drives": []}
+
+
 def qemu_version() -> str:
     qemu = shutil.which("qemu-system-x86_64")
     if qemu is None:
@@ -374,7 +416,14 @@ def run_scenario(args: argparse.Namespace) -> int:
     started_at = now_utc()
     try:
         swtpm_process, swtpm_socket = start_swtpm(swtpm_state, scenario_dir)
-        drive_args, snapshot = snapshot_drive(image, scenario_dir)
+        # Apply the scenario mutation: boot the mutated disk (disk-image roles)
+        # or attach the mutation as a labelled payload drive (payload roles).
+        boot_plan = mutation_boot_plan(
+            os.environ.get("SUDERRA_MUTATION_ROLE", ""),
+            Path(os.environ["SUDERRA_MUTATION_ARTIFACT"]) if os.environ.get("SUDERRA_MUTATION_ARTIFACT") else None,
+        )
+        boot_image = boot_plan["boot_image"] or image
+        drive_args, snapshot = snapshot_drive(boot_image, scenario_dir)
         drive_option = drive_args[0]
         extra_drive_args = drive_args[1:]
         qemu_args = [
@@ -390,6 +439,7 @@ def run_scenario(args: argparse.Namespace) -> int:
             "-drive",
             drive_option,
             *extra_drive_args,
+            *boot_plan["extra_drives"],
             "-drive",
             f"if=pflash,format=raw,unit=0,readonly=on,file={ovmf_code}",
             "-drive",

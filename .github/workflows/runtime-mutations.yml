@@ -10,12 +10,18 @@ on:
     paths:
       - tests/qemu/runtime_mutations.py
       - tests/qemu/runtime-mutations-component-test.sh
+      - tests/qemu/harness-wiring-test.py
+      - tests/qemu/production-runtime.py
+      - tests/qemu/production-runtime-scenario.py
       - .github/workflows/runtime-mutations.yml
   pull_request:
     branches: [main, "claude/**"]
     paths:
       - tests/qemu/runtime_mutations.py
       - tests/qemu/runtime-mutations-component-test.sh
+      - tests/qemu/harness-wiring-test.py
+      - tests/qemu/production-runtime.py
+      - tests/qemu/production-runtime-scenario.py
       - .github/workflows/runtime-mutations.yml
   workflow_dispatch:
 
@@ -46,3 +52,6 @@ jobs:
 
       - name: Run mutation producers component test
         run: bash tests/qemu/runtime-mutations-component-test.sh
+
+      - name: Run harness wiring unit test
+        run: python3 tests/qemu/harness-wiring-test.py
