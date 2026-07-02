@@ -45,6 +45,7 @@ done
 for token in \
     'CONFIG_SECURITY_LOCKDOWN_LSM=y' \
     'CONFIG_LSM="lockdown,yama,bpf,landlock"' \
+    'CONFIG_SECURITY_LANDLOCK=y' \
     'CONFIG_VMAP_STACK=y' \
     'CONFIG_PAGE_POISONING=y' \
     'CONFIG_SLAB_FREELIST_HARDENED=y' \
