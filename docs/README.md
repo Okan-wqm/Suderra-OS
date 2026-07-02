@@ -26,6 +26,7 @@ docs/
   - [ADR-0004: RAUC + A/B partition](architecture/ADR-0004-rauc-ab-partition.md)
   - [ADR-0005: dm-verity + Secure Boot](architecture/ADR-0005-dm-verity-secure-boot.md)
   - [ADR-0006: IEC 62443 SL 2 hedef seçimi (SL3 yerine)](architecture/ADR-0006-iec-62443-sl2-vs-sl3.md)
+  - [ADR-0007: ARM doğrulanmış boot + dm-verity + A/B zinciri](architecture/ADR-0007-arm-verity-ab-boot-chain.md)
   - [ADR-template.md](architecture/ADR-template.md)
 
 ### Güvenlik
