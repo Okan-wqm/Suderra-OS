@@ -317,7 +317,7 @@ build_x86_verity_initramfs() {
     copy_first_target_binary "${target_dir}" "${root}" /bin/sleep /usr/bin/sleep >/dev/null
     copy_target_runtime_libs "${target_dir}" "${root}"
 
-    for applet in sh cat mkdir mount umount sleep head; do
+    for applet in sh cat mkdir mount umount sleep head reboot poweroff; do
         ln -sfn busybox "${root}/bin/${applet}"
     done
 
@@ -329,8 +329,15 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PATH
 
 die() {
+    # Fail-secure: verified boot basarisiz oldugunda ASLA shell'e dusme —
+    # kurcalanmis rootfs kimlik dogrulamasiz root kabugu elde ederdi.
+    # Konsol logu icin bekle, sonra zorla reboot: GRUB boot-count diger
+    # A/B slotuna dusurur. Reboot da basarisizsa kapat; o da olmazsa dur.
     echo "Suderra initramfs failure: \$*" >&2
-    exec sh
+    sleep 10
+    reboot -f 2>/dev/null || true
+    poweroff -f 2>/dev/null || true
+    while :; do sleep 3600; done
 }
 
 mount -t proc proc /proc || die "cannot mount proc"

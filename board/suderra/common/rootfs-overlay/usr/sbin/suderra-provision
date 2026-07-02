@@ -24,7 +24,11 @@ elif [ "${1:-}" = "-c" ]; then
 else
     command="${*:-}"
 fi
+# Saldırgan kontrolündeki komut üzerinde glob genişletmesini kapat;
+# yalnız word-splitting kalsın (ör. '*' home dizinine genişlemesin).
+set -f
 set -- ${command}
+set +f
 
 [ "$#" -gt 0 ] || {
     usage

@@ -10,7 +10,27 @@ ExecStart=/usr/sbin/suderra-provision-worker
 User=root
 Group=root
 UMask=0077
+# NNP=false bilinçli: edge-install lockdown adımı PAM/setuid araçlarına
+# dokunabilir; root servis için NNP kazancı küçük, kırma riski gerçek.
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectHome=true
+
+# Ağdan tetiklenen en ayrıcalıklı yol — dosya sistemi ve kernel yüzeyi
+# kilitli; yazma yalnız aşağıdaki listeye. (ReadWritePaths ancak
+# ProtectSystem=strict ile anlam kazanır.)
+ProtectSystem=strict
 ReadWritePaths=/var/spool/suderra-provision /var/lib/suderra /var/log/suderra /opt/suderra /etc/suderra /etc/systemd/system /etc/shadow
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

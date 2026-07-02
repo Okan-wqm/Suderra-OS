@@ -86,7 +86,10 @@ ExecStart=/bin/sh -c ' \
 # Hardening (oneshot bile olsa)
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/etc /var/lib /var/log
+# /var/spool: provisioning inbox + tek-kullanımlık credentials.env buraya
+# yazılır (yukarıda adım 2) — listeden düşerse set -e altında firstboot
+# iptal olur ve cihaz hiç provision edilemez.
+ReadWritePaths=/etc /var/lib /var/log /var/spool
 ProtectHome=true
 PrivateTmp=true
 PrivateNetwork=true
