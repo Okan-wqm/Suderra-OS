@@ -34,7 +34,7 @@ _MUTATION_PATH_KEYS = frozenset({
     "stub", "kernel", "osrel", "initrd", "cmdline_tampered", "sign_key",
     "sign_cert", "signed_uki", "image", "swtpm_state", "bundle_tool", "before_source",
 })
-_MUTATION_INT_KEYS = frozenset({"offset", "length"})
+_MUTATION_INT_KEYS = frozenset({"offset", "length", "esp_offset"})
 
 
 def load_validator() -> Any:

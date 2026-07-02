@@ -1153,12 +1153,27 @@ def runtime_plan(
     ovmf_enrollment_mode: str,
     ovmf_enrolled_vars_sha256: str,
     secure_boot_db_sha256: str,
+    mutation_inputs: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = contract or load_contract()
     command_base = shlex.split(scenario_command)
     if not command_base:
         raise ValueError("--scenario-command must not be empty")
+    # Per-scenario mutation producer inputs (image, ESP offset, keys, ...) that
+    # the runner feeds to tests/qemu/runtime_mutations.py. Only governed scenario
+    # names are accepted so a plan cannot smuggle inputs for unknown scenarios.
+    governed = set(runtime_required_scenarios(payload))
+    resolved_mutation_inputs: dict[str, Any] = {}
+    if mutation_inputs is not None:
+        if not isinstance(mutation_inputs, dict):
+            raise ValueError("mutation_inputs must be a JSON object keyed by scenario")
+        for scenario_name, values in mutation_inputs.items():
+            if scenario_name not in governed:
+                raise ValueError(f"mutation_inputs references ungoverned scenario: {scenario_name}")
+            if not isinstance(values, dict):
+                raise ValueError(f"mutation_inputs[{scenario_name}] must be an object")
+            resolved_mutation_inputs[scenario_name] = values
     scenarios = []
     contracts = runtime_scenario_contracts(payload)
     for name in runtime_required_scenarios(payload):
@@ -1202,6 +1217,7 @@ def runtime_plan(
         "ovmf_enrolled_vars_sha256": ovmf_enrolled_vars_sha256,
         "secure_boot_db_sha256": secure_boot_db_sha256,
         "swtpm_state": swtpm_state,
+        "mutation_inputs": resolved_mutation_inputs,
         "scenarios": scenarios,
     }
 
@@ -1438,6 +1454,7 @@ def main() -> int:
     parser.add_argument("--ovmf-enrollment-mode")
     parser.add_argument("--ovmf-enrolled-vars-sha256")
     parser.add_argument("--secure-boot-db-sha256")
+    parser.add_argument("--mutation-inputs-file")
     parser.add_argument("--swtpm-state")
     parser.add_argument("--raw-image-sha256")
     parser.add_argument("--raw-image-bytes", type=int)
@@ -1484,6 +1501,11 @@ def main() -> int:
                         ovmf_enrollment_mode=_required_runtime_arg(args, "ovmf_enrollment_mode"),
                         ovmf_enrolled_vars_sha256=_required_runtime_arg(args, "ovmf_enrolled_vars_sha256"),
                         secure_boot_db_sha256=_required_runtime_arg(args, "secure_boot_db_sha256"),
+                        mutation_inputs=(
+                            json.loads(Path(args.mutation_inputs_file).read_text(encoding="utf-8"))
+                            if args.mutation_inputs_file
+                            else None
+                        ),
                         contract=payload,
                     ),
                     indent=2,
