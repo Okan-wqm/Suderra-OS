@@ -71,6 +71,13 @@ openssl req -newkey rsa:3072 -nodes -keyout verity-signing.key \
     -x509 -sha256 -days 365 -out verity-signing.crt \
     -subj "/CN=Suderra Dev Verity/" 2>/dev/null
 
+# ARM U-Boot signed-FIT signing (ADR-0007). mkimage imzalar; U-Boot içine gömülü
+# public key ile boot'ta doğrulanır. RSA-2048 (U-Boot FIT_SIGNATURE yaygın seçim).
+echo "==> ARM signed-FIT signing key (RSA-2048)"
+openssl req -newkey rsa:2048 -nodes -keyout fit-signing.key \
+    -x509 -sha256 -days 365 -out fit-signing.crt \
+    -subj "/CN=Suderra Dev FIT/" 2>/dev/null
+
 # USB installer payload manifest signing
 echo "==> USB installer payload signing key (Ed25519)"
 openssl genpkey -algorithm ED25519 -out installer-payload.key 2>/dev/null
