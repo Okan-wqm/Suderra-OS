@@ -1,6 +1,26 @@
 # Kernel Sertleştirme — Suderra OS
 
-> **Status:** Skeleton. Tam CONFIG matrisi `board/suderra/common/kernel-fragment.config` ile birlikte Faz 3'te dolacak.
+> **Status:** Kısmen uygulanmış. Aşağıdaki tablolar **hedef** matristir;
+> bugün ne uygulandığı "Uygulama Durumu" bölümünde, sapması
+> `tests/image-contracts/arm-hardening-contract-test.sh` ile korunur.
+
+## Uygulama Durumu (fiili)
+
+| Varyant | Uygulanan fragment(ler) | Notlar |
+|---|---|---|
+| `suderra_x86_64`, `suderra_qemu_x86_64_prod_ab` | `board/suderra/common/kernel-fragment.config` | Hedef matrisin x86 karşılığı: lockdown zorunlu (confidentiality), modules-off, KEXEC/HIBERNATION kapalı |
+| `suderra_aarch64_rpi4`, `suderra_aarch64_revpi4`, `..._usb_installer` | `linux-rpi4.config` + `linux-rpi4-hardening.config` | Boot-güvenli alt küme: lockdown **derli ama zorlamasız**, `CONFIG_MODULES` **açık**, SW_TTBR0_PAN, rodata=full, unpriv BPF kapalı, kexec/hibernation/USER_NS kapalı |
+| `suderra_qemu_x86_64` (dev), `suderra_aarch64` (template) | yok | Dev/lab; sertleştirme iddiası yok |
+
+### ARM'da bilinçli ertelenenler (donanım kanıtı gate'i)
+
+Şunlar Pi/RevPi donanım lab'ında boot kanıtı alınmadan ARM fragmentine
+**giremez** (contract test bunu zorlar):
+
+- `CONFIG_MODULES=n` — bcm2711 sürücü seti modül bağımlı; monolitik kernel
+  yanlış kombinasyonda cihazı boot edemez hale getirebilir.
+- `CONFIG_LOCK_DOWN_KERNEL_FORCE_*` — Pi firmware zincirinde imzalı kernel
+  zorlaması yokken firmware arayüzlerini kırma riski; signed-FIT fazına bağlı.
 
 ## Felsefe
 
