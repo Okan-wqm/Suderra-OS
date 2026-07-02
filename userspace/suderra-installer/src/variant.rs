@@ -17,7 +17,11 @@
 
 /// Normalize edilmiş bir varyant değeri üretim mi?
 fn value_is_prod(value: &str) -> bool {
-    let v = value.trim().trim_matches('"').trim_matches('\'').to_ascii_lowercase();
+    let v = value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
     v == "prod" || v == "production" || v.starts_with("prod-") || v.starts_with("prod_")
 }
 
@@ -36,8 +40,9 @@ pub fn is_production() -> bool {
         return false;
     };
     os_release.lines().any(|line| {
-        line.split_once('=')
-            .is_some_and(|(key, value)| matches!(key, "VARIANT" | "VARIANT_ID") && value_is_prod(value))
+        line.split_once('=').is_some_and(|(key, value)| {
+            matches!(key, "VARIANT" | "VARIANT_ID") && value_is_prod(value)
+        })
     })
 }
 
@@ -47,7 +52,14 @@ mod tests {
 
     #[test]
     fn classifies_prod_labels() {
-        for v in ["prod", "PROD", "\"prod\"", "production", "prod-eu", "prod_eu"] {
+        for v in [
+            "prod",
+            "PROD",
+            "\"prod\"",
+            "production",
+            "prod-eu",
+            "prod_eu",
+        ] {
             assert!(value_is_prod(v), "{v} prod sayılmalı");
         }
     }
