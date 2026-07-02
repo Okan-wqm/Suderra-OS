@@ -128,8 +128,8 @@ Suderra OS sadece **bilinen** bir uygulamayı host eder. Bu yüzden uyumluluk i�
 
 ## Yapılacaklar (Faz 3)
 
-- [ ] `board/suderra/common/kernel-fragment.config` dosyasını tam doldur
-- [ ] `board/suderra/common/rootfs-overlay/etc/sysctl.d/90-suderra-hardening.conf` yaz
+- [x] `board/suderra/common/kernel-fragment.config` (x86) + `linux-rpi4-hardening.config` (ARM boot-güvenli alt küme)
+- [x] `board/suderra/common/rootfs-overlay/etc/sysctl.d/90-suderra-hardening.conf` — yazıldı, tüm imajlara uygulanıyor
 - [ ] `board/suderra/common/rootfs-overlay/etc/security/limits.d/90-suderra.conf` (ulimit)
 - [ ] Lynis baseline tarama → `tests/security/lynis-baseline.sh`
 - [ ] KSPP (Kernel Self Protection Project) checklist'i karşılaştır
