@@ -67,9 +67,11 @@ jobs:
           echo "== enrolled varstore =="
           virt-fw-vars --input "${work}/OVMF_VARS.enrolled.fd" --print | tee "${work}/print.txt"
 
-          # Fail-closed assertions.
-          grep -qi 'secure boot' "${work}/print.txt"
-          for var in PK KEK db; do grep -qw "${var}" "${work}/print.txt"; done
+          # Fail-closed assertions. virt-fw-vars --print (compact) lists each
+          # variable as "<name> : <desc>"; --secure-boot yields
+          # "SecureBootEnable : bool: ON".
+          grep -Eq '^SecureBootEnable +: bool: ON' "${work}/print.txt"
+          for var in PK KEK db; do grep -Eq "^${var} +:" "${work}/print.txt"; done
 
           blank="$(sha256sum "${work}/OVMF_VARS.fd" | awk '{print $1}')"
           enrolled="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["enrolled_vars_sha256"])' "${work}/ovmf-enrollment.json")"
