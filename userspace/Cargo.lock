@@ -1607,9 +1607,7 @@ version = "0.1.0-alpha"
 dependencies = [
  "anyhow",
  "libc",
- "nix",
  "sd-notify",
- "suderra-config",
  "tokio",
  "tracing",
  "tracing-subscriber",
