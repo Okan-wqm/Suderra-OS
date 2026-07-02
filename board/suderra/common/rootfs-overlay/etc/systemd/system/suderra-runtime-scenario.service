@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# QEMU production-runtime GUEST senaryo sürücüsü. YALNIZ qemu-x86_64-prod-ab
+# runtime-evidence imajında enable edilir (post-build); saha imajından silinir.
+
+[Unit]
+Description=Suderra OS production-runtime scenario driver (QEMU evidence only)
+Documentation=https://github.com/Okan-wqm/suderra-os
+After=suderra-firstboot.service suderra-data.service nftables.service multi-user.target
+Wants=multi-user.target
+ConditionPathExists=/usr/sbin/suderra-runtime-scenario
+ConditionPathExists=/sys/firmware/qemu_fw_cfg/by_name/opt/suderra/runtime-scenario/raw
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/suderra-runtime-scenario
+# Mutasyon uygulamak için ayrıcalık gerekir (mount/rauc); yine de yüzeyi kıs.
+User=root
+Group=root
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suderra-runtime-scenario
+
+[Install]
+WantedBy=multi-user.target
