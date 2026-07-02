@@ -59,7 +59,7 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     tokio::fs::create_dir_all(&manifest_cache_dir).await?;
     let manifest_path = manifest_cache_dir.join(format!("{}-{}.json", args.package, version));
     info!("manifest indiriliyor: {manifest_url}");
-    download_file(&manifest_url, &manifest_path, None)
+    download_file(&manifest_url, &manifest_path, None, crate::download::METADATA_MAX_BYTES)
         .await
         .with_context(|| {
             format!(
@@ -79,7 +79,7 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         let manifest_cert_path =
             manifest_cache_dir.join(format!("{}-{}.json.cert", args.package, version));
         info!("manifest signature indiriliyor: {manifest_sig_url}");
-        download_file(&manifest_sig_url, &manifest_sig_path, None)
+        download_file(&manifest_sig_url, &manifest_sig_path, None, crate::download::METADATA_MAX_BYTES)
             .await
             .with_context(|| {
                 format!(
@@ -88,7 +88,7 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
                 )
             })?;
         info!("manifest certificate indiriliyor: {manifest_cert_url}");
-        download_file(&manifest_cert_url, &manifest_cert_path, None)
+        download_file(&manifest_cert_url, &manifest_cert_path, None, crate::download::METADATA_MAX_BYTES)
             .await
             .with_context(|| {
                 format!(
@@ -162,8 +162,15 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     let target = target_dir.join(&package_info.file);
 
     let bundle_url = release.artifact_url(args.mirror);
+    // Bundle indirmesi için tavan: manifest'in bildirdiği boyut (biraz pay ile),
+    // mutlak BUNDLE_MAX_BYTES ile sınırlanır. sha256 zaten sonradan doğrulanır;
+    // bu tavan doğrulama-öncesi kaynak tükenmesini önler.
+    let bundle_cap = package_info
+        .size_bytes
+        .saturating_add(1024 * 1024)
+        .clamp(1, crate::download::BUNDLE_MAX_BYTES);
     let download_result =
-        match download_file(&bundle_url, &target, Some(&package_info.sha256)).await {
+        match download_file(&bundle_url, &target, Some(&package_info.sha256), bundle_cap).await {
             Ok(r) => r,
             Err(e) => {
                 // Fallback mirror
@@ -175,7 +182,7 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
                         arch,
                     };
                     let fallback_url = release2.artifact_url(fallback);
-                    download_file(&fallback_url, &target, Some(&package_info.sha256)).await?
+                    download_file(&fallback_url, &target, Some(&package_info.sha256), bundle_cap).await?
                 } else {
                     return Err(e);
                 }
@@ -199,10 +206,10 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         let cert_path = target_dir.join(format!("{}.cert", &package_info.file));
         info!("signature indiriliyor: {sig_url}");
 
-        match download_file(&sig_url, &sig_path, None).await {
+        match download_file(&sig_url, &sig_path, None, crate::download::METADATA_MAX_BYTES).await {
             Ok(_) => {
                 info!("certificate indiriliyor: {cert_url}");
-                download_file(&cert_url, &cert_path, None)
+                download_file(&cert_url, &cert_path, None, crate::download::METADATA_MAX_BYTES)
                     .await
                     .with_context(|| {
                         format!(
@@ -387,7 +394,10 @@ fn package_kind_is_edge(package: &str) -> bool {
 /// state/audit/insan-mesajı üretir — böylece lab-copy "kuruldu" gibi sunulmaz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallOutcome {
-    /// Gerçek RAUC-backed kurulum (servis etkin).
+    /// Gerçek RAUC-backed kurulum (servis etkin). Faz 4'te RAUC motoru
+    /// eklendiğinde `install_bundle` bunu döndürecek; şimdilik yalnız match
+    /// kollarında kullanılıyor.
+    #[allow(dead_code)]
     Rauc,
     /// Yalnız lab: bundle kopyalandı; RAUC yok, servis etkinleştirilmedi.
     LabCopy,
@@ -457,22 +467,7 @@ fn enforce_signature_policy(verify_signature: bool) -> Result<()> {
 }
 
 fn is_production_variant() -> bool {
-    if std::env::var("SUDERRA_OS_VARIANT")
-        .or_else(|_| std::env::var("SUDERRA_VARIANT"))
-        .map(|value| value.trim_matches('"').eq_ignore_ascii_case("prod"))
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    let Ok(os_release) = std::fs::read_to_string("/etc/os-release") else {
-        return false;
-    };
-    os_release.lines().any(|line| {
-        let Some((key, value)) = line.split_once('=') else {
-            return false;
-        };
-        matches!(key, "VARIANT" | "VARIANT_ID")
-            && value.trim().trim_matches('"').eq_ignore_ascii_case("prod")
-    })
+    // Tek kaynak: crate::variant (download.rs ile paylaşılan tanım). Önceki iki
+    // ayrı/uyuşmayan tanım tek fonksiyonda birleştirildi (M1).
+    crate::variant::is_production()
 }
