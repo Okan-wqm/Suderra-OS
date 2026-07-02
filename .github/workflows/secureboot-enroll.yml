@@ -1,0 +1,91 @@
+name: Secure Boot Enrollment
+
+# OVMF Secure Boot enrollment helper'ının GERÇEK, hızlı bileşen testi.
+# Tam 285 dakikalık production-runtime suite'ini beklemeden, enroll-secureboot-vars
+# betiğinin gerçekten çalıştığını (PK/KEK/db enroll + Secure Boot açık + boş
+# depodan farklı hash) her PR'da kanıtlar.
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - scripts/qemu/enroll-secureboot-vars
+      - scripts/gen-dev-keys.sh
+      - tests/qemu/production-runtime.py
+      - scripts/evidence/evidence_contract.py
+      - .github/workflows/secureboot-enroll.yml
+  pull_request:
+    branches: [main, "claude/**"]
+    paths:
+      - scripts/qemu/enroll-secureboot-vars
+      - scripts/gen-dev-keys.sh
+      - tests/qemu/production-runtime.py
+      - scripts/evidence/evidence_contract.py
+      - .github/workflows/secureboot-enroll.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secureboot-enroll-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  enroll:
+    name: OVMF enrollment component test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install enrollment tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ovmf \
+            openssl \
+            python3-virt-firmware
+
+      - name: Generate throwaway PK/KEK/db and enroll
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd "${work}/OVMF_VARS.fd"
+          for role in pk kek db; do
+            openssl req -newkey rsa:3072 -nodes -keyout "${work}/${role}.key" \
+              -x509 -sha256 -days 1 -out "${work}/${role}.crt" \
+              -subj "/CN=Suderra CI ${role}/" 2>/dev/null
+          done
+          ./scripts/qemu/enroll-secureboot-vars \
+            --input "${work}/OVMF_VARS.fd" \
+            --output "${work}/OVMF_VARS.enrolled.fd" \
+            --pk "${work}/pk.crt" \
+            --kek "${work}/kek.crt" \
+            --db "${work}/db.crt" \
+            --manifest "${work}/ovmf-enrollment.json"
+
+          echo "== enrolled varstore =="
+          virt-fw-vars --input "${work}/OVMF_VARS.enrolled.fd" --print | tee "${work}/print.txt"
+
+          # Fail-closed assertions.
+          grep -qi 'secure boot' "${work}/print.txt"
+          for var in PK KEK db; do grep -qw "${var}" "${work}/print.txt"; done
+
+          blank="$(sha256sum "${work}/OVMF_VARS.fd" | awk '{print $1}')"
+          enrolled="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["enrolled_vars_sha256"])' "${work}/ovmf-enrollment.json")"
+          test "${enrolled}" != "${blank}"
+          test "${enrolled}" = "$(sha256sum "${work}/OVMF_VARS.enrolled.fd" | awk '{print $1}')"
+
+          db_der="$(openssl x509 -in "${work}/db.crt" -outform DER | sha256sum | awk '{print $1}')"
+          manifest_db="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["secure_boot_db_sha256"])' "${work}/ovmf-enrollment.json")"
+          test "${db_der}" = "${manifest_db}"
+          echo "OVMF enrollment component test passed"
+
+      - name: Assert no fake enrollment fallback in suite builder
+        run: |
+          set -euo pipefail
+          if grep -nE 'ovmf_enrolled_vars_sha256".*sha256_file|secure_boot_db_sha256".*sha256_file' tests/qemu/production-runtime.py; then
+            echo "ERROR: production-runtime.py must not fabricate enrollment hashes from the vars file" >&2
+            exit 1
+          fi
+          echo "no fake enrollment fallback present"

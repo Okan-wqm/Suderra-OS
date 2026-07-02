@@ -177,13 +177,25 @@ runtime_plan = json.loads(
             "--ovmf-code",
             "OVMF_CODE.fd",
             "--ovmf-vars",
-            "OVMF_VARS.fd",
+            "OVMF_VARS.enrolled.fd",
+            "--ovmf-enrollment-mode",
+            "secure-boot-enrolled",
+            "--ovmf-enrolled-vars-sha256",
+            "c" * 64,
+            "--secure-boot-db-sha256",
+            "d" * 64,
             "--swtpm-state",
             "swtpm",
         ],
         text=True,
     )
 )
+if runtime_plan["ovmf_enrollment_mode"] != "secure-boot-enrolled":
+    raise SystemExit("runtime-plan must carry the OVMF enrollment mode")
+if runtime_plan["ovmf_enrolled_vars_sha256"] != "c" * 64:
+    raise SystemExit("runtime-plan must carry the enrolled OVMF vars digest")
+if runtime_plan["secure_boot_db_sha256"] != "d" * 64:
+    raise SystemExit("runtime-plan must carry the Secure Boot db digest")
 if runtime_plan["artifact_digest"] != "b" * 64:
     raise SystemExit("runtime-plan must accept --artifact-digest as the public compressed artifact digest")
 if runtime_plan["compressed_artifact_sha256"] != "b" * 64:
