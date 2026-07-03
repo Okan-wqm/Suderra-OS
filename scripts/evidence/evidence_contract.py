@@ -1150,6 +1150,9 @@ def runtime_plan(
     ovmf_vars: str,
     swtpm_state: str,
     scenario_command: str,
+    ovmf_enrollment_mode: str,
+    ovmf_enrolled_vars_sha256: str,
+    secure_boot_db_sha256: str,
     contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = contract or load_contract()
@@ -1195,6 +1198,9 @@ def runtime_plan(
         "release_artifact": release_artifact,
         "ovmf_code": ovmf_code,
         "ovmf_vars": ovmf_vars,
+        "ovmf_enrollment_mode": ovmf_enrollment_mode,
+        "ovmf_enrolled_vars_sha256": ovmf_enrolled_vars_sha256,
+        "secure_boot_db_sha256": secure_boot_db_sha256,
         "swtpm_state": swtpm_state,
         "scenarios": scenarios,
     }
@@ -1429,6 +1435,9 @@ def main() -> int:
     parser.add_argument("--release-artifact")
     parser.add_argument("--ovmf-code")
     parser.add_argument("--ovmf-vars")
+    parser.add_argument("--ovmf-enrollment-mode")
+    parser.add_argument("--ovmf-enrolled-vars-sha256")
+    parser.add_argument("--secure-boot-db-sha256")
     parser.add_argument("--swtpm-state")
     parser.add_argument("--raw-image-sha256")
     parser.add_argument("--raw-image-bytes", type=int)
@@ -1472,6 +1481,9 @@ def main() -> int:
                         ovmf_vars=_required_runtime_arg(args, "ovmf_vars"),
                         swtpm_state=_required_runtime_arg(args, "swtpm_state"),
                         scenario_command=args.scenario_command,
+                        ovmf_enrollment_mode=_required_runtime_arg(args, "ovmf_enrollment_mode"),
+                        ovmf_enrolled_vars_sha256=_required_runtime_arg(args, "ovmf_enrolled_vars_sha256"),
+                        secure_boot_db_sha256=_required_runtime_arg(args, "secure_boot_db_sha256"),
                         contract=payload,
                     ),
                     indent=2,

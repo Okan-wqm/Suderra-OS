@@ -361,9 +361,12 @@ def create_command(args: argparse.Namespace) -> int:
         "ovmf_vars": str(ovmf_vars),
         "ovmf_vars_sha256": sha256_file(ovmf_vars),
         "ovmf_enrollment": {
-            "mode": str(plan.get("ovmf_enrollment_mode", "secure-boot-enrolled")),
-            "enrolled_vars_sha256": str(plan.get("ovmf_enrolled_vars_sha256", sha256_file(ovmf_vars))),
-            "secure_boot_db_sha256": str(plan.get("secure_boot_db_sha256", sha256_file(ovmf_vars))),
+            # Enrollment kanıtı plandan GELMELİ — enroll edilmemiş OVMF_VARS'ın
+            # hash'ini "enrolled" gibi göstermek (eski fallback) Secure Boot
+            # ölçümünü sahteler. Alan yoksa fail-closed.
+            "mode": require_string(plan, "ovmf_enrollment_mode", "plan"),
+            "enrolled_vars_sha256": require_string(plan, "ovmf_enrolled_vars_sha256", "plan"),
+            "secure_boot_db_sha256": require_string(plan, "secure_boot_db_sha256", "plan"),
         },
         "qemu_version": first_qemu_version,
         "qemu_argv": first_qemu_argv,
