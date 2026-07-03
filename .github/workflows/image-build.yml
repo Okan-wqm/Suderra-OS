@@ -327,7 +327,7 @@ jobs:
 
       - name: Attest image and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
@@ -615,7 +615,7 @@ jobs:
 
       - name: Attest installer base and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/boot.vfat
@@ -999,7 +999,7 @@ jobs:
 
       - name: Attest payload image and build evidence
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/**
@@ -1078,7 +1078,7 @@ jobs:
 
       - name: Attest installer artifact
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             suderra-installer-${{ matrix.arch }}
@@ -1196,6 +1196,6 @@ jobs:
           if-no-files-found: error
       - name: Attest image build contract
         if: success() && github.event_name == 'push'
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: image-build-contract/image-build-contract.json
