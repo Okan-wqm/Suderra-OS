@@ -13,11 +13,26 @@ use std::path::Path;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
-/// Bir dosyayı URL'den indirip diske yaz, SHA256 hesapla
+/// İmza/hash doğrulaması OLMADAN indirilen (manifest, .sig, .cert, sürüm listesi
+/// gibi) küçük metadata dosyaları için üst sınır. Bunlar doğrulanmadan diske/RAM'e
+/// yazıldığından, ele geçirilmiş/MITM bir mirror'ın sınırsız stream ile diski veya
+/// belleği tüketmesini engeller.
+pub const METADATA_MAX_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
+
+/// SHA256'sı önceden bilinen bundle indirmeleri için mutlak tavan. Manifest'te
+/// beklenen boyut ayrıca kontrol edilir; bu, kötü niyetli bir manifest'e karşı
+/// son emniyet sübabıdır.
+pub const BUNDLE_MAX_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
+
+/// Bir dosyayı URL'den indirip diske yaz, SHA256 hesapla.
+///
+/// `max_bytes`: indirilen toplam byte bu sınırı aşarsa indirme iptal edilir ve
+/// yarım dosya silinir (doğrulama-öncesi kaynak tüketimini engeller).
 pub async fn download_file(
     url: &str,
     target: &Path,
     expected_sha256: Option<&str>,
+    max_bytes: u64,
 ) -> Result<DownloadResult> {
     info!("indiriliyor: {url}");
     debug!("hedef yol: {}", target.display());
@@ -33,6 +48,15 @@ pub async fn download_file(
         bail!("HTTP {} — {}", response.status(), url);
     }
 
+    // Sunucu Content-Length bildirdiyse, tek byte indirmeden önce reddet.
+    if let Some(len) = response.content_length() {
+        if len > max_bytes {
+            bail!(
+                "indirme reddedildi: bildirilen boyut {len} bytes > sınır {max_bytes} bytes ({url})"
+            );
+        }
+    }
+
     // Hedef dosyayı aç + parent dir oluştur
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -44,12 +68,21 @@ pub async fn download_file(
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
 
-    // Buffered streaming: response.chunk() loop (reqwest native, no extra deps)
+    // Buffered streaming: response.chunk() loop (reqwest native, no extra deps).
+    // Content-Length yalan söyleyebilir veya hiç gelmeyebilir; bu yüzden akış
+    // sırasında da sınırı zorunlu kılıyoruz.
     let mut response = response;
     while let Some(chunk) = response.chunk().await.context("download chunk hatası")? {
+        downloaded += chunk.len() as u64;
+        if downloaded > max_bytes {
+            drop(file);
+            let _ = tokio::fs::remove_file(target).await;
+            bail!(
+                "indirme iptal: {downloaded} bytes indirildikten sonra sınır {max_bytes} bytes aşıldı ({url})"
+            );
+        }
         hasher.update(&chunk);
         file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
     }
 
     file.flush().await?;
@@ -98,7 +131,7 @@ fn build_client() -> Result<reqwest::Client> {
         .map(|v| v == "1")
         .unwrap_or(false);
     if insecure {
-        if production_variant() {
+        if crate::variant::is_production() {
             bail!("SUDERRA_INSECURE=1 is forbidden on production Suderra OS variants");
         }
         warn!("⚠ SUDERRA_INSECURE=1 — TLS doğrulaması devre dışı (yalnızca dev/test)");
@@ -116,32 +149,32 @@ fn build_client() -> Result<reqwest::Client> {
         .map_err(|e| anyhow!("HTTP client başlatılamadı: {e}"))
 }
 
-fn production_variant() -> bool {
-    if std::env::var("SUDERRA_VARIANT")
-        .map(|value| value == "prod")
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    let Ok(os_release) = std::fs::read_to_string("/etc/os-release") else {
-        return false;
-    };
-    os_release.lines().any(|line| {
-        matches!(
-            line.trim(),
-            "VARIANT=prod" | "VARIANT=\"prod\"" | "VARIANT='prod'"
-        )
-    })
-}
-
-/// Tek string olarak küçük bir dosya indir (örn: .sha256, manifest.json)
+/// Tek string olarak küçük bir dosya indir (örn: .sha256, manifest.json).
+/// Gövde `METADATA_MAX_BYTES` ile sınırlıdır — doğrulanmadan belleğe okunduğundan
+/// sınırsız bir yanıt belleği tüketemez.
 pub async fn fetch_text(url: &str) -> Result<String> {
     let client = build_client()?;
     let response = client.get(url).send().await?;
     if !response.status().is_success() {
         bail!("HTTP {} — {}", response.status(), url);
     }
-    Ok(response.text().await?)
+    if let Some(len) = response.content_length() {
+        if len > METADATA_MAX_BYTES {
+            bail!(
+                "metadata reddedildi: bildirilen boyut {len} bytes > sınır {METADATA_MAX_BYTES} bytes ({url})"
+            );
+        }
+    }
+
+    let mut response = response;
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await.context("metadata chunk hatası")? {
+        if body.len() as u64 + chunk.len() as u64 > METADATA_MAX_BYTES {
+            bail!("metadata iptal: gövde sınır {METADATA_MAX_BYTES} bytes'ı aştı ({url})");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body).context("metadata gövdesi geçerli UTF-8 değil")
 }
 
 /// Bir dosyanın SHA256 hash'ini hesapla (lokal kontrol için)

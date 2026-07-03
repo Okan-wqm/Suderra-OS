@@ -39,6 +39,7 @@ mod contracts;
 mod download;
 mod manifest;
 mod sources;
+mod variant;
 mod verify;
 
 use anyhow::Result;

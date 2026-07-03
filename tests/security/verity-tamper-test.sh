@@ -22,6 +22,10 @@ grep -q 'suderra.verity.root_hash' "${PRODUCTION_ARTIFACTS}" || {
     echo "ERROR: signed UKI cmdline must bind the dm-verity roothash" >&2
     exit 1
 }
+if grep -qE 'exec (/bin/)?sh' "${PRODUCTION_ARTIFACTS}"; then
+    echo "ERROR: verity initramfs must fail secure — no shell drop on verification failure" >&2
+    exit 1
+fi
 
 python3 - "${TMPDIR}/production-runtime.json" <<'PY'
 import hashlib

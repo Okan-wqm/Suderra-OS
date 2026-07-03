@@ -7,15 +7,19 @@
 #
 # Buildroot tarafından `BR2_ROOTFS_USERS_TABLES` ile okunur.
 #
-# Provisioning image: root local console login defconfig ile geçici açılır.
+# Root: TÜM imajlarda password login kilitli (`!`). Erişim yalnız provisioning
+# akışı üzerinden: firstboot `provision` kullanıcısına tek-kullanımlık bir parola
+# atar ve login shell'i genel shell yerine forced-command `suderra-provision`'dır.
 # Runtime appliance: suderra-lockdown root login/getty/debug/remote shell kapatır.
+# (Repo'ya gömülü sabit root parolası GÜVENLİK NEDENİYLE KALDIRILDI — post-build.sh
+#  guardrail'i gömülü bir root parolası tespit ederse build'i fail eder.)
 #
 # UID range:
 #   1-99      sistem (Buildroot default)
 #   100-999   Suderra reserved (edge agent, monitoring, vb)
 #   1000+     gerçek kullanıcılar (PROD'da yok)
 #
-# NOT: $6$ = SHA-512 hash. mkpasswd -m sha-512 -S "saltsuderra" "suderra"
+# NOT: $6$ = SHA-512 hash. Parola alanı "!" = kilitli (login devre dışı).
 
 # Edge Agent runtime user — interactive login disabled, sadece systemd unit kullanır.
 # UID 200 sabit (reproducible) — Buildroot'un auto-assign (-1) yerine.

@@ -59,17 +59,22 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     tokio::fs::create_dir_all(&manifest_cache_dir).await?;
     let manifest_path = manifest_cache_dir.join(format!("{}-{}.json", args.package, version));
     info!("manifest indiriliyor: {manifest_url}");
-    download_file(&manifest_url, &manifest_path, None)
-        .await
-        .with_context(|| {
-            format!(
-                "manifest indirilemedi: {manifest_url}\n\
+    download_file(
+        &manifest_url,
+        &manifest_path,
+        None,
+        crate::download::METADATA_MAX_BYTES,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "manifest indirilemedi: {manifest_url}\n\
                  - Paket adı doğru mu? '{}'\n\
                  - Sürüm doğru mu? '{}'\n\
                  - GitHub Releases'ta release yayınlandı mı?",
-                args.package, version
-            )
-        })?;
+            args.package, version
+        )
+    })?;
 
     if args.verify_signature {
         let manifest_sig_url = release.manifest_signature_url(args.mirror);
@@ -79,23 +84,33 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         let manifest_cert_path =
             manifest_cache_dir.join(format!("{}-{}.json.cert", args.package, version));
         info!("manifest signature indiriliyor: {manifest_sig_url}");
-        download_file(&manifest_sig_url, &manifest_sig_path, None)
-            .await
-            .with_context(|| {
-                format!(
-                    "manifest signature indirilemedi: {manifest_sig_url}\n\
+        download_file(
+            &manifest_sig_url,
+            &manifest_sig_path,
+            None,
+            crate::download::METADATA_MAX_BYTES,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "manifest signature indirilemedi: {manifest_sig_url}\n\
                      Manifest doğrulanmadan paket kurulamaz."
-                )
-            })?;
+            )
+        })?;
         info!("manifest certificate indiriliyor: {manifest_cert_url}");
-        download_file(&manifest_cert_url, &manifest_cert_path, None)
-            .await
-            .with_context(|| {
-                format!(
-                    "manifest certificate indirilemedi: {manifest_cert_url}\n\
+        download_file(
+            &manifest_cert_url,
+            &manifest_cert_path,
+            None,
+            crate::download::METADATA_MAX_BYTES,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "manifest certificate indirilemedi: {manifest_cert_url}\n\
                      Manifest doğrulanmadan paket kurulamaz."
-                )
-            })?;
+            )
+        })?;
         verify::verify_keyless(&manifest_path, &manifest_sig_path, &manifest_cert_path)
             .with_context(|| {
                 // Tampered manifest is not safe to leave on disk
@@ -162,8 +177,15 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     let target = target_dir.join(&package_info.file);
 
     let bundle_url = release.artifact_url(args.mirror);
+    // Bundle indirmesi için tavan: manifest'in bildirdiği boyut (biraz pay ile),
+    // mutlak BUNDLE_MAX_BYTES ile sınırlanır. sha256 zaten sonradan doğrulanır;
+    // bu tavan doğrulama-öncesi kaynak tükenmesini önler.
+    let bundle_cap = package_info
+        .size_bytes
+        .saturating_add(1024 * 1024)
+        .clamp(1, crate::download::BUNDLE_MAX_BYTES);
     let download_result =
-        match download_file(&bundle_url, &target, Some(&package_info.sha256)).await {
+        match download_file(&bundle_url, &target, Some(&package_info.sha256), bundle_cap).await {
             Ok(r) => r,
             Err(e) => {
                 // Fallback mirror
@@ -175,7 +197,13 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
                         arch,
                     };
                     let fallback_url = release2.artifact_url(fallback);
-                    download_file(&fallback_url, &target, Some(&package_info.sha256)).await?
+                    download_file(
+                        &fallback_url,
+                        &target,
+                        Some(&package_info.sha256),
+                        bundle_cap,
+                    )
+                    .await?
                 } else {
                     return Err(e);
                 }
@@ -199,17 +227,29 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         let cert_path = target_dir.join(format!("{}.cert", &package_info.file));
         info!("signature indiriliyor: {sig_url}");
 
-        match download_file(&sig_url, &sig_path, None).await {
+        match download_file(
+            &sig_url,
+            &sig_path,
+            None,
+            crate::download::METADATA_MAX_BYTES,
+        )
+        .await
+        {
             Ok(_) => {
                 info!("certificate indiriliyor: {cert_url}");
-                download_file(&cert_url, &cert_path, None)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "certificate indirilemedi: {cert_url}\n\
+                download_file(
+                    &cert_url,
+                    &cert_path,
+                    None,
+                    crate::download::METADATA_MAX_BYTES,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "certificate indirilemedi: {cert_url}\n\
                          Artifact doğrulanmadan paket kurulamaz."
-                        )
-                    })?;
+                    )
+                })?;
                 match verify::verify_keyless(&target, &sig_path, &cert_path) {
                     Ok(_outcome) => {
                         signature_verified = true;
@@ -248,7 +288,8 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
     }
 
     // Bundle install (Faz 4 RAUC integration)
-    install_bundle(&target, &args.package, args.start_service).await?;
+    let outcome = install_bundle(&target, &args.package, args.start_service).await?;
+    let method = install_method(outcome);
 
     // State güncelle
     let mut state = InstalledState::load()
@@ -260,28 +301,66 @@ async fn install_from_remote(args: &InstallArgs) -> Result<()> {
         installed_at: chrono::Utc::now(),
         sha256: download_result.sha256,
         signature_verified,
+        install_method: method,
     });
     state.save()?;
 
-    // Audit log
-    Event::new(EventKind::Install, &args.package, EventResult::Success)
+    // Audit log — kurulum yöntemi açıkça kaydedilir; lab-copy "başarılı kurulum"
+    // olarak sunulmaz.
+    Event::new(EventKind::Install, &args.package, install_result(outcome))
         .with_version(&manifest.version)
         .with_meta("mirror", format!("{:?}", args.mirror))
         .with_meta("signature_verified", signature_verified)
+        .with_meta("install_method", format!("{method:?}"))
         .record()
         .ok();
 
-    println!();
-    println!("✓ {} v{} kuruldu", args.package, manifest.version);
-    println!();
-    if package_info.name == "edge" {
-        println!("Servis durumu:");
-        println!("  systemctl status suderra-edge-agent");
-        println!("  journalctl -u suderra-edge-agent -f");
-        println!();
-    }
-
+    report_outcome(
+        outcome,
+        &args.package,
+        &manifest.version,
+        package_info.name == "edge",
+    );
     Ok(())
+}
+
+/// `InstallOutcome`'u kalıcı `InstallMethod`'a çevir.
+fn install_method(outcome: InstallOutcome) -> crate::manifest::InstallMethod {
+    match outcome {
+        InstallOutcome::Rauc => crate::manifest::InstallMethod::Rauc,
+        InstallOutcome::LabCopy => crate::manifest::InstallMethod::LabCopy,
+    }
+}
+
+/// Lab-copy gerçek bir kurulum olmadığından audit'te `Success` olarak damgalanmaz.
+fn install_result(outcome: InstallOutcome) -> EventResult {
+    match outcome {
+        InstallOutcome::Rauc => EventResult::Success,
+        InstallOutcome::LabCopy => EventResult::Aborted,
+    }
+}
+
+/// Kullanıcıya dürüst çıktı: lab-copy için "kuruldu" demeyiz, servis ipuçlarını basmayız.
+fn report_outcome(outcome: InstallOutcome, package: &str, version: &str, is_edge: bool) {
+    println!();
+    match outcome {
+        InstallOutcome::Rauc => {
+            println!("✓ {package} v{version} kuruldu");
+            println!();
+            if is_edge {
+                println!("Servis durumu:");
+                println!("  systemctl status suderra-edge-agent");
+                println!("  journalctl -u suderra-edge-agent -f");
+                println!();
+            }
+        }
+        InstallOutcome::LabCopy => {
+            println!("⚠ {package} v{version} yalnızca LAB-COPY olarak yerleştirildi.");
+            println!("  Bu GERÇEK bir kurulum değildir: RAUC uygulanmadı ve servis");
+            println!("  etkinleştirilmedi. Üretimde kullanmayın (RAUC entegrasyonu Faz 4).");
+            println!();
+        }
+    }
 }
 
 async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Result<()> {
@@ -317,7 +396,8 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
     let sha = crate::download::hash_file(local).await?;
     info!("yerel dosya SHA256: {}", &sha[..16]);
 
-    install_bundle(local, &args.package, args.start_service).await?;
+    let outcome = install_bundle(local, &args.package, args.start_service).await?;
+    let method = install_method(outcome);
 
     let mut state = InstalledState::load()
         .context("installed state okunamadı; corrupt state ile kurulum fail-closed durur")?;
@@ -328,25 +408,55 @@ async fn install_from_local(args: &InstallArgs, local: &std::path::Path) -> Resu
         installed_at: chrono::Utc::now(),
         sha256: sha,
         signature_verified,
+        install_method: method,
     });
     state.save()?;
 
-    Event::new(EventKind::Install, &args.package, EventResult::Success)
+    Event::new(EventKind::Install, &args.package, install_result(outcome))
         .with_meta("source", "local")
         .with_meta("path", local.display().to_string())
+        .with_meta("install_method", format!("{method:?}"))
         .record()
         .ok();
 
-    println!("✓ {} (yerel) kuruldu", args.package);
+    report_outcome(
+        outcome,
+        &args.package,
+        "local",
+        package_kind_is_edge(&args.package),
+    );
     Ok(())
 }
 
+/// Yerel kurulumda paket adına göre edge olup olmadığını belirle (servis ipuçları için).
+fn package_kind_is_edge(package: &str) -> bool {
+    package == "edge"
+}
+
+/// Bir `install_bundle` çağrısının GERÇEKTE ne yaptığı. Çağıran bu sonuca göre
+/// state/audit/insan-mesajı üretir — böylece lab-copy "kuruldu" gibi sunulmaz.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallOutcome {
+    /// Gerçek RAUC-backed kurulum (servis etkin). Faz 4'te RAUC motoru
+    /// eklendiğinde `install_bundle` bunu döndürecek; şimdilik yalnız match
+    /// kollarında kullanılıyor.
+    #[allow(dead_code)]
+    Rauc,
+    /// Yalnız lab: bundle kopyalandı; RAUC yok, servis etkinleştirilmedi.
+    LabCopy,
+}
+
 /// RAUC bundle install.
+///
+/// Gerçek RAUC motoru henüz yok. `SUDERRA_ALLOW_LEGACY_COPY_INSTALL=1` (yalnız
+/// non-prod) ile bundle bir dizine kopyalanır; bu GERÇEK bir kurulum DEĞİLDİR ve
+/// çağırana `LabCopy` döner ki state/audit yanıltıcı biçimde "başarılı kurulum"
+/// yazmasın.
 async fn install_bundle(
     bundle: &std::path::Path,
     package: &str,
     start_service: bool,
-) -> Result<()> {
+) -> Result<InstallOutcome> {
     info!("bundle kurulumu: {}", bundle.display());
 
     if std::env::var("SUDERRA_ALLOW_LEGACY_COPY_INSTALL").as_deref() != Ok("1") {
@@ -359,7 +469,7 @@ async fn install_bundle(
         bail!("production images cannot use SUDERRA_ALLOW_LEGACY_COPY_INSTALL");
     }
 
-    warn!("SUDERRA_ALLOW_LEGACY_COPY_INSTALL=1 active; using lab-only copy install path");
+    warn!("SUDERRA_ALLOW_LEGACY_COPY_INSTALL=1 active; using lab-only copy install path (NOT a real install)");
     let target_dir = PathBuf::from("/opt/suderra").join(package);
     tokio::fs::create_dir_all(&target_dir).await?;
     let target_file = target_dir.join(
@@ -371,11 +481,14 @@ async fn install_bundle(
     info!("bundle kopyalandı: {}", target_file.display());
 
     if start_service {
-        info!("systemd unit etkinleştiriliyor (stub): suderra-{package}.service");
-        // TODO Faz 4: systemctl enable + start
+        // RAUC/servis motoru yok — servisi BAŞLATMADIĞIMIZI net söyle, aksi halde
+        // çağıran "servis çalışıyor" sanır.
+        warn!(
+            "start_service istendi ama lab-copy modunda systemd unit ETKİNLEŞTİRİLMEDİ (suderra-{package}.service); RAUC entegrasyonu Faz 4"
+        );
     }
 
-    Ok(())
+    Ok(InstallOutcome::LabCopy)
 }
 
 fn confirm_install() -> Result<bool> {
@@ -397,22 +510,7 @@ fn enforce_signature_policy(verify_signature: bool) -> Result<()> {
 }
 
 fn is_production_variant() -> bool {
-    if std::env::var("SUDERRA_OS_VARIANT")
-        .or_else(|_| std::env::var("SUDERRA_VARIANT"))
-        .map(|value| value.trim_matches('"').eq_ignore_ascii_case("prod"))
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    let Ok(os_release) = std::fs::read_to_string("/etc/os-release") else {
-        return false;
-    };
-    os_release.lines().any(|line| {
-        let Some((key, value)) = line.split_once('=') else {
-            return false;
-        };
-        matches!(key, "VARIANT" | "VARIANT_ID")
-            && value.trim().trim_matches('"').eq_ignore_ascii_case("prod")
-    })
+    // Tek kaynak: crate::variant (download.rs ile paylaşılan tanım). Önceki iki
+    // ayrı/uyuşmayan tanım tek fonksiyonda birleştirildi (M1).
+    crate::variant::is_production()
 }

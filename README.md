@@ -69,6 +69,12 @@ Hardware detayı: [docs/hardware/rpi4-cm4.md](docs/hardware/rpi4-cm4.md)
 
 ## Mimari
 
+### Hedef mimari
+
+Aşağıdaki diyagram **hedef** güvenlik mimarisidir; hangi varyantın bugün ne
+sağladığı bir sonraki tabloda ve `ci/build-matrix.yml` blocker alanlarında
+izlenir.
+
 ```
 ┌─────────────────────────────────────────┐
 │   Suderra Edge Agent (Rust, ~5MB)       │
@@ -97,6 +103,18 @@ Hardware detayı: [docs/hardware/rpi4-cm4.md](docs/hardware/rpi4-cm4.md)
 │   UEFI + Secure Boot (signed chain)     │
 └─────────────────────────────────────────┘
 ```
+
+### Bugünkü güvenlik durumu (varyant bazında)
+
+Tek doğruluk kaynağı `ci/build-matrix.yml` (profil + blocker alanları); bu
+tablo onun okunabilir özetidir:
+
+| Varyant | Kernel sertleştirme | dm-verity | Signed boot | A/B OTA | Eksikler (blocker) |
+|---|---|---|---|---|---|
+| `qemu_x86_64` (dev/CI) | yok (dev kernel) | yok | yok | yok | dev/lab imajı — production iddiası yok |
+| `x86_64`, `qemu_x86_64_prod_ab` | ortak fragment (lockdown zorunlu, modules-off) | partition layout hazır | UEFI UKI hedefli | RAUC hedefli | HSM, runtime-v2 ve donanım kanıtı |
+| `rpi4`, `revpi4` | boot-güvenli arm64 fragmenti (lockdown derli/zorlamasız, **modules açık**) | kernel hazır, imaj **kullanmıyor** | yok (signed-FIT bekliyor) | yok | signed-FIT + dm-verity + RAUC + donanım kanıtı |
+| `usb_installer` | boot-güvenli arm64 fragmenti | yok | payload Ed25519 imzalı | — | prod key policy + flash kanıtı |
 
 Detaylar: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md), [docs/architecture/boot-chain.md](docs/architecture/boot-chain.md)
 
