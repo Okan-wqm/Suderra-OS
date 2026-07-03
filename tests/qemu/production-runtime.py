@@ -26,7 +26,15 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = ROOT / "scripts" / "evidence" / "validate-production-runtime-suite.py"
+RUNTIME_MUTATIONS_PATH = Path(__file__).resolve().parent / "runtime_mutations.py"
 SCENARIO_RESULT = "scenario-result.json"
+
+# Producer input keys that must be coerced to filesystem paths / ints.
+_MUTATION_PATH_KEYS = frozenset({
+    "stub", "kernel", "osrel", "initrd", "cmdline_tampered", "sign_key",
+    "sign_cert", "signed_uki", "image", "swtpm_state", "bundle_tool", "before_source",
+})
+_MUTATION_INT_KEYS = frozenset({"offset", "length"})
 
 
 def load_validator() -> Any:
@@ -36,6 +44,56 @@ def load_validator() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_mutations() -> Any:
+    spec = importlib.util.spec_from_file_location("runtime_mutations", RUNTIME_MUTATIONS_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {RUNTIME_MUTATIONS_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_mutation_inputs(raw: dict[str, Any]) -> dict[str, Any]:
+    resolved: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in _MUTATION_PATH_KEYS:
+            resolved[key] = Path(str(value))
+        elif key in _MUTATION_INT_KEYS:
+            resolved[key] = int(value)
+        else:
+            resolved[key] = value
+    return resolved
+
+
+def produce_scenario_mutation(plan: dict[str, Any], name: str, scenario_dir: Path) -> dict[str, str]:
+    """Produce the real mutation artifact for a negative scenario and return the
+    env the scenario runner consumes (SUDERRA_MUTATION_ARTIFACT/_ROLE/
+    _BEFORE_SHA256). Returns {} for the positive scenario or when the plan
+    carries no mutation_inputs — a negative scenario without a mutation is left
+    to fail as operator-error in the runner, never silently passed."""
+    mutations = load_mutations()
+    if name in mutations.NO_MUTATION:
+        return {}
+    inputs_map = plan.get("mutation_inputs")
+    if not isinstance(inputs_map, dict):
+        return {}
+    raw = inputs_map.get(name)
+    if not isinstance(raw, dict):
+        return {}
+    result = mutations.produce(
+        name,
+        work_dir=scenario_dir / "mutation",
+        inputs=_resolve_mutation_inputs(raw),
+    )
+    if result is None:
+        return {}
+    return {
+        "SUDERRA_MUTATION_ARTIFACT": str(result["artifact"]),
+        "SUDERRA_MUTATION_ROLE": str(result["role"]),
+        "SUDERRA_MUTATION_BEFORE_SHA256": str(result["before_sha256"]),
+    }
 
 
 def now_utc() -> str:
@@ -195,6 +253,10 @@ def execute_scenario(
     swtpm_before_digest = sha256_tree(Path(plan["swtpm_state"]))
     started_at = now_utc()
     command = command_from_spec(item, f"scenarios[{idx}]")
+    # Produce the REAL mutation artifact for negative scenarios and export it to
+    # the scenario runner, which applies it to the boot disk / attaches it as a
+    # guest payload. signed-boot produces nothing.
+    mutation_env = produce_scenario_mutation(plan, name, scenario_dir)
     env = {
         **{key: str(value) for key, value in plan.get("environment", {}).items() if isinstance(key, str)},
         "SUDERRA_PRODUCTION_SCENARIO": name,
@@ -205,6 +267,7 @@ def execute_scenario(
         "SUDERRA_SWTPM_STATE": str(plan["swtpm_state"]),
         "SUDERRA_EXPECTED_OUTCOME": str(item.get("expected_outcome", "")),
         "SUDERRA_SCENARIO_RESULT": str(scenario_dir / SCENARIO_RESULT),
+        **mutation_env,
     }
     result = subprocess.run(
         command,
