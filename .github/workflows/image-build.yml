@@ -35,7 +35,7 @@ jobs:
       payload_matrix: ${{ steps.matrix.outputs.payload_matrix }}
       qemu_matrix: ${{ steps.matrix.outputs.qemu_matrix }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - name: Validate build matrix
         run: python3 scripts/ci/validate-build-matrix.py validate
       - name: Emit dynamic matrices
@@ -80,7 +80,7 @@ jobs:
           free -h
           docker --version
           ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           submodules: recursive
 
@@ -370,7 +370,7 @@ jobs:
           free -h
           docker --version
           ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           submodules: recursive
 
@@ -662,7 +662,7 @@ jobs:
           free -h
           docker --version
           ls -la /dev/kvm 2>&1 || echo "no /dev/kvm"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           submodules: recursive
 
@@ -1029,7 +1029,7 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
         with:
@@ -1093,7 +1093,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrix.outputs.qemu_matrix) }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Install QEMU + OVMF
         run: |
@@ -1150,7 +1150,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           submodules: recursive
       - name: Download image build artifacts
