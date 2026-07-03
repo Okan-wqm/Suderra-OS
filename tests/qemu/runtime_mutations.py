@@ -95,8 +95,18 @@ def _need(path: Path, what: str) -> Path:
 # --------------------------------------------------------------------------
 # Disk-targeting producers
 # --------------------------------------------------------------------------
-def produce_unsigned_uki(*, signed_uki: Path, work_dir: Path, **_: Any) -> Path:
-    """Strip the Authenticode signature from a validly-built UKI."""
+def produce_unsigned_uki(
+    *,
+    signed_uki: Path,
+    work_dir: Path,
+    image: Path | None = None,
+    esp_offset: int | None = None,
+    esp_dest: str | None = None,
+    **_: Any,
+) -> Path:
+    """Strip the Authenticode signature from a validly-built UKI. When image +
+    esp_offset + esp_dest are supplied, emit a full boot disk whose ESP UKI is
+    the unsigned one (firmware will refuse it); otherwise emit the bare UKI."""
     _require_tool("sbattach")
     _need(signed_uki, "signed UKI")
     out = work_dir / "unsigned-suderra.efi"
@@ -106,6 +116,8 @@ def produce_unsigned_uki(*, signed_uki: Path, work_dir: Path, **_: Any) -> Path:
     # (sbverify --list exits 0 even when empty, so parse its output).
     if shutil.which("sbverify") is not None and _has_signature(out):
         raise RuntimeError("unsigned UKI still carries a signature — strip failed")
+    if image is not None and esp_offset is not None and esp_dest is not None:
+        return _apply_uki_to_image(image, out, esp_offset, esp_dest, work_dir / "unsigned-image.img")
     return out
 
 
@@ -119,10 +131,14 @@ def produce_cmdline_tamper(
     sign_key: Path,
     sign_cert: Path,
     work_dir: Path,
+    image: Path | None = None,
+    esp_offset: int | None = None,
+    esp_dest: str | None = None,
     **_: Any,
 ) -> Path:
     """Rebuild a UKI with a tampered dm-verity roothash and re-sign with the
-    REAL db key: firmware accepts (valid signature), kernel rejects (bad hash)."""
+    REAL db key: firmware accepts (valid signature), kernel rejects (bad hash).
+    With image + esp_offset + esp_dest, emit a full boot disk carrying it."""
     objcopy = _require_tool("objcopy")
     _require_tool("sbsign")
     for path, what in ((stub, "UKI stub"), (kernel, "kernel"), (osrel, "os-release"),
@@ -142,6 +158,8 @@ def produce_cmdline_tamper(
     _run(["sbsign", "--key", str(sign_key), "--cert", str(sign_cert), "--output", str(signed), str(unsigned)])
     if not _sbverify_ok(signed, cert=sign_cert):
         raise RuntimeError("cmdline-tamper UKI must remain validly signed (firmware must accept it)")
+    if image is not None and esp_offset is not None and esp_dest is not None:
+        return _apply_uki_to_image(image, signed, esp_offset, esp_dest, work_dir / "cmdline-tamper-image.img")
     return signed
 
 
@@ -237,6 +255,21 @@ def _rauc_bundle(*, kind: str, work_dir: Path, bundle_tool: Path, **_: Any) -> P
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
+def _apply_uki_to_image(base_image: Path, uki: Path, esp_offset: int, esp_dest: str, out: Path) -> Path:
+    """Copy the boot disk and replace the ESP UKI with ``uki`` via mtools,
+    addressing the FAT ESP inside the image at ``esp_offset`` bytes. Returns the
+    full mutated disk image the harness boots. mtools keeps this root-free."""
+    _require_tool("mcopy")
+    _need(base_image, "base disk image")
+    _need(uki, "replacement UKI")
+    if esp_offset <= 0:
+        raise RuntimeError("esp_offset must be the ESP partition byte offset from the layout")
+    dest = esp_dest if esp_dest.startswith("::") else f"::{esp_dest.lstrip('/')}"
+    shutil.copy2(base_image, out)
+    _run(["mcopy", "-i", f"{out}@@{esp_offset}", "-o", str(uki), dest])
+    return out
+
+
 def _sbverify_ok(binary: Path, cert: Path) -> bool:
     """True if ``binary`` verifies against ``cert`` (reliable exit code)."""
     sbverify = shutil.which("sbverify")
@@ -321,7 +354,7 @@ def _coerce_inputs(raw: list[str]) -> dict[str, Any]:
                    "sign_cert", "signed_uki", "image", "swtpm_state", "bundle_tool",
                    "before_source"}:
             inputs[key] = Path(value)
-        elif key in {"offset", "length"}:
+        elif key in {"offset", "length", "esp_offset"}:
             inputs[key] = int(value)
         else:
             inputs[key] = value
