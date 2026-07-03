@@ -1,0 +1,154 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Suderra OS — QEMU production-runtime GUEST senaryo sürücüsü.
+#
+# GÜVENLİK NOTU: Bu betik mutasyon KABUL EDEN bir affordance'tır (payload
+# sürücüsünden RAUC bundle / downgrade manifest okuyup uygular). SAHA imajına
+# ASLA girmemelidir — yalnız qemu-x86_64-prod-ab runtime-evidence imajına
+# post-build tarafından wire edilir ve saha imajından silinir
+# (bkz. board/suderra/common/post-build.sh + runtime-scenario-guest-contract).
+#
+# QEMU fw_cfg 'opt/suderra/runtime-scenario' üzerinden senaryo adını okur; guest
+# katmanına ulaşan senaryolar için (booted/userspace) gerçek in-guest aksiyonu
+# yürütür ve production-runtime-scenario.py classifier'ının aradığı deterministik
+# markeri konsola basar:
+#     SUDERRA_PRODUCTION_RUNTIME_OUTCOME=<booted|userspace-rejected|rollback-completed>
+# Firmware/kernel'de reddedilen senaryolar (unsigned-boot, cmdline-tamper,
+# rootfs-tamper) guest'e hiç ulaşmaz; onların outcome'u firmware/kernel'den
+# ölçülür, bu betik çalışmaz.
+#
+set -eu
+
+CONSOLE=/dev/console
+FWCFG=/sys/firmware/qemu_fw_cfg/by_name/opt/suderra/runtime-scenario/raw
+PAYLOAD_DEV=/dev/disk/by-id/virtio-suderra-scenario-payload
+PAYLOAD_MNT=/run/suderra-scenario-payload
+
+log() { printf '%s\n' "suderra-runtime-scenario: $*" > "${CONSOLE}" 2>/dev/null || true; }
+
+emit() {
+    # Deterministik outcome markeri (classifier serial'da bunu arar).
+    printf 'SUDERRA_PRODUCTION_RUNTIME_OUTCOME=%s\n' "$1" > "${CONSOLE}" 2>/dev/null || true
+}
+
+collect_facts() {
+    # booted senaryolarda guest_facts için semantic collector'ı çalıştır.
+    if [ -x /usr/sbin/suderra-qemu-semantic-collector ]; then
+        /usr/sbin/suderra-qemu-semantic-collector > "${CONSOLE}" 2>/dev/null || true
+    fi
+}
+
+read_scenario() {
+    [ -r "${FWCFG}" ] || return 1
+    tr -d '\0\r\n' < "${FWCFG}" 2>/dev/null || true
+}
+
+mount_payload() {
+    # Payload sürücüsü (rauc bundle / downgrade manifest) — sabit seri no ile.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -e "${PAYLOAD_DEV}" ] && break
+        sleep 1
+    done
+    [ -e "${PAYLOAD_DEV}" ] || { log "payload sürücüsü yok"; return 1; }
+    mkdir -p "${PAYLOAD_MNT}"
+    mount -o ro "${PAYLOAD_DEV}" "${PAYLOAD_MNT}" 2>/dev/null \
+        || mount -t auto -o ro "${PAYLOAD_DEV}" "${PAYLOAD_MNT}" 2>/dev/null \
+        || { log "payload mount edilemedi"; return 1; }
+    return 0
+}
+
+scenario="$(read_scenario || true)"
+if [ -z "${scenario}" ]; then
+    log "fw_cfg senaryosu yok; no-op"
+    exit 0
+fi
+log "senaryo: ${scenario}"
+
+case "${scenario}" in
+    signed-boot)
+        # Sağlıklı boot: dm-verity aktif + agent ayakta beklenir.
+        collect_facts
+        emit booted
+        ;;
+
+    data-luks-swtpm)
+        # /data LUKS mapper açık + TPM2 seal tamamlanmış olmalı (facts ile ölçülür).
+        collect_facts
+        emit booted
+        ;;
+
+    rauc-good-update)
+        # Payload'daki geçerli imzalı bundle inactive slota kurulmalı.
+        if mount_payload && [ -f "${PAYLOAD_MNT}/bundle.raucb" ]; then
+            if suderra-ota install "${PAYLOAD_MNT}/bundle.raucb" > "${CONSOLE}" 2>&1 \
+               || rauc install "${PAYLOAD_MNT}/bundle.raucb" > "${CONSOLE}" 2>&1; then
+                collect_facts
+                emit booted
+            else
+                log "geçerli bundle kurulamadı"
+                emit userspace-rejected
+            fi
+        else
+            log "bundle yok"
+            emit userspace-rejected
+        fi
+        ;;
+
+    rauc-bad-signature-rejection)
+        # İmzası güvenilmez bundle rauc tarafından REDDEDİLMELİ.
+        if mount_payload && [ -f "${PAYLOAD_MNT}/bundle.raucb" ]; then
+            if suderra-ota install "${PAYLOAD_MNT}/bundle.raucb" > "${CONSOLE}" 2>&1 \
+               || rauc install "${PAYLOAD_MNT}/bundle.raucb" > "${CONSOLE}" 2>&1; then
+                log "GÜVENLİK: kötü imzalı bundle kabul edildi"
+                emit booted   # beklenmeyen kabul -> suite fail (expected userspace-rejected)
+            else
+                emit userspace-rejected
+            fi
+        else
+            log "bundle yok"
+            emit userspace-rejected
+        fi
+        ;;
+
+    rauc-health-rollback)
+        # Bundle kurulur, health-gate düşer, rollback tamamlanır.
+        if mount_payload && [ -f "${PAYLOAD_MNT}/bundle.raucb" ]; then
+            suderra-ota install "${PAYLOAD_MNT}/bundle.raucb" > "${CONSOLE}" 2>&1 \
+                || rauc install "${PAYLOAD_MNT}/bundle.raucb" > "${CONSOLE}" 2>&1 || true
+            if suderra-ota rollback --reason health-gate > "${CONSOLE}" 2>&1 \
+               || rauc status mark-bad > "${CONSOLE}" 2>&1; then
+                printf 'rollback-completed\n' > "${CONSOLE}" 2>/dev/null || true
+                emit rollback-completed
+            else
+                log "rollback başarısız"
+                emit userspace-rejected
+            fi
+        else
+            log "bundle yok"
+            emit userspace-rejected
+        fi
+        ;;
+
+    anti-rollback-downgrade-rejection)
+        # Floor altındaki downgrade manifest suderra-ota tarafından REDDEDİLMELİ.
+        if mount_payload && [ -f "${PAYLOAD_MNT}/downgrade-manifest.json" ]; then
+            if suderra-ota install --manifest "${PAYLOAD_MNT}/downgrade-manifest.json" > "${CONSOLE}" 2>&1; then
+                log "GÜVENLİK: downgrade manifest kabul edildi"
+                emit booted   # beklenmeyen kabul -> suite fail
+            else
+                emit userspace-rejected
+            fi
+        else
+            log "manifest yok"
+            emit userspace-rejected
+        fi
+        ;;
+
+    *)
+        log "bilinmeyen/guest-dışı senaryo: ${scenario}; no-op"
+        ;;
+esac
+
+exit 0

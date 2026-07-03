@@ -199,6 +199,25 @@ case "${DEFCONFIG_NAME}" in
         ;;
 esac
 
+# 6b. Production-runtime GUEST senaryo sürücüsü.
+# Bu sürücü mutasyon KABUL EDER (payload'dan RAUC bundle / downgrade manifest
+# uygular) — saldırı yüzeyi. Yalnız qemu-x86_64-prod-ab runtime-evidence
+# imajında enable edilir; DİĞER TÜM imajlardan (saha x86_64 dahil) silinir,
+# böylece saha imajı bu affordance'ı hiç içermez.
+case "${DEFCONFIG_NAME}" in
+    suderra_qemu_x86_64_prod_ab*)
+        chmod 0755 "${TARGET_DIR}/usr/sbin/suderra-runtime-scenario" 2>/dev/null || true
+        ln -sfn ../suderra-runtime-scenario.service \
+            "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-runtime-scenario.service"
+        ;;
+    *)
+        rm -f "${TARGET_DIR}/usr/sbin/suderra-runtime-scenario" \
+              "${TARGET_DIR}/etc/systemd/system/suderra-runtime-scenario.service" \
+              "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-runtime-scenario.service" \
+              2>/dev/null || true
+        ;;
+esac
+
 # 7. Appliance lockdown — Suderra OS genel amaçlı Linux dağıtımı değildir.
 # Varsayılan target image provisioning modunda gelir: geçici forced-command
 # provision kullanıcısı açıktır. Edge artifact kurulduktan sonra
