@@ -51,6 +51,7 @@ docs/
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
+- [x86-hardware-lab.md](operations/x86-hardware-lab.md) — industrial-x86_64 donanım lab station registry + kontroller + kanıt akışı
 - [operator-lifecycle.md](operations/operator-lifecycle.md) — freeze, ingress, preflight, signing, publish, abort ve retention RACI
 - [evidence-retention.md](operations/evidence-retention.md) — contract-governed immutable evidence retention ve restore/replay testleri
 - [release-lifecycle.md](operations/release-lifecycle.md) — alpha ve production release kapıları
