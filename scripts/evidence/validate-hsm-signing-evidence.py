@@ -21,6 +21,18 @@ import evidence_contract  # noqa: E402
 
 EVIDENCE_CONTRACT = evidence_contract.load_contract()
 SCHEMA_VERSION = evidence_contract.schema_version("hsm_signing_session", EVIDENCE_CONTRACT)
+
+# Approved production HSM provider/model allowlist (SSOT: evidence-contract.yml
+# signing.replay_requirements). Rejecting SoftHSM is necessary but not
+# sufficient — production signing must run on a vetted hardware token, so under
+# --require-production the provider/token identity must match this allowlist.
+_SIGNING_REPLAY = EVIDENCE_CONTRACT.get("signing", {}).get("replay_requirements", {})
+APPROVED_PROVIDER_ALLOWLIST = tuple(
+    str(entry).lower() for entry in _SIGNING_REPLAY.get("approved_provider_allowlist", [])
+)
+APPROVED_PROVIDER_ALLOWLIST_ENFORCED = bool(
+    _SIGNING_REPLAY.get("approved_provider_allowlist_enforced", False)
+)
 LEGACY_SCHEMA_VERSIONS = {"suderra.hsm-signing-session.v1"}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PKCS11_KEY_URI_RE = re.compile(r"^pkcs11:.*(?:object|id)=")
@@ -289,6 +301,24 @@ def validate(
     provider = str(payload.get("provider", "")).lower()
     if require_production and any(marker in provider for marker in SOFTHSM_MARKERS):
         failures.append("production HSM evidence must not use SoftHSM or software tokens")
+    # Approved provider/model allowlist (positive control on top of the SoftHSM
+    # negative control): the provider or token manufacturer/model must name a
+    # vetted production HSM. Composed here so it works for both schema versions.
+    if require_production and APPROVED_PROVIDER_ALLOWLIST_ENFORCED and APPROVED_PROVIDER_ALLOWLIST:
+        token_obj = payload.get("token") if isinstance(payload.get("token"), dict) else {}
+        identity = " ".join(
+            str(value) for value in (
+                provider,
+                token_obj.get("manufacturer", ""),
+                token_obj.get("model", ""),
+                token_obj.get("label", ""),
+            )
+        ).lower()
+        if not any(approved in identity for approved in APPROVED_PROVIDER_ALLOWLIST):
+            failures.append(
+                "production HSM provider/model is not in the approved allowlist "
+                "(evidence-contract.yml signing.replay_requirements.approved_provider_allowlist)"
+            )
     if require_production and payload.get("mode") != "production":
         failures.append("mode must be production")
     audit = payload.get("audit")

@@ -9,6 +9,7 @@ usage() {
     cat <<'EOF'
 Usage:
   create-rauc-bundle.sh x86 <BINARIES_DIR> <VERSION> <OUTPUT.raucb>
+  create-rauc-bundle.sh arm <BINARIES_DIR> <VERSION> <OUTPUT.raucb>
 
 Required environment:
   SUDERRA_RAUC_SIGNING_CERT      RAUC bundle signing certificate
@@ -216,6 +217,104 @@ create_x86_bundle() {
     fi
 }
 
+write_arm_manifest() {
+    local manifest="$1"
+    local version="$2"
+    local rootfs="$3"
+    local verity="$4"
+
+    # ARM: aarch64 device class + U-Boot signed-FIT slot hook. rootfs/verity
+    # are the A/B slot images; suderra-A/B.fit are staged as bundle files that
+    # the hook copies into the boot FAT (not RAUC slot images).
+    cat > "${manifest}" <<EOF
+[update]
+compatible=suderra-os-aarch64
+version=${version}
+
+[bundle]
+format=verity
+
+[hooks]
+filename=suderra-rauc-arm-slot-hook.sh
+
+[image.rootfs]
+filename=$(basename "${rootfs}")
+size=$(size_of "${rootfs}")
+sha256=$(sha256_of "${rootfs}")
+hooks=post-install
+
+[image.rootfs-verity]
+filename=$(basename "${verity}")
+size=$(size_of "${verity}")
+sha256=$(sha256_of "${verity}")
+EOF
+}
+
+create_arm_bundle() {
+    local binaries_dir="$1"
+    local version="$2"
+    local output="$3"
+    local rauc_tool
+    local signing_key="${SUDERRA_RAUC_SIGNING_KEY:-}"
+    local signing_cert="${SUDERRA_RAUC_SIGNING_CERT:-}"
+    local keyring="${SUDERRA_RAUC_KEYRING:-}"
+    local script_dir stage_dir rootfs verity
+
+    [ -n "${version}" ] || die "version must not be empty"
+    case "${version}" in
+        *[!A-Za-z0-9._+-]*) die "version contains unsupported characters: ${version}" ;;
+    esac
+    if production_mode; then
+        if [ -n "${signing_key}" ]; then reject_prod_file_key "${signing_key}"; fi
+        reject_prod_file_key "${SUDERRA_RAUC_PKCS11_URI:-}"
+        [ -n "${keyring}" ] || die "SUDERRA_RAUC_KEYRING must be set for production RAUC signing"
+        need_file "${keyring}"
+        signing_key="${SUDERRA_RAUC_PKCS11_URI}"
+    fi
+    [ -n "${signing_key}" ] || die "SUDERRA_RAUC_SIGNING_KEY must be set"
+    [ -n "${signing_cert}" ] || die "SUDERRA_RAUC_SIGNING_CERT must be set"
+    case "${signing_key}" in
+        pkcs11:*) ;;
+        *) need_file "${signing_key}" ;;
+    esac
+    need_file "${signing_cert}"
+
+    rauc_tool="$(resolve_rauc)"
+    script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    stage_dir="$(mktemp -d)"
+    trap 'rm -rf "${stage_dir}"' EXIT
+
+    rootfs="${stage_dir}/rootfs.img"
+    verity="${stage_dir}/rootfs-verity.img"
+
+    stage_file "${binaries_dir}/rootfs.ext4" "${rootfs}"
+    stage_file "${binaries_dir}/rootfs.verity" "${verity}"
+    stage_file "${binaries_dir}/suderra-A.fit" "${stage_dir}/suderra-A.fit"
+    stage_file "${binaries_dir}/suderra-B.fit" "${stage_dir}/suderra-B.fit"
+    stage_file "${script_dir}/../package/suderra-rauc-config/suderra-rauc-arm-slot-hook.sh" \
+        "${stage_dir}/suderra-rauc-arm-slot-hook.sh"
+    chmod 0755 "${stage_dir}/suderra-rauc-arm-slot-hook.sh"
+
+    write_arm_manifest "${stage_dir}/manifest.raucm" "${version}" "${rootfs}" "${verity}"
+    if production_mode; then
+        production_signing_evidence
+    fi
+    rm -f "${output}"
+    "${rauc_tool}" bundle \
+        --cert="${signing_cert}" \
+        --key="${signing_key}" \
+        "${stage_dir}" \
+        "${output}"
+    need_file "${output}"
+    if production_mode; then
+        production_signing_evidence "$(sha256_of "${output}")"
+    fi
+    if [ -n "${keyring}" ]; then
+        need_file "${keyring}"
+        "${rauc_tool}" info --keyring="${keyring}" "${output}" >/dev/null
+    fi
+}
+
 command="${1:-}"
 case "${command}" in
     x86)
@@ -224,6 +323,13 @@ case "${command}" in
             exit 2
         }
         create_x86_bundle "$2" "$3" "$4"
+        ;;
+    arm)
+        [ "$#" -eq 4 ] || {
+            usage >&2
+            exit 2
+        }
+        create_arm_bundle "$2" "$3" "$4"
         ;;
     --help|-h|help)
         usage
