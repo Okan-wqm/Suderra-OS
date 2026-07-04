@@ -1,0 +1,119 @@
+name: ARM Production Build (signed-FIT + verity + RAUC)
+
+# Gated production build for the ARM signed-FIT A/B lane (ADR-0007). Builds the
+# prod-variant rpi4/revpi4 image with HSM-backed FIT/image/RAUC signing. It is
+# NOT part of the standard per-PR Image Build (those targets set image_build:
+# false in ci/build-matrix.yml); it runs only on demand, under the protected
+# `production-runtime` environment, when real PKCS#11 signing material exists.
+# production_ready stays false until hardware evidence closes (A10/A11).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "ARM production OTA target"
+        required: true
+        type: choice
+        options:
+          - rpi4-prod-ab
+          - revpi4-prod-ab
+      version:
+        description: "SemVer version to bind into release evidence"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact commit SHA to build"
+        required: true
+        type: string
+      source_run_id:
+        description: "Image Build workflow run id that produced the release subject"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm-production-build-${{ inputs.target }}-${{ inputs.version }}-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  arm-production-build:
+    name: ${{ inputs.target }} production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    environment:
+      name: production-runtime
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.source_sha }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Validate source binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          python3 scripts/ci/validate-build-matrix.py validate
+
+      - name: Resolve target defconfig
+        id: map
+        run: |
+          set -euo pipefail
+          case "${{ inputs.target }}" in
+            rpi4-prod-ab) defconfig="suderra_aarch64_rpi4_prod_ab_defconfig" ;;
+            revpi4-prod-ab) defconfig="suderra_aarch64_revpi4_prod_ab_defconfig" ;;
+            *) echo "unsupported target: ${{ inputs.target }}" >&2; exit 1 ;;
+          esac
+          echo "defconfig=${defconfig}" >> "$GITHUB_OUTPUT"
+
+      - name: Build HSM-signed production image
+        env:
+          SUDERRA_VARIANT: prod
+          SUDERRA_RELEASE_TIER: production
+          SUDERRA_SIGNING_MODE: prod
+          SUDERRA_RELEASE_VERSION: ${{ inputs.version }}
+          SUDERRA_SOURCE_SHA: ${{ inputs.source_sha }}
+          SUDERRA_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          # PKCS#11 / HSM signing material (protected environment secrets).
+          # File-backed keys are rejected in prod mode (need_signing_key).
+          SUDERRA_PKCS11_ENGINE: ${{ secrets.SUDERRA_PKCS11_ENGINE }}
+          SUDERRA_PKCS11_MODULE: ${{ secrets.SUDERRA_PKCS11_MODULE }}
+          SUDERRA_FIT_SIGNING_KEY: ${{ secrets.SUDERRA_FIT_SIGNING_KEY }}
+          SUDERRA_FIT_SIGNING_CERT: ${{ secrets.SUDERRA_FIT_SIGNING_CERT }}
+          SUDERRA_FIT_KEYS_DIR: ${{ secrets.SUDERRA_FIT_KEYS_DIR }}
+          SUDERRA_IMAGE_SIGNING_KEY: ${{ secrets.SUDERRA_IMAGE_SIGNING_KEY }}
+          SUDERRA_IMAGE_SIGNING_CERT: ${{ secrets.SUDERRA_IMAGE_SIGNING_CERT }}
+          SUDERRA_HSM_SIGNING_EVIDENCE: ${{ secrets.SUDERRA_HSM_SIGNING_EVIDENCE }}
+          SUDERRA_RAUC_PKCS11_URI: ${{ secrets.SUDERRA_RAUC_PKCS11_URI }}
+          SUDERRA_RAUC_SIGNING_CERT: ${{ secrets.SUDERRA_RAUC_SIGNING_CERT }}
+          SUDERRA_RAUC_KEYRING: ${{ secrets.SUDERRA_RAUC_KEYRING }}
+        run: |
+          set -euo pipefail
+          docker build -t suderra-builder ci/
+          ./scripts/build-in-docker.sh "${{ steps.map.outputs.defconfig }}"
+
+      - name: Verify signed-FIT + verity + RAUC bundle
+        run: |
+          set -euo pipefail
+          out="output/${{ steps.map.outputs.defconfig }}/images"
+          for f in \
+            suderra-A.fit suderra-A.fit.sig suderra-A.fit.cert \
+            suderra-B.fit suderra-B.fit.sig suderra-B.fit.cert \
+            rootfs.verity rootfs.verity.roothash u-boot.bin boot.scr; do
+            test -s "${out}/${f}" || { echo "ERROR: production artifact missing: ${f}" >&2; exit 1; }
+          done
+          ls -la "${out}"/suderra-os-*.raucb
+
+      - name: Upload production evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: arm-production-${{ inputs.target }}-${{ inputs.version }}
+          path: |
+            output/${{ steps.map.outputs.defconfig }}/images/*.raucb
+            output/${{ steps.map.outputs.defconfig }}/images/suderra-os-update-manifest.json
+            output/${{ steps.map.outputs.defconfig }}/images/release-ota/**
+            output/${{ steps.map.outputs.defconfig }}/images/MANIFEST.txt
+          if-no-files-found: error
+          retention-days: 30
