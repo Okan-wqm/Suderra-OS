@@ -294,7 +294,7 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
             echo "==> x86 production boot/verity artifact üretimi"
             "${PRODUCTION_ARTIFACTS}" x86-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
             ;;
-        suderra_aarch64_rpi4|suderra_aarch64_revpi4)
+        suderra_aarch64_rpi4|suderra_aarch64_rpi4_prod_ab|suderra_aarch64_revpi4|suderra_aarch64_revpi4_prod_ab)
             echo "==> ARM production signed-FIT + verity artifact üretimi (ADR-0007)"
             # rootfs.verity + per-slot imzalı FIT (kernel+DTB+initramfs+bootargs)
             # + u-boot.dtb'ye gömülü FIT pubkey.
@@ -346,17 +346,22 @@ fi
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
     "${PRODUCTION_ARTIFACTS}" sign-image "${BINARIES_DIR}" "${IMAGE_OUTPUT_NAME}"
-    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ] || [ "${DEFCONFIG_NAME}" = "suderra_qemu_x86_64_prod_ab" ]; then
+    # OTA-capable production targets emit a signed RAUC bundle. The bundle tool
+    # subcommand (x86 UKI vs arm signed-FIT) is derived from the target backend
+    # in ci/evidence-contract.yml by produce-ota-artifacts.py.
+    ota_target=""
+    case "${DEFCONFIG_NAME}" in
+        suderra_x86_64) ota_target="x86_64" ;;
+        suderra_qemu_x86_64_prod_ab) ota_target="qemu-x86_64-prod-ab" ;;
+        suderra_aarch64_rpi4_prod_ab) ota_target="rpi4-prod-ab" ;;
+        suderra_aarch64_revpi4_prod_ab) ota_target="revpi4-prod-ab" ;;
+    esac
+    if [ -n "${ota_target}" ]; then
         release_version="${SUDERRA_RELEASE_VERSION:-}"
         if [ -z "${release_version}" ]; then
             echo "ERROR: SUDERRA_RELEASE_VERSION is required for production RAUC bundle generation"
             exit 1
         fi
-        ota_target=""
-        case "${DEFCONFIG_NAME}" in
-            suderra_x86_64) ota_target="x86_64" ;;
-            suderra_qemu_x86_64_prod_ab) ota_target="qemu-x86_64-prod-ab" ;;
-        esac
         RAUC_BUNDLE_PATH="${BINARIES_DIR}/suderra-os-${release_version}-${ota_target}.raucb"
         echo "==> production OTA artifact üretimi: $(basename "${RAUC_BUNDLE_PATH}")"
         python3 "${PRODUCE_OTA_ARTIFACTS}" create \

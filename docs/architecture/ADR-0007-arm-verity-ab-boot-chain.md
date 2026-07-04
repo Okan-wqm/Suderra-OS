@@ -98,3 +98,24 @@ tartışılır (x86 hattıyla aynı politika).
   (ADR-0004'ün ARM somutlaması).
 - ADR-0005'in "UEFI Secure Boot" bölümü x86'ya özgü kalır; bu ADR ARM
   karşılığıdır (ADR-0005'i değiştirmez, tamamlar).
+
+## Production build lane (PR-A9)
+
+ARM prod imajı, x86 desenini (ayrı `_prod_ab` defconfig) izleyen ayrı, gated bir
+hatta kurulur:
+
+- **`configs/suderra_aarch64_{rpi4,revpi4}_prod_ab_defconfig`** — `VARIANT_PROD`,
+  kilitli appliance (dropbear/getty yok). Dev `rpi4`/`revpi4` defconfig'leri
+  DOKUNULMAZ; her-PR standart Image Build yeşil kalır. Prod hedefler
+  `ci/build-matrix.yml`'de `image_build: false` ile standart build'den hariç
+  tutulur (tıpkı `qemu_x86_64_prod_ab`).
+- **`.github/workflows/arm-production-build.yml`** — `workflow_dispatch`, korumalı
+  `production-runtime` environment. `SUDERRA_SIGNING_MODE=prod` FIT/imaj/RAUC
+  imzalamasını **PKCS#11/HSM** anahtarına zorlar (`need_signing_key` dosya
+  anahtarını reddeder). Gerçek imzalı build yalnız HSM signing material
+  sağlandığında koşar; SoftHSM audited gate (`validate-hsm-signing-evidence.py`
+  softhsm negatif kontrolü + allowlist) tarafından reddedilir.
+- **`ci/evidence-contract.yml`** — `rpi4-prod-ab`/`revpi4-prod-ab` OTA hedefleri
+  `backend: uboot-rauc`, `ota_capable: true`, U-Boot env monotonic rollback.
+- `production_ready` tüm prod hedeflerde `false` kalır; gerçek donanım kanıtı
+  (G4/G5, A10/A11) release/ingress join'de gelene dek fail-closed.
