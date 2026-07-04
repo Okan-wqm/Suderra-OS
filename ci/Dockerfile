@@ -65,6 +65,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     cryptsetup-bin \
     sbsigntool \
+    # ARM signed-FIT (ADR-0007): mkimage builds/signs FITs, dtc compiles the .its
+    u-boot-tools \
+    device-tree-compiler \
     # QEMU for testing
     qemu-system-x86 \
     qemu-system-arm \

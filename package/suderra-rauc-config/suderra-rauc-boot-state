@@ -18,13 +18,24 @@ a_ok=""
 a_try=""
 b_ok=""
 b_try=""
+a_left=""
+b_left=""
+bootloader="unknown"
 if [ -r "${grubenv}" ] && command -v grub-editenv >/dev/null 2>&1; then
+    # x86: GRUB env backend (ORDER / <slot>_OK / <slot>_TRY).
+    bootloader="grub"
     env_dump="$(grub-editenv "${grubenv}" list 2>/dev/null || true)"
     order="$(printf '%s\n' "${env_dump}" | sed -n 's/^ORDER=//p' | head -n 1)"
     a_ok="$(printf '%s\n' "${env_dump}" | sed -n 's/^A_OK=//p' | head -n 1)"
     a_try="$(printf '%s\n' "${env_dump}" | sed -n 's/^A_TRY=//p' | head -n 1)"
     b_ok="$(printf '%s\n' "${env_dump}" | sed -n 's/^B_OK=//p' | head -n 1)"
     b_try="$(printf '%s\n' "${env_dump}" | sed -n 's/^B_TRY=//p' | head -n 1)"
+elif command -v fw_printenv >/dev/null 2>&1; then
+    # ARM: U-Boot env backend (BOOT_ORDER / BOOT_<slot>_LEFT try counters).
+    bootloader="uboot"
+    order="$(fw_printenv -n BOOT_ORDER 2>/dev/null || true)"
+    a_left="$(fw_printenv -n BOOT_A_LEFT 2>/dev/null || true)"
+    b_left="$(fw_printenv -n BOOT_B_LEFT 2>/dev/null || true)"
 fi
 
 rauc_status="unavailable"
@@ -36,12 +47,15 @@ cat >"${status_json}.tmp" <<EOF
 {
   "schema_version": "suderra.rauc-boot-state.v1",
   "active_slot": "${active_slot}",
+  "bootloader": "${bootloader}",
   "grubenv_path": "${grubenv}",
   "order": "${order}",
   "A_OK": "${a_ok}",
   "A_TRY": "${a_try}",
   "B_OK": "${b_ok}",
   "B_TRY": "${b_try}",
+  "BOOT_A_LEFT": "${a_left}",
+  "BOOT_B_LEFT": "${b_left}",
   "rauc_status": $(if printf '%s' "${rauc_status}" | grep -q '^[[:space:]]*{'; then printf '%s' "${rauc_status}"; else printf '"%s"' "${rauc_status}"; fi)
 }
 EOF
