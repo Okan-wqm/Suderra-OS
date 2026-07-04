@@ -392,23 +392,45 @@ verify_target_partitions() {
     [ "${root_type}" = "ext4" ] ||
         die "root partition type mismatch: ${root_part} type=${root_type}"
 
-    root_partuuid="$(blkid -s PARTUUID -o value "${root_part}" 2>/dev/null || true)"
-    [ -n "${root_partuuid}" ] || die "root PARTUUID missing for ${root_part}"
-
     mount_dir="${REPORT_DIR}/target-boot"
     mkdir -p "${mount_dir}"
     mount "${boot_part}" "${mount_dir}"
-    if [ ! -f "${mount_dir}/cmdline.txt" ]; then
+
+    if [ -f "${mount_dir}/suderra-A.fit" ]; then
+        # PROD signed-FIT image (ADR-0007): boot identity + kernel cmdline live
+        # INSIDE the signed FIT (root=/dev/mapper/suderra-root behind dm-verity),
+        # not in cmdline.txt. Mutating boot content would break the FIT/verity
+        # integrity chain, so we VERIFY the signed-FIT boot chain and mutate
+        # nothing. Slot identity is dm-verity/partlabel, not a post-flash PARTUUID.
+        for f in suderra-A.fit suderra-B.fit u-boot.bin boot.scr; do
+            if [ ! -f "${mount_dir}/${f}" ]; then
+                umount "${mount_dir}" || true
+                die "signed-FIT target boot partition missing ${f}"
+            fi
+        done
+        if [ -f "${mount_dir}/cmdline.txt" ]; then
+            umount "${mount_dir}" || true
+            die "signed-FIT image must not carry a mutable cmdline.txt (bootargs are in the FIT)"
+        fi
+        log "==> signed-FIT boot chain verified; no post-flash cmdline mutation"
+        sync
+        umount "${mount_dir}"
+    elif [ -f "${mount_dir}/cmdline.txt" ]; then
+        # DEV image: kernel=Image + cmdline.txt; pin root to the flashed
+        # partition's PARTUUID (stable across the removable installer media).
+        root_partuuid="$(blkid -s PARTUUID -o value "${root_part}" 2>/dev/null || true)"
+        [ -n "${root_partuuid}" ] || { umount "${mount_dir}" || true; die "root PARTUUID missing for ${root_part}"; }
+        sed -i "s#root=[^ ]*#root=PARTUUID=${root_partuuid}#" "${mount_dir}/cmdline.txt"
+        if ! grep -q "root=PARTUUID=${root_partuuid}" "${mount_dir}/cmdline.txt"; then
+            umount "${mount_dir}" || true
+            die "cmdline.txt PARTUUID update verification failed"
+        fi
+        sync
+        umount "${mount_dir}"
+    else
         umount "${mount_dir}" || true
-        die "target boot partition has no cmdline.txt"
+        die "target boot partition has neither a signed FIT nor cmdline.txt"
     fi
-    sed -i "s#root=[^ ]*#root=PARTUUID=${root_partuuid}#" "${mount_dir}/cmdline.txt"
-    if ! grep -q "root=PARTUUID=${root_partuuid}" "${mount_dir}/cmdline.txt"; then
-        umount "${mount_dir}" || true
-        die "cmdline.txt PARTUUID update verification failed"
-    fi
-    sync
-    umount "${mount_dir}"
 }
 
 install_image() {
@@ -446,7 +468,7 @@ install_image() {
     [ "${actual}" = "${uncompressed_sha}" ] ||
         die "written target verification failed"
 
-    log "==> Verifying target partitions and PARTUUID boot identity"
+    log "==> Verifying target partitions and boot identity"
     verify_target_partitions "${target}"
 
     mkdir -p "${REPORT_DIR}"

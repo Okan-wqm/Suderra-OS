@@ -247,13 +247,21 @@ case "${DEFCONFIG_NAME}" in
                 GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4-usb-installer/genimage.cfg"
                 IMAGE_OUTPUT_NAME="suderra-pi-cm4-revpi-usb-installer.img"
             fi
+        elif [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+            # PROD: GPT A/B + verity + LUKS data (ADR-0007). DEV keeps MBR.
+            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/genimage-prod.cfg"
+            IMAGE_OUTPUT_NAME="suderra-rpi4-target.img"
         else
             GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/genimage.cfg"
             IMAGE_OUTPUT_NAME="suderra-rpi4-target.img"
         fi
         ;;
     suderra_aarch64_revpi*)
-        GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi4/genimage.cfg"
+        if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi4/genimage-prod.cfg"
+        else
+            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi4/genimage.cfg"
+        fi
         IMAGE_OUTPUT_NAME="suderra-revpi4-target.img"
         ;;
     suderra_aarch64*)
@@ -285,6 +293,20 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
         suderra_x86_64|suderra_qemu_x86_64_prod_ab)
             echo "==> x86 production boot/verity artifact üretimi"
             "${PRODUCTION_ARTIFACTS}" x86-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
+            ;;
+        suderra_aarch64_rpi4|suderra_aarch64_revpi4)
+            echo "==> ARM production signed-FIT + verity artifact üretimi (ADR-0007)"
+            # rootfs.verity + per-slot imzalı FIT (kernel+DTB+initramfs+bootargs)
+            # + u-boot.dtb'ye gömülü FIT pubkey.
+            "${PRODUCTION_ARTIFACTS}" arm-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
+            # RAUC slot-seçen boot script'i derle (imzalı FIT bootm).
+            mkimage -A arm64 -T script -C none \
+                -d "${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/boot.scr.cmd" \
+                "${BINARIES_DIR}/boot.scr" >/dev/null
+            # Pi firmware'i U-Boot chainload'a çevir (prod config.txt).
+            install -D -m 0644 \
+                "${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/config-uboot.txt" \
+                "${BINARIES_DIR}/rpi-firmware/config.txt"
             ;;
     esac
 fi
@@ -398,9 +420,17 @@ enforce_production_contract() {
             ;;
         suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
             if [ "${DEFCONFIG_NAME}" != "suderra_aarch64_rpi4_usb_installer" ]; then
+                # A/B imzalı FIT (+ detached sig/cert), U-Boot ve boot script.
+                # Boot zinciri imzalı FIT'e dayanır; tekil suderra.fit değil.
                 for artifact in \
-                    "${BINARIES_DIR}/suderra.fit" \
-                    "${BINARIES_DIR}/suderra.fit.sig"
+                    "${BINARIES_DIR}/suderra-A.fit" \
+                    "${BINARIES_DIR}/suderra-A.fit.sig" \
+                    "${BINARIES_DIR}/suderra-A.fit.cert" \
+                    "${BINARIES_DIR}/suderra-B.fit" \
+                    "${BINARIES_DIR}/suderra-B.fit.sig" \
+                    "${BINARIES_DIR}/suderra-B.fit.cert" \
+                    "${BINARIES_DIR}/u-boot.bin" \
+                    "${BINARIES_DIR}/boot.scr"
                 do
                     if [ ! -s "${artifact}" ]; then
                         missing="${missing} ${artifact}"

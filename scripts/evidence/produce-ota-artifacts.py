@@ -56,6 +56,22 @@ def production_mode() -> bool:
     return os.environ.get("SUDERRA_SIGNING_MODE") == "prod" or os.environ.get("SUDERRA_RELEASE_TIER") == "production"
 
 
+# create-rauc-bundle.sh subcommand per RAUC/boot backend (SSOT: ota target
+# backend). GRUB targets sign UKIs (x86), U-Boot targets sign FITs (arm).
+_BACKEND_BUNDLE_SUBCOMMAND = {"grub-rauc": "x86", "uboot-rauc": "arm"}
+
+
+def bundle_subcommand_for(target: str, policy: dict[str, Any]) -> str:
+    backend = policy.get("backend")
+    subcommand = _BACKEND_BUNDLE_SUBCOMMAND.get(backend)
+    if subcommand is None:
+        raise ValueError(
+            f"OTA target {target} backend {backend!r} has no create-rauc-bundle "
+            f"subcommand (expected one of {sorted(_BACKEND_BUNDLE_SUBCOMMAND)})"
+        )
+    return subcommand
+
+
 def bundle_name_for(version: str, target: str, policy: dict[str, Any]) -> str:
     for template in policy.get("bundle_artifacts", []):
         if isinstance(template, str) and template.endswith(".raucb"):
@@ -159,7 +175,8 @@ def create_command(args: argparse.Namespace) -> int:
             raise ValueError(f"target {args.target} is not OTA capable in ci/evidence-contract.yml")
         args.binaries_dir.mkdir(parents=True, exist_ok=True)
         bundle = args.binaries_dir / bundle_name_for(args.version, args.target, policy)
-        run([str(args.rauc_bundle_tool), "x86", str(args.binaries_dir), args.version, str(bundle)])
+        subcommand = bundle_subcommand_for(args.target, policy)
+        run([str(args.rauc_bundle_tool), subcommand, str(args.binaries_dir), args.version, str(bundle)])
         if not bundle.is_file() or bundle.stat().st_size <= 0:
             raise ValueError(f"RAUC bundle was not produced: {bundle}")
         manifest_path = args.binaries_dir / "suderra-os-update-manifest.json"

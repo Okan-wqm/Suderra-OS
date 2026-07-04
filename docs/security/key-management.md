@@ -79,11 +79,11 @@ Seçenekler:
 
 - [x] Üretim RAUC signing scripts reject file-backed private keys and require
       PKCS#11 URI plus validated HSM session evidence.
-- [ ] Cold ceremony prosedürü (yazılı runbook)
-- [ ] CI'da kısa-ömürlü key delegation
-- [ ] Anahtar yedekleme + kurtarma planı
-- [ ] Compromise drill testi
-- [ ] Approved production HSM provider/model allowlist
+- [x] Cold ceremony prosedürü (yazılı runbook) — [key-ceremony.md](key-ceremony.md) §Ceremony (iki-kişi kontrolü)
+- [x] CI'da kısa-ömürlü key delegation — [key-ceremony.md](key-ceremony.md) §Delegation (time-boxed PKCS#11 credential)
+- [x] Anahtar yedekleme + kurtarma planı — [key-ceremony.md](key-ceremony.md) §Backup And Recovery (replay-doğrulamalı drill)
+- [x] Compromise drill testi — [key-ceremony.md](key-ceremony.md) §Compromise Drill (7 adımlı, replay-doğrulamalı)
+- [x] Approved production HSM provider/model allowlist — `ci/evidence-contract.yml` `signing.replay_requirements.approved_provider_allowlist`, `validate-hsm-signing-evidence.py --require-production` ile zorlanıyor
 
 ## Referanslar
 

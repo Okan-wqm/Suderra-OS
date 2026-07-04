@@ -397,7 +397,26 @@
       "xz: configure.ac: warning: The macro 'AC_PROG_CC_C99' is obsolete.",
       "xz: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-docs, --disable-documentation, --with-xmlto, --with-fop, --enable-ipv6",
       "xz: configure: WARNING: using cross tools not prefixed with host triplet",
-      "xz: libtool: warning: remember to run 'libtool --finish /usr/lib'"
+      "xz: libtool: warning: remember to run 'libtool --finish /usr/lib'",
+      "host-uboot-tools: ./tools/lib/ecdsa/ecdsa-libcrypto.c: warning: 'ECDSA_do_sign' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/ecdsa/ecdsa-libcrypto.c: warning: 'ECDSA_do_verify' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/ecdsa/ecdsa-libcrypto.c: warning: 'EC_KEY_free' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/ecdsa/ecdsa-libcrypto.c: warning: 'EC_KEY_get0_group' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/ecdsa/ecdsa-libcrypto.c: warning: 'EC_KEY_get0_public_key' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/ecdsa/ecdsa-libcrypto.c: warning: 'EVP_PKEY_get1_EC_KEY' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_by_id' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_finish' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_free' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_get_id' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_init' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_load_builtin_engines' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_load_private_key' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_load_public_key' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'ENGINE_set_default_RSA' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'EVP_PKEY_get0_RSA' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'RSA_get0_key' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "host-uboot-tools: tools/mxsimage.c: warning: argument 1 null where non-null expected [-Wnonnull]"
     ]
   },
   "third_party": {

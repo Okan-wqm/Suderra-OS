@@ -87,7 +87,7 @@ artifact_sig = root / "contract.raucb.sig"
 payload = {
     "schema_version": "suderra.hsm-signing-session.v2",
     "mode": "production",
-    "provider": "contract-hsm",
+    "provider": "YubiHSM 2",
     "hardware_backed": True,
     "hsm_serial": "contract-serial",
     "pkcs11_uri": "pkcs11:token=Suderra;object=rauc-prod;type=private",
@@ -107,8 +107,8 @@ payload = {
     },
     "token": {
         "label": "Suderra Production Token",
-        "manufacturer": "contract-hsm-vendor",
-        "model": "contract-hsm-model",
+        "manufacturer": "Yubico",
+        "model": "YubiHSM 2",
         "serial": "contract-serial",
         "module_sha256": "c" * 64,
     },
