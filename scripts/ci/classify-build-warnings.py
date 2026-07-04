@@ -87,7 +87,11 @@ FAKEROOT_WRAPAWK_REGEXP_WARNING = (
 )
 FAKEROOT_REGEXP_WARNING_RE = re.compile(
     r"^(?:awk: )?(?:(?:\./wrapawk(?::\d+(?:[.-]\d+)*)?|\d+(?:[.-]\d+)*): )?"
-    r"warning: regexp escape sequence `\\#' is not a known regexp operator$"
+    # Trailing ".*" tolerates parallel-build log interleaving: under make -j,
+    # another process's output can be appended to this warning line (e.g.
+    # "...regexp operator/bin/bash ./libtool ..."), which must still canonicalize
+    # to the same fingerprint rather than surface as a novel unapproved warning.
+    r"warning: regexp escape sequence `\\#' is not a known regexp operator.*$"
 )
 GRUB2_LINUX16_LINK_WARNING_RE = re.compile(
     r"^\$OUTPUT_DIR/per-package/grub2/host/bin/\.\./lib/gcc/"

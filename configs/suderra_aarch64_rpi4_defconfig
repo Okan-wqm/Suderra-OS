@@ -67,6 +67,25 @@ BR2_LINUX_KERNEL_DTS_SUPPORT=y
 BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-cm4 broadcom/bcm2711-rpi-cm4-io"
 
 # ============================================================================
+# U-Boot — signed-FIT root of trust (ADR-0007, gate G1)
+# ============================================================================
+# BUILD-ONLY at this stage: config.txt still boots the kernel directly until
+# PR-A4 flips it to chainload u-boot.bin. Enabling it here proves U-Boot +
+# CONFIG_FIT_SIGNATURE compiles for BCM2711 in CI (Image Build job). The FIT
+# verification public key is inserted into u-boot.dtb at signing time by
+# mkimage -K (PR-A3); RAUC's U-Boot env backend arrives in PR-A5.
+BR2_TARGET_UBOOT=y
+BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
+BR2_TARGET_UBOOT_BOARD_DEFCONFIG="rpi_arm64"
+BR2_TARGET_UBOOT_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/uboot-fragment.config"
+BR2_TARGET_UBOOT_NEEDS_OPENSSL=y
+BR2_TARGET_UBOOT_NEEDS_DTC=y
+BR2_TARGET_UBOOT_FORMAT_BIN=y
+BR2_PACKAGE_HOST_UBOOT_TOOLS=y
+BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SUPPORT=y
+BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SIGNATURE_SUPPORT=y
+
+# ============================================================================
 # Raspberry Pi Firmware (close-source GPU/boot blobs — Broadcom)
 # ============================================================================
 #
@@ -160,6 +179,15 @@ BR2_PACKAGE_I2C_TOOLS=y
 # ============================================================================
 BR2_PACKAGE_SUDERRA_OS_INSTALLER=y     # Runtime manifest verifier
 BR2_PACKAGE_SUDERRA_KEYS=y             # Runtime trust roots
+
+# RAUC A/B OTA (ADR-0007/ADR-0004) — U-Boot backend, signed-FIT slot hook.
+# rauc Config.in, BR2_TARGET_UBOOT ile fw_printenv/setenv'i otomatik select eder.
+BR2_PACKAGE_RAUC=y
+BR2_PACKAGE_RAUC_DBUS=y
+BR2_PACKAGE_RAUC_GPT=y
+BR2_PACKAGE_RAUC_JSON=y
+BR2_PACKAGE_HOST_RAUC=y
+BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y
 # BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
 
