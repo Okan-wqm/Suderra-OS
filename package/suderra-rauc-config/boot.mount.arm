@@ -1,0 +1,16 @@
+[Unit]
+Description=Mount Suderra Pi FAT boot partition
+Documentation=https://rauc.readthedocs.io/en/latest/integration.html
+Before=rauc.service suderra-rauc-mark-good.service
+
+[Mount]
+# ARM: Pi firmware FAT boot bölümü (GPT partlabel "boot"). RAUC U-Boot
+# backend'i /boot'a yazılabilir erişimle fw_setenv (BOOT_ORDER/BOOT_x_LEFT)
+# ve slot-hook FIT kopyalaması yapar.
+What=/dev/disk/by-partlabel/boot
+Where=/boot
+Type=vfat
+Options=rw,nosuid,nodev,noexec,umask=0077,shortname=winnt
+
+[Install]
+WantedBy=local-fs.target
