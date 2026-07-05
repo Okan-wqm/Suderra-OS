@@ -106,6 +106,15 @@ BR2_PACKAGE_RAUC_GPT=y
 BR2_PACKAGE_RAUC_JSON=y
 BR2_PACKAGE_HOST_RAUC=y
 BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y
+
+# TPM 2.0 + encrypted mutable /data at rest (M2, ADR-0007). suderra-data-unlock
+# (common overlay) LUKS-opens /data; RevPi seals to the SLB9670 TPM, rpi4 keyfile.
+BR2_PACKAGE_TPM2_TSS=y
+BR2_PACKAGE_TPM2_TOOLS=y
+BR2_PACKAGE_LVM2=y
+BR2_PACKAGE_CRYPTSETUP=y
+# Version anti-rollback (M4): rollback-floor / monotonic install guard.
+BR2_PACKAGE_SUDERRA_OTA=y
 # BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 
 BR2_TARGET_GENERIC_HOSTNAME="suderra-revpi4"

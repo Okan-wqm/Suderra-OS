@@ -570,6 +570,18 @@ enforce_production_contract() {
 
     case "${DEFCONFIG_NAME}" in
         suderra_aarch64_rpi4_prod_ab|suderra_aarch64_revpi4_prod_ab)
+            # Data-at-rest (M2): /data must be LUKS-openable — the shared
+            # suderra-data-unlock service needs cryptsetup (+ TPM2 for RevPi seal).
+            if ! grep -q '^BR2_PACKAGE_CRYPTSETUP=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include cryptsetup for encrypted /data at rest"; exit 1
+            fi
+            if ! grep -q '^BR2_PACKAGE_TPM2_TOOLS=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include tpm2-tools for TPM-sealed /data"; exit 1
+            fi
+            # Version anti-rollback (M4): a validly-signed downgrade must not be installable.
+            if ! grep -q '^BR2_PACKAGE_SUDERRA_OTA=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include suderra-ota (rollback-floor anti-rollback guard)"; exit 1
+            fi
             # ARM signed-FIT crypto gates (mirror the x86 PE gates — presence
             # checks are NOT enough for the boot root of trust).
             verify_fit_sidecar() {

@@ -23,6 +23,12 @@ for b in rpi4 revpi4; do
         echo "ERROR: ${b} prod_ab hâlâ dropbear/getty açık" >&2; exit 1; fi
     grep -q "^BR2_ROOTFS_POST_SCRIPT_ARGS=\"suderra_aarch64_${b}_prod_ab\"" "${dc}" || {
         echo "ERROR: ${b} prod_ab post-script arg yanlış" >&2; exit 1; }
+    # Data-at-rest (M2) + anti-rollback (M4) hardening parity with x86 prod.
+    for pkg in BR2_PACKAGE_CRYPTSETUP BR2_PACKAGE_TPM2_TOOLS BR2_PACKAGE_TPM2_TSS BR2_PACKAGE_SUDERRA_OTA; do
+        grep -q "^${pkg}=y" "${dc}" || { echo "ERROR: ${b} prod_ab eksik: ${pkg}" >&2; exit 1; }
+    done
+    # FIT control DTB must be produced (CRIT1) + FORMAT_DTB.
+    grep -q '^BR2_TARGET_UBOOT_FORMAT_DTB=y' "${dc}" || { echo "ERROR: ${b} prod_ab FORMAT_DTB yok (u-boot.dtb üretilmez)" >&2; exit 1; }
     # Dev defconfig kilitlenMEMELİ (her-PR build).
     grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_DEV=y' "${ROOT}/configs/suderra_aarch64_${b}_defconfig" || {
         echo "ERROR: dev ${b} VARIANT_DEV kalmalı" >&2; exit 1; }
