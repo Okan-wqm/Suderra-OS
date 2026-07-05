@@ -1199,3 +1199,45 @@ jobs:
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: image-build-contract/image-build-contract.json
+
+  notify-on-failure:
+    # Regression backstop: the full Image Build is not a required PR check
+    # (it is ~285 min). Alert only on scheduled/main-push failures so a
+    # post-merge regression (e.g. a defconfig that breaks the build) is surfaced
+    # immediately via a tracking issue rather than sitting silently red.
+    name: Alert on main/nightly build failure
+    needs: [matrix, build, build-payload-base, build-payload, build-installer, qemu-smoke-test, image-build-contract]
+    if: failure() && (github.event_name == 'schedule' || github.event_name == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          label="image-build-failure"
+          gh label create "${label}" --repo "${REPO}" --color b60205 \
+            --description "Automated: main/nightly Image Build failed" 2>/dev/null || true
+          body="$(printf '%s\n' \
+            "The **${EVENT}** Image Build on \`main\` failed." \
+            "" \
+            "- Run: ${RUN_URL}" \
+            "- Commit: ${COMMIT_SHA}" \
+            "" \
+            "This is the regression backstop for the non-required full Image Build. Triage and fix.")"
+          existing="$(gh issue list --repo "${REPO}" --label "${label}" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --repo "${REPO}" --body "${body}"
+          else
+            gh issue create --repo "${REPO}" --label "${label}" \
+              --title "Image Build failed on main ($(date -u +%Y-%m-%d))" --body "${body}"
+          fi
