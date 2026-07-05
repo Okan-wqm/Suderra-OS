@@ -601,7 +601,7 @@ build_signed_slot_fit() {
     local initrd="${binaries_dir}/suderra-${slot}.initrd"
     local its="${binaries_dir}/suderra-${slot}.its"
     local fit="${binaries_dir}/suderra-${slot}.fit"
-    local keydir dtb cmdline key cert material
+    local keydir cmdline key cert material
 
     need_cmd mkimage
     need_cmd dtc
