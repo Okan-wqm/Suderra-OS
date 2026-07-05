@@ -59,8 +59,14 @@ grep -q 'create_arm_bundle' "${crb}" || { echo "ERROR: create-rauc-bundle arm su
 grep -q 'compatible=suderra-os-aarch64' "${crb}" || { echo "ERROR: arm bundle aarch64 compatible değil" >&2; exit 1; }
 grep -q 'suderra-A.fit' "${crb}" || { echo "ERROR: arm bundle FIT staging yapmıyor" >&2; exit 1; }
 
-# defconfig'ler RAUC + config paketini seçmeli.
-for dc in suderra_aarch64_rpi4_defconfig suderra_aarch64_revpi4_defconfig; do
+# PROD defconfig'ler RAUC + config paketini seçmeli (dev = minimal, x86 desenine
+# uygun: RAUC/OTA yalnız prod'da; dev host-rauc kurmaz).
+for dc in suderra_aarch64_rpi4_prod_ab_defconfig suderra_aarch64_revpi4_prod_ab_defconfig; do
     grep -q '^BR2_PACKAGE_RAUC=y' "${ROOT}/configs/${dc}" || { echo "ERROR: ${dc} RAUC seçmiyor" >&2; exit 1; }
     grep -q '^BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y' "${ROOT}/configs/${dc}" || { echo "ERROR: ${dc} SUDERRA_RAUC_CONFIG seçmiyor" >&2; exit 1; }
+done
+# DEV defconfig'ler RAUC İÇERMEMELİ (host-rauc build warning'lerinden kaçın).
+for dc in suderra_aarch64_rpi4_defconfig suderra_aarch64_revpi4_defconfig; do
+    if grep -qE '^BR2_PACKAGE_RAUC=y|^BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y' "${ROOT}/configs/${dc}"; then
+        echo "ERROR: dev ${dc} RAUC içermemeli (yalnız prod_ab)" >&2; exit 1; fi
 done

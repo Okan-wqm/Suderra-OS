@@ -5,7 +5,7 @@
     "expires_at": "2026-11-17T00:00:00Z",
     "evidence_run_id": "26714427801",
     "evidence_commit": "ede3db96bbefc93459b764293109670b0b0b765e",
-    "rationale": "Buildroot/toolchain warning fingerprints are allowlisted only after triage against CI build logs; canonical fingerprints intentionally remove output paths and Buildroot package versions while keeping package and warning bodies stable. Expiry forces periodic review.",
+    "rationale": "Buildroot/toolchain warning fingerprints are allowlisted only after triage against CI build logs; canonical fingerprints intentionally remove output paths and Buildroot package versions while keeping package and warning bodies stable. Expiry forces periodic review. host-rauc uses the OpenSSL 3.0-deprecated ENGINE API for PKCS#11 (src/signature.c); these deprecation warnings are allowlisted but the ENGINE dependency is a tracked forward-compat risk (migrate to OpenSSL providers before OpenSSL removes ENGINE).",
     "allowed_fingerprints": [
       "busybox: .config: warning: trying to assign nonexistent symbol ASH_SLEEP",
       "busybox: applets/usage.c: warning: ignoring return value of 'write' declared with attribute 'warn_unused_result' [-Wunused-result]",
@@ -416,7 +416,27 @@
       "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'EVP_PKEY_get0_RSA' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
       "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: 'RSA_get0_key' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
       "host-uboot-tools: ./tools/lib/rsa/rsa-sign.c: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
-      "host-uboot-tools: tools/mxsimage.c: warning: argument 1 null where non-null expected [-Wnonnull]"
+      "host-uboot-tools: tools/mxsimage.c: warning: argument 1 null where non-null expected [-Wnonnull]",
+      "host-libglib2: girepository/girparser.c: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-libglib2: glib/gkeyfile.c: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-libglib2: glib/gvariant-parser.c: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-libglib2: gobject/gsignal.c: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-libglib2: gobject/gtype.c: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-libglib2: gobject/gtype.h: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-libglib2: gobject/gtypemodule.c: warning: potential null pointer dereference [-Wnull-dereference]",
+      "host-lzo: $OUTPUT_DIR/build/host-lzo-$PACKAGE_VERSION/examples/portab.h: warning: '%s' directive argument is null [-Wformat-overflow=]",
+      "host-pcre2: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-doc, --disable-docs, --disable-documentation, --with-xmlto, --with-fop, --disable-nls",
+      "host-rauc: $OUTPUT_DIR/per-package/host-rauc/host/include/openssl/bio.h: warning: value computed is not used [-Wunused-value]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_by_id' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_ctrl_cmd' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_ctrl_cmd_string' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_finish' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_free' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_init' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_load_builtin_engines' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-rauc: src/signature.c: warning: 'ENGINE_load_private_key' is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]",
+      "host-xz: configure: WARNING: unrecognized options: --disable-gtk-doc, --disable-gtk-doc-html, --disable-docs, --disable-documentation, --with-xmlto, --with-fop",
+      "libffi: configure.ac: warning: The macro 'AC_TRY_COMPILE' is obsolete."
     ]
   },
   "third_party": {
