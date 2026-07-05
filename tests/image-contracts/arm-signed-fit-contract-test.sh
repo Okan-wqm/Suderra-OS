@@ -75,9 +75,14 @@ for slot in A B; do
     grep -q "rauc.slot=${slot}" "${cmdline}" || { echo "ERROR: ${slot} rauc.slot yok" >&2; exit 1; }
 done
 
-# FIT doğrulama pubkey'i u-boot.dtb'ye gömülmeli.
-dtc -I dtb -O dts "${BIN}/u-boot.dtb" 2>/dev/null | grep -q 'key-name-hint = "fit-signing"' || {
+# FIT doğrulama pubkey'i u-boot.dtb kontrol FDT'sine gömülmeli VE required olmalı.
+# 'required = "conf"' olmadan U-Boot imzayı zorlamaz (fit_config_verify_required_sigs
+# hiçbir required anahtar bulamaz) → sessiz fail-open. ADR-0007 root-of-trust.
+uboot_dts="$(dtc -I dtb -O dts "${BIN}/u-boot.dtb" 2>/dev/null)"
+printf '%s' "${uboot_dts}" | grep -q 'key-name-hint = "fit-signing"' || {
     echo "ERROR: FIT pubkey u-boot.dtb'ye gömülmedi" >&2; exit 1; }
+printf '%s' "${uboot_dts}" | grep -q 'required = "conf"' || {
+    echo "ERROR: u-boot.dtb fit-signing anahtarı required değil — boot'ta imza zorlanmaz (fail-open)" >&2; exit 1; }
 
 # roothash veritysetup verify ile eşleşmeli.
 . "${BIN}/rootfs.verity.env"

@@ -119,3 +119,33 @@ hatta kurulur:
   `backend: uboot-rauc`, `ota_capable: true`, U-Boot env monotonic rollback.
 - `production_ready` tüm prod hedeflerde `false` kalır; gerçek donanım kanıtı
   (G4/G5, A10/A11) release/ingress join'de gelene dek fail-closed.
+
+## FIT signature enforcement — build gate vs hardware gate (audit remediation)
+
+The signed-FIT root of trust has two layers. Both must hold; the first is
+CI-provable, the second requires hardware (G4).
+
+**Build-time fail-closed gate (CI-enforced):**
+- `build_signed_slot_fit` marks the config signature `required = "conf"`, so
+  `mkimage -K` writes a **required** `fit-signing` key into the U-Boot control
+  DTB (`u-boot.dtb`). Without `required`, U-Boot's
+  `fit_config_verify_required_sigs()` finds no required key and boots any FIT
+  (silent fail-open).
+- ARM defconfigs set `BR2_TARGET_UBOOT_FORMAT_DTB=y` so `u-boot.dtb` is produced.
+- `enforce_production_contract` (ARM branch) now performs real crypto gates
+  (mirroring x86): `openssl dgst -verify` of each `suderra-{A,B}.fit.sig` vs its
+  cert, `dumpimage -l` proof the FIT carries an embedded rsa2048 signature, and a
+  **fail-closed assertion** that `u-boot.dtb` contains the `fit-signing` key
+  marked `required = "conf"`. A prod build that does not provably configure FIT
+  enforcement now FAILS instead of shipping a "signed" image that enforces nothing.
+
+**Runtime control-FDT requirement (G4 hardware gate — blocks production_ready):**
+On `rpi_arm64`, U-Boot's control FDT is normally the DTB the VideoCore firmware
+loads (`bcm2711-*.dtb`), NOT the standalone `u-boot.dtb`. For the required key to
+actually enforce at boot, the keyed `u-boot.dtb` must BE U-Boot's runtime control
+FDT — via `CONFIG_OF_SEPARATE` and re-appending the `mkimage -K`-keyed `u-boot.dtb`
+into the shipped U-Boot binary, or by injecting the required-key `/signature` node
+into the firmware-passed board DTB. This is board-specific and **must be validated
+on real Pi/RevPi hardware (G4)**: boot must reject a tampered/unsigned FIT. The
+build-time gate above is necessary but not sufficient; `production_ready` stays
+`false` until the hardware boot test proves enforcement.
