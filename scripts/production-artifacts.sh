@@ -601,7 +601,7 @@ build_signed_slot_fit() {
     local initrd="${binaries_dir}/suderra-${slot}.initrd"
     local its="${binaries_dir}/suderra-${slot}.its"
     local fit="${binaries_dir}/suderra-${slot}.fit"
-    local keydir dtb cmdline key cert material
+    local keydir cmdline key cert material
 
     need_cmd mkimage
     need_cmd dtc
@@ -615,12 +615,52 @@ build_signed_slot_fit() {
     keydir="${SUDERRA_FIT_KEYS_DIR:-${SUDERRA_KEYS_DIR:-}}"
     [ -n "${keydir}" ] || die "SUDERRA_FIT_KEYS_DIR (or SUDERRA_KEYS_DIR) required for mkimage -k"
 
-    dtb="$(find "${binaries_dir}" -maxdepth 1 -name '*.dtb' ! -name 'u-boot.dtb' | sort | head -n 1)"
-    [ -n "${dtb}" ] || die "no board DTB found in ${binaries_dir}"
-
     write_arm_verity_cmdline "${binaries_dir}" "${slot}"
     build_verity_initramfs "${binaries_dir}" "${target_dir}" "${slot}" "${initrd}"
     cmdline="$(cat "${binaries_dir}/suderra-${slot}.cmdline")"
+
+    # HIGH1: emit ONE signed config per board DTB (not the alphabetically-first
+    # only), so CM4 / CM4-IO / RevPi boot with the correct device tree. boot.scr
+    # selects the config by the board U-Boot reports; the default is the first
+    # (Pi 4 Model B for rpi4). Each config is individually signed (required=conf).
+    local dtbfile boardname fdt_nodes="" conf_nodes="" default_conf="" idx=0
+    local dtbs
+    dtbs="$(find "${binaries_dir}" -maxdepth 1 -name '*.dtb' ! -name 'u-boot.dtb' | sort)"
+    [ -n "${dtbs}" ] || die "no board DTB found in ${binaries_dir}"
+    local board_compat
+    while IFS= read -r dtbfile; do
+        [ -n "${dtbfile}" ] || continue
+        idx=$((idx + 1))
+        boardname="$(basename "${dtbfile}" .dtb)"
+        # Extract the board root compatible so U-Boot auto-selects the matching
+        # config against the running board (fit_conf_get_node), instead of a
+        # fragile board-name string match in boot.scr. Falls back to no
+        # compatible (default config) if extraction fails.
+        board_compat="$(dtc -I dtb -O dts "${dtbfile}" 2>/dev/null \
+            | sed -n 's/^[[:space:]]*compatible = \(.*\);[[:space:]]*$/\1/p' | head -n 1)"
+        fdt_nodes="${fdt_nodes}
+        fdt-${idx} {
+            data = /incbin/(\"${dtbfile}\");
+            type = \"flat_dt\"; arch = \"arm64\"; compression = \"none\";
+            hash-1 { algo = \"sha256\"; };
+        };"
+        conf_nodes="${conf_nodes}
+        conf-${boardname} {
+            description = \"${boardname} (slot ${slot})\";${board_compat:+
+            compatible = ${board_compat};}
+            kernel = \"kernel\"; fdt = \"fdt-${idx}\"; ramdisk = \"ramdisk-1\";
+            bootargs = \"${cmdline}\";
+            signature-1 {
+                algo = \"sha256,rsa2048\";
+                key-name-hint = \"fit-signing\";
+                sign-images = \"kernel\", \"fdt\", \"ramdisk\";
+                required = \"conf\";
+            };
+        };"
+        [ -n "${default_conf}" ] || default_conf="conf-${boardname}"
+    done <<EOF
+${dtbs}
+EOF
 
     cat > "${its}" <<ITS
 /dts-v1/;
@@ -634,30 +674,14 @@ build_signed_slot_fit() {
             load = <0x00080000>; entry = <0x00080000>;
             hash-1 { algo = "sha256"; };
         };
-        fdt-1 {
-            data = /incbin/("${dtb}");
-            type = "flat_dt"; arch = "arm64"; compression = "none";
-            hash-1 { algo = "sha256"; };
-        };
         ramdisk-1 {
             data = /incbin/("${initrd}");
             type = "ramdisk"; arch = "arm64"; os = "linux"; compression = "gzip";
             hash-1 { algo = "sha256"; };
-        };
+        };${fdt_nodes}
     };
     configurations {
-        default = "conf-${slot}";
-        conf-${slot} {
-            description = "slot ${slot}";
-            kernel = "kernel"; fdt = "fdt-1"; ramdisk = "ramdisk-1";
-            bootargs = "${cmdline}";
-            signature-1 {
-                algo = "sha256,rsa2048";
-                key-name-hint = "fit-signing";
-                sign-images = "kernel", "fdt", "ramdisk";
-                required = "conf";
-            };
-        };
+        default = "${default_conf}";${conf_nodes}
     };
 };
 ITS

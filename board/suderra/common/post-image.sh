@@ -598,7 +598,11 @@ enforce_production_contract() {
                 rm -f "${pubkey}"
                 # The FIT must carry an EMBEDDED rsa2048 signature — this is what
                 # U-Boot verifies at bootm (the detached sidecar above is for RAUC/release).
-                if ! dumpimage -l "${artifact}" 2>/dev/null | grep -qiE 'Sign algo:.*rsa2048'; then
+                # Capture the listing once: 'dumpimage -l | grep -q' under pipefail is a
+                # SIGPIPE race (grep -q exits early → dumpimage 141 → false build failure).
+                local fit_listing
+                fit_listing="$(dumpimage -l "${artifact}" 2>/dev/null || true)"
+                if ! grep -qiE 'Sign algo:.*rsa2048' <<<"${fit_listing}"; then
                     echo "ERROR: ${name} carries no embedded rsa2048 FIT signature"; exit 1
                 fi
             }
