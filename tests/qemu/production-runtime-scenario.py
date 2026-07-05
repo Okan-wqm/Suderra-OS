@@ -389,6 +389,14 @@ def run_scenario(args: argparse.Namespace) -> int:
     for path in (image, ovmf_code, ovmf_vars):
         if not path.is_file() or path.stat().st_size <= 0:
             raise RuntimeError(f"required runtime input missing or empty: {path}")
+    # L2: Secure Boot is only enforced with a SecureBoot-enabled OVMF build. A
+    # stock OVMF_CODE.fd does NOT enforce SB, so a "denied" scenario could pass
+    # for the wrong reason. Require the .secboot firmware (or an explicit opt-in).
+    if "secboot" not in ovmf_code.name.lower() and os.environ.get("SUDERRA_OVMF_SECBOOT") != "1":
+        raise RuntimeError(
+            f"OVMF_CODE must be a SecureBoot build (name contains 'secboot') or set "
+            f"SUDERRA_OVMF_SECBOOT=1 to assert it: {ovmf_code}"
+        )
     if not swtpm_state.is_dir():
         raise RuntimeError(f"swtpm state directory missing: {swtpm_state}")
 
@@ -428,8 +436,15 @@ def run_scenario(args: argparse.Namespace) -> int:
         extra_drive_args = drive_args[1:]
         qemu_args = [
             qemu,
+            # L2: smm=on + secure pflash so the enrolled SB varstore is
+            # SMM-tamper-protected; disable_s3 avoids an S3 SB-bypass. This is
+            # the documented OVMF Secure Boot invocation.
             "-machine",
-            "q35",
+            "q35,smm=on",
+            "-global",
+            "driver=cfi.pflash01,property=secure,value=on",
+            "-global",
+            "ICH9-LPC.disable_s3=1",
             "-m",
             str(args.memory),
             "-smp",
