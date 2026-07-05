@@ -567,6 +567,49 @@ enforce_production_contract() {
         verify_signed_pe_artifact "suderra-A.efi"
         verify_signed_pe_artifact "suderra-B.efi"
     fi
+
+    case "${DEFCONFIG_NAME}" in
+        suderra_aarch64_rpi4_prod_ab|suderra_aarch64_revpi4_prod_ab)
+            # ARM signed-FIT crypto gates (mirror the x86 PE gates — presence
+            # checks are NOT enough for the boot root of trust).
+            verify_fit_sidecar() {
+                local name="$1"
+                local artifact="${BINARIES_DIR}/${name}"
+                local pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/${name}.pubkey"
+                if ! openssl x509 -in "${artifact}.cert" -pubkey -noout > "${pubkey}" 2>/dev/null; then
+                    echo "ERROR: ${name}.cert does not contain a usable public key"; exit 1
+                fi
+                if ! openssl dgst -sha256 -verify "${pubkey}" \
+                        -signature "${artifact}.sig" "${artifact}" >/dev/null 2>&1; then
+                    echo "ERROR: ${name}.sig does not validate against ${name}.cert"; rm -f "${pubkey}"; exit 1
+                fi
+                rm -f "${pubkey}"
+                # The FIT must carry an EMBEDDED rsa2048 signature — this is what
+                # U-Boot verifies at bootm (the detached sidecar above is for RAUC/release).
+                if ! dumpimage -l "${artifact}" 2>/dev/null | grep -qiE 'Sign algo:.*rsa2048'; then
+                    echo "ERROR: ${name} carries no embedded rsa2048 FIT signature"; exit 1
+                fi
+            }
+            if ! command -v dumpimage >/dev/null 2>&1 || ! command -v dtc >/dev/null 2>&1; then
+                echo "ERROR: dumpimage/dtc (u-boot-tools/device-tree-compiler) not available — ARM production gate cannot pass"
+                exit 1
+            fi
+            verify_fit_sidecar "suderra-A.fit"
+            verify_fit_sidecar "suderra-B.fit"
+            # FAIL-CLOSED root-of-trust gate (ADR-0007): the FIT verification pubkey
+            # must be present AND marked required in the U-Boot control DTB, else
+            # CONFIG_FIT_SIGNATURE enforces nothing at boot (silent fail-open).
+            uboot_dts="$(dtc -I dtb -O dts "${BINARIES_DIR}/u-boot.dtb" 2>/dev/null || true)"
+            if ! printf '%s' "${uboot_dts}" | grep -q 'key-name-hint = "fit-signing"'; then
+                echo "ERROR: u-boot.dtb control FDT has no fit-signing key — FIT signatures will NOT be enforced at boot (fail-open)"
+                exit 1
+            fi
+            if ! printf '%s' "${uboot_dts}" | grep -q 'required = "conf"'; then
+                echo "ERROR: u-boot.dtb fit-signing key is not marked required — FIT enforcement is not guaranteed (fail-open)"
+                exit 1
+            fi
+            ;;
+    esac
 }
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then

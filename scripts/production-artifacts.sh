@@ -655,6 +655,7 @@ build_signed_slot_fit() {
                 algo = "sha256,rsa2048";
                 key-name-hint = "fit-signing";
                 sign-images = "kernel", "fdt", "ramdisk";
+                required = "conf";
             };
         };
     };
