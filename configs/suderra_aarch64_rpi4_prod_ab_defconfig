@@ -168,8 +168,9 @@ BR2_PACKAGE_CHRONY=y
 # ============================================================================
 # Donanım yardımcı araçları
 # ============================================================================
-# I2C/SPI debug ve test için
-BR2_PACKAGE_I2C_TOOLS=y
+# I2C/SPI debug/test CLI'ları prod'da SEVK EDİLMEZ (kilitli appliance; scripted
+# runtime kullanımı yok). Yalnız dev variant'ta etkin. (ADR-0008 Dalga 6)
+# BR2_PACKAGE_I2C_TOOLS is not set
 
 # Hardware watchdog daemon (busybox watchdog yerine systemd-watchdog kullanılır)
 # BR2_PACKAGE_WATCHDOG=n
