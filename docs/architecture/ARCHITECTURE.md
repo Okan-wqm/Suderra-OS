@@ -77,17 +77,27 @@ Detay: [boot-chain.md](boot-chain.md)
 
 ## Network Yüzeyi
 
-| Yön | Protokol | Port | Açıklama |
-|---|---|---|---|
-| Outbound | MQTT TLS | 8883 | Cloud broker (mTLS) |
-| Outbound | Modbus TCP | 502 | PLC'lere |
-| Outbound | OPC UA | 4840 | Sahadaki HMI server'lar |
-| Outbound | HTTPS | 443 | OTA + provisioning |
-| Inbound | OPC UA | 4840 | Eğer cihaz server modunda (opsiyonel) |
-| Inbound | HTTP | 8080 | Health endpoint (sadece lokal/mTLS, opsiyonel) |
-| Inbound | **HİÇBİR ŞEY** | - | SSH/Telnet/FTP/RPC/mDNS YOK |
+> **Önemli ayrım (OS vs iş yükü).** Aşağıdaki tablo, cihazın ÇALIŞTIRDIĞI iş
+> yükünün (harici, proprietary `suderra-edge-agent` — `aquaculture_platform/
+> sens-api-gateway`) hedeflenen ağ yüzeyidir. **Endüstriyel protokoller
+> (Modbus/OPC-UA/MQTT) OS'un kendisinde uygulanmamıştır**; OS'un ürettiği tek
+> giden bağlantı `suderra-installer`/OTA'nın HTTPS release indirmesidir (tek-yön
+> TLS; bütünlük cosign+SHA256'dan gelir, mTLS'ten değil). Bu tablo bir **hedef/iş
+> yükü sözleşmesidir**, bugünkü OS kodunun listening/giden yüzeyi değil.
 
-Firewall: nftables, default DROP. Detay: [board/suderra/common/rootfs-overlay/etc/nftables.conf](../../board/suderra/common/rootfs-overlay/etc/nftables.conf) (Faz 1'de oluşturulacak)
+| Yön | Protokol | Port | Sahip | Açıklama |
+|---|---|---|---|---|
+| Outbound | HTTPS | 443 | **OS** | OTA/installer release indirme (tek-yön TLS + cosign/SHA256) |
+| Outbound | MQTT TLS | 8883 | İş yükü | Cloud broker (mTLS) — edge-agent |
+| Outbound | Modbus TCP | 502 | İş yükü | PLC'lere — edge-agent |
+| Outbound | OPC UA | 4840 | İş yükü | Sahadaki HMI server'lar — edge-agent |
+| Inbound | OPC UA | 4840 | İş yükü | Cihaz server modundaysa (opsiyonel) — edge-agent |
+| Inbound | HTTP | 8080 | İş yükü | Health endpoint (lokal, opsiyonel) — edge-agent |
+| Inbound | **HİÇBİR ŞEY** | - | OS | SSH/Telnet/FTP/RPC/mDNS YOK (prod'da dropbear/getty maskeli) |
+
+Firewall: nftables, default DROP (mevcut: [nftables.conf](../../board/suderra/common/rootfs-overlay/etc/nftables.conf)).
+Egress bugün hedefe göre kısıtsızdır (443/8883/502/4840 herhangi host'a) — adlandırılmış
+hedef-set'leriyle sıkılaştırma [ADR-0008](ADR-0008-device-trust-architecture.md) Dalga 4'te.
 
 ## Sertleştirme Katmanları (defense-in-depth)
 

@@ -5,7 +5,10 @@
 > temelinde doğrulanmıştır. Spekülasyon yok; her madde koddan kanıtlıdır.
 >
 > Nasıl çalıştığının anlatımı için: [security-architecture.md](security-architecture.md).
-> Tarih: 2026-07-06.
+> Tarih: 2026-07-06. **Güncelleme 2026-07-11:** ikinci bağımsız uçtan-uca inceleme
+> (güvenlik + kod-doğruluğu + performans) yapıldı; yeni bulgular ve çözüm durumu
+> [Kategori 6](#kategori-6--ikinci-bağımsız-inceleme-2026-07-11)'da. Bütünsel çözüm
+> mimarisi: [ADR-0008](../architecture/ADR-0008-device-trust-architecture.md).
 
 ## Nasıl okunmalı — iki risk türü
 
@@ -197,3 +200,50 @@ kesin G4/G5 listesi olarak yazılı. Yeni "hata" değil; donanım gelince kapana
 5. **SC-3, SC-4, MIN-***: hijyen — non-prod TLS sıkılaştırma, native sigstore, ölü anahtar,
    workspace lints.
 6. **HW-1..HW-4 (G4/G5)**: donanım geldiğinde — ADR-0007'deki turnkey liste.
+
+---
+
+## Kategori 6 — İkinci bağımsız inceleme (2026-07-11)
+
+Dört bağımsız agent (build/CI performansı, runtime/boot ayak izi, bağımsız güvenlik
+doğrulama + yeni-bug avı, Rust kod-doğruluğu) + çapraz-doğrulama. Kategori 1–5
+teyit edildi (register sağlam). Aşağıdakiler **register'da OLMAYAN** yeni bulgular ve
+her birinin çözüm durumudur. Bütünsel mimari:
+[ADR-0008](../architecture/ADR-0008-device-trust-architecture.md).
+
+### Yeni güvenlik bulguları
+
+| # | Bulgu | Ciddiyet | Durum |
+|---|---|---|---|
+| NEW-1 | OTA `is_production()` yalnız hiçbir yerde set edilmeyen env'le true → anti-rollback trusted-floor + dev-override reddi her cihazda ölü; env ile bypass | **Yüksek** | **Çözüldü** (Dalga 1): prod-tespiti imzalı os-release VARIANT'ından; anti-rollback katmanlı (Tier-1/2); build gate VARIANT=prod assert eder |
+| NEW-2 | nftables egress hedefe göre kısıtsız (exfiltration; 502/4840 lateral) | Orta | Açık — ADR-0008 Dalga 4 (destination-set) |
+| NEW-3 | `variant::is_production()` env ile prod'u DOWNGRADE edebiliyordu (+ boş-env fail-open) | Orta | **Çözüldü** (Dalga 1) |
+| NEW-4 | `suderra-agent.service` indirilen harici ajana `/dev/tpm0`+`/dev/watchdog` veriyor | Orta | Açık — ADR-0008 Dalga 4 (capability mediation) |
+| NEW-5 | Appliance firewall prod'da aktive olmuyor; provisioning ruleset kalıcı default | Düşük | Açık — ADR-0008 Dalga 4 |
+| NEW-6 | Dev firstboot provisioning parolasını `/dev/console`'a basıyor (dev-only) | Düşük | Açık — Dalga 4 |
+| NEW-7 | Ed25519 `verify` (strict değil) + non-canonical imza serileştirme | Düşük | **Kısmen çözüldü** (Dalga 1: `verify_strict`); canonical-bytes signer değişikliği açık |
+
+### Kod-doğruluğu bug'ları (gerçek crate'ler)
+
+| # | Bulgu | Ciddiyet | Durum |
+|---|---|---|---|
+| C-1 | `variant::is_production()` set-but-empty env → fail-open | Orta | **Çözüldü** (Dalga 1) |
+| C-2 | Watchdog besleme aralığı donanım timeout'una kısıtsız → sağlıklı cihazı reset döngüsü | Orta | **Çözüldü** (Dalga 1) |
+| C-3 | Watchdog tick'inde timeout'suz `systemctl` → wedge kick açlığı → reset | Orta | **Çözüldü** (Dalga 1) |
+| C-4 | `mark-good --version X` pending yokken floor'u kalıcı yükseltir → update-kilidi DoS | Orta | **Çözüldü** (Dalga 1) |
+| C-5 | `restart_after + 1` overflow (hostile env) | Düşük | **Çözüldü** (Dalga 1, `saturating_add`) |
+| C-6 | TOCTOU (verify→use) OTA bundle / installer manifest | Düşük–Orta | Açık |
+| C-7 | Non-SemVer `VERSION_ID` OTA'yı bricker (fail-closed availability) | Düşük | Açık |
+
+### Register kalemlerinde ilerleme
+
+- **RT-1** (`/data` LUKS2 provisioning yok) → **Çözüldü** (ADR-0008 Dalga 2): `suderra-data-provision`, TPM2-seal default + fail-closed; runtime kanıtı QEMU-swtpm/G5.
+- **RT-5** (`systemd-cryptsetup` yok) → **Çözüldü** (Dalga 2): 3 prod defconfig'te `BR2_PACKAGE_SYSTEMD_CRYPTSETUP=y`.
+- **DOC-1** (`/data` LUKS iddiası, kod yok) → **Çözüldü** (Dalga 2, provisioning uygulandı).
+- **RT-6** (TPM-NV anti-rollback etiket) → NEW-1 ile derinleşti; Tier-2 kaynağı ADR-0008 Dalga 3'te (gerçek TPM-NV).
+- **DOC-2 / DOC-3** → **Çözüldü** (Dalga 5): ARCHITECTURE ağ yüzeyi OS/iş-yükü ayrımıyla netleşti; ROADMAP gerçek-durum tablosuyla hizalandı.
+
+### Performans bulguları (özet — ADR-0008 Dalga 6)
+
+- **Build/CI:** cross-toolchain her build'de sıfırdan; dl/ccache cache defconfig-parçalı + `restore-keys` yok → 10 GB bütçe eviction thrash; Docker builder run başına ~5× layer-cache'siz; redundant smoke/parse + `msrv` cache'siz.
+- **Footprint (çoğu iyi optimize):** `tokio full` her crate'te; kullanılmayan `reqwest` (`ota`/`telemetry`/`attestation`); ikili TLS yığını (OpenSSL+rustls); `tpm2-tools`/`i2c-tools` prod'da tüketicisiz; `network-online.target` DHCP boot-stall worst-case ~120 s.
