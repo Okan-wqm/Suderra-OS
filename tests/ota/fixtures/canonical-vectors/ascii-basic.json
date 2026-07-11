@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "version": "v1.2.3",
+  "target": "suderra-os-aarch64",
+  "flags": [true, false, null],
+  "bundle": {"name": "suderra-os.raucb", "sha256": "ab12", "bytes": 1048576}
+}

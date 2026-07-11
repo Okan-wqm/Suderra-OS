@@ -1,0 +1,9 @@
+{
+  "newline": "a\nb",
+  "tab": "a\tb",
+  "quote": "a\"b",
+  "backslash": "a\\b",
+  "ctrl_soh": "a\u0001b",
+  "del_char": "ab",
+  "empty": ""
+}

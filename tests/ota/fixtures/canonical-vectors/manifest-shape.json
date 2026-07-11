@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "version": "v0.2.0",
+  "target": "suderra-os-x86_64",
+  "artifact_sha256": "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+  "bundle": {"name": "suderra-os-x86_64-v0.2.0.raucb", "sha256": "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8", "bytes": 268435456},
+  "key_epoch": 1,
+  "expires_at": "2027-01-01T00:00:00Z",
+  "min_current_version": "v0.1.0",
+  "rollback_floor": "v0.1.0",
+  "release_notes": null
+}

@@ -1,0 +1,9 @@
+{
+  "zeta": 1,
+  "Alpha": 2,
+  "alpha": 3,
+  "_underscore": 4,
+  "10numeric": 5,
+  "şapka": 6,
+  "nested": {"c": 1, "b": {"z": 1, "a": 2}, "a": []}
+}
