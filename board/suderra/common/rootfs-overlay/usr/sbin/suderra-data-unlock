@@ -36,10 +36,60 @@ mount_dev_data() {
     mount_data_bindings
 }
 
+# First-boot provisioning (RT-1): format a BLANK data partition as LUKS2 and seal
+# its key to the TPM2 (bound to PCR7 / secure-boot state) so /data is encrypted
+# at rest with a key that cannot be extracted from storage. TPM is REQUIRED
+# (fail-closed): a board without a TPM does not get a false sense of security
+# from an on-disk keyfile. Idempotent: only runs when the partition is blank.
+provision_luks_data() {
+    dev="$1"
+    # SAFETY: never format a partition that already carries data. isLuks was
+    # already false here; if blkid still sees ANY signature (ext4, etc.) this is
+    # not our fresh partition — refuse and require manual intervention.
+    if blkid "${dev}" >/dev/null 2>&1; then
+        echo "refusing to auto-format ${dev}: it has a non-LUKS filesystem/signature (manual step required)" >&2
+        exit 1
+    fi
+    # Fail-closed: production at-rest encryption requires a TPM2 device.
+    if [ ! -e /dev/tpmrm0 ] && [ ! -e /dev/tpm0 ]; then
+        echo "production /data encryption requires a TPM2 device; none found (/dev/tpm*)" >&2
+        exit 1
+    fi
+    command -v systemd-cryptenroll >/dev/null 2>&1 || {
+        echo "systemd-cryptenroll missing; cannot provision TPM-sealed /data" >&2
+        exit 1
+    }
+    # Ephemeral key lives only in /run (tmpfs, RAM) and is shredded below; it is
+    # never written to persistent storage.
+    keyfile="$(mktemp /run/suderra-data-key.XXXXXX)"
+    chmod 0600 "${keyfile}"
+    dd if=/dev/urandom of="${keyfile}" bs=512 count=1 status=none
+    if ! cryptsetup luksFormat --type luks2 --batch-mode --key-file "${keyfile}" "${dev}"; then
+        rm -f "${keyfile}"
+        echo "luksFormat failed on ${dev}" >&2
+        exit 1
+    fi
+    # Seal the volume key to the TPM2, bound to PCR7 (UEFI/boot secure-boot policy).
+    if ! systemd-cryptenroll "${dev}" --unlock-key-file="${keyfile}" \
+            --tpm2-device=auto --tpm2-pcrs=7; then
+        # The header is brand new over a blank partition — erase it so the next
+        # boot re-provisions cleanly instead of leaving an unopenable volume.
+        cryptsetup erase --batch-mode "${dev}" >/dev/null 2>&1 || true
+        rm -f "${keyfile}"
+        echo "TPM2 enroll failed; erased fresh LUKS header for clean retry" >&2
+        exit 1
+    fi
+    # Drop the ephemeral passphrase slot so TPM2 becomes the ONLY unlock path.
+    systemd-cryptenroll "${dev}" --wipe-slot=password >/dev/null 2>&1 || true
+    rm -f "${keyfile}"
+    echo "==> provisioned LUKS2 /data on ${dev} (TPM2-sealed, PCR7)"
+}
+
 unlock_prod_luks_data() {
     data_dev="${SUDERRA_DATA_DEVICE:-/dev/disk/by-partlabel/data}"
     mapper="${SUDERRA_DATA_MAPPER:-suderra-data}"
     mapper_dev="/dev/mapper/${mapper}"
+    fresh=0
 
     command -v cryptsetup >/dev/null 2>&1 || {
         echo "cryptsetup missing; production /data cannot unlock" >&2
@@ -49,10 +99,10 @@ unlock_prod_luks_data() {
         echo "production data partition missing: ${data_dev}" >&2
         exit 1
     }
-    cryptsetup isLuks "${data_dev}" || {
-        echo "production data partition is not LUKS2: ${data_dev}" >&2
-        exit 1
-    }
+    if ! cryptsetup isLuks "${data_dev}"; then
+        provision_luks_data "${data_dev}"
+        fresh=1
+    fi
     luks_type="$(cryptsetup luksDump "${data_dev}" 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -n 1)"
     [ "${luks_type}" = "2" ] || {
         echo "production data partition must be LUKS2" >&2
@@ -74,6 +124,12 @@ unlock_prod_luks_data() {
                     exit 1
                 }
         fi
+    fi
+
+    # A freshly provisioned volume has no filesystem yet — create it once, on the
+    # decrypted mapper (so the plaintext filesystem never touches the raw device).
+    if [ "${fresh}" = "1" ]; then
+        mkfs.ext4 -q -L SUDERRA-DATA "${mapper_dev}"
     fi
 
     mkdir -p /data
