@@ -24,6 +24,7 @@ source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-rauc-config/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-ota/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-watchdog/Config.in"
+source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-attestation/Config.in"
 
 #
 # Profil seçimi — hangi varyant build ediliyor
