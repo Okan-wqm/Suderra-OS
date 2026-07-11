@@ -249,6 +249,22 @@ case "${DEFCONFIG_NAME}" in
         ;;
 esac
 
+# 6c. QEMU semantic collector — yalnız qemu-x86_64 test imajında enable edilir
+# (yukarıda). Diğer TÜM imajlardan (saha/prod dahil) binary+unit SİLİNİR; aksi
+# halde atıl bir test binary'si prod rootfs'te kalırdı (AUD-5), suderra-runtime-
+# scenario ile aynı desen.
+case "${DEFCONFIG_NAME}" in
+    suderra_qemu_x86_64*)
+        : # collector burada enable — dokunma
+        ;;
+    *)
+        rm -f "${TARGET_DIR}/usr/sbin/suderra-qemu-semantic-collector" \
+              "${TARGET_DIR}/etc/systemd/system/suderra-qemu-semantic-collector.service" \
+              "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-qemu-semantic-collector.service" \
+              2>/dev/null || true
+        ;;
+esac
+
 # 7. Appliance lockdown — Suderra OS genel amaçlı Linux dağıtımı değildir.
 # Varsayılan target image provisioning modunda gelir: geçici forced-command
 # provision kullanıcısı açıktır. Edge artifact kurulduktan sonra

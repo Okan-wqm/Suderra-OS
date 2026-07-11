@@ -153,11 +153,10 @@ struct OtaState {
     last_error: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     init_logging(cli.verbose);
-    match run(cli.command).await {
+    match run(cli.command) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
             error!("{err:#}");
@@ -172,7 +171,7 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
-async fn run(command: Commands) -> Result<()> {
+fn run(command: Commands) -> Result<()> {
     match command {
         Commands::Install(args) => install(args),
         Commands::Status(args) => status(args),
@@ -1256,7 +1255,6 @@ fn compare_prerelease(left: &[PrereleaseIdentifier], right: &[PrereleaseIdentifi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
     use std::sync::Mutex;
 

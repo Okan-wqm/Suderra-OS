@@ -93,7 +93,11 @@ lto = "fat"              # link-time optimization (cross-crate inlining)
 codegen-units = 1        # tek codegen unit (LTO maksimum verim)
 strip = "symbols"        # debug sembolleri çıkar
 panic = "abort"          # panic'te abort (unwind tablosunu kaldır, binary küçülür)
-overflow-checks = false  # release'de runtime overflow check yok (perf)
+# AUD-10: overflow-checks AÇIK. Bu crate'ler saldırgan-etkili girdiyi (imzalı
+# manifest, SemVer, TPM-NV counter, watchdog eşik aritmetiği) işleyen bir
+# güvenlik cihazıdır; sessiz wrap yerine panic (fail-closed) tercih edilir.
+# Maliyet: opt-level="z"+LTO yanında birkaç % CPU, boyut ihmal edilebilir.
+overflow-checks = true
 
 # Debug profile — hızlı iterasyon için
 [profile.dev]

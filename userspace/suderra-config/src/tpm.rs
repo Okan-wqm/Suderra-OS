@@ -199,6 +199,10 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    // SUDERRA_TPM2_BIN_DIR process-global; env'e dokunan testleri serileştir.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Bir tempdir'e verilen isimde çalıştırılabilir sahte tpm2 scripti kurar.
     fn fake_tool(dir: &Path, name: &str, body: &str) {
@@ -212,6 +216,7 @@ mod tests {
 
     #[test]
     fn nv_read_counter_parses_big_endian_8_bytes() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         // 0x0000000000000005 (big-endian) yaz.
         fake_tool(
@@ -227,6 +232,7 @@ mod tests {
 
     #[test]
     fn run_propagates_nonzero_exit_fail_closed() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         fake_tool(dir.path(), "tpm2_nvincrement", "echo boom >&2; exit 3");
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
@@ -238,6 +244,7 @@ mod tests {
 
     #[test]
     fn define_counter_is_idempotent_when_already_present() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         // nvreadpublic başarılı → zaten var → nvdefine ÇAĞRILMAMALI.
         fake_tool(dir.path(), "tpm2_nvreadpublic", "exit 0");
@@ -254,6 +261,7 @@ mod tests {
 
     #[test]
     fn prod_uses_fixed_path_not_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // Prod'da SUDERRA_TPM2_BIN_DIR yok sayılır (env ile kaydırılamaz).
         let dir = tempfile::tempdir().unwrap();
         fake_tool(dir.path(), "tpm2_nvread", "printf 'x'");
