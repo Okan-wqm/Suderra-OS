@@ -12,7 +12,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -265,13 +265,18 @@ fn rollback(args: RollbackArgs) -> Result<()> {
 
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
     let mut state = load_state()?;
-    let requested_version = args.version;
-    let version = requested_version
-        .or_else(|| state.pending_version.clone())
+    // mark-good YALNIZCA gerçekten pending (doğrulanmış install ile stage edilmiş)
+    // bir sürümü onaylar. `--version` verildiyse pending ile ÖRTÜŞMELİDİR; aksi
+    // halde pending olmayan keyfi bir sürüm current_version/rollback_floor'u
+    // yükseltip cihazı bu değerin altındaki her meşru update'e karşı kalıcı olarak
+    // kilitleyebilirdi (install olmadan tetiklenen DoS).
+    let version = state
+        .pending_version
+        .clone()
         .ok_or_else(|| anyhow!("no pending version to mark good"))?;
-    if let Some(pending) = state.pending_version.as_deref() {
-        if pending != version {
-            bail!("mark-good version {version} does not match pending version {pending}");
+    if let Some(requested) = args.version.as_deref() {
+        if requested != version {
+            bail!("mark-good version {requested} does not match pending version {version}");
         }
     }
     if let Some(expected_slot) = state.pending_boot_slot.as_deref() {
@@ -357,8 +362,11 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     }
     let signature_bytes = decode_fixed_hex::<64>(&signature.signature_hex, "signature_hex")?;
     let signature = Signature::from_bytes(&signature_bytes);
+    // `verify_strict`: non-canonical imza / karışık-sıra key reddedilir (malleability
+    // kapatılır). Meşru imzalayıcı canonical imza ürettiğinden gerçek manifest'ler
+    // etkilenmez.
     public_key
-        .verify(&manifest_signing_bytes(manifest)?, &signature)
+        .verify_strict(&manifest_signing_bytes(manifest)?, &signature)
         .context("manifest signature verification failed")?;
     Ok(())
 }

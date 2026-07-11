@@ -10,7 +10,7 @@ use crate::cli::{
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -845,7 +845,10 @@ fn decode_hex_array<const N: usize>(text: &str, label: &str) -> Result<[u8; N]> 
 }
 
 fn verify_ed25519(key: &VerifyingKey, message: &[u8], signature: &Signature) -> Result<()> {
-    key.verify(message, signature).map_err(Into::into)
+    // `verify_strict`: non-canonical imzaları ve karışık-sıra public key'leri reddeder
+    // (imza malleability'yi kapatır). Meşru imzalayıcı canonical imza ürettiğinden
+    // gerçek artefaktların doğrulanması etkilenmez.
+    key.verify_strict(message, signature).map_err(Into::into)
 }
 
 fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
