@@ -64,21 +64,31 @@ if ! command -v nft >/dev/null 2>&1; then
     exit 0
 fi
 
-nft -c -f "${NFT}" >/dev/null 2>&1 \
-    || fail "runtime: nft -c rejected the shipped ruleset"
-echo "PASS: runtime nft -c parse of shipped ruleset"
-
-# Commissioned (element-add'li) kopya da geçerli olmalı.
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT INT TERM
+
+# Cihazda /etc/suderra/egress.d/ overlay ile HER ZAMAN vardır (boş olsa da), ama CI
+# repo checkout'unda o absolute path YOKTUR. nft sürümleri "olmayan dizin glob'unu"
+# farklı ele alır (kimi tolere eder, kimi reddeder). Ruleset SÖZDİZİMİNİ sağlam
+# doğrulamak için include'u VAR OLAN boş bir temp dizine yönlendiririz — bu, cihaz
+# gerçeğini (dizin var, aktif *.nft yok = fail-closed) birebir yansıtır.
+mkdir -p "${WORK}/empty"
+sed "s#/etc/suderra/egress.d/\\*.nft#${WORK}/empty/*.nft#" "${NFT}" > "${WORK}/shipped.nft"
+if ! err="$(nft -c -f "${WORK}/shipped.nft" 2>&1)"; then
+    fail "runtime: nft -c rejected the shipped ruleset (empty egress.d): ${err}"
+fi
+echo "PASS: runtime nft -c parse of shipped ruleset (fail-closed)"
+
+# Commissioned (element-add'li) kopya da geçerli olmalı.
 mkdir -p "${WORK}/egress.d"
-sed "s#/etc/suderra/egress.d/\\*.nft#${WORK}/egress.d/*.nft#" "${NFT}" > "${WORK}/nftables.conf"
+sed "s#/etc/suderra/egress.d/\\*.nft#${WORK}/egress.d/*.nft#" "${NFT}" > "${WORK}/commissioned.nft"
 cat > "${WORK}/egress.d/10-site.nft" <<'EOF'
 add element inet filter egress_update { 203.0.113.10 }
 add element inet filter egress_cloud  { 198.51.100.0/24 }
 add element inet filter egress_field  { 10.10.0.0/16 }
 add element inet filter egress_infra  { 10.10.0.1, 10.10.0.2 }
 EOF
-nft -c -f "${WORK}/nftables.conf" >/dev/null 2>&1 \
-    || fail "runtime: commissioned ruleset (populated sets) failed nft -c"
+if ! err="$(nft -c -f "${WORK}/commissioned.nft" 2>&1)"; then
+    fail "runtime: commissioned ruleset (populated sets) failed nft -c: ${err}"
+fi
 echo "PASS: runtime nft -c parse of commissioned ruleset (sets populate)"
