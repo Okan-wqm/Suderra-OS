@@ -75,7 +75,11 @@ struct InstallArgs {
     /// RAUC bundle referenced by the manifest.
     bundle: PathBuf,
     /// Ed25519 public key used to verify the manifest signature.
-    #[arg(long, env = "SUDERRA_OTA_MANIFEST_PUBKEY")]
+    /// NOT: env fallback bilinçli olarak clap'ten KALDIRILDI — env yalnız
+    /// non-prod'da (dev_override) geçerlidir; prod'da ambient env manifest
+    /// güven kökünü kaydıramaz (aksi halde her diğer güvenlik yolunu kapılayan
+    /// dev_override sözleşmesi delinirdi).
+    #[arg(long)]
     manifest_pubkey: Option<PathBuf>,
     /// Do not request reboot after a successful inactive-slot install.
     #[arg(long, env = "SUDERRA_OTA_NO_REBOOT", default_value_t = false)]
@@ -400,11 +404,9 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     }
     let key_path = key_path
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("SUDERRA_OTA_MANIFEST_PUBKEY")
-                .ok()
-                .map(PathBuf::from)
-        })
+        // Env fallback prod'da KAPALI (dev_override): gerçek prod cihazda manifest
+        // pubkey'i yalnız imzalı RO default'tan gelir, ambient env ile değil.
+        .or_else(|| dev_override("SUDERRA_OTA_MANIFEST_PUBKEY").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/etc/suderra/os-update-manifest.ed25519.pub"));
     let public_key = read_public_key(&key_path)?;
     let public_key_sha256 = hex::encode(Sha256::digest(public_key.as_bytes()));
@@ -874,6 +876,14 @@ fn floor_sync() -> Result<()> {
 
     let tpm = suderra_config::tpm::Tpm::new(is_production());
     let index = rollback_nv_index();
+    // NV counter'ı BURADA idempotent tanımla: prod'da firstboot güven-tesis
+    // durum makinesi (identity/attestation) çalışmıyor olabilir, ama RT-6
+    // anti-rollback yolu buna BAĞIMLI OLMAMALI. Zaten tanımlıysa no-op; ilk
+    // boot'ta 0'dan başlar (mark-good epoch'a yükseltir). Böylece prod OTA yolu
+    // firstboot wiring'inden bağımsız çalışır (fail-closed brick önlenir).
+    tpm.nv_define_counter(index).with_context(|| {
+        format!("TPM-NV rollback counter {index:#x} tanımlanamadı (fail-closed)")
+    })?;
     let nv = tpm
         .nv_read_counter(index)
         .with_context(|| format!("TPM-NV rollback counter {index:#x} okunamadı (fail-closed)"))?;
@@ -912,12 +922,10 @@ fn advance_rollback_anchor() -> Result<()> {
     };
     let tpm = suderra_config::tpm::Tpm::new(is_production());
     let index = rollback_nv_index();
-    let mut nv = tpm.nv_read_counter(index)?;
-    // Sayaç yalnız artar; epoch'a ulaşana dek increment.
-    while nv < epoch {
-        tpm.nv_increment(index)?;
-        nv = tpm.nv_read_counter(index)?;
-    }
+    // Idempotent tanımla (floor sync henüz koşmamış olabilir) + sınırlı,
+    // strict-advance yükseltme (ortak invariant suderra_config::tpm'de).
+    tpm.nv_define_counter(index)?;
+    tpm.nv_raise_to(index, epoch)?;
     Ok(())
 }
 
@@ -1286,6 +1294,9 @@ mod tests {
             "tpm2_nvread",
             "printf '\\000\\000\\000\\000\\000\\000\\000\\003'",
         );
+        // floor_sync artık counter'ı idempotent tanımlar (prod'da firstboot
+        // koşmayabilir); nvreadpublic=0 → "zaten tanımlı" → nvdefine no-op.
+        fake_tpm2(&bindir, "tpm2_nvreadpublic", "exit 0");
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", &bindir);
 
         // İmaj epoch 5 (>= 3) → floor yazılmalı.

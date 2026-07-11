@@ -51,11 +51,20 @@
   sync` gerçek TPM-NV monotonic counter'ı okur, imaj epoch'uyla çapraz doğrular,
   downgrade fail-closed; `firstboot` counter'ı tanımlar/yükseltir, `mark-good`
   ilerletir. Birim + contract testli. "Etikette TPM" durumu kapandı.
-- **RT-2 — Çözüldü (swtpm-kanıtı kaldı):** `suderra-attestation` placeholder →
-  gerçek CLI (setup/baseline/quote/verify-local; PCR 0-7 AK-imzalı quote).
-  Doğrulayıcı sunucu bilinçli kapsam dışı (sözleşme ADR-0009'da).
-- **RT-3 — Çözüldü (swtpm-kanıtı kaldı):** `firstboot` TPM-resident ECC signing
-  key + self-attested `device.json` üretir. X.509 CSR bilinçle ertelendi (ADR-0009).
+- **RT-2 — Kod uygulandı; cihaz-üstü wiring + swtpm/G5 kanıtı BEKLİYOR:**
+  `suderra-attestation` placeholder → gerçek CLI (setup/baseline/quote/verify-local;
+  PCR 0-7 AK-imzalı quote; verify-local AK-pinlemeli). Doğrulayıcı sunucu bilinçli
+  kapsam dışı. **DİKKAT (kod incelemesi):** attestation firstboot tarafından
+  çağrılır, ama firstboot binary'si bugün hiçbir imajda çalışmıyor (bkz. RT-3) →
+  RT-2 cihazda henüz aktif değil.
+- **RT-3 — Kod uygulandı; cihaz-üstü wiring BEKLİYOR:** `firstboot` TPM-resident
+  ECC signing key + self-attested `device.json` üretir; X.509 CSR bilinçle
+  ertelendi. **DİKKAT (kod incelemesi):** `suderra-firstboot` Rust binary'si board
+  overlay'deki placeholder shell unit tarafından isim-gölgelenir ve prod'da hiç
+  enable edilmez → identity/attestation adımları cihazda çalışmıyor. Prod'da
+  devreye alma Dalga 3'ün kalan wiring adımı (ADR-0009). RT-6 anti-rollback ise
+  buna BAĞIMLI DEĞİL: floor sync NV counter'ı kendisi tanımlar (fail-closed brick
+  önlendi).
 - **Kalan:** QEMU+swtpm senaryoları (`production-runtime-qemu.yml` lane) ve G5
   donanım kanıtı. `suderra_config::tpm` sarmalayıcısı sahte-tpm2 birim testleriyle
   kapsanır. **RT-4** kısmen: firstboot/attestation gerçek; telemetry/factory-reset

@@ -24,6 +24,10 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// `nv_raise_to` için üst adım sınırı — meşru bir cihaz birkaç güvenlik nesli
+/// atlar; binlerce adım hatalı config sinyalidir (fail-closed).
+const MAX_NV_RAISE_STEPS: u64 = 4096;
+
 /// TPM 2.0 cihazının varlığı (RevPi SLB9670 / x86 fTPM / swtpm).
 pub fn have_tpm() -> bool {
     Path::new("/dev/tpmrm0").exists() || Path::new("/dev/tpm0").exists()
@@ -117,22 +121,56 @@ impl Tpm {
     }
 
     /// NV counter'ın mevcut değerini okur (8-byte big-endian).
+    ///
+    /// `-s 8 -o -` TAM 8 ham bayt üretmelidir. Eğer çıktı 8 bayt DEĞİLSE
+    /// (bir tpm2-tools sürümü stdout'a fazladan newline/diagnostic eklerse)
+    /// son-8-baytı almak sessizce YANLIŞ sayaç verirdi ve bu değer floor_sync'in
+    /// downgrade kararını sürerdi. Fail-silent yerine fail-closed: uzunluk 8
+    /// değilse hata (yanlış donanım çıpası, hatadan beterdir).
     pub fn nv_read_counter(&self, index: u32) -> Result<u64> {
         let raw = self.run(
             "tpm2_nvread",
             &[&format!("{index:#x}"), "-s", "8", "-o", "-"],
         )?;
-        // `-o -` stdout'a ham bayt yazar. tpm2_nvread bazı sürümlerde stdout'a
-        // doğrudan yazar; 8 baytı bekleriz.
-        if raw.len() < 8 {
+        if raw.len() != 8 {
             bail!(
-                "NV counter {index:#x} 8 bayttan kısa döndü ({} bayt)",
+                "NV counter {index:#x} beklenen 8 bayt yerine {} bayt döndü (fail-closed)",
                 raw.len()
             );
         }
         let mut buf = [0u8; 8];
-        buf.copy_from_slice(&raw[raw.len() - 8..]);
+        buf.copy_from_slice(&raw);
         Ok(u64::from_be_bytes(buf))
+    }
+
+    /// NV counter'ı `target`'a kadar YÜKSELTİR (yalnız artırır, düşürmez).
+    /// Her increment sonrası sayacın GERÇEKTEN ilerlediğini doğrular (aksi halde
+    /// fail-closed — takılı/no-op bir counter'da sonsuz döngü + NV yazma
+    /// dayanıklılığını yakmayı önler) ve makul bir üst sınırla korunur (yanlış
+    /// yazılmış devasa bir epoch cihazı kilitlemesin). ota + firstboot ortak
+    /// kullanır (tek yerde invariant).
+    pub fn nv_raise_to(&self, index: u32, target: u64) -> Result<()> {
+        let mut nv = self.nv_read_counter(index)?;
+        let mut steps = 0u64;
+        while nv < target {
+            self.nv_increment(index)?;
+            let next = self.nv_read_counter(index)?;
+            if next <= nv {
+                bail!(
+                    "NV counter {index:#x} increment sonrası ilerlemedi ({nv} → {next}); \
+                     fail-closed (TPM/counter anomalisi)"
+                );
+            }
+            nv = next;
+            steps += 1;
+            if steps > MAX_NV_RAISE_STEPS {
+                bail!(
+                    "NV counter {index:#x} raise-to {target} {MAX_NV_RAISE_STEPS} adımı aştı \
+                     (mevcut {nv}) — muhtemelen hatalı büyük epoch; fail-closed"
+                );
+            }
+        }
+        Ok(())
     }
 
     // --- PCR / quote (RT-2 attestation) --------------------------------------
@@ -227,6 +265,42 @@ mod tests {
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
         let tpm = Tpm::new(false);
         assert_eq!(tpm.nv_read_counter(0x0150_0001).unwrap(), 5);
+        std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
+    }
+
+    #[test]
+    fn nv_read_counter_rejects_non_8_byte_output_fail_closed() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        // 8 bayt + fazladan newline → fail-closed (son-8-bayt sessizce alınmaz).
+        fake_tool(
+            dir.path(),
+            "tpm2_nvread",
+            "printf '\\000\\000\\000\\000\\000\\000\\000\\005\\n'",
+        );
+        std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
+        let tpm = Tpm::new(false);
+        let err = tpm.nv_read_counter(0x0150_0001).unwrap_err();
+        assert!(err.to_string().contains("8 bayt"), "{err}");
+        std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
+    }
+
+    #[test]
+    fn nv_raise_to_bails_when_counter_does_not_advance() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        // Sayaç hep 3 döner, increment no-op → nv_raise_to(target=5) sonsuz
+        // döngü yerine strict-advance kontrolüyle fail-closed olmalı.
+        fake_tool(
+            dir.path(),
+            "tpm2_nvread",
+            "printf '\\000\\000\\000\\000\\000\\000\\000\\003'",
+        );
+        fake_tool(dir.path(), "tpm2_nvincrement", "exit 0");
+        std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
+        let tpm = Tpm::new(false);
+        let err = tpm.nv_raise_to(0x0150_0001, 5).unwrap_err();
+        assert!(err.to_string().contains("ilerlemedi"), "{err}");
         std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
     }
 

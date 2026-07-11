@@ -23,9 +23,9 @@ endef
 define SUDERRA_WATCHDOG_INSTALL_INIT_SYSTEMD
 	$(INSTALL) -D -m 0644 $(@D)/suderra-watchdog.service \
 		$(TARGET_DIR)/usr/lib/systemd/system/suderra-watchdog.service
-	mkdir -p $(TARGET_DIR)/usr/lib/systemd/system/multi-user.target.wants
+	mkdir -p $(TARGET_DIR)/usr/lib/systemd/system/sysinit.target.wants
 	ln -sf ../suderra-watchdog.service \
-		$(TARGET_DIR)/usr/lib/systemd/system/multi-user.target.wants/suderra-watchdog.service
+		$(TARGET_DIR)/usr/lib/systemd/system/sysinit.target.wants/suderra-watchdog.service
 endef
 
 $(eval $(generic-package))

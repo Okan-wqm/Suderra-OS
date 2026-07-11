@@ -21,7 +21,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/run/suderra
+# /run tmpfs her boot sıfırdan gelir; ReadWritePaths=/run/suderra var-olmayan
+# dizinde namespace kurulumunu (ExecStart'tan ÖNCE) 226/NAMESPACE ile patlatırdı.
+# RuntimeDirectory systemd'ye /run/suderra'yı ExecStart'tan önce oluşturtur;
+# Preserve=yes ile install/mark-good yollarının okuduğu floor dosyası kalıcı olur.
+RuntimeDirectory=suderra
+RuntimeDirectoryPreserve=yes
 DevicePolicy=closed
 DeviceAllow=/dev/tpmrm0 rw
 DeviceAllow=/dev/tpm0 rw

@@ -219,7 +219,7 @@ fn quote(ctx: &Ctx, args: &QuoteArgs) -> Result<()> {
     let tmp = tempdir_in(&ctx.dir)?;
     let msg = tmp.join("quote.msg");
     let sig = tmp.join("quote.sig");
-    let pcr = tmp.join("quote.pcr");
+    let quote_pcr = tmp.join("quote.pcr");
     ctx.tpm.run(
         "tpm2_quote",
         &[
@@ -234,15 +234,21 @@ fn quote(ctx: &Ctx, args: &QuoteArgs) -> Result<()> {
             "-s",
             pstr(&sig)?,
             "-o",
-            pstr(&pcr)?,
+            pstr(&quote_pcr)?,
         ],
     )?;
+    // pcrs_sha256_hex, baseline ile AYNI temsilden (tpm2_pcrread -o) hesaplanır;
+    // aksi halde tpm2_quote'un -o çıktısı (TPML_PCR framing) baseline'ın
+    // tpm2_pcrread çıktısıyla asla eşleşmez ve verify-local her zaman yanlış
+    // "kurcalanmış" hatası verirdi. (quote_pcr yalnız quote üretimi için gerekli.)
+    let pcr_read = tmp.join("pcrread.bin");
+    ctx.tpm.pcr_read_to(&pcr_read)?;
     let evidence = Evidence {
         schema: EVIDENCE_SCHEMA.to_string(),
         nonce: args.nonce.clone(),
         quote_msg_b64: b64(&std::fs::read(&msg)?),
         quote_sig_b64: b64(&std::fs::read(&sig)?),
-        pcrs_sha256_hex: sha256_hex_of(&pcr)?,
+        pcrs_sha256_hex: sha256_hex_of(&pcr_read)?,
         ak_pub_pem: std::fs::read_to_string(ctx.ak_pub_path())
             .context("AK pub okunamadı — önce `setup` çalıştırın")?,
     };
@@ -263,18 +269,27 @@ fn verify_local(ctx: &Ctx, args: &VerifyArgs) -> Result<()> {
     if evidence.schema != EVIDENCE_SCHEMA {
         bail!("beklenmeyen evidence şeması: {}", evidence.schema);
     }
+    // AK PİNLEME: quote, evidence'ın İÇİNDEKİ AK ile değil, cihazın SAKLANAN
+    // kalıcı AK'sıyla (setup'ta 0x81010001 → ak.pub.pem) doğrulanmalı. Aksi halde
+    // saldırgan kendi AK'sıyla tutarlı bir quote üretip evidence'a kendi pub'ını
+    // koyar ve self-verify "GEÇTİ" derdi (fail-open). Saklanan AK yoksa yerel
+    // doğrulama anlamsızdır → fail-closed.
+    let pinned_ak = ctx.ak_pub_path();
+    let pinned_pem = std::fs::read_to_string(&pinned_ak)
+        .context("saklanan AK pub yok (önce `setup`) — yerel doğrulama AK pinlemesi gerektirir")?;
+    if pinned_pem.trim() != evidence.ak_pub_pem.trim() {
+        bail!("evidence AK pub'ı cihazın saklanan AK'sıyla eşleşmiyor (forged evidence?)");
+    }
     let tmp = tempdir_in(&ctx.dir)?;
-    let ak = tmp.join("ak.pub.pem");
     let msg = tmp.join("q.msg");
     let sig = tmp.join("q.sig");
-    std::fs::write(&ak, evidence.ak_pub_pem.as_bytes())?;
     std::fs::write(&msg, unb64(&evidence.quote_msg_b64)?)?;
     std::fs::write(&sig, unb64(&evidence.quote_sig_b64)?)?;
     ctx.tpm.run(
         "tpm2_checkquote",
         &[
             "-u",
-            pstr(&ak)?,
+            pstr(&pinned_ak)?,
             "-m",
             pstr(&msg)?,
             "-s",

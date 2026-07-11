@@ -198,15 +198,9 @@ fn step_rollback_anchor(tpm: &Tpm) -> Result<()> {
     tpm.nv_define_counter(ROLLBACK_NV_INDEX)
         .context("NV counter tanımlanamadı")?;
     if let Some(epoch) = ota_conf_epoch() {
-        let mut nv = tpm.nv_read_counter(ROLLBACK_NV_INDEX)?;
-        while nv < epoch {
-            tpm.nv_increment(ROLLBACK_NV_INDEX)?;
-            nv = tpm.nv_read_counter(ROLLBACK_NV_INDEX)?;
-        }
-        info!(
-            epoch,
-            nv, "TPM-NV rollback çıpası imaj epoch'una yükseltildi"
-        );
+        // Ortak, sınırlı, strict-advance yükseltme (suderra_config::tpm).
+        tpm.nv_raise_to(ROLLBACK_NV_INDEX, epoch)?;
+        info!(epoch, "TPM-NV rollback çıpası imaj epoch'una yükseltildi");
     }
     Ok(())
 }

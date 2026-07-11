@@ -12,7 +12,14 @@
 [Unit]
 Description=Suderra hardware watchdog owner (feed + tiered escalation)
 Documentation=https://github.com/Okan-wqm/Suderra-OS
-After=multi-user.target
+# Donanım watchdog'unu MÜMKÜN OLDUĞUNCA ERKEN beslemeye başla: erken boot'ta
+# takılan bir servis, geç başlayan bir watchdog tarafından yakalanamaz.
+# (Sağlık-probe HEALTH_UNIT default BOŞ olduğundan agent'ı beklemesi gerekmez.)
+DefaultDependencies=no
+After=local-fs.target systemd-modules-load.service
+Before=sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 Type=simple
@@ -44,4 +51,4 @@ StandardError=journal
 SyslogIdentifier=suderra-watchdog
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target

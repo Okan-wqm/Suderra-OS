@@ -123,6 +123,24 @@ Sunucu **icat edilmez** — "gereksiz kod yazma" ilkesi.
 - **Donanım (Dalga 7 / G5):** gerçek TPM'de seal/unseal, NV kalıcılığı, PCR
   ölçümleri — `production_ready:false` bu kanıt gelene dek dürüstçe korunur.
 
+### Cihaz-üstü çalıştırma wiring'i (dürüst sınır — kod incelemesinde bulundu)
+
+- **RT-6 (anti-rollback) firstboot'a BAĞIMLI DEĞİLDİR:** `suderra-ota floor sync`
+  NV counter'ı **idempotent kendisi tanımlar**; böylece prod OTA yolu, firstboot
+  güven-tesis binary'sinin çalışıp çalışmamasından bağımsız fail-closed doğru
+  çalışır. `suderra-ota-floor.service` `/run/suderra`'yı `RuntimeDirectory` ile
+  oluşturur (aksi halde namespace kurulumu ExecStart'tan önce patlardı).
+- **RT-2 / RT-3 (attestation + kimlik) cihaz-üstü çalıştırması BEKLİYOR:** kod +
+  birim testi + paketleme hazır, ancak `suderra-firstboot` Rust binary'si bugün
+  hiçbir imajda ÇALIŞMIYOR — board overlay'deki placeholder shell unit
+  (`/etc/systemd/system/suderra-firstboot.service`, machine-id + dizinler)
+  paket unit'ini (`/usr/lib/.../suderra-firstboot.service`, binary'yi çağıran)
+  isim-gölgeler ve prod'da firstboot hiç enable edilmez. Bu binary'yi prod'da
+  devreye almak (placeholder unit'i binary'yle birleştirmek + prod'da enable) ve
+  swtpm/G5 kanıtı **Dalga 3'ün kalan wiring adımıdır**; register bunu açık
+  bırakır. Bu yüzden RT-2/RT-3 "kod uygulandı, cihaz-üstü wiring + kanıt bekliyor"
+  olarak işaretlenir — "sahada çalışıyor" DEĞİL.
+
 ## Sonuçlar
 
 - Olumlu: RT-2/RT-3/RT-6 yazılım tarafı gerçek koda kavuştu; shipped tpm2-tools

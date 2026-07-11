@@ -80,7 +80,45 @@ fi
 if sed -n '/^prod | production/,/;;/p' "${FIREWALL}" | grep -q 'appliance-locked'; then
     fail "prod selection must not depend on a writable /var/lib marker"
 fi
+
+# FAIL-CLOSED: /etc/os-release okunamıyorsa (güven kökü yok) appliance ruleset
+# seçilmeli — provisioning (SSH açık) DEĞİL.
+grep -Eq '\[ ! -r /etc/os-release \]' "${FIREWALL}" \
+    || fail "unreadable os-release must be handled explicitly (fail-closed)"
+awk '/! -r \/etc\/os-release/{f=1} f&&/nftables.conf/{print; exit}' "${FIREWALL}" | grep -q 'nftables.conf' \
+    || fail "unreadable os-release must select the appliance ruleset (/etc/nftables.conf)"
 echo "PASS: NEW-5 prod-locked-by-default firewall selector contract"
+
+# Fonksiyonel duman testi: sahte os-release'lerle seçiciyi çalıştır, nft'yi
+# yakalayan bir stub ile HANGİ ruleset'in seçildiğini gözle. nft `-f <ruleset>`
+# aldığından stub $2'yi (ruleset yolu) bildirir.
+smoke_dir="$(mktemp -d)"
+trap 'rm -rf "${smoke_dir}"' EXIT
+mkdir -p "${smoke_dir}/bin"
+printf '#!/bin/sh\necho "SELECTED:$2"\n' > "${smoke_dir}/bin/nft"
+chmod +x "${smoke_dir}/bin/nft"
+run_fw() { # $1 = os-release içeriği ya da MISSING ; $2 = etiket
+    _root="${smoke_dir}/root-$2"
+    mkdir -p "${_root}/etc" "${_root}/var/lib/suderra"
+    [ "$1" = "MISSING" ] || printf '%s\n' "$1" > "${_root}/etc/os-release"
+    # Yalnız os-release, nft binary ve marker dizinini stub root'a yönlendir;
+    # nftables ruleset yolları OLDUĞU GİBİ kalsın ki çıktı kesin eşleşsin.
+    sed -e "s#/etc/os-release#${_root}/etc/os-release#g" \
+        -e "s#/usr/sbin/nft#${smoke_dir}/bin/nft#g" \
+        -e "s#/var/lib/suderra#${_root}/var/lib/suderra#g" \
+        "${FIREWALL}" > "${_root}/fw.sh"
+    sh "${_root}/fw.sh" 2>/dev/null
+}
+# Prod → appliance (tam /etc/nftables.conf, provisioning DEĞİL).
+[ "$(run_fw 'VARIANT="prod"' prod)" = "SELECTED:/etc/nftables.conf" ] \
+    || fail "smoke: prod variant must select the appliance ruleset"
+# os-release yok → appliance (fail-closed).
+[ "$(run_fw MISSING missing)" = "SELECTED:/etc/nftables.conf" ] \
+    || fail "smoke: missing os-release must fail closed to appliance"
+# Dev + marker yok → provisioning.
+[ "$(run_fw 'VARIANT="dev"' dev)" = "SELECTED:/etc/nftables.provisioning.conf" ] \
+    || fail "smoke: dev without lock marker must select provisioning ruleset"
+echo "PASS: firewall selector functional smoke (prod/missing→appliance, dev→provisioning)"
 
 # ---------------------------------------------------------------------------
 # 2. RUNTIME nft -c doğrulaması (nft varsa)
