@@ -12,7 +12,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -21,7 +21,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const MANIFEST_SCHEMA: &str = "suderra.os-update-manifest.v1";
 const STATE_SCHEMA: &str = "suderra.ota-state.v1";
@@ -265,13 +265,18 @@ fn rollback(args: RollbackArgs) -> Result<()> {
 
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
     let mut state = load_state()?;
-    let requested_version = args.version;
-    let version = requested_version
-        .or_else(|| state.pending_version.clone())
+    // mark-good YALNIZCA gerçekten pending (doğrulanmış install ile stage edilmiş)
+    // bir sürümü onaylar. `--version` verildiyse pending ile ÖRTÜŞMELİDİR; aksi
+    // halde pending olmayan keyfi bir sürüm current_version/rollback_floor'u
+    // yükseltip cihazı bu değerin altındaki her meşru update'e karşı kalıcı olarak
+    // kilitleyebilirdi (install olmadan tetiklenen DoS).
+    let version = state
+        .pending_version
+        .clone()
         .ok_or_else(|| anyhow!("no pending version to mark good"))?;
-    if let Some(pending) = state.pending_version.as_deref() {
-        if pending != version {
-            bail!("mark-good version {version} does not match pending version {pending}");
+    if let Some(requested) = args.version.as_deref() {
+        if requested != version {
+            bail!("mark-good version {requested} does not match pending version {version}");
         }
     }
     if let Some(expected_slot) = state.pending_boot_slot.as_deref() {
@@ -357,8 +362,11 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     }
     let signature_bytes = decode_fixed_hex::<64>(&signature.signature_hex, "signature_hex")?;
     let signature = Signature::from_bytes(&signature_bytes);
+    // `verify_strict`: non-canonical imza / karışık-sıra key reddedilir (malleability
+    // kapatılır). Meşru imzalayıcı canonical imza ürettiğinden gerçek manifest'ler
+    // etkilenmez.
     public_key
-        .verify(&manifest_signing_bytes(manifest)?, &signature)
+        .verify_strict(&manifest_signing_bytes(manifest)?, &signature)
         .context("manifest signature verification failed")?;
     Ok(())
 }
@@ -637,11 +645,49 @@ fn read_rollback_floor() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Prod binary'de güvenlik-kritik davranış env ile DEĞİŞTİRİLEMEZ. Bu bayrak
-/// açıkken tüm test/dev override'ları yok sayılır (fail-closed). Non-prod (dev,
-/// lab, CI-smoke) binary'lerde override'lar test kolaylığı için etkindir.
+/// Cihazın gerçekten bir ÜRETİM cihazı olup olmadığı. GÜVEN KÖKÜ, dm-verity
+/// altındaki imzalı, salt-okunur `/etc/os-release`'in `VARIANT`/`VARIANT_ID`
+/// alanıdır — `suderra-installer::variant` ile AYNI kök (ADR-0008; ileride
+/// paylaşılan crate'e çıkarılacak). Bu bayrak `dev_override()`'ı kapılar: gerçek
+/// prod cihazda hiçbir environment değişkeni güvenlik davranışını GEVŞETEMEZ.
+///
+/// Env `SUDERRA_OTA_PRODUCTION=1` yalnız sınıflandırmayı ÜRETİM yönünde
+/// SIKILAŞTIRABİLİR (CI/dev'de prod davranışını zorlamak için); prod'u dev'e
+/// çekemez. VARIANT hiç yoksa (Suderra olmayan host / CI) dev sayılır; gerçek
+/// prod imajın `VARIANT=prod` taşıdığı `enforce_production_contract` build
+/// kapısıyla garanti edilir (fail-open residual'ı build katmanında kapatır).
 fn is_production() -> bool {
+    if os_release_variant().is_some_and(|v| variant_is_prod(&v)) {
+        return true;
+    }
     std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1")
+}
+
+/// İmzalı `/etc/os-release`'ten `VARIANT`/`VARIANT_ID` değerini okur.
+fn os_release_variant() -> Option<String> {
+    let content = fs::read_to_string("/etc/os-release").ok()?;
+    for line in content.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            if matches!(key, "VARIANT" | "VARIANT_ID") {
+                let v = value.trim().trim_matches('"').trim().to_string();
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Normalize edilmiş varyant üretim mi? (`suderra-installer::variant::value_is_prod`
+/// ile aynı sözleşme.)
+fn variant_is_prod(value: &str) -> bool {
+    let v = value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    v == "prod" || v == "production" || v.starts_with("prod-") || v.starts_with("prod_")
 }
 
 /// Test/dev-only env override okuyucu. Prod'da `None` döner; böylece expiry,
@@ -698,36 +744,67 @@ fn running_image_version() -> Option<String> {
     None
 }
 
+/// Prod anti-rollback KATMANLI bir politikadır (ADR-0008):
+///
+/// - **Tier 2 (donanım-çıpalı, güçlü):** `SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE`
+///   `tpm-nv`/`bootloader-monotonic` olarak BEYAN edilmişse KATI doğrulanır:
+///   kaynak yolu zorunludur, yazılabilir state dizininin DIŞINDA yaşamalı ve
+///   okunabilir+geçerli SemVer üretmelidir. Aksi halde fail-closed.
+/// - **Tier 1 (userspace floor — bugünün dürüst durumu):** kaynak beyan
+///   edilmemişse `/data` üzerindeki monotonik floor tek anti-rollback katmanıdır
+///   (HW-5'te "userspace-only" olarak dokümante). Cihaz KİLİTLENMEZ; ama bu, bir
+///   donanım çıpası olmadığını `degraded` seviyesinde AÇIKÇA sinyaller. Kritik
+///   olan: bu cihazda `is_production()` true olduğundan `dev_override` KAPALIDIR
+///   — yani floor env ile kurcalanamaz. Tier 2'ye geçiş G5 donanım kanıtıyla
+///   `production_ready` flip'inde tamamlanır.
+///
+/// Bu ayrım, NEW-1'in kök nedenini kapatır: eskiden tek bir env bayrağı hem
+/// dev-override reddini hem de TPM-NV zorunluluğunu birden kapılıyor ve hiçbir
+/// cihazda set edilmediğinden ikisi de ölüydü.
 fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
     if !is_production() {
         return Ok(());
     }
-    match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE").ok().as_deref() {
-        Some("tpm-nv") | Some("bootloader-monotonic") => {}
+    match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE")
+        .ok()
+        .as_deref()
+    {
+        Some("tpm-nv") | Some("bootloader-monotonic") => {
+            // Tier 2: kaynak beyan edildi → KATI doğrula. Floor'un GERÇEKTEN
+            // okunacağı yol zorunlu ve yazılabilir state dizininin dışında olmalı;
+            // yoksa "TPM-destekli" iddia teatral kalır (saldırgan /data'daki
+            // dosyayı silip floor'u düşüremesin).
+            let path = trusted_floor_path().ok_or_else(|| {
+                anyhow!("declared monotonic rollback floor source requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")
+            })?;
+            let sdir = state_dir();
+            if path.starts_with(&sdir) {
+                bail!(
+                    "rollback floor source path {} must not live under the writable state dir {}",
+                    path.display(),
+                    sdir.display()
+                );
+            }
+            trusted_rollback_floor()?.ok_or_else(|| {
+                anyhow!("monotonic rollback floor source is configured but produced no value")
+            })?;
+            Ok(())
+        }
         Some(other) => bail!(
-            "production anti-rollback requires TPM NV or bootloader monotonic state, got {other}"
+            "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE must be tpm-nv or bootloader-monotonic, got {other}"
         ),
-        None => bail!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE=tpm-nv or bootloader-monotonic"),
+        None => {
+            // Tier 1: donanım çıpası beyan edilmemiş → userspace /data floor tek
+            // katman. Kilitlemek yerine degraded-mode sinyali ver (sessiz değil).
+            warn!(
+                tier = "userspace-floor",
+                "anti-rollback donanım çıpası (TPM-NV/bootloader) yapılandırılmamış; \
+                 /data üzerindeki monotonik floor tek katman (HW-5, G5'te kapanır). \
+                 dev_override bu cihazda kapalı olduğundan floor env ile kurcalanamaz."
+            );
+            Ok(())
+        }
     }
-    // Floor'un GERÇEKTEN okunacağı kaynak yolu zorunlu olmalı ve yazılabilir
-    // state dizininin dışında yaşamalı — yoksa "TPM-destekli" iddiası teatral
-    // kalır (saldırgan /data'daki dosyayı silip floor'u düşürebilir).
-    let path = trusted_floor_path().ok_or_else(|| {
-        anyhow!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH backed by the declared monotonic source")
-    })?;
-    let sdir = state_dir();
-    if path.starts_with(&sdir) {
-        bail!(
-            "rollback floor source path {} must not live under the writable state dir {}",
-            path.display(),
-            sdir.display()
-        );
-    }
-    // Kaynak okunabilir ve geçerli olmalı (fail-closed).
-    trusted_rollback_floor()?.ok_or_else(|| {
-        anyhow!("production rollback floor source is configured but produced no value")
-    })?;
-    Ok(())
 }
 
 fn state_dir() -> PathBuf {
@@ -1034,6 +1111,45 @@ mod tests {
         std::env::remove_var("SUDERRA_OTA_PRODUCTION");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+    }
+
+    #[test]
+    fn tier1_userspace_floor_does_not_brick_prod() {
+        // Prod cihaz + donanım çıpası BEYAN EDİLMEMİŞ → Tier 1: gate kilitlemez
+        // (Ok), userspace /data floor tek katman olarak enforce edilmeye devam eder.
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+        assert!(
+            production_rollback_floor_requires_monotonic_state().is_ok(),
+            "kaynak beyan edilmediğinde prod OTA kilitlenmemeli (Tier 1)"
+        );
+        // Beyan edilen ama geçersiz bir kaynak tipi ise fail-closed.
+        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "file");
+        assert!(
+            production_rollback_floor_requires_monotonic_state().is_err(),
+            "geçersiz kaynak tipi reddedilmeli"
+        );
+        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
+    }
+
+    #[test]
+    fn variant_classification_matches_installer_contract() {
+        for v in [
+            "prod",
+            "PROD",
+            "\"prod\"",
+            "production",
+            "prod-eu",
+            "prod_eu",
+        ] {
+            assert!(variant_is_prod(v), "{v} prod sayılmalı");
+        }
+        for v in ["dev", "lab", "", "staging", "preprod"] {
+            assert!(!variant_is_prod(v), "{v} prod SAYILMAMALI");
+        }
     }
 
     #[test]

@@ -1,0 +1,21 @@
+# Suderra OS — egress hedef beyanı (ÖRNEK ŞABLON — AKTİF DEĞİL)
+#
+# Bu dosya `.example` uzantılı olduğundan nftables include glob'una
+# (`/etc/suderra/egress.d/*.nft`) GİRMEZ; yalnızca formatı gösterir.
+#
+# Commissioning: cihazın çıkabileceği hedefleri buradaki gibi beyan edip
+# `/etc/suderra/egress.d/<isim>.nft` olarak imzalı imaj overlay'ine koyun
+# (verified-boot'un parçası; runtime'da değiştirilemez). CIDR veya tek IP.
+#
+# Boş bırakılırsa (hiç .nft yoksa) egress FAIL-CLOSED'dur: cihaz o portlardan
+# hiçbir hedefe çıkamaz. Bu, endüstriyel least-privilege (IEC 62443) varsayılanıdır.
+#
+# ---------------------------------------------------------------------------
+# add element inet filter egress_update { 203.0.113.10 }         # OTA/update sunucusu (443)
+# add element inet filter egress_cloud  { 198.51.100.0/24 }      # cloud API + MQTT broker (443/8883)
+# add element inet filter egress_field  { 10.10.0.0/16 }         # PLC/HMI subnet (502/4840)
+# add element inet filter egress_infra  { 10.10.0.1, 10.10.0.2 } # DNS + NTP (53/123)
+# ---------------------------------------------------------------------------
+#
+# Akuakültür sahası örneği: sensör/pompa PLC'leri egress_field'da, bulut
+# telemetri broker'ı egress_cloud'da, saha DNS/NTP'si egress_infra'da beyan edilir.

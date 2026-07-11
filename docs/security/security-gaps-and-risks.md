@@ -5,7 +5,10 @@
 > temelinde doğrulanmıştır. Spekülasyon yok; her madde koddan kanıtlıdır.
 >
 > Nasıl çalıştığının anlatımı için: [security-architecture.md](security-architecture.md).
-> Tarih: 2026-07-06.
+> Tarih: 2026-07-06. **Güncelleme 2026-07-11:** ikinci bağımsız uçtan-uca inceleme
+> (güvenlik + kod-doğruluğu + performans) yapıldı; yeni bulgular ve çözüm durumu
+> [Kategori 6](#kategori-6--ikinci-bağımsız-inceleme-2026-07-11)'da. Bütünsel çözüm
+> mimarisi: [ADR-0008](../architecture/ADR-0008-device-trust-architecture.md).
 
 ## Nasıl okunmalı — iki risk türü
 
@@ -197,3 +200,66 @@ kesin G4/G5 listesi olarak yazılı. Yeni "hata" değil; donanım gelince kapana
 5. **SC-3, SC-4, MIN-***: hijyen — non-prod TLS sıkılaştırma, native sigstore, ölü anahtar,
    workspace lints.
 6. **HW-1..HW-4 (G4/G5)**: donanım geldiğinde — ADR-0007'deki turnkey liste.
+
+---
+
+## Kategori 6 — İkinci bağımsız inceleme (2026-07-11)
+
+Dört bağımsız agent (build/CI performansı, runtime/boot ayak izi, bağımsız güvenlik
+doğrulama + yeni-bug avı, Rust kod-doğruluğu) + çapraz-doğrulama. Kategori 1–5
+teyit edildi (register sağlam). Aşağıdakiler **register'da OLMAYAN** yeni bulgular ve
+her birinin çözüm durumudur. Bütünsel mimari:
+[ADR-0008](../architecture/ADR-0008-device-trust-architecture.md).
+
+### Yeni güvenlik bulguları
+
+| # | Bulgu | Ciddiyet | Durum |
+|---|---|---|---|
+| NEW-1 | OTA `is_production()` yalnız hiçbir yerde set edilmeyen env'le true → anti-rollback trusted-floor + dev-override reddi her cihazda ölü; env ile bypass | **Yüksek** | **Çözüldü** (Dalga 1): prod-tespiti imzalı os-release VARIANT'ından; anti-rollback katmanlı (Tier-1/2); build gate VARIANT=prod assert eder |
+| NEW-2 | nftables egress hedefe göre kısıtsız (exfiltration; 502/4840 lateral) | Orta | **Çözüldü — politika** (Dalga 4): appliance ruleset'i fail-closed named-set allow-list'e çevrildi (egress_update/cloud/field/infra), imzalı RO `/etc/suderra/egress.d/*.nft`'ten doldurulur, `nft -c` ile doğrulandı + contract test. **Sahada aktifleşmesi NEW-5'e bağlı** (cihazın appliance-locked ruleset'e geçmesi) |
+| NEW-3 | `variant::is_production()` env ile prod'u DOWNGRADE edebiliyordu (+ boş-env fail-open) | Orta | **Çözüldü** (Dalga 1) |
+| NEW-4 | `suderra-agent.service` indirilen harici ajana `/dev/tpm0`+`/dev/watchdog` veriyor | Orta | Açık — ADR-0008 Dalga 4 (capability mediation) |
+| NEW-5 | Appliance firewall prod'da aktive olmuyor; provisioning ruleset kalıcı default | Düşük | Açık — ADR-0008 Dalga 4 |
+| NEW-6 | Dev firstboot provisioning parolasını `/dev/console`'a basıyor (dev-only) | Düşük | Açık — Dalga 4 |
+| NEW-7 | Ed25519 `verify` (strict değil) + non-canonical imza serileştirme | Düşük | **Kısmen çözüldü** (Dalga 1: `verify_strict`); canonical-bytes signer değişikliği açık |
+
+### Kod-doğruluğu bug'ları (gerçek crate'ler)
+
+| # | Bulgu | Ciddiyet | Durum |
+|---|---|---|---|
+| C-1 | `variant::is_production()` set-but-empty env → fail-open | Orta | **Çözüldü** (Dalga 1) |
+| C-2 | Watchdog besleme aralığı donanım timeout'una kısıtsız → sağlıklı cihazı reset döngüsü | Orta | **Çözüldü** (Dalga 1) |
+| C-3 | Watchdog tick'inde timeout'suz `systemctl` → wedge kick açlığı → reset | Orta | **Çözüldü** (Dalga 1) |
+| C-4 | `mark-good --version X` pending yokken floor'u kalıcı yükseltir → update-kilidi DoS | Orta | **Çözüldü** (Dalga 1) |
+| C-5 | `restart_after + 1` overflow (hostile env) | Düşük | **Çözüldü** (Dalga 1, `saturating_add`) |
+| C-6 | TOCTOU (verify→use) OTA bundle / installer manifest | Düşük–Orta | Açık |
+| C-7 | Non-SemVer `VERSION_ID` OTA'yı bricker (fail-closed availability) | Düşük | Açık |
+
+### Register kalemlerinde ilerleme
+
+- **RT-1** (`/data` LUKS2 provisioning yok) → **Çözüldü** (ADR-0008 Dalga 2): `suderra-data-provision`, TPM2-seal default + fail-closed; runtime kanıtı QEMU-swtpm/G5.
+- **RT-5** (`systemd-cryptsetup` yok) → **Çözüldü** (Dalga 2): 3 prod defconfig'te `BR2_PACKAGE_SYSTEMD_CRYPTSETUP=y`.
+- **DOC-1** (`/data` LUKS iddiası, kod yok) → **Çözüldü** (Dalga 2, provisioning uygulandı).
+- **RT-6** (TPM-NV anti-rollback etiket) → NEW-1 ile derinleşti; Tier-2 kaynağı ADR-0008 Dalga 3'te (gerçek TPM-NV).
+- **DOC-2 / DOC-3** → **Çözüldü** (Dalga 5): ARCHITECTURE ağ yüzeyi OS/iş-yükü ayrımıyla netleşti; ROADMAP gerçek-durum tablosuyla hizalandı.
+
+### Performans bulguları (özet — ADR-0008 Dalga 6)
+
+- **Build/CI:** cross-toolchain her build'de sıfırdan; dl/ccache cache defconfig-parçalı + `restore-keys` yok → 10 GB bütçe eviction thrash; Docker builder run başına ~5× layer-cache'siz; redundant smoke/parse + `msrv` cache'siz.
+- **Footprint (çoğu iyi optimize):** **Çözüldü** → kullanılmayan `reqwest` `ota`/`telemetry`/`attestation`'dan çıkarıldı (MIN-2); `tokio` `full` yerine crate-başı feature (48 satır transitive dep düştü); `i2c-tools` prod'dan çıkarıldı. **Açık:** ikili TLS yığını (OpenSSL+rustls, M-effort); `tpm2-tools` prod'da (post-image gate + Wave 3 attestation'a bağlı); `network-online.target` DHCP boot-stall (~120 s, boot-test gerekir).
+- **Hijyen:** **Çözüldü** → workspace-geneli `unsafe_code = "deny"` + hedefli watchdog allow (MIN-3, negatif testle kanıtlı).
+
+### Adversarial review turu — bu PR'ın kendi diff'i (2026-07-11)
+
+PR'ın diff'i bağımsız bir reviewer + kendi kritik okumamla adversarial denetlendi; 8 bulgu, hepsi **düzeltildi**:
+
+| # | Bulgu | Ciddiyet | Çözüm |
+|---|---|---|---|
+| F6 | Watchdog kalıcı probe-timeout'ta escalate etmiyor + beslemeye devam → hung cihaz asla reset olmuyor | Orta (safety) | Timeout artık "sağlık doğrulanamadı → fail-safe sağlıksız" sayılıyor; kalıcı wedge escalate eder |
+| F4 | Firewall `nft -f` yüklenmezse hiç ruleset yok → default ACCEPT (fail-OPEN) | Yüksek | `suderra-firewall` yükleme başarısızsa hardcoded minimal drop-all uygular (fail-closed) |
+| F1 | Keyfile ile provision edilen cihaz keyfile ile açılamıyordu (unlock yalnız TPM) | Orta | `suderra-data-unlock`'a simetrik keyfile-unlock yolu eklendi |
+| F2 | İlk-boot enroll'undan önceki crash /data'yı kalıcı brick'liyor | Orta | Gerçek anahtar mkfs'ten ÖNCE enroll ediliyor (kırılgan pencere minimal) |
+| F8 | Prod-label sözleşmesi 3 katmanda çelişiyor (`prod-eu` → plaintext dev-mount) | Düşük | `suderra-data-unlock` case'i `prod/production/prod-*/prod_*`'a hizalandı + lowercasing |
+| F3 | luksFormat mevcut fs/bozuk-header'ı sessizce silebiliyor | Düşük-Orta | luksFormat öncesi `blkid` guard (force override hariç) |
+| F7 | Unhealthy tick'te probe+systemctl ~timeout'a yaklaşabilir | Düşük | probe_budget = interval/2 (tick işi ≤ interval) |
+| F5 | os-release yoksa is_production fail-open | Düşük | Cihazda `VARIANT=prod` build-gate garantisiyle erişilemez (dokümante) |

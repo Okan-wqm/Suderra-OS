@@ -28,3 +28,6 @@ nix = { workspace = true }
 sd-notify = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
+
+[lints]
+workspace = true

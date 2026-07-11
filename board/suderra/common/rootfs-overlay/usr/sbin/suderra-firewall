@@ -7,4 +7,31 @@ else
     rules=/etc/nftables.provisioning.conf
 fi
 
-exec /usr/sbin/nft -f "${rules}"
+# Fail-closed (F4): birincil ruleset herhangi bir sebeple yüklenemezse (kernel
+# netfilter modülü, desteklenmeyen set tipi, gelecekte malformed bir egress.d
+# fragment'ı), `nft -f` tüm ruleset'i reddeder ve HİÇBİR ŞEY uygulanmaz →
+# default policy ACCEPT = tam fail-OPEN. Bunun yerine cihazı hardcoded minimal
+# drop-all ile kilitle: bağlantı kesilir (görünür semptom) ama açık kalmaz.
+if /usr/sbin/nft -f "${rules}"; then
+    exit 0
+fi
+
+echo "suderra-firewall: '${rules}' yüklenemedi; fail-closed minimal drop-all uygulanıyor" >&2
+/usr/sbin/nft -f - <<'NFT'
+flush ruleset
+table inet filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif "lo" accept
+        ct state established,related accept
+    }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+    chain output {
+        type filter hook output priority filter; policy drop;
+        oif "lo" accept
+        ct state established,related accept
+    }
+}
+NFT

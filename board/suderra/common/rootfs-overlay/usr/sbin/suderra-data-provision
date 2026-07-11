@@ -1,0 +1,130 @@
+#!/bin/sh
+# suderra-data-provision — ilk boot'ta /data'yı LUKS2 olarak provision eder (RT-1).
+#
+# Sözleşme (ADR-0008, Dalga 2):
+#   - İDEMPOTENT: partition zaten LUKS2 ise hiçbir şey yapmaz (çıkış 0). Yıkıcı
+#     luksFormat YALNIZ ham/formatsız partition'da çalışır — mevcut veriyi asla
+#     ezmez.
+#   - FAIL-CLOSED: prod'da anahtar tesis edilemezse ASLA düz/şifresiz veya zayıf
+#     bir /data bırakmaz; die() ile çıkar (data-unlock unlock'u da başarısız olur,
+#     boot degraded olur ama sır sızmaz).
+#   - Anahtar custody KATMANLI:
+#       * tpm2 (DEFAULT, donanım kökü): anahtar TPM2'ye PCR-policy ile seal edilir;
+#         /data yalnız kurcalanmamış boot state'te açılır. RevPi SLB9670 / x86 fTPM.
+#       * keyfile (ZAYIF tier): anahtar imajdaki bir dosyada — donanım kökü yok,
+#         imajı olan çözebilir. YALNIZ açık `SUDERRA_DATA_KEY_MODE=keyfile` opt-in'i
+#         ile (imzalı config'ten gelmeli). Hiçbir board bunu SESSİZCE seçmez.
+#       * auto (default): TPM varsa tpm2, yoksa FAIL (zayıf tier'a sessizce düşmez).
+#
+# Yıkıcı open/mkfs ve TPM-seal davranışının gerçek doğrulaması CI QEMU-swtpm lane'i
+# ve G5 donanım kanıtındadır; header (format/enroll) işlemleri loopback contract
+# testiyle burada doğrulanır.
+set -eu
+
+data_dev="${SUDERRA_DATA_DEVICE:-/dev/disk/by-partlabel/data}"
+mapper="${SUDERRA_DATA_MAPPER:-suderra-data-provision}"
+key_mode="${SUDERRA_DATA_KEY_MODE:-auto}"
+tpm_dev="${SUDERRA_DATA_TPM2_DEVICE:-auto}"
+# Secure-boot/boot-state PCR: boot zinciri değişirse TPM seal açılmaz (fail-secure).
+tpm_pcrs="${SUDERRA_DATA_TPM2_PCRS:-7}"
+keyfile="${SUDERRA_DATA_KEYFILE:-/etc/suderra/data.key}"
+
+log() { echo "suderra-data-provision: $*" >&2; }
+die() { log "FATAL: $*"; exit 1; }
+
+command -v cryptsetup >/dev/null 2>&1 || die "cryptsetup missing; cannot provision /data"
+[ -e "${data_dev}" ] || die "data device missing: ${data_dev}"
+
+# --- İdempotency: zaten provision edilmişse dokunma. ------------------------
+if cryptsetup isLuks "${data_dev}" 2>/dev/null; then
+    v="$(cryptsetup luksDump "${data_dev}" 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -n1)"
+    [ "${v}" = "2" ] || die "device ${data_dev} is LUKS but not v2 — refusing to touch existing data"
+    log "already provisioned (LUKS2); nothing to do"
+    exit 0
+fi
+
+# --- Anahtar modu çözümle (auto → tpm2 varsa, yoksa fail-closed). -----------
+have_tpm() { [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; }
+case "${key_mode}" in
+    auto)
+        if have_tpm; then
+            key_mode="tpm2"
+        else
+            die "no TPM present and SUDERRA_DATA_KEY_MODE unset; refusing to provision a weak keyfile /data. \
+Set SUDERRA_DATA_KEY_MODE=keyfile in the signed config to explicitly opt into the documented weaker tier."
+        fi
+        ;;
+    tpm2)
+        have_tpm || die "SUDERRA_DATA_KEY_MODE=tpm2 but no TPM device (/dev/tpm*) present"
+        ;;
+    keyfile)
+        : # açık opt-in — aşağıda uyarı basılır
+        ;;
+    *)
+        die "invalid SUDERRA_DATA_KEY_MODE: ${key_mode} (want auto|tpm2|keyfile)"
+        ;;
+esac
+
+# --- F3: mevcut veriyi koru — ham/formatsız OLMAYAN partition'ı EZME. --------
+# isLuks yukarıda false döndü; ama partition non-LUKS bir fs veya bozuk-LUKS imzası
+# taşıyorsa (yeniden-flash, manufacturing state, header bozulması) luksFormat onu
+# SESSİZCE silerdi. blkid bir imza bulursa reddet (explicit override hariç).
+if [ "${SUDERRA_DATA_FORCE_FORMAT:-0}" != "1" ] && command -v blkid >/dev/null 2>&1; then
+    if existing="$(blkid -o value -s TYPE "${data_dev}" 2>/dev/null)" && [ -n "${existing}" ]; then
+        die "refusing to format ${data_dev}: existing '${existing}' signature present \
+(set SUDERRA_DATA_FORCE_FORMAT=1 in signed config to override)"
+    fi
+fi
+
+# --- Ham partition'ı LUKS2 olarak kur (crash-safe sıralama). ----------------
+# (1) geçici bootstrap-key ile format, (2) GERÇEK anahtarı HEMEN enroll et
+# (TPM seal / keyfile), (3) bootstrap ile açıp mkfs, (4) bootstrap keyslot'unu
+# kaldır. Enroll'u mkfs'ten ÖNCE yapmak F2'yi azaltır: bir güç kesintisi yalnız
+# kısa format→enroll penceresinde açılamaz bir volume bırakır (/data boş, re-image);
+# enroll sonrası her crash'te volume gerçek anahtarla AÇILABİLİR kalır.
+bootstrap="$(mktemp)"
+chmod 600 "${bootstrap}"
+cleanup() { rm -f "${bootstrap}"; }
+trap cleanup EXIT INT TERM
+head -c 64 /dev/urandom > "${bootstrap}"
+
+log "formatting LUKS2 on ${data_dev} (key_mode=${key_mode})"
+cryptsetup luksFormat --type luks2 --batch-mode "${data_dev}" "${bootstrap}" \
+    || die "luksFormat failed"
+
+# Gerçek anahtarı mkfs'ten ÖNCE enroll et.
+case "${key_mode}" in
+    tpm2)
+        command -v systemd-cryptenroll >/dev/null 2>&1 \
+            || die "systemd-cryptenroll missing (enable BR2_PACKAGE_SYSTEMD_CRYPTSETUP)"
+        log "sealing /data key to TPM2 (device=${tpm_dev}, pcrs=${tpm_pcrs})"
+        systemd-cryptenroll "${data_dev}" \
+            --unlock-key-file="${bootstrap}" \
+            --tpm2-device="${tpm_dev}" \
+            --tpm2-pcrs="${tpm_pcrs}" \
+            || die "TPM2 enroll failed"
+        ;;
+    keyfile)
+        [ -r "${keyfile}" ] || die "keyfile mode but ${keyfile} is not readable"
+        log "WARNING: keyfile tier — /data key lives in the image (no hardware root of trust). \
+At-rest protection is limited; this must be an explicit, documented deployment choice."
+        cryptsetup luksAddKey --batch-mode --key-file "${bootstrap}" "${data_dev}" "${keyfile}" \
+            || die "keyfile enroll failed"
+        ;;
+esac
+
+# Bootstrap ile açıp mkfs (tek seferlik). Gerçek anahtar zaten enroll edildi.
+mapper_dev="/dev/mapper/${mapper}"
+cryptsetup open --key-file "${bootstrap}" "${data_dev}" "${mapper}" \
+    || die "opening freshly-formatted volume failed"
+if ! mkfs.ext4 -q -L SUDERRA-DATA "${mapper_dev}"; then
+    cryptsetup close "${mapper}" || true
+    die "mkfs on ${mapper_dev} failed"
+fi
+cryptsetup close "${mapper}" || die "closing bootstrap mapper failed"
+
+# Bootstrap keyslot'unu kaldır → volume artık YALNIZ gerçek anahtarla açılır.
+cryptsetup luksRemoveKey "${data_dev}" "${bootstrap}" \
+    || die "failed to remove bootstrap key — volume still openable with a discarded key"
+
+log "provisioning complete (${key_mode}); /data is LUKS2 encrypted-at-rest"

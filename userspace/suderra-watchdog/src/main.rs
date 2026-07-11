@@ -55,6 +55,7 @@ fn kick(dev: &mut File) -> Result<()> {
 
 /// `WDIOC_SETTIMEOUT` ile donanım watchdog süresini ayarlar; kernel'in kabul ettiği
 /// (yuvarladığı) gerçek değeri döndürür.
+#[allow(unsafe_code)] // donanım watchdog ioctl'i; gerekçe aşağıdaki SAFETY'de
 fn set_timeout(dev: &File, secs: i32) -> Result<i32> {
     let mut requested: libc::c_int = secs;
     // SAFETY: `dev` açık ve geçerli bir watchdog karakter aygıtı; `requested`
@@ -70,6 +71,7 @@ fn set_timeout(dev: &File, secs: i32) -> Result<i32> {
 }
 
 /// Cihazın raporladığı mevcut timeout'u okur (teşhis için; hata olması ölümcül değil).
+#[allow(unsafe_code)] // donanım watchdog ioctl'i; gerekçe aşağıdaki SAFETY'de
 fn get_timeout(dev: &File) -> Option<i32> {
     let mut current: libc::c_int = 0;
     // SAFETY: aynı gerekçe `set_timeout` ile; ioctl tek `int` çıktı yazar.
@@ -147,9 +149,9 @@ async fn main() -> Result<()> {
     let timeout_secs = env_u64("SUDERRA_WATCHDOG_TIMEOUT_SECS")
         .unwrap_or(60)
         .clamp(2, 3600) as i32;
-    let interval_secs = env_u64("SUDERRA_WATCHDOG_INTERVAL_SECS")
-        .unwrap_or((timeout_secs as u64) / 3)
-        .max(1);
+    // Besleme aralığı donanımın GERÇEKTEN uyguladığı timeout bilindikten sonra
+    // hesaplanır (cihaz açılınca); burada yalnız kullanıcı tercihini okuyoruz.
+    let interval_pref = env_u64("SUDERRA_WATCHDOG_INTERVAL_SECS");
     let require_hw = std::env::var("SUDERRA_WATCHDOG_REQUIRE_HW").ok().as_deref() == Some("1");
 
     let health_unit = std::env::var("SUDERRA_WATCHDOG_HEALTH_UNIT")
@@ -166,21 +168,27 @@ async fn main() -> Result<()> {
         .max(1);
     let reboot_after = env_u64("SUDERRA_WATCHDOG_REBOOT_AFTER")
         .unwrap_or(10)
-        .max(restart_after + 1);
+        .max(restart_after.saturating_add(1));
 
     // Donanım watchdog cihazını aç. Yoksa: prod'da fail-closed (REQUIRE_HW),
     // dev/QEMU'da yalnız systemd yazılım watchdog'una düşerek çalışmaya devam.
+    // Donanımın gerçekten uyguladığı timeout (yuvarlanmış olabilir); besleme
+    // aralığını bunun üzerinden kısıtlayacağız.
+    let mut applied_timeout_secs: Option<i32> = None;
     let mut hw_dev: Option<File> = match OpenOptions::new().read(false).write(true).open(&dev_path)
     {
         Ok(dev) => {
             match set_timeout(&dev, timeout_secs) {
-                Ok(applied) => info!(
-                    device = %dev_path,
-                    requested = timeout_secs,
-                    applied,
-                    reported = ?get_timeout(&dev),
-                    "donanım watchdog açıldı, timeout ayarlandı"
-                ),
+                Ok(applied) => {
+                    applied_timeout_secs = Some(applied);
+                    info!(
+                        device = %dev_path,
+                        requested = timeout_secs,
+                        applied,
+                        reported = ?get_timeout(&dev),
+                        "donanım watchdog açıldı, timeout ayarlandı"
+                    )
+                }
                 Err(err) => {
                     warn!(device = %dev_path, %err, "timeout ayarlanamadı; cihaz varsayılan timeout ile beslenecek")
                 }
@@ -195,6 +203,28 @@ async fn main() -> Result<()> {
                 "donanım watchdog yok; yalnız systemd yazılım watchdog'u beslenecek (dev/QEMU modu)");
             None
         }
+    };
+
+    // Besleme aralığı DAİMA efektif timeout'un yarısının altında olmalı: aksi halde
+    // (ör. INTERVAL=30, TIMEOUT=2) sağlıklı bir cihaz beslenmeden önce donanım süresi
+    // dolar ve sistem gereksiz yere reset atar. Efektif timeout = donanımın uyguladığı
+    // değer; yoksa (dev/QEMU) istenen timeout.
+    let effective_timeout = applied_timeout_secs.unwrap_or(timeout_secs).max(1) as u64;
+    let max_interval = (effective_timeout / 2).max(1);
+    let interval_secs = match interval_pref {
+        Some(req) => {
+            let clamped = req.clamp(1, max_interval);
+            if req > max_interval {
+                warn!(
+                    requested = req,
+                    applied = clamped,
+                    effective_timeout,
+                    "besleme aralığı efektif timeout'un yarısına kısıtlandı"
+                );
+            }
+            clamped
+        }
+        None => (effective_timeout / 3).clamp(1, max_interval),
     };
 
     // İlk kick + systemd Ready. Ready'i cihazı açıp beslemeye HAZIR olduktan sonra
@@ -223,17 +253,36 @@ async fn main() -> Result<()> {
                 // 1) Health değerlendirmesi (opsiyonel). Sağlıksızsa kademeli
                 //    müdahale; reboot eşiğinde donanım watchdog'u BESLEMEYİ KESERİZ.
                 if let Some(unit) = &health_unit {
-                    if unit_is_active(unit).await {
+                    // Sağlık probu ve systemctl çağrıları zaman-sınırlı çalışır: tek bir
+                    // yavaş/wedge systemctl çağrısı besleme döngüsünü aç bırakıp SAĞLIKLI
+                    // cihazı donanım reset'ine sürüklemesin. Bütçe interval/2 → prob +
+                    // takip eden systemctl toplamı ≲ interval < timeout (kick starve olmaz).
+                    let probe_budget = Duration::from_secs((interval_secs / 2).max(1));
+
+                    // Prob zaman aşımı = sağlık DOĞRULANAMADI. Fail-safe: sağlıksız say.
+                    // Böylece KALICI wedge (dbus/PID1 D-state — gerçekten hung cihaz)
+                    // consecutive_fail'i tırmandırıp eninde sonunda reset'e götürür;
+                    // TRANSIENT yavaşlık ise bir sonraki sağlıklı probe ile sıfırlanır.
+                    // (Watchdog'un asıl varlık nedeni: hung sistemi resetlemek.)
+                    let healthy = match tokio::time::timeout(probe_budget, unit_is_active(unit)).await {
+                        Ok(active) => active,
+                        Err(_) => {
+                            warn!(%unit, "sağlık probu zaman aşımına uğradı; sağlık doğrulanamadı → fail-safe: sağlıksız sayılıyor");
+                            false
+                        }
+                    };
+
+                    if healthy {
                         if consecutive_fail > 0 {
                             info!(%unit, "sağlık geri geldi; sayaç sıfırlandı");
                         }
                         consecutive_fail = 0;
                     } else {
                         consecutive_fail += 1;
-                        warn!(%unit, consecutive_fail, "izlenen unit sağlıksız");
+                        warn!(%unit, consecutive_fail, "izlenen unit sağlıksız/doğrulanamadı");
                         if consecutive_fail == restart_after {
                             warn!(%unit, "restart eşiği aşıldı; systemctl restart");
-                            systemctl("restart", unit).await;
+                            let _ = tokio::time::timeout(probe_budget, systemctl("restart", unit)).await;
                         }
                         if consecutive_fail >= reboot_after {
                             error!(%unit, consecutive_fail,
@@ -245,7 +294,7 @@ async fn main() -> Result<()> {
                                 return Ok(());
                             }
                             // Donanım watchdog yoksa (dev) yazılım tarafında reboot iste.
-                            systemctl("reboot", unit).await;
+                            let _ = tokio::time::timeout(probe_budget, systemctl("reboot", unit)).await;
                         }
                     }
                 }
