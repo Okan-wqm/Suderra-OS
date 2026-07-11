@@ -18,7 +18,12 @@ from typing import Any
 
 
 SCHEMA_VERSION = "suderra.os-update-manifest.v1"
-SIGNATURE_ALGORITHM = "ed25519-suderra-os-update-manifest-v1"
+# -v2: imza baytlari sorted-key kanonik JSON'dur (Rust dogrulayicidaki
+# suderra_config::canonical ile bayt-bayt ayni; golden vektorler:
+# tests/ota/fixtures/canonical-vectors/). -v1 insertion-order imzaliyordu ve
+# dosyaya sort_keys ile yazildigindan bu script'in kendi verify'i bile kendi
+# ciktisini dogrulayamiyordu; -v2 bu tutarsizligi kapatir.
+SIGNATURE_ALGORITHM = "ed25519-suderra-os-update-manifest-v2"
 
 
 def sha256_file(path: Path) -> str:
@@ -72,7 +77,26 @@ def unsigned_manifest(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def canonical_bytes(payload: dict[str, Any]) -> bytes:
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    """Imza baytlari — Rust `suderra_config::canonical` ile ayni sozlesme.
+
+    sort_keys=True: anahtarlar Unicode code-point sirasiyla (UTF-8 bayt sirasi
+    ile ozdes — Rust BTreeMap ile ayni). ensure_ascii=False: non-ASCII ham UTF-8
+    (serde_json ile ayni). Float bu sozlesmede YASAK (platform-bagimli
+    formatlama); manifest semasi yalniz int/string/bool/null icerir.
+    """
+    _reject_floats(payload)
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def _reject_floats(value: Any) -> None:
+    if isinstance(value, float):
+        raise ValueError("float degerler imza sozlesmesinde yasak (kanonik form belirsiz)")
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_floats(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_floats(item)
 
 
 def sign_ed25519(signing_key: Path, payload: bytes) -> bytes:

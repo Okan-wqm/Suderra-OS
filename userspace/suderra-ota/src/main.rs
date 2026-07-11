@@ -338,9 +338,14 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
         .signature
         .as_ref()
         .ok_or_else(|| anyhow!("OS update manifest must carry an Ed25519 signature"))?;
-    if signature.algorithm != "ed25519-suderra-os-update-manifest-v1" {
+    // -v2: imza baytları sorted-key kanonik JSON'dur (suderra_config::canonical,
+    // installer ile aynı form). -v1 (struct-alan-sıralı bayt) temiz kırılımla
+    // kaldırıldı — sahada cihaz yok (production_ready:false), dual-accept ölü
+    // güvenlik kodu olurdu. Eski manifest'ler burada teşhis edilebilir hatayla düşer.
+    if signature.algorithm != "ed25519-suderra-os-update-manifest-v2" {
         bail!(
-            "unsupported manifest signature algorithm: {}",
+            "unsupported manifest signature algorithm: {} (expected ed25519-suderra-os-update-manifest-v2; \
+             v1 manifests must be re-signed with scripts/create-os-update-manifest.py)",
             signature.algorithm
         );
     }
@@ -371,10 +376,12 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     Ok(())
 }
 
+/// İmza baytları: üst-düzey `signature` alanı düşülmüş, anahtarları sıralı kanonik
+/// JSON (paylaşılan sözleşme — struct alan sırasına bağımlılık yok; Python
+/// imzalayıcı `sort_keys=True` ile aynı baytları üretir, golden vektörlerle sınanır).
 fn manifest_signing_bytes(manifest: &SignedManifest) -> Result<Vec<u8>> {
-    let mut unsigned = manifest.clone();
-    unsigned.signature = None;
-    serde_json::to_vec(&unsigned).context("cannot canonicalize unsigned manifest")
+    suderra_config::canonical::canonical_without_signature(manifest)
+        .context("cannot canonicalize unsigned manifest")
 }
 
 fn read_public_key(path: &Path) -> Result<VerifyingKey> {
@@ -647,9 +654,9 @@ fn read_rollback_floor() -> Option<String> {
 
 /// Cihazın gerçekten bir ÜRETİM cihazı olup olmadığı. GÜVEN KÖKÜ, dm-verity
 /// altındaki imzalı, salt-okunur `/etc/os-release`'in `VARIANT`/`VARIANT_ID`
-/// alanıdır — `suderra-installer::variant` ile AYNI kök (ADR-0008; ileride
-/// paylaşılan crate'e çıkarılacak). Bu bayrak `dev_override()`'ı kapılar: gerçek
-/// prod cihazda hiçbir environment değişkeni güvenlik davranışını GEVŞETEMEZ.
+/// alanıdır — sözleşme `suderra_config::variant`'ta paylaşılır (ADR-0008 §1
+/// çıkarması; installer aynı kökü kullanır). Bu bayrak `dev_override()`'ı
+/// kapılar: gerçek prod cihazda hiçbir env güvenlik davranışını GEVŞETEMEZ.
 ///
 /// Env `SUDERRA_OTA_PRODUCTION=1` yalnız sınıflandırmayı ÜRETİM yönünde
 /// SIKILAŞTIRABİLİR (CI/dev'de prod davranışını zorlamak için); prod'u dev'e
@@ -657,37 +664,10 @@ fn read_rollback_floor() -> Option<String> {
 /// prod imajın `VARIANT=prod` taşıdığı `enforce_production_contract` build
 /// kapısıyla garanti edilir (fail-open residual'ı build katmanında kapatır).
 fn is_production() -> bool {
-    if os_release_variant().is_some_and(|v| variant_is_prod(&v)) {
+    if suderra_config::variant::os_release_is_prod() {
         return true;
     }
     std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1")
-}
-
-/// İmzalı `/etc/os-release`'ten `VARIANT`/`VARIANT_ID` değerini okur.
-fn os_release_variant() -> Option<String> {
-    let content = fs::read_to_string("/etc/os-release").ok()?;
-    for line in content.lines() {
-        if let Some((key, value)) = line.split_once('=') {
-            if matches!(key, "VARIANT" | "VARIANT_ID") {
-                let v = value.trim().trim_matches('"').trim().to_string();
-                if !v.is_empty() {
-                    return Some(v);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Normalize edilmiş varyant üretim mi? (`suderra-installer::variant::value_is_prod`
-/// ile aynı sözleşme.)
-fn variant_is_prod(value: &str) -> bool {
-    let v = value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_ascii_lowercase();
-    v == "prod" || v == "production" || v.starts_with("prod-") || v.starts_with("prod_")
 }
 
 /// Test/dev-only env override okuyucu. Prod'da `None` döner; böylece expiry,
@@ -1137,19 +1117,11 @@ mod tests {
 
     #[test]
     fn variant_classification_matches_installer_contract() {
-        for v in [
-            "prod",
-            "PROD",
-            "\"prod\"",
-            "production",
-            "prod-eu",
-            "prod_eu",
-        ] {
-            assert!(variant_is_prod(v), "{v} prod sayılmalı");
-        }
-        for v in ["dev", "lab", "", "staging", "preprod"] {
-            assert!(!variant_is_prod(v), "{v} prod SAYILMAMALI");
-        }
+        // Sözleşme artık paylaşılan modülde — burada yalnız aynı kökü
+        // kullandığımızı sabitleyen bir duman testi kalır.
+        use suderra_config::variant::value_is_prod;
+        assert!(value_is_prod("prod-eu"));
+        assert!(!value_is_prod("preprod"));
     }
 
     #[test]
@@ -1186,7 +1158,7 @@ mod tests {
             rollback_floor: "v1.0.0".to_string(),
             release_notes: None,
             signature: Some(ManifestSignature {
-                algorithm: "ed25519-suderra-os-update-manifest-v1".to_string(),
+                algorithm: "ed25519-suderra-os-update-manifest-v2".to_string(),
                 key_id: "test".to_string(),
                 public_key_sha256: "b".repeat(64),
                 signature_hex: "c".repeat(128),
@@ -1195,5 +1167,26 @@ mod tests {
         let text = String::from_utf8(manifest_signing_bytes(&manifest).unwrap()).unwrap();
         assert!(!text.contains("signature_hex"));
         assert!(text.contains(MANIFEST_SCHEMA));
+        // -v2 sözleşmesi: imza baytları anahtar-sıralıdır; struct alan sırası
+        // (schema_version, version, target, artifact_sha256, ...) DEĞİL.
+        let artifact_pos = text.find("artifact_sha256").unwrap();
+        let version_pos = text.find("\"version\"").unwrap();
+        assert!(
+            artifact_pos < version_pos,
+            "kanonik form anahtar-sıralı olmalı: {text}"
+        );
+    }
+
+    /// Diller-arası uçtan uca kanıt: `scripts/create-os-update-manifest.py` ile
+    /// imzalanmış committed fixture, Rust doğrulayıcıdan geçmeli.
+    /// (Fixture'ı yeniden üretmek için: tests/ota/fixtures/signed-manifest/README.md)
+    #[test]
+    fn python_signed_fixture_verifies_in_rust() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/ota/fixtures/signed-manifest");
+        let manifest_path = dir.join("manifest.json");
+        let manifest = load_manifest(&manifest_path).expect("fixture manifest parse edilmeli");
+        verify_manifest_signature(&manifest, Some(&dir.join("test-key.ed25519.pub")))
+            .expect("Python imzalı fixture Rust'ta doğrulanmalı");
     }
 }
