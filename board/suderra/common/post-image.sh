@@ -586,8 +586,12 @@ enforce_production_contract() {
             if ! grep -q '^BR2_PACKAGE_TPM2_TOOLS=y' "${BR2_CONFIG}" 2>/dev/null; then
                 echo "ERROR: ARM production must include tpm2-tools for TPM-sealed /data"; exit 1
             fi
+            # cryptsetup + tpm2-tss auto-enable systemd's -Dlibcryptsetup=enabled +
+            # -Dtpm2=enabled (see buildroot systemd.mk), so systemd-cryptsetup and
+            # systemd-cryptenroll --tpm2 are built from these — there is no separate
+            # BR2_PACKAGE_SYSTEMD_CRYPTSETUP symbol to gate on.
             if ! grep -q '^BR2_PACKAGE_TPM2_TSS=y' "${BR2_CONFIG}" 2>/dev/null; then
-                echo "ERROR: ARM production must include tpm2-tss (TPM2 stack for /data seal)"; exit 1
+                echo "ERROR: ARM production must include tpm2-tss (TPM2 stack; also enables systemd -Dtpm2 for /data seal)"; exit 1
             fi
             # Version anti-rollback (M4): a validly-signed downgrade must not be installable.
             if ! grep -q '^BR2_PACKAGE_SUDERRA_OTA=y' "${BR2_CONFIG}" 2>/dev/null; then

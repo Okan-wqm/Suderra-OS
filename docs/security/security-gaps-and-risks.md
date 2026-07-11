@@ -18,12 +18,12 @@
 
 | # | Bulgu | Kategori | Ciddiyet | Tür |
 |---|---|---|---|---|
-| RT-1 | `/data` at-rest şifreleme provisioning'i YOK | Runtime | **Kritik** | AKSİYON |
-| RT-2 | TPM cihazda hiç kullanılmıyor (attestation + seal iskele) | Runtime | **Yüksek** | AKSİYON |
+| RT-1 | `/data` at-rest şifreleme provisioning'i YOK | Runtime | **Kritik** | ✅ UYGULANDI (G5 donanım) |
+| RT-2 | TPM cihazda hiç kullanılmıyor (attestation + seal iskele) | Runtime | **Yüksek** | KISMİ (seal RT-1'de; attestation AKSİYON) |
 | RT-3 | Kriptografik cihaz kimliği / enrollment yok (plaintext serial) | Runtime | **Yüksek** | AKSİYON |
-| DOC-1 | `/data` "LUKS2 provision edilir" iddiası — kod yok | Doküman | **Yüksek** | AKSİYON |
+| DOC-1 | `/data` "LUKS2 provision edilir" iddiası — kod yok | Doküman | **Yüksek** | ✅ UYGULANDI (RT-1 ile) |
 | RT-4 | 4 güvenlik crate'i placeholder (firstboot/telemetry/attestation/factory-reset) | Runtime | Orta | AKSİYON |
-| RT-5 | `systemd-cryptsetup` (tpm2 token) hiçbir defconfig'te yok | Runtime | Orta | AKSİYON |
+| RT-5 | `systemd-cryptsetup` (tpm2 token) yok sanılıyordu | Runtime | Orta | ✅ ÇÜRÜTÜLDÜ (otomatik açık) |
 | RT-6 | "TPM-backed anti-rollback" etikette (TPM NV çağrısı yok) | Runtime | Orta | AKSİYON |
 | DOC-2 | ARCHITECTURE.md ağ yüzeyi (Modbus/OPC-UA/MQTT/mTLS) implemente değil | Doküman | Orta | AKSİYON |
 | DOC-3 | ROADMAP.md güncel değil (kod yol haritasının önünde) | Doküman | Düşük | AKSİYON |
@@ -40,9 +40,20 @@
 
 ## Kategori 1 — Cihaz-içi runtime güvenlik boşlukları (en yüksek öncelik)
 
-### RT-1 — `/data` at-rest şifreleme provisioning'i YOK — **Kritik / AKSİYON**
+### RT-1 — `/data` at-rest şifreleme provisioning'i — **Kritik / ✅ UYGULANDI (G5 donanım bekliyor)**
 
-**Kanıt:** Repo-geneli grep `luksFormat|cryptenroll|luksAddKey|tpm2_create` → sadece placeholder
+> **Çözüm (uygulandı):** `suderra-data-unlock` prod yolu artık ilk boot'ta BLANK data
+> partition'ını LUKS2 formatlar ve anahtarı **TPM2'ye seal eder** (PCR7-bound,
+> `systemd-cryptenroll --tpm2-device=auto`), ephemeral passphrase slot'unu siler → TPM2
+> tek unlock yolu. **Fail-closed:** TPM yoksa provision edilmez (kullanıcı kararı: on-disk
+> keyfile ile sahte güven YOK). **Güvenlik guard'ı:** yalnız blank partition formatlanır —
+> mevcut fs/imza görülürse (blkid) REDDEDİLİR (kaza sonucu veri kaybı yok). `SYSTEMD_CRYPTSETUP`
+> 4 prod defconfig'e eklendi (RT-5). LUKS mekaniği (format→open→mkfs→mount→kalıcılık +
+> dolu-partition reddi) loopback ile doğrulandı; `data-luks-provision-contract-test.sh` statik
+> olarak zorlar; enforce_production_contract paketleri gate'ler. **KALAN:** gerçek TPM2
+> seal/unseal donanım/swtpm ister → G5 (`data-luks-swtpm` QEMU senaryosu + hardware lab).
+
+**Kanıt (düzeltme öncesi durum):** Repo-geneli grep `luksFormat|cryptenroll|luksAddKey|tpm2_create` → sadece placeholder
 doküman/yorum. `firstboot` (amaçlanan provisioner) no-op ve her defconfig'te kapalı
 (`userspace/suderra-firstboot/src/main.rs:39-49`). genimage `data` partition'ı boş/formatsız
 (`board/suderra/aarch64-rpi4/genimage-prod.cfg:76-81`).
@@ -89,11 +100,16 @@ kullansın. RT-2 ile birlikte gider.
 işlevler (LUKS init, TPM seal, cloud enroll, PCR attestation, factory reset) uygulanmamış. Bu
 crate'ler workspace'te derleniyor ama (attestation hariç bazıları) imaja bile girmiyor.
 
-### RT-5 — `systemd-cryptsetup` / systemd-tpm2 token handler yok — Orta / AKSİYON
+### RT-5 — `systemd-cryptsetup`/tpm2 token — Orta / ✅ ÇÜRÜTÜLDÜ (aslında sorun değildi)
 
-`suderra-data-unlock:63-71` systemd'nin tpm2 cryptsetup token'ına bağlı ama
-`BR2_PACKAGE_SYSTEMD_CRYPTSETUP` hiçbir defconfig'te açık değil. LUKS volume olsa bile hem tercih
-edilen hem fallback unlock yolu muhtemelen işlevsiz. (RT-1 ile birlikte düzeltilmeli.)
+Denetim "`BR2_PACKAGE_SYSTEMD_CRYPTSETUP` hiçbir defconfig'te yok" demişti — ancak bu Buildroot
+sürümünde **öyle bir sembol yoktur**. systemd cryptsetup+tpm2 desteği `BR2_PACKAGE_CRYPTSETUP` +
+`BR2_PACKAGE_TPM2_TSS` ile OTOMATİK açılır (`buildroot/package/systemd/systemd.mk:159-161,635-637`
+→ `-Dlibcryptsetup=enabled` + `-Dtpm2=enabled`), ve ikisi de prod defconfig'lerde açıktır. Yani
+`systemd-cryptsetup` + `systemd-cryptenroll --tpm2` prod imajlarda zaten üretilir. RT-1 doğrulaması
+sırasında (resolved `.config` parse edilerek) yakalandı: defconfig'e ölü sembol eklemek işe yaramaz;
+gerçek gate `CRYPTSETUP + TPM2_TSS`'tir (enforce + contract test bunları zorlar). Ders: **yeşil
+defconfig metni ≠ resolved config** — sembol var mı diye parse ile doğrula.
 
 ### RT-6 — "TPM-backed anti-rollback" etikette kalıyor — Orta / AKSİYON
 
