@@ -39,31 +39,31 @@ ve validator patch'leri merge edildikten sonra tekrar kullanılamaz.
    <!-- suderra-generated: governance-policy -->
    | Category | Name |
    | --- | --- |
-   | `required_check` | `Build / Build matrix contract` |
-   | `required_check` | `Build / Buildroot defconfig parse smoke (pi-cm4-revpi-usb-installer)` |
-   | `required_check` | `Build / Buildroot defconfig parse smoke (qemu-x86_64)` |
-   | `required_check` | `Build / Buildroot defconfig parse smoke (revpi4)` |
-   | `required_check` | `Build / Buildroot defconfig parse smoke (rpi4)` |
-   | `required_check` | `Build / Syntax and workflow contracts` |
-   | `required_check` | `Hadolint (Dockerfile lint) / Hadolint` |
-   | `required_check` | `Lint / Build Matrix Contract` |
-   | `required_check` | `Lint / DCO (Signed-off-by) Check` |
-   | `required_check` | `Lint / GitHub Actions Lint` |
-   | `required_check` | `Lint / Image Contract + Installer Tests` |
-   | `required_check` | `Lint / Markdown Lint` |
-   | `required_check` | `Lint / Secret Scan (gitleaks)` |
-   | `required_check` | `Lint / ShellCheck` |
-   | `required_check` | `Lint / YAML Lint` |
-   | `required_check` | `Rust Userspace / Build (aarch64-unknown-linux-musl)` |
-   | `required_check` | `Rust Userspace / Build (x86_64-unknown-linux-musl)` |
-   | `required_check` | `Rust Userspace / Format + Clippy + Test` |
-   | `required_check` | `Rust Userspace / MSRV check (Rust 1.86)` |
-   | `required_check` | `Rust Userspace / Security (audit + deny)` |
-   | `required_check` | `Security Scan / Gitleaks (secret scan)` |
-   | `required_check` | `Security Scan / Grype (filesystem)` |
-   | `required_check` | `Security Scan / Trivy (config / Dockerfile)` |
-   | `required_check` | `Security Scan / Trivy (filesystem)` |
-   | `required_check` | `Security Scan / VEX JSON syntax` |
+   | `required_check` | `Build (aarch64-unknown-linux-musl)` |
+   | `required_check` | `Build (x86_64-unknown-linux-musl)` |
+   | `required_check` | `Build Matrix Contract` |
+   | `required_check` | `Build matrix contract` |
+   | `required_check` | `Buildroot defconfig parse smoke (pi-cm4-revpi-usb-installer)` |
+   | `required_check` | `Buildroot defconfig parse smoke (qemu-x86_64)` |
+   | `required_check` | `Buildroot defconfig parse smoke (revpi4)` |
+   | `required_check` | `Buildroot defconfig parse smoke (rpi4)` |
+   | `required_check` | `DCO (Signed-off-by) Check` |
+   | `required_check` | `Format + Clippy + Test` |
+   | `required_check` | `GitHub Actions Lint` |
+   | `required_check` | `Gitleaks (secret scan)` |
+   | `required_check` | `Grype (filesystem)` |
+   | `required_check` | `Hadolint` |
+   | `required_check` | `Image Contract + Installer Tests` |
+   | `required_check` | `MSRV check (Rust 1.86)` |
+   | `required_check` | `Markdown Lint` |
+   | `required_check` | `Secret Scan (gitleaks)` |
+   | `required_check` | `Security (audit + deny)` |
+   | `required_check` | `ShellCheck` |
+   | `required_check` | `Syntax and workflow contracts` |
+   | `required_check` | `Trivy (config / Dockerfile)` |
+   | `required_check` | `Trivy (filesystem)` |
+   | `required_check` | `VEX JSON syntax` |
+   | `required_check` | `YAML Lint` |
    <!-- /suderra-generated -->
 
 3. Yeni `origin/main` SHA için push kaynaklı Image Build'i yakala:

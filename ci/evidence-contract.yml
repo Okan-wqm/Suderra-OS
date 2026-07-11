@@ -476,7 +476,9 @@
         "revpi-connect-4"
       ],
       "revpi4": ["revpi-connect-4"],
+      "revpi4-prod-ab": ["revpi-connect-4"],
       "rpi4": ["raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"],
+      "rpi4-prod-ab": ["raspberry-pi-4-model-b", "cm4-lite-sd", "cm4-emmc-io-board"],
       "x86_64": ["industrial-x86_64"]
     },
     "required_checks": [
@@ -682,6 +684,54 @@
         "slot_labels": [],
         "verity_devices": []
       },
+      "rpi4-prod-ab": {
+        "backend": "uboot-rauc",
+        "boot_backend": "uboot-rauc",
+        "compatible": "suderra-os-aarch64",
+        "bundle_artifacts": [
+          "suderra-os-{version}-{target}.raucb",
+          "suderra-os-update-manifest.json"
+        ],
+        "health_policy": "production-runtime",
+        "health_checks": [
+          "booted-inactive-slot",
+          "rauc-status-active",
+          "dm-verity-active",
+          "data-luks-open",
+          "rollback-floor-current"
+        ],
+        "lifecycle": "production",
+        "mark_good_policy": "health-gate-before-rauc-mark-good",
+        "ota_capable": true,
+        "rollback_state": "uboot-env-monotonic-required",
+        "rollback_storage": "uboot-env-monotonic",
+        "slot_labels": ["rootfs-a", "rootfs-b"],
+        "verity_devices": ["rootfs-a-verity", "rootfs-b-verity"]
+      },
+      "revpi4-prod-ab": {
+        "backend": "uboot-rauc",
+        "boot_backend": "uboot-rauc",
+        "compatible": "suderra-os-aarch64",
+        "bundle_artifacts": [
+          "suderra-os-{version}-{target}.raucb",
+          "suderra-os-update-manifest.json"
+        ],
+        "health_policy": "production-runtime",
+        "health_checks": [
+          "booted-inactive-slot",
+          "rauc-status-active",
+          "dm-verity-active",
+          "data-luks-open",
+          "rollback-floor-current"
+        ],
+        "lifecycle": "production",
+        "mark_good_policy": "health-gate-before-rauc-mark-good",
+        "ota_capable": true,
+        "rollback_state": "uboot-env-monotonic-required",
+        "rollback_storage": "uboot-env-monotonic",
+        "slot_labels": ["rootfs-a", "rootfs-b"],
+        "verity_devices": ["rootfs-a-verity", "rootfs-b-verity"]
+      },
       "x86_64": {
         "backend": "grub-rauc",
         "boot_backend": "grub-rauc",
@@ -781,6 +831,24 @@
       "production_gate": true,
       "release_image_scan_required": true,
       "release_public": true,
+      "runtime_required": false,
+      "signing_required": true
+    },
+    "rpi4-prod-ab": {
+      "hardware_required": true,
+      "ota_capable": true,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": false,
+      "runtime_required": false,
+      "signing_required": true
+    },
+    "revpi4-prod-ab": {
+      "hardware_required": true,
+      "ota_capable": true,
+      "production_gate": true,
+      "release_image_scan_required": true,
+      "release_public": false,
       "runtime_required": false,
       "signing_required": true
     },

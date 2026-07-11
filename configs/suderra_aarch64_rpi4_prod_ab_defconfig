@@ -1,5 +1,9 @@
 #
-# Suderra OS — Raspberry Pi 4 / CM4 defconfig (aarch64)
+# Suderra OS — Raspberry Pi 4 / CM4 PRODUCTION defconfig (aarch64, ADR-0007)
+# PROD variant: signed-FIT + GPT A/B + dm-verity + LUKS. Locked appliance
+# (no dropbear/getty). Built ONLY via the gated arm-production-build.yml with
+# HSM signing; excluded from the standard per-PR Image Build. Dev builds use
+# suderra_aarch64_rpi4_defconfig (unchanged).
 #
 # Hedef donanım: Raspberry Pi 4 Model B, Compute Module 4 (CM4),
 #                CM4 IO Board, CM4-based custom carrier'lar.
@@ -34,7 +38,7 @@ BR2_cortex_a72=y
 BR2_ARM_FPU_VFPV4=y
 BR2_JLEVEL=4
 BR2_CCACHE=y
-BR2_PACKAGE_SUDERRA_VARIANT_DEV=y
+BR2_PACKAGE_SUDERRA_VARIANT_PROD=y
 BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/buildroot-hashes"
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
 
@@ -135,7 +139,7 @@ BR2_PACKAGE_HOST_MTOOLS=y
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/rootfs-overlay"
 BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-build.sh"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/post-image.sh"
-BR2_ROOTFS_POST_SCRIPT_ARGS="suderra_aarch64_rpi4"
+BR2_ROOTFS_POST_SCRIPT_ARGS="suderra_aarch64_rpi4_prod_ab"
 BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/common/users.txt"
 
 # ============================================================================
@@ -151,9 +155,8 @@ BR2_PACKAGE_LIBCURL=y
 BR2_PACKAGE_LIBCURL_CURL=y
 BR2_PACKAGE_LIBCURL_OPENSSL=y
 BR2_PACKAGE_CA_CERTIFICATES=y
-BR2_PACKAGE_DROPBEAR=y
+# BR2_PACKAGE_DROPBEAR is not set
 # BR2_PACKAGE_DROPBEAR_CLIENT is not set
-BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
 BR2_PACKAGE_UTIL_LINUX=y
 BR2_PACKAGE_UTIL_LINUX_BINARIES=y
 
@@ -181,6 +184,23 @@ BR2_PACKAGE_I2C_TOOLS=y
 BR2_PACKAGE_SUDERRA_OS_INSTALLER=y     # Runtime manifest verifier
 BR2_PACKAGE_SUDERRA_KEYS=y             # Runtime trust roots
 
+# RAUC A/B OTA (ADR-0007/ADR-0004) — U-Boot backend, signed-FIT slot hook.
+# rauc Config.in, BR2_TARGET_UBOOT ile fw_printenv/setenv'i otomatik select eder.
+BR2_PACKAGE_RAUC=y
+BR2_PACKAGE_RAUC_DBUS=y
+BR2_PACKAGE_RAUC_GPT=y
+BR2_PACKAGE_RAUC_JSON=y
+BR2_PACKAGE_HOST_RAUC=y
+BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y
+
+# TPM 2.0 + encrypted mutable /data at rest (M2, ADR-0007). suderra-data-unlock
+# (common overlay) LUKS-opens /data; RevPi seals to the SLB9670 TPM, rpi4 keyfile.
+BR2_PACKAGE_TPM2_TSS=y
+BR2_PACKAGE_TPM2_TOOLS=y
+BR2_PACKAGE_LVM2=y
+BR2_PACKAGE_CRYPTSETUP=y
+# Version anti-rollback (M4): rollback-floor / monotonic install guard.
+BR2_PACKAGE_SUDERRA_OTA=y
 # BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
 
@@ -190,9 +210,7 @@ BR2_PACKAGE_SUDERRA_KEYS=y             # Runtime trust roots
 BR2_TARGET_GENERIC_HOSTNAME="suderra-rpi4"
 BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
 # BR2_TARGET_ENABLE_ROOT_LOGIN is not set
-BR2_TARGET_GENERIC_GETTY=y
-BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
-BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+# BR2_TARGET_GENERIC_GETTY is not set
 
 # ============================================================================
 # Reproducible build

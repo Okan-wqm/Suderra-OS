@@ -49,10 +49,13 @@ mkimage -f fit.its -k . -K u-boot.dtb -r suderra-A.fit >/dev/null 2>&1 || {
     echo "ERROR: mkimage signed FIT üretemedi" >&2; exit 1; }
 
 # ACCEPT-1: gömülü imza sha256,rsa2048 (U-Boot'un zorlayacağı algoritma).
-mkimage -l suderra-A.fit 2>/dev/null | grep -qiE 'Sign algo:.*sha256,rsa2048' || {
+# Listeyi bir kez al (pipefail altında 'mkimage -l | grep -q' SIGPIPE yarışı).
+fit_listing="$(mkimage -l suderra-A.fit 2>/dev/null || true)"
+grep -qiE 'Sign algo:.*sha256,rsa2048' <<<"${fit_listing}" || {
     echo "ERROR: FIT gömülü rsa2048 imza taşımıyor" >&2; exit 1; }
 # ACCEPT-2: pubkey u-boot.dtb'ye gömülü (U-Boot bununla doğrular).
-dtc -I dtb -O dts u-boot.dtb 2>/dev/null | grep -q 'key-name-hint = "fit-signing"' || {
+uboot_dts="$(dtc -I dtb -O dts u-boot.dtb 2>/dev/null || true)"
+grep -q 'key-name-hint = "fit-signing"' <<<"${uboot_dts}" || {
     echo "ERROR: fit-signing pubkey u-boot.dtb'ye gömülmedi" >&2; exit 1; }
 
 # İmza-içerik bağı: release detached imza (A3 üreticisi *.fit.sig emit eder).

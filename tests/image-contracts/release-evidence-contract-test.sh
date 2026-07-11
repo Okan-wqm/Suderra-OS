@@ -589,8 +589,10 @@ subject_targets = [
     "x86_64",
     "qemu-x86_64-prod-ab",
     "rpi4",
+    "rpi4-prod-ab",
     "pi-cm4-revpi-usb-installer",
     "revpi4",
+    "revpi4-prod-ab",
 ]
 for idx, target in enumerate(dict.fromkeys(subject_targets)):
     target_subject_id = (
