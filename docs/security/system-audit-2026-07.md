@@ -30,6 +30,27 @@ Kalan boşluklar üç kümede toplanıyor:
 3. **Kod kalitesi ince işçilik** — OTA imza kanonikalizasyonunun iki dilde kırılgan
    kopyası (AUD-4), tokio/overflow-checks/atıl test binary'si gibi düşük seviye kalemler.
 
+## 1b. Uygulama durumu (2026-07-11 güncellemesi)
+
+Bu rapor bir denetim anlık görüntüsü olarak başladı; aynı PR (#85) sonrasında
+bulguların büyük kısmını **uçtan uca kapattı**. Kapatılanlar (kod + test):
+
+- **Merge:** PR #84 güvenlik dalgası main'e alındı; dependabot PR'ları işleniyor.
+- **AUD-4 / NEW-7:** OTA imza kanonikalizasyonu birleştirildi (imza `-v2` kırılımı;
+  diller-arası golden vektörler). **AUD-5/9/10:** collector temizliği, tokio diyeti,
+  `overflow-checks`.
+- **NEW-4, NEW-5, C-6, C-7:** agent capability strip + watchdog paketleme; firewall
+  VARIANT-çapalı locked-by-default; tek-okuma/staged-verify TOCTOU; SemVer build kapısı.
+- **RT-2, RT-3, RT-6 (ADR-0009):** TPM 2.0 yazılım tarafı (subprocess sarmalayıcı,
+  TPM-NV anti-rollback çıpası, attestation istemcisi, firstboot güven durum makinesi).
+- **Kalan:** Faz 4 CI eklemeleri (CodeQL/imaj-CVE/security-test wiring/ARM FIT boot),
+  QEMU+swtpm senaryoları ve G5 donanım kanıtı (`production_ready:false` korunur).
+- **`codex/enterprise-evidence-architecture`:** kurtarılacak GRUB2 fingerprint deltası
+  zaten main'de (`ccf74f6`) — **no-op**; branch mayınlanmamalı.
+
+Ayrıntılı kayıt: [security-gaps-and-risks.md](security-gaps-and-risks.md),
+[ADR-0009](../architecture/ADR-0009-tpm-implementation.md).
+
 ## 2. Metodoloji
 
 - **Branch'ler:** `main` (`f3bbb33`), `claude/security-docs-merge-dg2are` (PR #84, 8 commit),
