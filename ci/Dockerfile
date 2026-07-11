@@ -68,6 +68,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ARM signed-FIT (ADR-0007): mkimage builds/signs FITs, dtc compiles the .its
     u-boot-tools \
     device-tree-compiler \
+    # PKCS#11 engine for HSM-backed FIT/image/RAUC signing in the gated
+    # arm-production-build.yml lane (openssl -engine pkcs11, mkimage -N pkcs11)
+    libengine-pkcs11-openssl \
+    opensc \
+    p11-kit \
     # QEMU for testing
     qemu-system-x86 \
     qemu-system-arm \

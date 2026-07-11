@@ -294,7 +294,7 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
             echo "==> x86 production boot/verity artifact üretimi"
             "${PRODUCTION_ARTIFACTS}" x86-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
             ;;
-        suderra_aarch64_rpi4|suderra_aarch64_revpi4)
+        suderra_aarch64_rpi4|suderra_aarch64_rpi4_prod_ab|suderra_aarch64_revpi4|suderra_aarch64_revpi4_prod_ab)
             echo "==> ARM production signed-FIT + verity artifact üretimi (ADR-0007)"
             # rootfs.verity + per-slot imzalı FIT (kernel+DTB+initramfs+bootargs)
             # + u-boot.dtb'ye gömülü FIT pubkey.
@@ -346,17 +346,22 @@ fi
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
     "${PRODUCTION_ARTIFACTS}" sign-image "${BINARIES_DIR}" "${IMAGE_OUTPUT_NAME}"
-    if [ "${DEFCONFIG_NAME}" = "suderra_x86_64" ] || [ "${DEFCONFIG_NAME}" = "suderra_qemu_x86_64_prod_ab" ]; then
+    # OTA-capable production targets emit a signed RAUC bundle. The bundle tool
+    # subcommand (x86 UKI vs arm signed-FIT) is derived from the target backend
+    # in ci/evidence-contract.yml by produce-ota-artifacts.py.
+    ota_target=""
+    case "${DEFCONFIG_NAME}" in
+        suderra_x86_64) ota_target="x86_64" ;;
+        suderra_qemu_x86_64_prod_ab) ota_target="qemu-x86_64-prod-ab" ;;
+        suderra_aarch64_rpi4_prod_ab) ota_target="rpi4-prod-ab" ;;
+        suderra_aarch64_revpi4_prod_ab) ota_target="revpi4-prod-ab" ;;
+    esac
+    if [ -n "${ota_target}" ]; then
         release_version="${SUDERRA_RELEASE_VERSION:-}"
         if [ -z "${release_version}" ]; then
             echo "ERROR: SUDERRA_RELEASE_VERSION is required for production RAUC bundle generation"
             exit 1
         fi
-        ota_target=""
-        case "${DEFCONFIG_NAME}" in
-            suderra_x86_64) ota_target="x86_64" ;;
-            suderra_qemu_x86_64_prod_ab) ota_target="qemu-x86_64-prod-ab" ;;
-        esac
         RAUC_BUNDLE_PATH="${BINARIES_DIR}/suderra-os-${release_version}-${ota_target}.raucb"
         echo "==> production OTA artifact üretimi: $(basename "${RAUC_BUNDLE_PATH}")"
         python3 "${PRODUCE_OTA_ARTIFACTS}" create \
@@ -562,6 +567,65 @@ enforce_production_contract() {
         verify_signed_pe_artifact "suderra-A.efi"
         verify_signed_pe_artifact "suderra-B.efi"
     fi
+
+    case "${DEFCONFIG_NAME}" in
+        suderra_aarch64_rpi4_prod_ab|suderra_aarch64_revpi4_prod_ab)
+            # Data-at-rest (M2): /data must be LUKS-openable — the shared
+            # suderra-data-unlock service needs cryptsetup (+ TPM2 for RevPi seal).
+            if ! grep -q '^BR2_PACKAGE_CRYPTSETUP=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include cryptsetup for encrypted /data at rest"; exit 1
+            fi
+            if ! grep -q '^BR2_PACKAGE_TPM2_TOOLS=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include tpm2-tools for TPM-sealed /data"; exit 1
+            fi
+            # Version anti-rollback (M4): a validly-signed downgrade must not be installable.
+            if ! grep -q '^BR2_PACKAGE_SUDERRA_OTA=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include suderra-ota (rollback-floor anti-rollback guard)"; exit 1
+            fi
+            # ARM signed-FIT crypto gates (mirror the x86 PE gates — presence
+            # checks are NOT enough for the boot root of trust).
+            verify_fit_sidecar() {
+                local name="$1"
+                local artifact="${BINARIES_DIR}/${name}"
+                local pubkey="${GENIMAGE_TMP:-${BINARIES_DIR}}/${name}.pubkey"
+                if ! openssl x509 -in "${artifact}.cert" -pubkey -noout > "${pubkey}" 2>/dev/null; then
+                    echo "ERROR: ${name}.cert does not contain a usable public key"; exit 1
+                fi
+                if ! openssl dgst -sha256 -verify "${pubkey}" \
+                        -signature "${artifact}.sig" "${artifact}" >/dev/null 2>&1; then
+                    echo "ERROR: ${name}.sig does not validate against ${name}.cert"; rm -f "${pubkey}"; exit 1
+                fi
+                rm -f "${pubkey}"
+                # The FIT must carry an EMBEDDED rsa2048 signature — this is what
+                # U-Boot verifies at bootm (the detached sidecar above is for RAUC/release).
+                # Capture the listing once: 'dumpimage -l | grep -q' under pipefail is a
+                # SIGPIPE race (grep -q exits early → dumpimage 141 → false build failure).
+                local fit_listing
+                fit_listing="$(dumpimage -l "${artifact}" 2>/dev/null || true)"
+                if ! grep -qiE 'Sign algo:.*rsa2048' <<<"${fit_listing}"; then
+                    echo "ERROR: ${name} carries no embedded rsa2048 FIT signature"; exit 1
+                fi
+            }
+            if ! command -v dumpimage >/dev/null 2>&1 || ! command -v dtc >/dev/null 2>&1; then
+                echo "ERROR: dumpimage/dtc (u-boot-tools/device-tree-compiler) not available — ARM production gate cannot pass"
+                exit 1
+            fi
+            verify_fit_sidecar "suderra-A.fit"
+            verify_fit_sidecar "suderra-B.fit"
+            # FAIL-CLOSED root-of-trust gate (ADR-0007): the FIT verification pubkey
+            # must be present AND marked required in the U-Boot control DTB, else
+            # CONFIG_FIT_SIGNATURE enforces nothing at boot (silent fail-open).
+            uboot_dts="$(dtc -I dtb -O dts "${BINARIES_DIR}/u-boot.dtb" 2>/dev/null || true)"
+            if ! printf '%s' "${uboot_dts}" | grep -q 'key-name-hint = "fit-signing"'; then
+                echo "ERROR: u-boot.dtb control FDT has no fit-signing key — FIT signatures will NOT be enforced at boot (fail-open)"
+                exit 1
+            fi
+            if ! printf '%s' "${uboot_dts}" | grep -q 'required = "conf"'; then
+                echo "ERROR: u-boot.dtb fit-signing key is not marked required — FIT enforcement is not guaranteed (fail-open)"
+                exit 1
+            fi
+            ;;
+    esac
 }
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then

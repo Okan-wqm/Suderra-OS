@@ -279,6 +279,82 @@ defconfigs:
     blocker: signed-fit-dm-verity-rauc-revpi-io-and-hardware-evidence-missing
     description: Revolution Pi Connect 4 target image.
 
+  - name: suderra_aarch64_rpi4_prod_ab_defconfig
+    target: rpi4-prod-ab
+    arch: aarch64
+    artifact: suderra-rpi4-target.img
+    release_artifact: suderra-rpi4-prod-ab.img.xz
+    expected_artifacts:
+      - suderra-rpi4-target.img
+      - suderra-rpi4-target.img.xz
+      - MANIFEST.txt
+    qemu_test: false
+    ci_build: false
+    fast_required: false
+    image_build: false
+    release_source: false
+    payload_base_required: false
+    release: false
+    timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
+    production_required: true
+    production_ready: false
+    profile: production-runtime
+    boot_mode: u-boot-signed-fit-required
+    partition_table: gpt
+    root_partition: rootfs-a
+    root_identity: verity-signed-fit
+    genimage: board/suderra/aarch64-rpi4/genimage-prod.cfg
+    post_image_arg: suderra_aarch64_rpi4_prod_ab
+    signing: production-required
+    acceptance: pi4-cm4-hardware-lab
+    blocker: signed-fit-dm-verity-rauc-and-hardware-evidence-missing
+    description: Raspberry Pi 4 / CM4 PRODUCTION signed-FIT A/B lane; gated arm-production-build.yml + HSM signing, excluded from the standard Image Build.
+
+  - name: suderra_aarch64_revpi4_prod_ab_defconfig
+    target: revpi4-prod-ab
+    arch: aarch64
+    artifact: suderra-revpi4-target.img
+    release_artifact: suderra-revpi4-prod-ab.img.xz
+    expected_artifacts:
+      - suderra-revpi4-target.img
+      - suderra-revpi4-target.img.xz
+      - MANIFEST.txt
+    qemu_test: false
+    ci_build: false
+    fast_required: false
+    image_build: false
+    release_source: false
+    payload_base_required: false
+    release: false
+    timeout_minutes: 300
+    build_step_timeout_minutes: 285
+    min_disk_gib: 30
+    min_mem_gib: 6
+    min_vcpu: 4
+    build_jlevel: 4
+    prebuild_defconfigs:
+    payload_image_exports:
+    production_required: true
+    production_ready: false
+    profile: production-runtime
+    boot_mode: u-boot-signed-fit-required
+    partition_table: gpt
+    root_partition: rootfs-a
+    root_identity: verity-signed-fit
+    genimage: board/suderra/aarch64-revpi4/genimage-prod.cfg
+    post_image_arg: suderra_aarch64_revpi4_prod_ab
+    signing: production-required
+    acceptance: revpi-connect-4-hardware-lab
+    blocker: signed-fit-dm-verity-rauc-revpi-io-and-hardware-evidence-missing
+    description: Revolution Pi Connect 4 PRODUCTION signed-FIT A/B lane; gated arm-production-build.yml + HSM signing, excluded from the standard Image Build.
+
 variants:
   - name: dev
     description: Development and lab images may keep provisioning/debug affordances.
