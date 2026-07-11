@@ -193,13 +193,13 @@ fn step_attestation_baseline() -> Result<()> {
     Ok(())
 }
 
-/// Adım 4 — RT-6: TPM-NV monotonic counter'ı tanımla ve imaj epoch'una yükselt.
+/// Adım 4 — RT-6: TPM-NV ordinal'ini tanımla (define+0) ve imaj epoch'una yükselt.
 fn step_rollback_anchor(tpm: &Tpm) -> Result<()> {
-    tpm.nv_define_counter(ROLLBACK_NV_INDEX)
-        .context("NV counter tanımlanamadı")?;
+    tpm.nv_define_ordinal(ROLLBACK_NV_INDEX)
+        .context("NV ordinal tanımlanamadı")?;
     if let Some(epoch) = ota_conf_epoch() {
-        // Ortak, sınırlı, strict-advance yükseltme (suderra_config::tpm).
-        tpm.nv_raise_to(ROLLBACK_NV_INDEX, epoch)?;
+        // Yalnız-artır yükseltme (tek yazma; ortak invariant suderra_config::tpm).
+        tpm.nv_raise_ordinal(ROLLBACK_NV_INDEX, epoch)?;
         info!(epoch, "TPM-NV rollback çıpası imaj epoch'una yükseltildi");
     }
     Ok(())

@@ -25,9 +25,15 @@ yok (`production_ready:false`) → dual-accept penceresi bilinçle eklenmedi.
 - **C-6:** verify→use TOCTOU kapatıldı (installer tek-okuma; ota staged-verify).
 - **C-7:** SemVer-dışı `VERSION_ID` build kapısı + install erken teşhisi.
 - **RT-2/RT-3/RT-6 (ADR-0009):** TPM 2.0 yazılım tarafı — `suderra-config::tpm`
-  subprocess sarmalayıcı, gerçek TPM-NV monotonic anti-rollback çıpası (`ota.conf`
-  + `floor sync`), attestation istemcisi (PCR quote), firstboot güven tesis durum
-  makinesi + TPM-bağlı cihaz kimliği. Donanım kanıtı G5'te.
+  subprocess sarmalayıcı, TPM-NV **ordinary-index** anti-rollback çıpası (`ota.conf`
+  + `floor sync`; ilk `nt=counter` tasarımı kod incelemesinde gerçek TPM'de kırık
+  bulunup ordinary-NV'ye çevrildi), attestation istemcisi (PCR quote), firstboot
+  güven tesis durum makinesi + TPM-bağlı cihaz kimliği. Donanım/swtpm kanıtı G5'te.
+  RT-2/RT-3 cihaz-üstü wiring (firstboot binary prod'da enable) BEKLİYOR — bkz. register.
+- **Kod incelemesi düzeltmeleri:** prod-OTA-brick (floor.service `/run/suderra`
+  namespace + firstboot'suz NV tanımı), firewall os-release-okunamaz fail-open,
+  attestation AK-pinleme + PCR-format, stage_bundle başarısızlıkta bundle-geri-yükleme,
+  anti-rollback floor kapısının install/mark-good'a sınırlanması (status/rollback açık).
 - **AUD-5/9/10:** atıl QEMU collector prod imajlardan silindi; senkron
   binary'lerden tokio düşürüldü; `overflow-checks=true`.
 

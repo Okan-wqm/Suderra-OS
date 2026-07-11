@@ -198,6 +198,11 @@ fn init_logging(verbose: bool) {
 }
 
 fn install(args: InstallArgs) -> Result<()> {
+    // Sert anti-rollback kaynak kapısı YALNIZ güncelleme-yükleyen yollara uygulanır
+    // (status/rollback teşhis/kurtarma komutları floor okumasına takılmasın diye
+    // load_state'ten buraya taşındı). Prod'da tpm-nv beyan edildiyse güvenilir
+    // floor mevcut+geçerli olmalı; yoksa fail-closed.
+    production_rollback_floor_requires_monotonic_state()?;
     let mut state = load_state()?;
     // C-7: cihazın kendi sürümü SemVer değilse her karşılaştırma derin policy
     // katmanında anlaşılmaz biçimde ölürdü — burada erken ve eyleme dönük teşhis.
@@ -220,8 +225,20 @@ fn install(args: InstallArgs) -> Result<()> {
     info!(version = %manifest.version, target = %manifest.target, "installing RAUC bundle");
     let rauc_result =
         run_rauc(&["install", path_str(&staged_bundle)?]).context("rauc install failed");
-    // Staging temizliği her iki sonuçta da best-effort (bundle tüketildi).
-    let _ = fs::remove_file(&staged_bundle);
+    // BAŞARIDA staged bundle tüketildi → sil. BAŞARISIZLIKTA operatörün girdi
+    // bundle'ını YOK ETME: staged'i orijinal yola geri taşı ki retry (aynı yol)
+    // yeniden indirmeye gerek kalmadan çalışsın. Sadece geri-taşıma da başarısızsa
+    // best-effort sil (staging dizinini bırakma).
+    match &rauc_result {
+        Ok(()) => {
+            let _ = fs::remove_file(&staged_bundle);
+        }
+        Err(_) => {
+            if fs::rename(&staged_bundle, &args.bundle).is_err() {
+                let _ = fs::remove_file(&staged_bundle);
+            }
+        }
+    }
     if let Some(dir) = staged_bundle.parent() {
         let _ = fs::remove_dir(dir);
     }
@@ -305,6 +322,10 @@ fn rollback(args: RollbackArgs) -> Result<()> {
 }
 
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
+    // Sert anti-rollback kaynak kapısı (install ile aynı gerekçe). persist ve
+    // advance yollarına ek olarak, floor karşılaştırması güvenilir floor'a
+    // dayansın diye başta açıkça uygulanır.
+    production_rollback_floor_requires_monotonic_state()?;
     let mut state = load_state()?;
     // mark-good YALNIZCA gerçekten pending (doğrulanmış install ile stage edilmiş)
     // bir sürümü onaylar. `--version` verildiyse pending ile ÖRTÜŞMELİDİR; aksi
@@ -654,7 +675,12 @@ fn request_reboot(reason: &str) -> Result<()> {
 }
 
 fn load_state() -> Result<OtaState> {
-    production_rollback_floor_requires_monotonic_state()?;
+    // NOT: sert anti-rollback kaynak kapısı BURADA çağrılmaz. Aksi halde floor
+    // dosyası (henüz) yoksa `status` ve `rollback` gibi TEŞHİS/KURTARMA komutları
+    // da kilitlenirdi. Kapı yalnız güncelleme YÜKENDEN sorumlu yollara
+    // (`install`/`mark_good`) açıkça uygulanır (bkz. o fonksiyonlar). Aşağıdaki
+    // trusted-floor okuması best-effort'tur: floor varsa alt-sınır olarak yükseltir,
+    // yoksa state'i olduğu gibi bırakır (kurtarma yolu bloklanmaz).
     let path = state_path();
     let mut state = if path.exists() {
         let state: OtaState = serde_json::from_str(
@@ -692,10 +718,11 @@ fn load_state() -> Result<OtaState> {
 
     // Güvenilir (TPM NV / bootloader monotonic) floor bir ALT SINIRDIR: state'teki
     // floor bunun altına ASLA inemez. Böylece saldırgan /data'daki state.json ve
-    // floor aynasını silse/düşürse bile downgrade koruması korunur. Prod'da
-    // production_rollback_floor_requires_monotonic_state() bu kaynağın varlığını
-    // ve okunabilirliğini zaten garanti eder.
-    if let Some(trusted) = trusted_rollback_floor()? {
+    // floor aynasını silse/düşürse bile downgrade koruması korunur. Best-effort:
+    // install/mark_good sert kapıyı zaten çağırdığından, bu yollarda floor mevcut
+    // ve okunabilirdir → yükseltilir. status/rollback'te floor yoksa (boot'ta
+    // floor sync başarısız) hata YERİNE state olduğu gibi kalır (kurtarma açık).
+    if let Ok(Some(trusted)) = trusted_rollback_floor() {
         if compare_versions(&trusted, &state.rollback_floor)? == Ordering::Greater {
             state.rollback_floor = trusted;
         }
@@ -876,22 +903,22 @@ fn floor_sync() -> Result<()> {
 
     let tpm = suderra_config::tpm::Tpm::new(is_production());
     let index = rollback_nv_index();
-    // NV counter'ı BURADA idempotent tanımla: prod'da firstboot güven-tesis
-    // durum makinesi (identity/attestation) çalışmıyor olabilir, ama RT-6
-    // anti-rollback yolu buna BAĞIMLI OLMAMALI. Zaten tanımlıysa no-op; ilk
-    // boot'ta 0'dan başlar (mark-good epoch'a yükseltir). Böylece prod OTA yolu
-    // firstboot wiring'inden bağımsız çalışır (fail-closed brick önlenir).
-    tpm.nv_define_counter(index).with_context(|| {
-        format!("TPM-NV rollback counter {index:#x} tanımlanamadı (fail-closed)")
+    // NV ordinal'i BURADA idempotent tanımla (define+0): prod'da firstboot
+    // güven-tesis durum makinesi (identity/attestation) çalışmıyor olabilir, ama
+    // RT-6 anti-rollback yolu buna BAĞIMLI OLMAMALI. Zaten tanımlıysa no-op; ilk
+    // boot'ta 0'dan başlar (mark-good epoch'a yükseltir). Ordinary NV → taze
+    // cihazda UNINITIALIZED yok (counter tasarımının brick bug'ı düzeltildi).
+    tpm.nv_define_ordinal(index).with_context(|| {
+        format!("TPM-NV rollback ordinal {index:#x} tanımlanamadı (fail-closed)")
     })?;
     let nv = tpm
-        .nv_read_counter(index)
-        .with_context(|| format!("TPM-NV rollback counter {index:#x} okunamadı (fail-closed)"))?;
+        .nv_read_ordinal(index)
+        .with_context(|| format!("TPM-NV rollback ordinal {index:#x} okunamadı (fail-closed)"))?;
 
     if epoch < nv {
         // Bu imaj, donanımın onayladığı nesilden ESKİ → downgrade. Floor yazma.
         bail!(
-            "downgrade tespit edildi: imaj epoch {epoch} < TPM-NV counter {nv} — \
+            "downgrade tespit edildi: imaj epoch {epoch} < TPM-NV ordinal {nv} — \
              güvenilir floor YAZILMADI, güncelleme yolu fail-closed olacak"
         );
     }
@@ -911,8 +938,8 @@ fn floor_sync() -> Result<()> {
     Ok(())
 }
 
-/// mark-good başarısında donanım çıpasını (TPM-NV counter) imaj epoch'una kadar
-/// ilerletir. Yalnız `tpm-nv` kaynağında ve counter < epoch iken artırır.
+/// mark-good başarısında donanım çıpasını (TPM-NV ordinal) imaj epoch'una kadar
+/// YÜKSELTİR. Yalnız `tpm-nv` kaynağında ve ordinal < epoch iken yazar.
 fn advance_rollback_anchor() -> Result<()> {
     if rollback_floor_source().as_deref() != Some("tpm-nv") {
         return Ok(());
@@ -922,10 +949,10 @@ fn advance_rollback_anchor() -> Result<()> {
     };
     let tpm = suderra_config::tpm::Tpm::new(is_production());
     let index = rollback_nv_index();
-    // Idempotent tanımla (floor sync henüz koşmamış olabilir) + sınırlı,
-    // strict-advance yükseltme (ortak invariant suderra_config::tpm'de).
-    tpm.nv_define_counter(index)?;
-    tpm.nv_raise_to(index, epoch)?;
+    // Idempotent tanımla (floor sync henüz koşmamış olabilir) + yalnız-artır
+    // yükseltme (tek yazma; ortak invariant suderra_config::tpm'de).
+    tpm.nv_define_ordinal(index)?;
+    tpm.nv_raise_ordinal(index, epoch)?;
     Ok(())
 }
 
@@ -1387,6 +1414,33 @@ mod tests {
         std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
         std::env::set_var("SUDERRA_OTA_CONF", &path);
         path
+    }
+
+    #[test]
+    fn load_state_does_not_hard_fail_when_floor_missing_prod() {
+        // Fix C: floor kapısı load_state'ten çıkarıldı → status/rollback gibi
+        // teşhis/kurtarma komutları, floor dosyası (henüz) yokken kilitlenmemeli.
+        // Prod + tpm-nv beyan + var-olmayan floor yolu: SERT kapı Err verir ama
+        // load_state Ok döner (best-effort trusted-floor).
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        let missing = std::env::temp_dir().join(format!("nope-floor-{}", std::process::id()));
+        std::fs::remove_file(&missing).ok();
+        let conf = write_ota_conf(&[
+            "rollback_floor_source=tpm-nv",
+            &format!("rollback_floor_path={}", missing.to_str().unwrap()),
+        ]);
+        assert!(
+            production_rollback_floor_requires_monotonic_state().is_err(),
+            "install/mark-good sert kapısı floor yokken fail-closed olmalı"
+        );
+        assert!(
+            load_state().is_ok(),
+            "load_state floor yokken kilitlenmemeli (status/rollback açık kalsın)"
+        );
+        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_file(&conf).ok();
     }
 
     #[test]

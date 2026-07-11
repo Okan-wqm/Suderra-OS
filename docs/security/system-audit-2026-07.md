@@ -41,8 +41,11 @@ bulguların büyük kısmını **uçtan uca kapattı**. Kapatılanlar (kod + tes
   `overflow-checks`.
 - **NEW-4, NEW-5, C-6, C-7:** agent capability strip + watchdog paketleme; firewall
   VARIANT-çapalı locked-by-default; tek-okuma/staged-verify TOCTOU; SemVer build kapısı.
-- **RT-2, RT-3, RT-6 (ADR-0009):** TPM 2.0 yazılım tarafı (subprocess sarmalayıcı,
-  TPM-NV anti-rollback çıpası, attestation istemcisi, firstboot güven durum makinesi).
+- **RT-6 (ADR-0009):** TPM-NV ordinary-index anti-rollback çıpası — kod + durumlu-mock
+  test + contract; floor sync firstboot'tan bağımsız. swtpm/G5 kanıtı bekliyor.
+- **RT-2, RT-3 (ADR-0009):** attestation istemcisi + firstboot kimlik/güven durum
+  makinesi kod + birim testli, ANCAK cihaz-üstü wiring (firstboot binary prod'da
+  enable) bekliyor — register'da dürüstçe "kod hazır, wiring bekliyor" işaretli.
 - **Kalan:** Faz 4 CI eklemeleri (CodeQL/imaj-CVE/security-test wiring/ARM FIT boot),
   QEMU+swtpm senaryoları ve G5 donanım kanıtı (`production_ready:false` korunur).
 - **`codex/enterprise-evidence-architecture`:** kurtarılacak GRUB2 fingerprint deltası

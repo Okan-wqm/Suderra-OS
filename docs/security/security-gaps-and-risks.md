@@ -46,11 +46,16 @@
 **RT-2 / RT-3 / RT-6 yazılım tarafı UYGULANDI** (ADR-0009; donanım kanıtı G5'te
 `production_ready:false` ile dürüstçe korunur):
 
-- **RT-6 — Çözüldü (swtpm-kanıtı kaldı):** anti-rollback floor kaynağı env'den
-  imzalı `/etc/suderra/ota.conf`'a (dm-verity RO) taşındı; `suderra-ota floor
-  sync` gerçek TPM-NV monotonic counter'ı okur, imaj epoch'uyla çapraz doğrular,
-  downgrade fail-closed; `firstboot` counter'ı tanımlar/yükseltir, `mark-good`
-  ilerletir. Birim + contract testli. "Etikette TPM" durumu kapandı.
+- **RT-6 — Mekanizma düzeltildi (ordinary-NV); swtpm/G5 kanıtı kaldı:** anti-rollback
+  floor kaynağı env'den imzalı `/etc/suderra/ota.conf`'a (dm-verity RO) taşındı;
+  `suderra-ota floor sync` **8-byte ordinary TPM-NV** index'ini (epoch ordinal'ini
+  doğrudan tutar) okur, imaj epoch'uyla çapraz doğrular, downgrade fail-closed;
+  `mark-good` `nv_raise_ordinal` ile yükseltir; floor sync ordinal'i kendi
+  tanımladığından firstboot'tan bağımsız. **DİKKAT (kod incelemesi):** ilk `nt=counter`
+  tasarımı gerçek TPM'de kırıktı (taze index UNINITIALIZED okur + counter değeri
+  epoch ordinaliyle karşılaştırılamaz) → ordinary-NV'ye geçildi. Tehdit: /data-wipe
+  rollback engellenir; online-root NV-rewrite KAPSAM DIŞI (G5/Wave-7 sertleştirme).
+  Durumlu-mock birim + contract testli; **gerçek swtpm/donanım doğrulaması zorunlu**.
 - **RT-2 — Kod uygulandı; cihaz-üstü wiring + swtpm/G5 kanıtı BEKLİYOR:**
   `suderra-attestation` placeholder → gerçek CLI (setup/baseline/quote/verify-local;
   PCR 0-7 AK-imzalı quote; verify-local AK-pinlemeli). Doğrulayıcı sunucu bilinçli

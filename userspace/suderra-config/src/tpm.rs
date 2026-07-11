@@ -24,10 +24,6 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `nv_raise_to` için üst adım sınırı — meşru bir cihaz birkaç güvenlik nesli
-/// atlar; binlerce adım hatalı config sinyalidir (fail-closed).
-const MAX_NV_RAISE_STEPS: u64 = 4096;
-
 /// TPM 2.0 cihazının varlığı (RevPi SLB9670 / x86 fTPM / swtpm).
 pub fn have_tpm() -> bool {
     Path::new("/dev/tpmrm0").exists() || Path::new("/dev/tpm0").exists()
@@ -88,17 +84,30 @@ impl Tpm {
         Ok(output.stdout)
     }
 
-    // --- NV monotonic counter (RT-6 anti-rollback donanım çıpası) ------------
+    // --- NV ordinal (RT-6 anti-rollback epoch tutucu) ------------------------
+    //
+    // TASARIM (ADR-0009, kod incelemesi düzeltmesi): `nt=counter` KULLANILMAZ.
+    // Bir TPM counter index'i (a) ilk `NV_Increment`'e kadar `NV_Read`'de
+    // UNINITIALIZED verir (0 okunmaz → taze cihazda floor_sync patlar, prod OTA
+    // kilitlenir) ve (b) ilk increment değeri TPM-global bir yüksek-su-işaretine
+    // ayarlanır (küçük değil) → küçük `rollback_epoch` ordinaliyle karşılaştırma
+    // temelden yanlıştır. Bunun yerine 8-byte ORDINARY NV index kullanılır: epoch
+    // ordinal'ini DOĞRUDAN tutarız (biz yazarız → mutlak-değer sorunu yok;
+    // tanımda 0 yazarız → UNINITIALIZED sorunu yok).
+    //
+    // Tehdit modeli: ordinary NV, /data silinerek floor sıfırlama saldırısını
+    // engeller (NV, /data'dan ayrı; factory-reset'e dayanır). Online-root'un NV'yi
+    // yeniden yazması KAPSAM DIŞI (zaten game-over). Donanım-monotonic anti-rewrite
+    // (online-root'a karşı) bir G5/Wave-7 sertleştirme kalemidir.
 
-    /// NV counter index'ini tanımlar (idempotent: zaten tanımlıysa no-op).
-    /// `nt=counter` → yalnız artar; owner auth ile bile geri sarılamaz.
-    pub fn nv_define_counter(&self, index: u32) -> Result<()> {
-        // Zaten tanımlıysa nvreadpublic başarılı olur → tekrar tanımlama.
+    /// Ordinary NV index'ini idempotent tanımlar ve tanımda 0'a başlatır (fresh
+    /// index UNINITIALIZED yerine okunabilir olsun). Zaten tanımlıysa no-op.
+    pub fn nv_define_ordinal(&self, index: u32) -> Result<()> {
         if self
             .run("tpm2_nvreadpublic", &[&format!("{index:#x}")])
             .is_ok()
         {
-            return Ok(());
+            return Ok(()); // zaten tanımlı → mevcut değeri koru
         }
         self.run(
             "tpm2_nvdefine",
@@ -106,35 +115,42 @@ impl Tpm {
                 &format!("{index:#x}"),
                 "-C",
                 "o",
+                "-s",
+                "8",
                 "-a",
-                "nt=counter|ownerread|authread|authwrite|policywrite",
+                "ownerread|ownerwrite|authread|authwrite",
             ],
-        )
-        .map(|_| ())
+        )?;
+        // Tanımdan hemen sonra 0 yaz → sonraki okumalar UNINITIALIZED vermez.
+        self.nv_write_ordinal(index, 0)
     }
 
-    /// NV counter'ı bir artırır (mark-good başarısında; başarısız güncelleme
-    /// sayacı yakmaz — çağıran sıralar).
-    pub fn nv_increment(&self, index: u32) -> Result<()> {
-        self.run("tpm2_nvincrement", &[&format!("{index:#x}")])
-            .map(|_| ())
+    /// Ordinary NV index'ine 8-byte big-endian değeri yazar (`tpm2_nvwrite`).
+    pub fn nv_write_ordinal(&self, index: u32, value: u64) -> Result<()> {
+        let tmp = std::env::temp_dir().join(format!("suderra-nv-{index:x}-{value}.bin"));
+        std::fs::write(&tmp, value.to_be_bytes())
+            .with_context(|| format!("NV yazma girdisi oluşturulamadı: {}", tmp.display()))?;
+        let res = self.run(
+            "tpm2_nvwrite",
+            &[&format!("{index:#x}"), "-C", "o", "-i", &path_str(&tmp)?],
+        );
+        let _ = std::fs::remove_file(&tmp);
+        res.map(|_| ())
     }
 
-    /// NV counter'ın mevcut değerini okur (8-byte big-endian).
+    /// Ordinary NV index'inin değerini okur (8-byte big-endian).
     ///
-    /// `-s 8 -o -` TAM 8 ham bayt üretmelidir. Eğer çıktı 8 bayt DEĞİLSE
-    /// (bir tpm2-tools sürümü stdout'a fazladan newline/diagnostic eklerse)
-    /// son-8-baytı almak sessizce YANLIŞ sayaç verirdi ve bu değer floor_sync'in
-    /// downgrade kararını sürerdi. Fail-silent yerine fail-closed: uzunluk 8
-    /// değilse hata (yanlış donanım çıpası, hatadan beterdir).
-    pub fn nv_read_counter(&self, index: u32) -> Result<u64> {
+    /// `-s 8 -o -` TAM 8 ham bayt üretmelidir. Uzunluk 8 değilse (bir tpm2-tools
+    /// sürümü fazladan newline/diagnostic eklerse) son-8-baytı almak sessizce
+    /// YANLIŞ değer verirdi ve bu downgrade kararını sürerdi → fail-closed.
+    pub fn nv_read_ordinal(&self, index: u32) -> Result<u64> {
         let raw = self.run(
             "tpm2_nvread",
             &[&format!("{index:#x}"), "-s", "8", "-o", "-"],
         )?;
         if raw.len() != 8 {
             bail!(
-                "NV counter {index:#x} beklenen 8 bayt yerine {} bayt döndü (fail-closed)",
+                "NV ordinal {index:#x} beklenen 8 bayt yerine {} bayt döndü (fail-closed)",
                 raw.len()
             );
         }
@@ -143,32 +159,12 @@ impl Tpm {
         Ok(u64::from_be_bytes(buf))
     }
 
-    /// NV counter'ı `target`'a kadar YÜKSELTİR (yalnız artırır, düşürmez).
-    /// Her increment sonrası sayacın GERÇEKTEN ilerlediğini doğrular (aksi halde
-    /// fail-closed — takılı/no-op bir counter'da sonsuz döngü + NV yazma
-    /// dayanıklılığını yakmayı önler) ve makul bir üst sınırla korunur (yanlış
-    /// yazılmış devasa bir epoch cihazı kilitlemesin). ota + firstboot ortak
-    /// kullanır (tek yerde invariant).
-    pub fn nv_raise_to(&self, index: u32, target: u64) -> Result<()> {
-        let mut nv = self.nv_read_counter(index)?;
-        let mut steps = 0u64;
-        while nv < target {
-            self.nv_increment(index)?;
-            let next = self.nv_read_counter(index)?;
-            if next <= nv {
-                bail!(
-                    "NV counter {index:#x} increment sonrası ilerlemedi ({nv} → {next}); \
-                     fail-closed (TPM/counter anomalisi)"
-                );
-            }
-            nv = next;
-            steps += 1;
-            if steps > MAX_NV_RAISE_STEPS {
-                bail!(
-                    "NV counter {index:#x} raise-to {target} {MAX_NV_RAISE_STEPS} adımı aştı \
-                     (mevcut {nv}) — muhtemelen hatalı büyük epoch; fail-closed"
-                );
-            }
+    /// Ordinal'i `target`'a YÜKSELTİR (yalnız artırır; düşürme yok). Tek yazma —
+    /// counter increment döngüsü YOK. ota + firstboot ortak kullanır.
+    pub fn nv_raise_ordinal(&self, index: u32, target: u64) -> Result<()> {
+        let current = self.nv_read_ordinal(index)?;
+        if target > current {
+            self.nv_write_ordinal(index, target)?;
         }
         Ok(())
     }
@@ -252,24 +248,54 @@ mod tests {
         std::fs::set_permissions(&p, perms).unwrap();
     }
 
+    /// DURUMLU sahte tpm2 NV: değeri `<dir>/nvstate` dosyasında tutar; nvdefine
+    /// yalnız yoksa oluşturur (define+0 semantiği), nvwrite `-i <infile>`'dan 8
+    /// baytı state'e kopyalar, nvread state'i (yoksa "tanımsız" → exit 1) döker,
+    /// nvreadpublic state varsa 0. Böylece define→read=0, write→read, raise
+    /// senaryoları GERÇEK NV davranışını modelleyerek sınanır.
+    fn install_stateful_nv(dir: &Path) {
+        let state = dir.join("nvstate");
+        let s = state.to_str().unwrap();
+        fake_tool(dir, "tpm2_nvreadpublic", &format!("test -f {s}"));
+        // nvdefine: state yoksa oluştur (henüz 0 yazılmadı — nvwrite 0 yapacak).
+        fake_tool(dir, "tpm2_nvdefine", &format!(": > {s}.defined"));
+        // nvwrite: `-i <infile>` argümanı; son argüman infile. 8 baytı state'e yaz.
+        fake_tool(
+            dir,
+            "tpm2_nvwrite",
+            &format!("infile=\"\"; while [ $# -gt 0 ]; do [ \"$1\" = \"-i\" ] && {{ shift; infile=$1; }}; shift; done; cp \"$infile\" {s}"),
+        );
+        // nvread: state (8 bayt) yoksa fail-closed (tanımsız NV gibi).
+        fake_tool(
+            dir,
+            "tpm2_nvread",
+            &format!("[ -s {s} ] && cat {s} || {{ echo uninit >&2; exit 1; }}"),
+        );
+    }
+
     #[test]
-    fn nv_read_counter_parses_big_endian_8_bytes() {
+    fn ordinal_define_then_read_is_zero_then_write_read_roundtrips() {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        // 0x0000000000000005 (big-endian) yaz.
-        fake_tool(
-            dir.path(),
-            "tpm2_nvread",
-            "printf '\\000\\000\\000\\000\\000\\000\\000\\005'",
-        );
+        install_stateful_nv(dir.path());
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
         let tpm = Tpm::new(false);
-        assert_eq!(tpm.nv_read_counter(0x0150_0001).unwrap(), 5);
+        // define → 0'a başlatır (UNINITIALIZED YOK — taze donanım bug'ının regresyonu).
+        tpm.nv_define_ordinal(0x0150_0001).unwrap();
+        assert_eq!(tpm.nv_read_ordinal(0x0150_0001).unwrap(), 0);
+        // write → read roundtrip.
+        tpm.nv_write_ordinal(0x0150_0001, 7).unwrap();
+        assert_eq!(tpm.nv_read_ordinal(0x0150_0001).unwrap(), 7);
+        // raise yalnız artırır: 3 (< 7) no-op, 9 (> 7) yükseltir.
+        tpm.nv_raise_ordinal(0x0150_0001, 3).unwrap();
+        assert_eq!(tpm.nv_read_ordinal(0x0150_0001).unwrap(), 7);
+        tpm.nv_raise_ordinal(0x0150_0001, 9).unwrap();
+        assert_eq!(tpm.nv_read_ordinal(0x0150_0001).unwrap(), 9);
         std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
     }
 
     #[test]
-    fn nv_read_counter_rejects_non_8_byte_output_fail_closed() {
+    fn nv_read_ordinal_rejects_non_8_byte_output_fail_closed() {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         // 8 bayt + fazladan newline → fail-closed (son-8-bayt sessizce alınmaz).
@@ -280,27 +306,30 @@ mod tests {
         );
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
         let tpm = Tpm::new(false);
-        let err = tpm.nv_read_counter(0x0150_0001).unwrap_err();
+        let err = tpm.nv_read_ordinal(0x0150_0001).unwrap_err();
         assert!(err.to_string().contains("8 bayt"), "{err}");
         std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
     }
 
     #[test]
-    fn nv_raise_to_bails_when_counter_does_not_advance() {
+    fn define_ordinal_is_idempotent_when_already_present() {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        // Sayaç hep 3 döner, increment no-op → nv_raise_to(target=5) sonsuz
-        // döngü yerine strict-advance kontrolüyle fail-closed olmalı.
+        // nvreadpublic başarılı → zaten var → nvdefine/nvwrite(0) ÇAĞRILMAMALI.
+        fake_tool(dir.path(), "tpm2_nvreadpublic", "exit 0");
         fake_tool(
             dir.path(),
-            "tpm2_nvread",
-            "printf '\\000\\000\\000\\000\\000\\000\\000\\003'",
+            "tpm2_nvdefine",
+            "echo should-not-run >&2; exit 1",
         );
-        fake_tool(dir.path(), "tpm2_nvincrement", "exit 0");
+        fake_tool(
+            dir.path(),
+            "tpm2_nvwrite",
+            "echo should-not-run >&2; exit 1",
+        );
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
         let tpm = Tpm::new(false);
-        let err = tpm.nv_raise_to(0x0150_0001, 5).unwrap_err();
-        assert!(err.to_string().contains("ilerlemedi"), "{err}");
+        assert!(tpm.nv_define_ordinal(0x0150_0001).is_ok());
         std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
     }
 
@@ -308,28 +337,11 @@ mod tests {
     fn run_propagates_nonzero_exit_fail_closed() {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        fake_tool(dir.path(), "tpm2_nvincrement", "echo boom >&2; exit 3");
+        fake_tool(dir.path(), "tpm2_nvread", "echo boom >&2; exit 3");
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
         let tpm = Tpm::new(false);
-        let err = tpm.nv_increment(0x0150_0001).unwrap_err();
+        let err = tpm.nv_read_ordinal(0x0150_0001).unwrap_err();
         assert!(err.to_string().contains("boom"), "{err}");
-        std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
-    }
-
-    #[test]
-    fn define_counter_is_idempotent_when_already_present() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        // nvreadpublic başarılı → zaten var → nvdefine ÇAĞRILMAMALI.
-        fake_tool(dir.path(), "tpm2_nvreadpublic", "exit 0");
-        fake_tool(
-            dir.path(),
-            "tpm2_nvdefine",
-            "echo should-not-run >&2; exit 1",
-        );
-        std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
-        let tpm = Tpm::new(false);
-        assert!(tpm.nv_define_counter(0x0150_0001).is_ok());
         std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
     }
 
@@ -342,7 +354,7 @@ mod tests {
         std::env::set_var("SUDERRA_TPM2_BIN_DIR", dir.path());
         let tpm = Tpm::new(true);
         // /usr/bin/tpm2_nvread test host'unda yok → çözüm başarısız (env'e düşmez).
-        assert!(tpm.nv_read_counter(0x0150_0001).is_err());
+        assert!(tpm.nv_read_ordinal(0x0150_0001).is_err());
         std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
     }
 }
