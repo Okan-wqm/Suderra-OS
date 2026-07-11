@@ -13,6 +13,7 @@
 //! - Validation: shape (Serde) + invariant'lar (custom check)
 
 pub mod canonical;
+pub mod tpm;
 pub mod variant;
 
 use serde::{Deserialize, Serialize};
