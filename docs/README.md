@@ -32,6 +32,7 @@ docs/
 
 ### Güvenlik
 
+- [system-audit-2026-07.md](security/system-audit-2026-07.md) — tam sistem denetimi (tüm branch'ler) + fazlı iyileştirme yol haritası
 - [threat-model.md](security/threat-model.md) — STRIDE tehdit modeli
 - [field-appliance-hardening.md](security/field-appliance-hardening.md) — sahada agent-only kilitli appliance güvenlik modeli
 - [kernel-hardening.md](security/kernel-hardening.md) — hangi CONFIG'ler açık/kapalı, neden
