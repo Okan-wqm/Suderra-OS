@@ -55,6 +55,8 @@ Lütfen şu bilgileri içerin:
 
 ## Güvenlik Tasarım Belgeleri
 
+- [docs/security/security-architecture.md](docs/security/security-architecture.md) — güvenlik mimarisi (kod-temelli, uçtan uca; uygulanan vs iskele)
+- [docs/security/security-gaps-and-risks.md](docs/security/security-gaps-and-risks.md) — teyit edilmiş eksik/risk kaydı (GATED vs AKSİYON)
 - [docs/security/threat-model.md](docs/security/threat-model.md) — STRIDE threat model
 - [docs/security/kernel-hardening.md](docs/security/kernel-hardening.md)
 - [docs/security/cve-process.md](docs/security/cve-process.md)
