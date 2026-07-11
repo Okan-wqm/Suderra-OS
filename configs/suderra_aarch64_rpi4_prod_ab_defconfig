@@ -199,6 +199,9 @@ BR2_PACKAGE_TPM2_TSS=y
 BR2_PACKAGE_TPM2_TOOLS=y
 BR2_PACKAGE_LVM2=y
 BR2_PACKAGE_CRYPTSETUP=y
+# systemd-cryptsetup + systemd-cryptenroll + TPM2 token handler (RT-5): /data
+# LUKS2'nin TPM2-seal ile provision + unlock edilebilmesi için gerekli.
+BR2_PACKAGE_SYSTEMD_CRYPTSETUP=y
 # Version anti-rollback (M4): rollback-floor / monotonic install guard.
 BR2_PACKAGE_SUDERRA_OTA=y
 # BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set

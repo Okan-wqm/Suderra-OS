@@ -49,10 +49,20 @@ unlock_prod_luks_data() {
         echo "production data partition missing: ${data_dev}" >&2
         exit 1
     }
-    cryptsetup isLuks "${data_dev}" || {
-        echo "production data partition is not LUKS2: ${data_dev}" >&2
-        exit 1
-    }
+    # İlk boot'ta partition ham/formatsız gelir → LUKS2 olarak provision et (RT-1).
+    # İdempotent: sonraki boot'larda zaten LUKS2 olduğundan provision no-op'tur.
+    # Fail-closed: provisioning başarısızsa unlock da başarısız olur (düz /data yok).
+    if ! cryptsetup isLuks "${data_dev}"; then
+        echo "production /data not yet provisioned; running suderra-data-provision" >&2
+        SUDERRA_DATA_DEVICE="${data_dev}" /usr/sbin/suderra-data-provision || {
+            echo "production /data LUKS2 provisioning failed" >&2
+            exit 1
+        }
+        cryptsetup isLuks "${data_dev}" || {
+            echo "production data partition still not LUKS2 after provisioning: ${data_dev}" >&2
+            exit 1
+        }
+    fi
     luks_type="$(cryptsetup luksDump "${data_dev}" 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -n 1)"
     [ "${luks_type}" = "2" ] || {
         echo "production data partition must be LUKS2" >&2

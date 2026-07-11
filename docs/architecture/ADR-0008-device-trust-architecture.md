@@ -83,9 +83,11 @@ kalır (asla yarı-provisioned sevk sırrı bırakmaz):
 
 ```
 firstboot (Type=oneshot, ConditionPathExists=!/data/.provisioned)
-  1. /data LUKS2 provision            (RT-1, DOC-1)
-       - luksFormat + mkfs (ilk boot)
-       - anahtar: RevPi → TPM2 PCR seal; rpi4/x86 → keyfile (bkz. Dalga 2)
+  1. /data LUKS2 provision            (RT-1, DOC-1)  [Dalga 2 — uygulandı]
+       - luksFormat + bootstrap-key ile mkfs (ilk boot), sonra gerçek anahtar
+       - anahtar custody KATMANLI (fail-closed): DEFAULT tpm2 (PCR-policy seal);
+         TPM'siz board'da provisioning FAIL-CLOSED (sessiz zayıf keyfile YOK);
+         keyfile tier YALNIZ açık SUDERRA_DATA_KEY_MODE=keyfile opt-in'iyle
   2. systemd-cryptsetup token enroll   (RT-5)
        - BR2_PACKAGE_SYSTEMD_CRYPTSETUP + systemd-cryptenroll --tpm2-device
   3. cihaz kimliği üret                (RT-3)
@@ -141,7 +143,7 @@ doğrulanmış olur; donanım yalnız "gerçekten böyle davrandı" ölçümün�
 | Dalga | Kapsam | Bulgular | Donanım? | Durum |
 |---|---|---|---|---|
 | **1** | Runtime crate hardening (prod-detection birleştirme, anti-rollback tiering, mark-good, watchdog, verify_strict) | NEW-1, NEW-3, #1/#2/#3/#4/#7 | Hayır | **Uygulandı** |
-| **2** | `/data` LUKS2 provisioning + firstboot durum makinesi iskeleti + systemd-cryptsetup | RT-1, RT-4, RT-5, RT-7, DOC-1 | swtpm ile | Sıradaki |
+| **2** | `/data` LUKS2 provisioning (provision-or-unlock, TPM2-seal default, fail-closed) + systemd-cryptsetup | RT-1, RT-5, DOC-1 | swtpm ile | **Uygulandı** (destructive open/mkfs/seal runtime kanıtı CI QEMU-swtpm) |
 | **3** | TPM seal + attestation + TPM-bağlı kimlik/enrollment + anti-rollback Tier-2 kaynağı imzalı config'e | RT-2, RT-3, RT-6 | swtpm ile | Dalga 2 sonrası |
 | **4** | Ağ yüzeyi: egress destination-set, firewall default, agent capability mediation | NEW-2, NEW-4, NEW-5 | Hayır | Paralel |
 | **5** | Doküman/roadmap hizalama + register'a NEW-1..7 işleme | DOC-2, DOC-3 | Hayır | Paralel |
