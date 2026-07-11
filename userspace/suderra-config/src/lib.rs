@@ -8,11 +8,12 @@
 //!
 //! Mimari:
 //! - `SuderraConfig` — sistem geneli config (`/etc/suderra/config.yaml`)
-//! - `OtaConfig` — OTA-specific subset
-//! - `TelemetryConfig` — telemetri-specific subset
+//! - [`canonical`] — imza baytları için kanonik JSON (installer + ota ortak)
+//! - [`variant`] — üretim varyant tespitinin güven kökü (installer + ota ortak)
 //! - Validation: shape (Serde) + invariant'lar (custom check)
-//!
-//! Faz 2'de doldurulur — şu an skeleton.
+
+pub mod canonical;
+pub mod variant;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

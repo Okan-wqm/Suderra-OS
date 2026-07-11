@@ -16,9 +16,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
+// Kanonik imza baytları paylaşılan sözleşmeden gelir (ota ile aynı form).
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use suderra_config::canonical::{canonical_json_bytes, canonical_without_signature};
 
 const USB_INDEX_KIND: &str = "suderra.usb-payload-index.v1";
 const EDGE_MANIFEST_KIND: &str = "suderra.edge-provisioning.v1";
@@ -849,59 +851,6 @@ fn verify_ed25519(key: &VerifyingKey, message: &[u8], signature: &Signature) -> 
     // (imza malleability'yi kapatır). Meşru imzalayıcı canonical imza ürettiğinden
     // gerçek artefaktların doğrulanması etkilenmez.
     key.verify_strict(message, signature).map_err(Into::into)
-}
-
-fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let value = serde_json::to_value(value)?;
-    canonical_value_bytes(&value)
-}
-
-fn canonical_without_signature<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let mut value = serde_json::to_value(value)?;
-    if let Value::Object(map) = &mut value {
-        map.remove("signature");
-    }
-    canonical_value_bytes(&value)
-}
-
-fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
-    let mut out = String::new();
-    write_canonical_value(value, &mut out)?;
-    Ok(out.into_bytes())
-}
-
-fn write_canonical_value(value: &Value, out: &mut String) -> Result<()> {
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
-        Value::Number(number) => out.push_str(&number.to_string()),
-        Value::String(value) => out.push_str(&serde_json::to_string(value)?),
-        Value::Array(values) => {
-            out.push('[');
-            for (idx, value) in values.iter().enumerate() {
-                if idx > 0 {
-                    out.push(',');
-                }
-                write_canonical_value(value, out)?;
-            }
-            out.push(']');
-        }
-        Value::Object(map) => {
-            out.push('{');
-            let mut first = true;
-            for (key, value) in map.iter().collect::<BTreeMap<_, _>>() {
-                if !first {
-                    out.push(',');
-                }
-                first = false;
-                out.push_str(&serde_json::to_string(key)?);
-                out.push(':');
-                write_canonical_value(value, out)?;
-            }
-            out.push('}');
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
