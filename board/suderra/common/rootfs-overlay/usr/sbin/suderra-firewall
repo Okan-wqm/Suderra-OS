@@ -1,10 +1,36 @@
 #!/bin/sh
+# Firewall ruleset seçimi — NEW-5: prod'da varsayılan KİLİTLİ (fail-closed).
+#
+# GÜVEN KÖKÜ imzalı, dm-verity altındaki salt-okunur /etc/os-release'in
+# VARIANT/VARIANT_ID alanıdır (NEW-1 ile aynı kök; suderra_config::variant
+# sözleşmesi). Prod imajda appliance ruleset'i KOŞULSUZ yüklenir — yazılabilir
+# /var/lib altındaki hiçbir marker prod cihazı provisioning ruleset'ine
+# (SSH:22 açık) düşüremez. os-release okunamazsa da appliance seçilir
+# (fail-closed). Prod cihaz komisyonu firewall açılarak değil, imzalı RO
+# /etc/suderra/egress.d/*.nft hedef setleriyle yapılır (ADR-0008 §4).
+#
+# Non-prod (dev/lab): mevcut yaşam döngüsü aynen — suderra-lockdown'ın koyduğu
+# .appliance-locked marker'ı kilitler; marker yoksa provisioning ruleset.
 set -eu
 
-if [ -f /var/lib/suderra/.appliance-locked ]; then
-    rules=/etc/nftables.conf
-else
-    rules=/etc/nftables.provisioning.conf
+variant=""
+if [ -r /etc/os-release ]; then
+    # VARIANT/VARIANT_ID değeri; tırnaklar soyulur, küçük harfe indirilir.
+    variant=$(sed -n 's/^VARIANT\(_ID\)\{0,1\}=//p' /etc/os-release | head -n 1 |
+        tr -d '"' | tr '[:upper:]' '[:lower:]' | tr -d ' \t')
 fi
+
+case "${variant}" in
+prod | production | prod-* | prod_*)
+    rules=/etc/nftables.conf
+    ;;
+*)
+    if [ -f /var/lib/suderra/.appliance-locked ]; then
+        rules=/etc/nftables.conf
+    else
+        rules=/etc/nftables.provisioning.conf
+    fi
+    ;;
+esac
 
 exec /usr/sbin/nft -f "${rules}"

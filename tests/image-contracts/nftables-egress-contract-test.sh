@@ -57,6 +57,32 @@ done
 echo "PASS: static nftables egress fail-closed contract"
 
 # ---------------------------------------------------------------------------
+# 1b. NEW-5: prod'da varsayılan KİLİTLİ ruleset (suderra-firewall seçicisi)
+# ---------------------------------------------------------------------------
+FIREWALL="${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-firewall"
+[ -f "${FIREWALL}" ] || fail "missing suderra-firewall selector"
+
+# Seçici imzalı os-release VARIANT'ına dallanmalı (NEW-1 güven kökü).
+grep -q 'VARIANT' "${FIREWALL}" \
+    || fail "suderra-firewall must anchor ruleset selection on os-release VARIANT (NEW-5)"
+
+# Prod dalı KOŞULSUZ appliance ruleset seçmeli — prod case gövdesinde
+# provisioning ruleset'e giden hiçbir yol olmamalı.
+prod_branch="$(sed -n '/^prod | production/,/;;/p' "${FIREWALL}")"
+[ -n "${prod_branch}" ] || fail "suderra-firewall must have an explicit prod variant branch"
+printf '%s' "${prod_branch}" | grep -q 'rules=/etc/nftables.conf' \
+    || fail "prod branch must select the appliance ruleset unconditionally"
+if printf '%s' "${prod_branch}" | grep -q 'provisioning'; then
+    fail "prod branch must have NO path to the provisioning ruleset (SSH open)"
+fi
+
+# Yazılabilir marker yalnız NON-prod dalında rol oynayabilir.
+if sed -n '/^prod | production/,/;;/p' "${FIREWALL}" | grep -q 'appliance-locked'; then
+    fail "prod selection must not depend on a writable /var/lib marker"
+fi
+echo "PASS: NEW-5 prod-locked-by-default firewall selector contract"
+
+# ---------------------------------------------------------------------------
 # 2. RUNTIME nft -c doğrulaması (nft varsa)
 # ---------------------------------------------------------------------------
 if ! command -v nft >/dev/null 2>&1; then

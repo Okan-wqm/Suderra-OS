@@ -109,9 +109,17 @@ mount'u değil) kanıtlayacak şekilde güçlendirilir; `data-luks-open` health-
   adlandırılmış hedef set'leriyle (cloud API, broker, PLC CIDR) yeniden yazılır;
   bilinmeyen host'a giden 443/8883/502/4840 **düşürülür**. Set'ler imzalı config'ten
   gelir (saha-özel CIDR'ler deployment girdisidir).
-- **Appliance firewall default'u tersine (NEW-5):** prod imaj build-time
-  `.appliance-locked` ile açılır; provisioning ruleset yalnız açık provisioning
-  marker'ı varken yüklenir.
+- **Appliance firewall default'u tersine (NEW-5):** seçim, yazılabilir bir
+  marker'a değil imzalı RO `/etc/os-release` `VARIANT` güven köküne çapalanır
+  (`/var/lib` = `/data` bind-mount olduğundan build-time marker mümkün değildir
+  ve NEW-1 kökünü kopyalamak yerine yeniden kullanmak doğrudur): `VARIANT=prod`
+  → appliance ruleset KOŞULSUZ; hiçbir yazılabilir dosya prod cihazı
+  provisioning ruleset'ine (SSH:22) düşüremez; os-release okunamazsa da
+  appliance (fail-closed). Non-prod'da mevcut `suderra-lockdown` →
+  `.appliance-locked` akışı değişmez. Saha komisyonu prod'da firewall açılarak
+  DEĞİL, imzalı RO `/etc/suderra/egress.d/*.nft` hedef setleri imaja alınarak
+  yapılır; teşhis için `suderra-lockdown-status` etkin ruleset'i ve nedenini
+  raporlar.
 - **Capability mediation (NEW-4):** indirilen harici `suderra-agent`'tan
   `/dev/tpm0`/`/dev/tpmrm0`/`/dev/watchdog` erişimi kaldırılır; TPM Suderra-sahipli
   bir broker üzerinden aracılı verilir, watchdog yalnız `suderra-watchdog`'da kalır.
