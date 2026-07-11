@@ -246,4 +246,5 @@ her birinin çözüm durumudur. Bütünsel mimari:
 ### Performans bulguları (özet — ADR-0008 Dalga 6)
 
 - **Build/CI:** cross-toolchain her build'de sıfırdan; dl/ccache cache defconfig-parçalı + `restore-keys` yok → 10 GB bütçe eviction thrash; Docker builder run başına ~5× layer-cache'siz; redundant smoke/parse + `msrv` cache'siz.
-- **Footprint (çoğu iyi optimize):** `tokio full` her crate'te; kullanılmayan `reqwest` (`ota`/`telemetry`/`attestation`); ikili TLS yığını (OpenSSL+rustls); `tpm2-tools`/`i2c-tools` prod'da tüketicisiz; `network-online.target` DHCP boot-stall worst-case ~120 s.
+- **Footprint (çoğu iyi optimize):** **Çözüldü** → kullanılmayan `reqwest` `ota`/`telemetry`/`attestation`'dan çıkarıldı (MIN-2); `tokio` `full` yerine crate-başı feature (48 satır transitive dep düştü); `i2c-tools` prod'dan çıkarıldı. **Açık:** ikili TLS yığını (OpenSSL+rustls, M-effort); `tpm2-tools` prod'da (post-image gate + Wave 3 attestation'a bağlı); `network-online.target` DHCP boot-stall (~120 s, boot-test gerekir).
+- **Hijyen:** **Çözüldü** → workspace-geneli `unsafe_code = "deny"` + hedefli watchdog allow (MIN-3, negatif testle kanıtlı).
