@@ -51,6 +51,21 @@ enum Commands {
     Rollback(RollbackArgs),
     /// Mark the current slot good after health checks pass.
     MarkGood(MarkGoodArgs),
+    /// Sync the TPM-NV-anchored anti-rollback floor into the runtime path (RT-6).
+    Floor(FloorArgs),
+}
+
+#[derive(Args, Debug)]
+struct FloorArgs {
+    #[command(subcommand)]
+    action: FloorAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum FloorAction {
+    /// Read the TPM-NV monotonic counter, cross-check the image epoch, and write
+    /// the trusted SemVer floor to the runtime path (fail-closed on downgrade).
+    Sync,
 }
 
 #[derive(Args, Debug)]
@@ -163,6 +178,9 @@ async fn run(command: Commands) -> Result<()> {
         Commands::Status(args) => status(args),
         Commands::Rollback(args) => rollback(args),
         Commands::MarkGood(args) => mark_good(args),
+        Commands::Floor(args) => match args.action {
+            FloorAction::Sync => floor_sync(),
+        },
     }
 }
 
@@ -335,6 +353,15 @@ fn mark_good(args: MarkGoodArgs) -> Result<()> {
     state.last_event = Some(event.clone());
     save_state(&state)?;
     persist_rollback_floor(&state.rollback_floor)?;
+    // RT-6: onaylanmış (mark-good) bir ileri-sürüm, donanım çıpasını (TPM-NV
+    // monotonic counter) da ilerletir. YALNIZ başarı yolunda — başarısız bir
+    // güncelleme sayacı yakmaz. Sayaç yalnız artar; sonraki bir downgrade denemesi
+    // floor_sync tarafından (image epoch < nv) fail-closed yakalanır.
+    if let Err(err) = advance_rollback_anchor() {
+        // Çıpa ilerletme başarısızlığı mark-good'u geri almaz (boot zaten iyi);
+        // ama görünür şekilde uyar — bir sonraki floor_sync tutarsızlığı yakalar.
+        warn!(error = %err, "TPM-NV rollback çıpası ilerletilemedi (mark-good yine de geçerli)");
+    }
     print_json(&event)?;
     Ok(())
 }
@@ -759,9 +786,140 @@ fn dev_override(key: &str) -> Option<String> {
 /// buradan okunur; yazılabilir `/data` üzerindeki floor dosyası prod'da yalnız
 /// bir ayna/cache'tir, güven çıpası DEĞİLDİR.
 fn trusted_floor_path() -> Option<PathBuf> {
-    std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")
-        .ok()
+    // RT-6: prod GÜVEN KÖKÜ imzalı `/etc/suderra/ota.conf`'tur; env yalnız
+    // dev/CI override (prod'da `dev_override` None döner → env prod'da yol
+    // beyan EDEMEZ, aksi halde saldırgan floor'u /tmp'ye yönlendirebilirdi).
+    ota_conf_value("rollback_floor_path")
+        .or_else(|| dev_override("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH"))
         .map(PathBuf::from)
+}
+
+/// İmzalı, dm-verity altındaki salt-okunur OTA config yolu. `SUDERRA_OTA_CONF`
+/// yeniden konumlandırma/test seam'idir; gerçek prod imajda dosya sabittir.
+fn ota_conf_path() -> PathBuf {
+    std::env::var("SUDERRA_OTA_CONF")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/etc/suderra/ota.conf"))
+}
+
+/// `/etc/suderra/ota.conf`'tan `key=value` okur (yorum `#`, tırnak soyulur).
+fn ota_conf_value(key: &str) -> Option<String> {
+    let content = fs::read_to_string(ota_conf_path()).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == key {
+                let v = v.trim().trim_matches('"').trim();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Anti-rollback floor kaynağı: imzalı config (prod kök) VEYA dev env override.
+fn rollback_floor_source() -> Option<String> {
+    ota_conf_value("rollback_floor_source")
+        .or_else(|| dev_override("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE"))
+}
+
+/// TPM-NV counter index'i (RT-6). Config'ten okunur; yoksa TCG owner-range
+/// varsayılanı.
+fn rollback_nv_index() -> u32 {
+    ota_conf_value("rollback_nv_index")
+        .and_then(|s| {
+            let s = s.trim();
+            let s = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .unwrap_or(s);
+            u32::from_str_radix(s, 16).ok()
+        })
+        .unwrap_or(0x0150_0001)
+}
+
+/// Bu imajın beyan ettiği anti-rollback epoch'u (config `rollback_epoch`).
+/// Güvenlik-ilgili her sürümde artan ordinal; TPM-NV counter'ın SemVer floor'a
+/// eşlemesidir (ADR-0009).
+fn image_rollback_epoch() -> Option<u64> {
+    ota_conf_value("rollback_epoch").and_then(|s| s.trim().parse::<u64>().ok())
+}
+
+/// RT-6 floor sync: TPM-NV monotonic counter'ı okur, imaj epoch'uyla çapraz
+/// doğrular ve güvenilir SemVer floor'u runtime yoluna yazar. Downgrade
+/// (imaj epoch'u < donanım counter'ı) fail-closed: floor YAZILMAZ → install
+/// yolu #84 invariantıyla fail-closed olur.
+fn floor_sync() -> Result<()> {
+    // Yalnız TPM-NV kaynağı bu sync'e ihtiyaç duyar; diğer kaynaklar (bootloader
+    // monotonic) çıpayı kendileri sağlar, Tier-1 (kaynak yok) no-op.
+    match rollback_floor_source().as_deref() {
+        Some("tpm-nv") => {}
+        _ => {
+            info!("rollback floor kaynağı tpm-nv değil; floor sync no-op");
+            return Ok(());
+        }
+    }
+    let floor = ota_conf_value("rollback_floor")
+        .ok_or_else(|| anyhow!("ota.conf tpm-nv beyan ediyor ama rollback_floor yok"))?;
+    ParsedVersion::parse(&floor)
+        .with_context(|| format!("ota.conf rollback_floor '{floor}' geçerli SemVer değil"))?;
+    let epoch = image_rollback_epoch()
+        .ok_or_else(|| anyhow!("ota.conf tpm-nv beyan ediyor ama rollback_epoch yok"))?;
+    let path = trusted_floor_path()
+        .ok_or_else(|| anyhow!("ota.conf tpm-nv beyan ediyor ama rollback_floor_path yok"))?;
+
+    let tpm = suderra_config::tpm::Tpm::new(is_production());
+    let index = rollback_nv_index();
+    let nv = tpm
+        .nv_read_counter(index)
+        .with_context(|| format!("TPM-NV rollback counter {index:#x} okunamadı (fail-closed)"))?;
+
+    if epoch < nv {
+        // Bu imaj, donanımın onayladığı nesilden ESKİ → downgrade. Floor yazma.
+        bail!(
+            "downgrade tespit edildi: imaj epoch {epoch} < TPM-NV counter {nv} — \
+             güvenilir floor YAZILMADI, güncelleme yolu fail-closed olacak"
+        );
+    }
+
+    // İmaj çıpa kadar veya daha ileri → güvenilir floor'u runtime yoluna yaz.
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = fs::File::create(&tmp)?;
+        writeln!(file, "{floor}")?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, &path)?;
+    info!(floor = %floor, epoch, nv, "TPM-NV rollback floor senkronize edildi");
+    Ok(())
+}
+
+/// mark-good başarısında donanım çıpasını (TPM-NV counter) imaj epoch'una kadar
+/// ilerletir. Yalnız `tpm-nv` kaynağında ve counter < epoch iken artırır.
+fn advance_rollback_anchor() -> Result<()> {
+    if rollback_floor_source().as_deref() != Some("tpm-nv") {
+        return Ok(());
+    }
+    let Some(epoch) = image_rollback_epoch() else {
+        return Ok(());
+    };
+    let tpm = suderra_config::tpm::Tpm::new(is_production());
+    let index = rollback_nv_index();
+    let mut nv = tpm.nv_read_counter(index)?;
+    // Sayaç yalnız artar; epoch'a ulaşana dek increment.
+    while nv < epoch {
+        tpm.nv_increment(index)?;
+        nv = tpm.nv_read_counter(index)?;
+    }
+    Ok(())
 }
 
 /// Güvenilir kaynaktan floor değerini okur ve SemVer olarak doğrular. Kaynak yolu
@@ -817,10 +975,7 @@ fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
     if !is_production() {
         return Ok(());
     }
-    match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE")
-        .ok()
-        .as_deref()
-    {
+    match rollback_floor_source().as_deref() {
         Some("tpm-nv") | Some("bootloader-monotonic") => {
             // Tier 2: kaynak beyan edildi → KATI doğrula. Floor'un GERÇEKTEN
             // okunacağı yol zorunlu ve yazılabilir state dizininin dışında olmalı;
@@ -1101,10 +1256,77 @@ fn compare_prerelease(left: &[PrereleaseIdentifier], right: &[PrereleaseIdentifi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::Mutex;
 
     // Env değiştiren testleri serileştir (process-global env yarışlarını önle).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn fake_tpm2(dir: &Path, name: &str, body: &str) {
+        let p = dir.join(name);
+        let mut f = std::fs::File::create(&p).unwrap();
+        writeln!(f, "#!/bin/sh\n{body}").unwrap();
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&p, perms).unwrap();
+    }
+
+    #[test]
+    fn floor_sync_writes_floor_and_rejects_downgrade() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("suderra-floor-sync-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bindir = dir.join("bin");
+        std::fs::create_dir_all(&bindir).unwrap();
+        let floor_path = dir.join("rollback-epoch");
+        let conf = dir.join("ota.conf");
+
+        // NV counter = 3 döndüren sahte tpm2_nvread (big-endian).
+        fake_tpm2(
+            &bindir,
+            "tpm2_nvread",
+            "printf '\\000\\000\\000\\000\\000\\000\\000\\003'",
+        );
+        std::env::set_var("SUDERRA_TPM2_BIN_DIR", &bindir);
+
+        // İmaj epoch 5 (>= 3) → floor yazılmalı.
+        std::fs::write(
+            &conf,
+            "rollback_floor_source=tpm-nv\nrollback_epoch=5\n\
+             rollback_floor=v1.2.0\nrollback_floor_path="
+                .to_string()
+                + floor_path.to_str().unwrap()
+                + "\n",
+        )
+        .unwrap();
+        std::env::set_var("SUDERRA_OTA_CONF", &conf);
+
+        floor_sync().expect("epoch >= nv → floor yazılmalı");
+        assert_eq!(
+            std::fs::read_to_string(&floor_path).unwrap().trim(),
+            "v1.2.0"
+        );
+
+        // İmaj epoch 2 (< 3) → downgrade → fail-closed, floor DEĞİŞMEMELİ.
+        std::fs::remove_file(&floor_path).ok();
+        std::fs::write(
+            &conf,
+            "rollback_floor_source=tpm-nv\nrollback_epoch=2\n\
+             rollback_floor=v0.9.0\nrollback_floor_path="
+                .to_string()
+                + floor_path.to_str().unwrap()
+                + "\n",
+        )
+        .unwrap();
+        let err = floor_sync().unwrap_err();
+        assert!(err.to_string().contains("downgrade"), "{err}");
+        assert!(!floor_path.exists(), "downgrade'de floor yazılmamalı");
+
+        std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn dev_override_ignored_in_production() {
@@ -1145,24 +1367,37 @@ mod tests {
         assert!(trusted_rollback_floor().unwrap().is_none());
     }
 
+    /// Test için geçici imzalı-config vekili yazar ve `SUDERRA_OTA_CONF`'a bağlar.
+    /// (RT-6: prod'da kaynak beyanı env'den değil imzalı config'ten gelir.)
+    fn write_ota_conf(lines: &[&str]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "suderra-ota-conf-{}-{}",
+            std::process::id(),
+            lines.len()
+        ));
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+        std::env::set_var("SUDERRA_OTA_CONF", &path);
+        path
+    }
+
     #[test]
     fn production_gate_rejects_writable_floor_source() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
-        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "tpm-nv");
-        // Floor kaynağı yazılabilir state dizininin altında → reddedilmeli.
+        // Kaynak imzalı config'ten beyan edilir; floor yolu yazılabilir state
+        // dizininin altında → reddedilmeli.
         let inside = state_dir().join("rollback-floor");
-        std::env::set_var(
-            "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH",
-            inside.to_str().unwrap(),
-        );
+        let conf = write_ota_conf(&[
+            "rollback_floor_source=tpm-nv",
+            &format!("rollback_floor_path={}", inside.to_str().unwrap()),
+        ]);
         assert!(
             production_rollback_floor_requires_monotonic_state().is_err(),
             "yazılabilir state dizinindeki floor kaynağı prod'da reddedilmeli"
         );
         std::env::remove_var("SUDERRA_OTA_PRODUCTION");
-        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
-        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_file(&conf).ok();
     }
 
     #[test]
@@ -1171,6 +1406,7 @@ mod tests {
         // (Ok), userspace /data floor tek katman olarak enforce edilmeye devam eder.
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        std::env::remove_var("SUDERRA_OTA_CONF");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
         assert!(
@@ -1178,13 +1414,14 @@ mod tests {
             "kaynak beyan edilmediğinde prod OTA kilitlenmemeli (Tier 1)"
         );
         // Beyan edilen ama geçersiz bir kaynak tipi ise fail-closed.
-        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "file");
+        let conf = write_ota_conf(&["rollback_floor_source=file"]);
         assert!(
             production_rollback_floor_requires_monotonic_state().is_err(),
             "geçersiz kaynak tipi reddedilmeli"
         );
         std::env::remove_var("SUDERRA_OTA_PRODUCTION");
-        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_file(&conf).ok();
     }
 
     #[test]

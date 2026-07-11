@@ -95,6 +95,25 @@ VARIANT="${SUDERRA_OS_VARIANT}"
 IMAGE_ROLE="${DEFCONFIG_NAME}"
 EOF
 
+# 1b. /etc/suderra/ota.conf — imzalı (dm-verity RO) anti-rollback kaynak beyanı (RT-6).
+# YALNIZ prod varyant: TPM-NV monotonic counter çıpası. rollback_epoch güvenlik-ilgili
+# her sürümde artan ordinal (SUDERRA_ROLLBACK_EPOCH build girdisi); rollback_floor
+# SemVer alt sınırı (VERSION_ID). suderra-ota floor sync bunu okur, NV counter ile
+# çapraz doğrular; downgrade fail-closed. dev/lab varyantı ota.conf ALMAZ → Tier-1.
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+    echo "==> /etc/suderra/ota.conf (prod anti-rollback çıpası) yazılıyor"
+    mkdir -p "${TARGET_DIR}/etc/suderra"
+    cat > "${TARGET_DIR}/etc/suderra/ota.conf" <<EOF
+# Suderra OS OTA anti-rollback — imzalı, salt-okunur (dm-verity). RT-6 / ADR-0009.
+rollback_floor_source=tpm-nv
+rollback_nv_index=0x01500001
+rollback_floor_path=/run/suderra/rollback-epoch
+rollback_floor=${SUDERRA_VERSION_FOR_ID}
+rollback_epoch=${SUDERRA_ROLLBACK_EPOCH:-1}
+EOF
+    chmod 0644 "${TARGET_DIR}/etc/suderra/ota.conf"
+fi
+
 # 2. Hostname
 case "${DEFCONFIG_NAME}" in
     *usb_installer*) HOSTNAME="suderra-usb-installer" ;;
