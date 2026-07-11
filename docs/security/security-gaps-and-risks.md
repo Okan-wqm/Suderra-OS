@@ -216,7 +216,7 @@ her birinin çözüm durumudur. Bütünsel mimari:
 | # | Bulgu | Ciddiyet | Durum |
 |---|---|---|---|
 | NEW-1 | OTA `is_production()` yalnız hiçbir yerde set edilmeyen env'le true → anti-rollback trusted-floor + dev-override reddi her cihazda ölü; env ile bypass | **Yüksek** | **Çözüldü** (Dalga 1): prod-tespiti imzalı os-release VARIANT'ından; anti-rollback katmanlı (Tier-1/2); build gate VARIANT=prod assert eder |
-| NEW-2 | nftables egress hedefe göre kısıtsız (exfiltration; 502/4840 lateral) | Orta | Açık — ADR-0008 Dalga 4 (destination-set) |
+| NEW-2 | nftables egress hedefe göre kısıtsız (exfiltration; 502/4840 lateral) | Orta | **Çözüldü — politika** (Dalga 4): appliance ruleset'i fail-closed named-set allow-list'e çevrildi (egress_update/cloud/field/infra), imzalı RO `/etc/suderra/egress.d/*.nft`'ten doldurulur, `nft -c` ile doğrulandı + contract test. **Sahada aktifleşmesi NEW-5'e bağlı** (cihazın appliance-locked ruleset'e geçmesi) |
 | NEW-3 | `variant::is_production()` env ile prod'u DOWNGRADE edebiliyordu (+ boş-env fail-open) | Orta | **Çözüldü** (Dalga 1) |
 | NEW-4 | `suderra-agent.service` indirilen harici ajana `/dev/tpm0`+`/dev/watchdog` veriyor | Orta | Açık — ADR-0008 Dalga 4 (capability mediation) |
 | NEW-5 | Appliance firewall prod'da aktive olmuyor; provisioning ruleset kalıcı default | Düşük | Açık — ADR-0008 Dalga 4 |
