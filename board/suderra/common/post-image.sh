@@ -378,6 +378,13 @@ fi
 enforce_production_contract() {
     missing=""
     production_target="0"
+    # Fail-closed default: a production target MUST hit a boot-signature gate
+    # below (x86 UEFI SB or ARM signed-FIT). The production_target glob is broader
+    # than the per-arch boot gates, so a future prod defconfig (e.g. a new board)
+    # could pass the generic verity/image gates while silently skipping boot
+    # enforcement. This flag is set only inside a real boot gate; if it stays 0
+    # for a production target, we refuse to certify the image (see end of fn).
+    boot_gate_verified="0"
 
     case "${DEFCONFIG_NAME}" in
         suderra_x86_64*|suderra_qemu_x86_64_prod_ab*|suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
@@ -566,6 +573,7 @@ enforce_production_contract() {
         verify_signed_pe_artifact "grubx64.efi"
         verify_signed_pe_artifact "suderra-A.efi"
         verify_signed_pe_artifact "suderra-B.efi"
+        boot_gate_verified="1"
     fi
 
     case "${DEFCONFIG_NAME}" in
@@ -577,6 +585,9 @@ enforce_production_contract() {
             fi
             if ! grep -q '^BR2_PACKAGE_TPM2_TOOLS=y' "${BR2_CONFIG}" 2>/dev/null; then
                 echo "ERROR: ARM production must include tpm2-tools for TPM-sealed /data"; exit 1
+            fi
+            if ! grep -q '^BR2_PACKAGE_TPM2_TSS=y' "${BR2_CONFIG}" 2>/dev/null; then
+                echo "ERROR: ARM production must include tpm2-tss (TPM2 stack for /data seal)"; exit 1
             fi
             # Version anti-rollback (M4): a validly-signed downgrade must not be installable.
             if ! grep -q '^BR2_PACKAGE_SUDERRA_OTA=y' "${BR2_CONFIG}" 2>/dev/null; then
@@ -616,16 +627,37 @@ enforce_production_contract() {
             # must be present AND marked required in the U-Boot control DTB, else
             # CONFIG_FIT_SIGNATURE enforces nothing at boot (silent fail-open).
             uboot_dts="$(dtc -I dtb -O dts "${BINARIES_DIR}/u-boot.dtb" 2>/dev/null || true)"
-            if ! printf '%s' "${uboot_dts}" | grep -q 'key-name-hint = "fit-signing"'; then
+            # here-string, not `printf | grep -q`: the latter SIGPIPEs printf when
+            # grep -q matches early, and under `set -euo pipefail` the `if !` then
+            # takes the error branch on a legitimate build (false fail-open).
+            if ! grep -q 'key-name-hint = "fit-signing"' <<<"${uboot_dts}"; then
                 echo "ERROR: u-boot.dtb control FDT has no fit-signing key — FIT signatures will NOT be enforced at boot (fail-open)"
                 exit 1
             fi
-            if ! printf '%s' "${uboot_dts}" | grep -q 'required = "conf"'; then
-                echo "ERROR: u-boot.dtb fit-signing key is not marked required — FIT enforcement is not guaranteed (fail-open)"
+            # required="conf" must be inside the fit-signing key node itself — a
+            # global grep could match a 'required' on some other node while the
+            # fit-signing key stays optional (fail-open). Scope the check to the
+            # key-<hint> node (mkimage -K names it key-fit-signing).
+            if ! printf '%s' "${uboot_dts}" | awk '
+                    /key-fit-signing[[:space:]]*\{/ { innode = 1; next }
+                    innode && /\}/ { innode = 0 }
+                    innode && /required[[:space:]]*=[[:space:]]*"conf"/ { found = 1 }
+                    END { exit found ? 0 : 1 }'; then
+                echo "ERROR: u-boot.dtb fit-signing key node is not marked required=\"conf\" — FIT enforcement is not guaranteed (fail-open)"
                 exit 1
             fi
+            boot_gate_verified="1"
             ;;
     esac
+
+    # Fail-closed: a production target that reached here without hitting a
+    # boot-signature gate (new board added to the production_target glob but not
+    # to the x86/ARM gate above) must NOT be certified — verified boot is the
+    # root of trust, not optional.
+    if [ "${boot_gate_verified}" != "1" ]; then
+        echo "ERROR: production target ${DEFCONFIG_NAME} matched no boot-signature gate (x86 UEFI SB / ARM signed-FIT) — refusing to certify a prod image without verified-boot enforcement"
+        exit 1
+    fi
 }
 
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then

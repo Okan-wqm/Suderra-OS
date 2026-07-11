@@ -61,12 +61,14 @@ jobs:
 
       - name: Resolve target defconfig
         id: map
+        env:
+          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          case "${{ inputs.target }}" in
+          case "${TARGET}" in
             rpi4-prod-ab) defconfig="suderra_aarch64_rpi4_prod_ab_defconfig" ;;
             revpi4-prod-ab) defconfig="suderra_aarch64_revpi4_prod_ab_defconfig" ;;
-            *) echo "unsupported target: ${{ inputs.target }}" >&2; exit 1 ;;
+            *) echo "unsupported target: ${TARGET}" >&2; exit 1 ;;
           esac
           echo "defconfig=${defconfig}" >> "$GITHUB_OUTPUT"
 
