@@ -253,39 +253,48 @@ async fn main() -> Result<()> {
                 // 1) Health değerlendirmesi (opsiyonel). Sağlıksızsa kademeli
                 //    müdahale; reboot eşiğinde donanım watchdog'u BESLEMEYİ KESERİZ.
                 if let Some(unit) = &health_unit {
-                    // Sağlık probu ve systemctl çağrıları zaman-sınırlı çalışır: wedge
-                    // olmuş bir systemctl/dbus (D-state, dbus hang) besleme döngüsünü
-                    // aç bırakıp SAĞLIKLI cihazı donanım reset'ine sürükleyemesin. Prob
-                    // zaman aşımına uğrarsa bu tick'in sağlık hükmü atlanır (sayaca
-                    // dokunulmaz) ve watchdog beslenmeye devam eder.
-                    let probe_budget = Duration::from_secs(interval_secs.max(1));
-                    match tokio::time::timeout(probe_budget, unit_is_active(unit)).await {
-                        Err(_) => warn!(%unit, "sağlık probu zaman aşımına uğradı; bu tick atlanıyor"),
-                        Ok(true) => {
-                            if consecutive_fail > 0 {
-                                info!(%unit, "sağlık geri geldi; sayaç sıfırlandı");
-                            }
-                            consecutive_fail = 0;
+                    // Sağlık probu ve systemctl çağrıları zaman-sınırlı çalışır: tek bir
+                    // yavaş/wedge systemctl çağrısı besleme döngüsünü aç bırakıp SAĞLIKLI
+                    // cihazı donanım reset'ine sürüklemesin. Bütçe interval/2 → prob +
+                    // takip eden systemctl toplamı ≲ interval < timeout (kick starve olmaz).
+                    let probe_budget = Duration::from_secs((interval_secs / 2).max(1));
+
+                    // Prob zaman aşımı = sağlık DOĞRULANAMADI. Fail-safe: sağlıksız say.
+                    // Böylece KALICI wedge (dbus/PID1 D-state — gerçekten hung cihaz)
+                    // consecutive_fail'i tırmandırıp eninde sonunda reset'e götürür;
+                    // TRANSIENT yavaşlık ise bir sonraki sağlıklı probe ile sıfırlanır.
+                    // (Watchdog'un asıl varlık nedeni: hung sistemi resetlemek.)
+                    let healthy = match tokio::time::timeout(probe_budget, unit_is_active(unit)).await {
+                        Ok(active) => active,
+                        Err(_) => {
+                            warn!(%unit, "sağlık probu zaman aşımına uğradı; sağlık doğrulanamadı → fail-safe: sağlıksız sayılıyor");
+                            false
                         }
-                        Ok(false) => {
-                            consecutive_fail += 1;
-                            warn!(%unit, consecutive_fail, "izlenen unit sağlıksız");
-                            if consecutive_fail == restart_after {
-                                warn!(%unit, "restart eşiği aşıldı; systemctl restart");
-                                let _ = tokio::time::timeout(probe_budget, systemctl("restart", unit)).await;
+                    };
+
+                    if healthy {
+                        if consecutive_fail > 0 {
+                            info!(%unit, "sağlık geri geldi; sayaç sıfırlandı");
+                        }
+                        consecutive_fail = 0;
+                    } else {
+                        consecutive_fail += 1;
+                        warn!(%unit, consecutive_fail, "izlenen unit sağlıksız/doğrulanamadı");
+                        if consecutive_fail == restart_after {
+                            warn!(%unit, "restart eşiği aşıldı; systemctl restart");
+                            let _ = tokio::time::timeout(probe_budget, systemctl("restart", unit)).await;
+                        }
+                        if consecutive_fail >= reboot_after {
+                            error!(%unit, consecutive_fail,
+                                "reboot eşiği aşıldı; watchdog beslemesi kesiliyor → donanım reset");
+                            if hw_dev.is_some() {
+                                // Magic-close YAZMADAN çık: donanım watchdog süresi
+                                // dolunca kernel tüm sistemi resetler (fail-safe).
+                                std::mem::forget(hw_dev.take());
+                                return Ok(());
                             }
-                            if consecutive_fail >= reboot_after {
-                                error!(%unit, consecutive_fail,
-                                    "reboot eşiği aşıldı; watchdog beslemesi kesiliyor → donanım reset");
-                                if hw_dev.is_some() {
-                                    // Magic-close YAZMADAN çık: donanım watchdog süresi
-                                    // dolunca kernel tüm sistemi resetler (fail-safe).
-                                    std::mem::forget(hw_dev.take());
-                                    return Ok(());
-                                }
-                                // Donanım watchdog yoksa (dev) yazılım tarafında reboot iste.
-                                let _ = tokio::time::timeout(probe_budget, systemctl("reboot", unit)).await;
-                            }
+                            // Donanım watchdog yoksa (dev) yazılım tarafında reboot iste.
+                            let _ = tokio::time::timeout(probe_budget, systemctl("reboot", unit)).await;
                         }
                     }
                 }

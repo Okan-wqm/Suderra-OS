@@ -38,6 +38,19 @@ grep -q 'luksRemoveKey' "${PROVISION}" \
 grep -q 'refusing to provision a weak keyfile' "${PROVISION}" \
     || fail "provision must fail-closed (no silent weak keyfile tier) when no TPM"
 
+# F2 (crash-safety): gerçek anahtar mkfs'ten ÖNCE enroll edilmeli — enroll satırı
+# mkfs satırından önce gelmeli, aksi halde format→enroll penceresi mkfs'i kapsar.
+enroll_ln="$(grep -n 'systemd-cryptenroll' "${PROVISION}" | head -n1 | cut -d: -f1)"
+mkfs_ln="$(grep -n 'mkfs.ext4' "${PROVISION}" | head -n1 | cut -d: -f1)"
+if [ -z "${enroll_ln}" ] || [ -z "${mkfs_ln}" ] || [ "${enroll_ln}" -ge "${mkfs_ln}" ]; then
+    fail "provision must enroll the real key BEFORE mkfs (crash-safe ordering, F2)"
+fi
+
+# F3: mevcut fs/imza taşıyan partition'ı ezmemeli (blkid guard).
+if ! grep -q 'blkid' "${PROVISION}" || ! grep -q 'refusing to format' "${PROVISION}"; then
+    fail "provision must refuse to format a partition carrying an existing signature (F3)"
+fi
+
 # data-unlock provision-or-unlock olmalı ve string sözleşmesini korumalı.
 grep -q 'suderra-data-provision' "${UNLOCK}" \
     || fail "data-unlock must invoke suderra-data-provision on first boot"
@@ -45,6 +58,16 @@ grep -q 'cryptsetup isLuks' "${UNLOCK}" \
     || fail "data-unlock must still gate on cryptsetup isLuks"
 grep -q 'systemd-cryptsetup attach' "${UNLOCK}" \
     || fail "data-unlock must keep TPM2-backed systemd-cryptsetup unlock path"
+
+# F1: keyfile ile provision edilmiş cihaz keyfile ile de AÇILABİLMELİ (simetri).
+grep -q 'cryptsetup open --key-file' "${UNLOCK}" \
+    || fail "data-unlock must support keyfile-backed unlock, symmetric with provisioning (F1)"
+
+# F8: prod-varyant sözleşmesi post-image gate + Rust ile hizalı olmalı; yalnız
+# exact 'prod' eşleyip 'production'/'prod-*'ı plaintext dev-mount'a düşürmemeli.
+if ! grep -q 'production' "${UNLOCK}" || ! grep -q 'prod-\*' "${UNLOCK}"; then
+    fail "data-unlock prod-variant case must match prod/production/prod-* (F8 alignment)"
+fi
 
 # RT-5: prod defconfig'lerde systemd-cryptsetup açık olmalı.
 for dc in suderra_aarch64_rpi4_prod_ab suderra_aarch64_revpi4_prod_ab suderra_qemu_x86_64_prod_ab; do

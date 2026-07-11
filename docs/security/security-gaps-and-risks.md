@@ -248,3 +248,18 @@ her birinin çözüm durumudur. Bütünsel mimari:
 - **Build/CI:** cross-toolchain her build'de sıfırdan; dl/ccache cache defconfig-parçalı + `restore-keys` yok → 10 GB bütçe eviction thrash; Docker builder run başına ~5× layer-cache'siz; redundant smoke/parse + `msrv` cache'siz.
 - **Footprint (çoğu iyi optimize):** **Çözüldü** → kullanılmayan `reqwest` `ota`/`telemetry`/`attestation`'dan çıkarıldı (MIN-2); `tokio` `full` yerine crate-başı feature (48 satır transitive dep düştü); `i2c-tools` prod'dan çıkarıldı. **Açık:** ikili TLS yığını (OpenSSL+rustls, M-effort); `tpm2-tools` prod'da (post-image gate + Wave 3 attestation'a bağlı); `network-online.target` DHCP boot-stall (~120 s, boot-test gerekir).
 - **Hijyen:** **Çözüldü** → workspace-geneli `unsafe_code = "deny"` + hedefli watchdog allow (MIN-3, negatif testle kanıtlı).
+
+### Adversarial review turu — bu PR'ın kendi diff'i (2026-07-11)
+
+PR'ın diff'i bağımsız bir reviewer + kendi kritik okumamla adversarial denetlendi; 8 bulgu, hepsi **düzeltildi**:
+
+| # | Bulgu | Ciddiyet | Çözüm |
+|---|---|---|---|
+| F6 | Watchdog kalıcı probe-timeout'ta escalate etmiyor + beslemeye devam → hung cihaz asla reset olmuyor | Orta (safety) | Timeout artık "sağlık doğrulanamadı → fail-safe sağlıksız" sayılıyor; kalıcı wedge escalate eder |
+| F4 | Firewall `nft -f` yüklenmezse hiç ruleset yok → default ACCEPT (fail-OPEN) | Yüksek | `suderra-firewall` yükleme başarısızsa hardcoded minimal drop-all uygular (fail-closed) |
+| F1 | Keyfile ile provision edilen cihaz keyfile ile açılamıyordu (unlock yalnız TPM) | Orta | `suderra-data-unlock`'a simetrik keyfile-unlock yolu eklendi |
+| F2 | İlk-boot enroll'undan önceki crash /data'yı kalıcı brick'liyor | Orta | Gerçek anahtar mkfs'ten ÖNCE enroll ediliyor (kırılgan pencere minimal) |
+| F8 | Prod-label sözleşmesi 3 katmanda çelişiyor (`prod-eu` → plaintext dev-mount) | Düşük | `suderra-data-unlock` case'i `prod/production/prod-*/prod_*`'a hizalandı + lowercasing |
+| F3 | luksFormat mevcut fs/bozuk-header'ı sessizce silebiliyor | Düşük-Orta | luksFormat öncesi `blkid` guard (force override hariç) |
+| F7 | Unhealthy tick'te probe+systemctl ~timeout'a yaklaşabilir | Düşük | probe_budget = interval/2 (tick işi ≤ interval) |
+| F5 | os-release yoksa is_production fail-open | Düşük | Cihazda `VARIANT=prod` build-gate garantisiyle erişilemez (dokümante) |

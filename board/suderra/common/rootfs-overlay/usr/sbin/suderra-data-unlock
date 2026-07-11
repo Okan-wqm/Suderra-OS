@@ -3,7 +3,7 @@ set -eu
 
 variant="dev"
 if [ -r /etc/os-release ]; then
-    variant="$(sed -n 's/^VARIANT=//p' /etc/os-release | tr -d '"' | head -n 1)"
+    variant="$(sed -n 's/^VARIANT=//p' /etc/os-release | tr -d '"' | tr '[:upper:]' '[:lower:]' | head -n 1)"
 fi
 
 mount_data_bindings() {
@@ -69,21 +69,53 @@ unlock_prod_luks_data() {
         exit 1
     }
 
-    if [ ! -e "${mapper_dev}" ]; then
-        if command -v systemd-cryptsetup >/dev/null 2>&1; then
-            systemd-cryptsetup attach "${mapper}" "${data_dev}" - \
-                tpm2-device=auto,headless=yes >/dev/null ||
-                {
-                    echo "TPM2-backed systemd-cryptsetup unlock failed" >&2
-                    exit 1
-                }
+    # Anahtar modu provisioning ile SİMETRİK olmalı (F1): keyfile ile provision
+    # edilmiş bir cihaz keyfile ile açılmalı, yoksa /data hiç unlock olmaz. auto →
+    # TPM varsa tpm2, yoksa keyfile.
+    key_mode="${SUDERRA_DATA_KEY_MODE:-auto}"
+    keyfile="${SUDERRA_DATA_KEYFILE:-/etc/suderra/data.key}"
+    if [ "${key_mode}" = "auto" ]; then
+        if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
+            key_mode="tpm2"
         else
-            cryptsetup open --token-only "${data_dev}" "${mapper}" >/dev/null ||
-                {
-                    echo "TPM2 token unlock failed" >&2
+            key_mode="keyfile"
+        fi
+    fi
+
+    if [ ! -e "${mapper_dev}" ]; then
+        case "${key_mode}" in
+            tpm2)
+                if command -v systemd-cryptsetup >/dev/null 2>&1; then
+                    systemd-cryptsetup attach "${mapper}" "${data_dev}" - \
+                        tpm2-device=auto,headless=yes >/dev/null ||
+                        {
+                            echo "TPM2-backed systemd-cryptsetup unlock failed" >&2
+                            exit 1
+                        }
+                else
+                    cryptsetup open --token-only "${data_dev}" "${mapper}" >/dev/null ||
+                        {
+                            echo "TPM2 token unlock failed" >&2
+                            exit 1
+                        }
+                fi
+                ;;
+            keyfile)
+                [ -r "${keyfile}" ] || {
+                    echo "keyfile unlock mode but ${keyfile} not readable" >&2
                     exit 1
                 }
-        fi
+                cryptsetup open --key-file "${keyfile}" "${data_dev}" "${mapper}" >/dev/null ||
+                    {
+                        echo "keyfile-backed unlock failed" >&2
+                        exit 1
+                    }
+                ;;
+            *)
+                echo "invalid SUDERRA_DATA_KEY_MODE for unlock: ${key_mode}" >&2
+                exit 1
+                ;;
+        esac
     fi
 
     mkdir -p /data
@@ -93,8 +125,11 @@ unlock_prod_luks_data() {
     mount_data_bindings
 }
 
+# Prod-varyant sözleşmesi post-image gate + Rust value_is_prod ile HİZALI olmalı
+# (F8): prod/production/prod-*/prod_* şifreli LUKS yoluna gider. Aksi halde bir
+# 'prod-eu' etiketi sessizce plaintext dev-mount'a düşerdi.
 case "${variant}" in
-    prod)
+    prod | production | prod-* | prod_*)
         unlock_prod_luks_data
         ;;
     *)

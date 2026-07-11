@@ -65,11 +65,23 @@ Set SUDERRA_DATA_KEY_MODE=keyfile in the signed config to explicitly opt into th
         ;;
 esac
 
-# --- Ham partition'ı LUKS2 olarak kur. --------------------------------------
-# Akış: (1) geçici bootstrap-key ile format, (2) bootstrap ile aç → mkfs → kapat,
-# (3) gerçek anahtarı (TPM seal / keyfile) enroll et, (4) bootstrap keyslot'unu
-# kaldır. Böylece nihai volume YALNIZ gerçek anahtarla açılır; mkfs için TPM
-# gerekmez ve mkfs tek seferliktir.
+# --- F3: mevcut veriyi koru — ham/formatsız OLMAYAN partition'ı EZME. --------
+# isLuks yukarıda false döndü; ama partition non-LUKS bir fs veya bozuk-LUKS imzası
+# taşıyorsa (yeniden-flash, manufacturing state, header bozulması) luksFormat onu
+# SESSİZCE silerdi. blkid bir imza bulursa reddet (explicit override hariç).
+if [ "${SUDERRA_DATA_FORCE_FORMAT:-0}" != "1" ] && command -v blkid >/dev/null 2>&1; then
+    if existing="$(blkid -o value -s TYPE "${data_dev}" 2>/dev/null)" && [ -n "${existing}" ]; then
+        die "refusing to format ${data_dev}: existing '${existing}' signature present \
+(set SUDERRA_DATA_FORCE_FORMAT=1 in signed config to override)"
+    fi
+fi
+
+# --- Ham partition'ı LUKS2 olarak kur (crash-safe sıralama). ----------------
+# (1) geçici bootstrap-key ile format, (2) GERÇEK anahtarı HEMEN enroll et
+# (TPM seal / keyfile), (3) bootstrap ile açıp mkfs, (4) bootstrap keyslot'unu
+# kaldır. Enroll'u mkfs'ten ÖNCE yapmak F2'yi azaltır: bir güç kesintisi yalnız
+# kısa format→enroll penceresinde açılamaz bir volume bırakır (/data boş, re-image);
+# enroll sonrası her crash'te volume gerçek anahtarla AÇILABİLİR kalır.
 bootstrap="$(mktemp)"
 chmod 600 "${bootstrap}"
 cleanup() { rm -f "${bootstrap}"; }
@@ -80,15 +92,7 @@ log "formatting LUKS2 on ${data_dev} (key_mode=${key_mode})"
 cryptsetup luksFormat --type luks2 --batch-mode "${data_dev}" "${bootstrap}" \
     || die "luksFormat failed"
 
-mapper_dev="/dev/mapper/${mapper}"
-cryptsetup open --key-file "${bootstrap}" "${data_dev}" "${mapper}" \
-    || die "opening freshly-formatted volume failed"
-if ! mkfs.ext4 -q -L SUDERRA-DATA "${mapper_dev}"; then
-    cryptsetup close "${mapper}" || true
-    die "mkfs on ${mapper_dev} failed"
-fi
-cryptsetup close "${mapper}" || die "closing bootstrap mapper failed"
-
+# Gerçek anahtarı mkfs'ten ÖNCE enroll et.
 case "${key_mode}" in
     tpm2)
         command -v systemd-cryptenroll >/dev/null 2>&1 \
@@ -108,6 +112,16 @@ At-rest protection is limited; this must be an explicit, documented deployment c
             || die "keyfile enroll failed"
         ;;
 esac
+
+# Bootstrap ile açıp mkfs (tek seferlik). Gerçek anahtar zaten enroll edildi.
+mapper_dev="/dev/mapper/${mapper}"
+cryptsetup open --key-file "${bootstrap}" "${data_dev}" "${mapper}" \
+    || die "opening freshly-formatted volume failed"
+if ! mkfs.ext4 -q -L SUDERRA-DATA "${mapper_dev}"; then
+    cryptsetup close "${mapper}" || true
+    die "mkfs on ${mapper_dev} failed"
+fi
+cryptsetup close "${mapper}" || die "closing bootstrap mapper failed"
 
 # Bootstrap keyslot'unu kaldır → volume artık YALNIZ gerçek anahtarla açılır.
 cryptsetup luksRemoveKey "${data_dev}" "${bootstrap}" \
