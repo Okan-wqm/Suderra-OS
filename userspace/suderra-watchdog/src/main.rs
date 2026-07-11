@@ -55,6 +55,7 @@ fn kick(dev: &mut File) -> Result<()> {
 
 /// `WDIOC_SETTIMEOUT` ile donanım watchdog süresini ayarlar; kernel'in kabul ettiği
 /// (yuvarladığı) gerçek değeri döndürür.
+#[allow(unsafe_code)] // donanım watchdog ioctl'i; gerekçe aşağıdaki SAFETY'de
 fn set_timeout(dev: &File, secs: i32) -> Result<i32> {
     let mut requested: libc::c_int = secs;
     // SAFETY: `dev` açık ve geçerli bir watchdog karakter aygıtı; `requested`
@@ -70,6 +71,7 @@ fn set_timeout(dev: &File, secs: i32) -> Result<i32> {
 }
 
 /// Cihazın raporladığı mevcut timeout'u okur (teşhis için; hata olması ölümcül değil).
+#[allow(unsafe_code)] // donanım watchdog ioctl'i; gerekçe aşağıdaki SAFETY'de
 fn get_timeout(dev: &File) -> Option<i32> {
     let mut current: libc::c_int = 0;
     // SAFETY: aynı gerekçe `set_timeout` ile; ioctl tek `int` çıktı yazar.

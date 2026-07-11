@@ -28,3 +28,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sd-notify = { workspace = true }
 nix = { workspace = true }
+
+[lints]
+workspace = true
