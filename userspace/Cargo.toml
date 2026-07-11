@@ -29,7 +29,10 @@ readme = "README.md"
 # Bu pinning supply-chain tutarlılığını sağlar (CRA + reproducible build için)
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.43", features = ["full"] }
+# Minimal ortak taban: tüm crate'ler yalnız #[tokio::main] kullanır. Ek ihtiyaçlar
+# (fs/io, process/signal/time) crate düzeyinde eklenir — "full"un getirdiği mio/net/fs
+# yığını shipped binary'lere gereksiz saldırı yüzeyi + derleme yüküydü (ADR-0008 Dalga 6).
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
