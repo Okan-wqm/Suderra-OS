@@ -12,7 +12,6 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
@@ -369,16 +368,27 @@ fn verify_edge_artifact(args: &EdgeManifestVerifyArtifactArgs) -> Result<()> {
         &args.min_rollback_floor,
     )?;
     check_edge_target(&manifest, args.board.as_deref(), args.arch.as_deref())?;
-    verify_file_size(
-        &args.artifact,
-        manifest.artifact.size_bytes,
-        "edge artifact",
-    )?;
-    verify_file_sha256(&args.artifact, &manifest.artifact.sha256, "edge artifact")?;
-    let sig = decode_signature_value(&manifest.artifact.signature)?;
-    let key = read_public_key(&args.public_key)?;
+    // TEK okuma (C-6 TOCTOU): boyut, sha256 ve imza AYNI bellek tamponundan
+    // doğrulanır — dosyayı iki kez açan eski akışta, hash'lenen baytlar ile
+    // imzası doğrulanan baytların aynı olduğu garanti değildi.
     let bytes = fs::read(&args.artifact)
         .with_context(|| format!("edge artifact not readable: {}", args.artifact.display()))?;
+    if bytes.len() as u64 != manifest.artifact.size_bytes {
+        bail!(
+            "edge artifact size mismatch: expected {} bytes, found {}",
+            manifest.artifact.size_bytes,
+            bytes.len()
+        );
+    }
+    let actual_sha = hex::encode(Sha256::digest(&bytes));
+    if !actual_sha.eq_ignore_ascii_case(manifest.artifact.sha256.trim()) {
+        bail!(
+            "edge artifact sha256 mismatch: expected {}, found {actual_sha}",
+            manifest.artifact.sha256
+        );
+    }
+    let sig = decode_signature_value(&manifest.artifact.signature)?;
+    let key = read_public_key(&args.public_key)?;
     verify_ed25519(&key, &bytes, &sig).context("edge artifact signature verification failed")?;
     Ok(())
 }
@@ -1142,8 +1152,13 @@ mod tests {
 
     #[test]
     fn canonical_json_sorts_object_keys() {
-        let value: Value = serde_json::from_str(r#"{"b":2,"a":{"d":4,"c":3}}"#).unwrap();
-        let canonical = String::from_utf8(canonical_value_bytes(&value).unwrap()).unwrap();
+        // Sözleşmenin kendisi suderra_config::canonical'da test edilir; burada
+        // installer'ın aynı formu tükettiğini sabitleyen duman testi kalır.
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"b":2,"a":{"d":4,"c":3}}"#).unwrap();
+        let canonical =
+            String::from_utf8(suderra_config::canonical::canonical_value_bytes(&value).unwrap())
+                .unwrap();
         assert_eq!(canonical, r#"{"a":{"c":3,"d":4},"b":2}"#);
     }
 }

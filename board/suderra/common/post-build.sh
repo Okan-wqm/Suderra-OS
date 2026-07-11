@@ -64,6 +64,18 @@ else
 fi
 
 # 1. /etc/os-release
+# C-7 kapısı: VERSION_ID SemVer olmalı. suderra-ota her politika
+# karşılaştırmasında strict SemVer parse eder; SemVer-dışı bir imaj sürümü
+# cihazda TÜM güncellemeleri kilitler (fail-closed erişilebilirlik sorunu).
+# Hata sahada değil build'de yakalanır.
+SUDERRA_VERSION_FOR_ID="${SUDERRA_VERSION:-0.1.0}"
+if ! printf '%s\n' "${SUDERRA_VERSION_FOR_ID#v}" |
+    grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+    echo "ERROR: SUDERRA_VERSION '${SUDERRA_VERSION_FOR_ID}' SemVer değil (C-7):"
+    echo "       suderra-ota bu imajda hiçbir güncellemeyi kabul edemezdi."
+    exit 1
+fi
+
 echo "==> /etc/os-release güncelleniyor"
 cat > "${TARGET_DIR}/etc/os-release" <<EOF
 NAME="Suderra OS"

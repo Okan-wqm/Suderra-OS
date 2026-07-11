@@ -28,6 +28,12 @@ grep -q 'BR2 Suderra variant.*conflicts with SUDERRA_VARIANT' "${POST_BUILD}"
 grep -q 'requires BR2_CONFIG or SUDERRA_VARIANT' "${POST_BUILD}"
 grep -q 'SUDERRA_VARIANT must be dev or prod' "${POST_BUILD}"
 
+# C-7: VERSION_ID SemVer build kapısı — SemVer-dışı SUDERRA_VERSION imaj
+# build'ini kesmeli (suderra-ota strict SemVer parse eder; SemVer-dışı imaj
+# sürümü cihazda tüm güncellemeleri kilitlerdi).
+grep -q 'SemVer değil (C-7)' "${POST_BUILD}"
+grep -Eq "grep -Eq '\^\(0\|\[1-9\]" "${POST_BUILD}"
+
 grep -q 'SUDERRA_SIGNING_MODE' "${SIGN_BUNDLE}"
 grep -q 'SUDERRA_RELEASE_TIER' "${SIGN_BUNDLE}"
 grep -q 'PROD_MODE' "${SIGN_BUNDLE}"

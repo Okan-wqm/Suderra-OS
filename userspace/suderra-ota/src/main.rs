@@ -178,13 +178,33 @@ fn init_logging(verbose: bool) {
 
 fn install(args: InstallArgs) -> Result<()> {
     let mut state = load_state()?;
+    // C-7: cihazın kendi sürümü SemVer değilse her karşılaştırma derin policy
+    // katmanında anlaşılmaz biçimde ölürdü — burada erken ve eyleme dönük teşhis.
+    // (Kaynağında önleme: post-build.sh, SemVer-dışı SUDERRA_VERSION ile imaj
+    // build'ini keser; bu dal yalnız bozuk/elle yazılmış state için kalır.)
+    ParsedVersion::parse(&state.current_version).with_context(|| {
+        format!(
+            "device current_version '{}' is not SemVer (source: /etc/os-release VERSION_ID \
+             or /data OTA state) — the image build violated the C-7 contract; \
+             no update can be policy-checked until the image/state is fixed",
+            state.current_version
+        )
+    })?;
     let manifest = load_manifest(&args.manifest)?;
     verify_manifest_signature(&manifest, args.manifest_pubkey.as_deref())?;
     verify_manifest_policy(&manifest, &state)?;
     verify_bundle(&manifest, &args.bundle)?;
+    let staged_bundle = stage_bundle_for_install(&manifest, &args.bundle)?;
 
     info!(version = %manifest.version, target = %manifest.target, "installing RAUC bundle");
-    run_rauc(&["install", path_str(&args.bundle)?]).context("rauc install failed")?;
+    let rauc_result =
+        run_rauc(&["install", path_str(&staged_bundle)?]).context("rauc install failed");
+    // Staging temizliği her iki sonuçta da best-effort (bundle tüketildi).
+    let _ = fs::remove_file(&staged_bundle);
+    if let Some(dir) = staged_bundle.parent() {
+        let _ = fs::remove_dir(dir);
+    }
+    rauc_result?;
     let pending_boot_slot = pending_boot_slot_after_install()
         .context("cannot prove inactive RAUC slot selected for next boot")?;
 
@@ -509,6 +529,58 @@ fn verify_bundle(manifest: &SignedManifest, bundle: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// C-6 (verify→use TOCTOU): doğrulanmış bundle'ı 0700 izinli bir staging
+/// dizinine ATOMİK `rename` ile alır (aynı dosya sistemi: bundle'ın kendi
+/// dizini altı) ve staged dosyayı AÇIK fd üzerinden yeniden hash'ler; rauc'a
+/// staged path verilir. Böylece hash ile rauc'un dosyayı açması arasındaki
+/// path-tabanlı swap penceresi kapanır (ayrıcalıksız yazar staging'e erişemez).
+/// Kalan risk dürüstçe: doğrulamadan ÖNCE elde tutulmuş bir yazma-fd'si aynı
+/// inode'a hâlâ yazabilir — derinlemesine savunma olarak RAUC, bundle imzasını
+/// keyring'e karşı bağımsız doğrular (verity bundle format).
+fn stage_bundle_for_install(manifest: &SignedManifest, bundle: &Path) -> Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = match bundle.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let staging = parent.join(".suderra-ota-staging");
+    fs::create_dir_all(&staging)
+        .with_context(|| format!("cannot create staging dir: {}", staging.display()))?;
+    let mut perms = fs::metadata(&staging)?.permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&staging, perms)?;
+
+    let staged = staging.join(&manifest.bundle.name);
+    fs::rename(bundle, &staged).with_context(|| {
+        format!(
+            "cannot stage bundle {} -> {}",
+            bundle.display(),
+            staged.display()
+        )
+    })?;
+
+    // Yeniden doğrulama AÇIK fd üzerinden — path bir daha çözülmez.
+    let mut file = fs::File::open(&staged)
+        .with_context(|| format!("cannot open staged bundle: {}", staged.display()))?;
+    let meta = file.metadata()?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).context("cannot hash staged bundle")?;
+    let digest = hex::encode(hasher.finalize());
+    if meta.len() != manifest.bundle.bytes || digest != manifest.bundle.sha256 {
+        let _ = fs::remove_file(&staged);
+        let _ = fs::remove_dir(&staging);
+        bail!(
+            "staged bundle failed re-verification (size {} vs {}, sha256 {} vs {})",
+            meta.len(),
+            manifest.bundle.bytes,
+            digest,
+            manifest.bundle.sha256
+        );
+    }
+    Ok(staged)
 }
 
 fn run_rauc(args: &[&str]) -> Result<()> {
