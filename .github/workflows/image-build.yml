@@ -141,6 +141,13 @@ jobs:
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
           key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
+          # Prefix fallback: bir defconfig düzenlemesi tüm dl cache'i invalidate
+          # etmesin ve defconfig'ler ortak (content-addressed) tarball'ları paylaşsın.
+          # Buildroot BR2_DL_DIR content-addressed olduğundan farklı defconfig'lerin
+          # dl'ini aynı dizinde barındırmak güvenlidir.
+          restore-keys: |
+            br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-
+            br-dl-${{ steps.br.outputs.sha }}-
 
       - name: Cache ccache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
@@ -427,6 +434,13 @@ jobs:
         with:
           path: ${{ env.SUDERRA_HOST_DL_DIR }}
           key: br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-${{ hashFiles(format('configs/{0}', matrix.defconfig)) }}
+          # Prefix fallback: bir defconfig düzenlemesi tüm dl cache'i invalidate
+          # etmesin ve defconfig'ler ortak (content-addressed) tarball'ları paylaşsın.
+          # Buildroot BR2_DL_DIR content-addressed olduğundan farklı defconfig'lerin
+          # dl'ini aynı dizinde barındırmak güvenlidir.
+          restore-keys: |
+            br-dl-${{ steps.br.outputs.sha }}-${{ hashFiles('patches/buildroot/*.patch') }}-
+            br-dl-${{ steps.br.outputs.sha }}-
 
       - name: Cache ccache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
