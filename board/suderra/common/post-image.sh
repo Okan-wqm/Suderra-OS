@@ -525,6 +525,17 @@ enforce_production_contract() {
         echo "ERROR: production defconfig must not include placeholder suderra-firstboot"
         exit 1
     fi
+    # Runtime prod-tespiti (suderra-ota + suderra-installer) imzalı, salt-okunur
+    # /etc/os-release'in VARIANT alanını GÜVEN KÖKÜ alır. Prod imaj GERÇEKTEN
+    # VARIANT=prod taşımalı; aksi halde cihaz kendini dev sanıp env güvenlik
+    # gevşetmelerini (dev_override / SUDERRA_INSECURE) açardı. Bu, runtime'daki
+    # "VARIANT yoksa dev say" fail-open residual'ını build katmanında kapatır.
+    _osrel="${TARGET_DIR:-}/etc/os-release"
+    if [ ! -f "${_osrel}" ] || \
+       ! grep -Eq '^VARIANT="?(prod|production|prod[-_][A-Za-z0-9]+)"?$' "${_osrel}" 2>/dev/null; then
+        echo "ERROR: production image /etc/os-release must declare VARIANT=prod (runtime trust root); got: $(grep -E '^VARIANT=' "${_osrel}" 2>/dev/null || echo '<none>')"
+        exit 1
+    fi
     if ! grep -q '^BR2_PACKAGE_RAUC=y' "${BR2_CONFIG}" 2>/dev/null; then
         echo "ERROR: production defconfig must enable RAUC A/B update support before production_ready can pass"
         exit 1
