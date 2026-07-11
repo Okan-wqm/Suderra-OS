@@ -21,7 +21,7 @@ path = "src/main.rs"
 suderra-config = { workspace = true }
 
 # Async runtime + HTTP
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
 reqwest = { workspace = true }
 
 # Error handling + logging
@@ -54,3 +54,6 @@ nix = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

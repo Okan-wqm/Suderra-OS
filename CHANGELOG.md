@@ -5,6 +5,32 @@ formatına ve [Semantic Versioning](https://semver.org/spec/v2.0.0.html) kuralla
 
 ## [Unreleased]
 
+### Security — Denetim remediation dalgası (2026-07, PR #85)
+
+**DİKKAT — OTA manifest imza formatı kırılımı:** imza algoritması
+`ed25519-suderra-os-update-manifest-v1` → `-v2`. İmza baytları artık paylaşılan
+sorted-key kanonik JSON'dur (`suderra-config::canonical`); eski manifest'ler
+`scripts/create-os-update-manifest.py` ile yeniden imzalanmalıdır. Sahada cihaz
+yok (`production_ready:false`) → dual-accept penceresi bilinçle eklenmedi.
+
+- **AUD-4 / NEW-7:** OTA + installer imza kanonikalizasyonu tek paylaşılan forma
+  birleştirildi; diller-arası golden vektörler + Python-imzalı→Rust-doğrulanan
+  fixture. prod-varyant tespiti de `suderra-config::variant`'a çıkarıldı.
+- **NEW-4:** agent unit'lerinden `/dev/watchdog`+`/dev/tpm0`+`/dev/tpmrm0`
+  `DeviceAllow` kaldırıldı; `suderra-watchdog` ilk kez paketlendi (donanım
+  watchdog'unun tek sahibi).
+- **NEW-5:** `suderra-firewall` imzalı `VARIANT=prod` köküne çapalandı →
+  prod'da appliance ruleset koşulsuz (SSH açık provisioning ruleset'ine
+  düşülemez); NEW-2 egress allow-list'ini sahada etkin kılar.
+- **C-6:** verify→use TOCTOU kapatıldı (installer tek-okuma; ota staged-verify).
+- **C-7:** SemVer-dışı `VERSION_ID` build kapısı + install erken teşhisi.
+- **RT-2/RT-3/RT-6 (ADR-0009):** TPM 2.0 yazılım tarafı — `suderra-config::tpm`
+  subprocess sarmalayıcı, gerçek TPM-NV monotonic anti-rollback çıpası (`ota.conf`
+  + `floor sync`), attestation istemcisi (PCR quote), firstboot güven tesis durum
+  makinesi + TPM-bağlı cihaz kimliği. Donanım kanıtı G5'te.
+- **AUD-5/9/10:** atıl QEMU collector prod imajlardan silindi; senkron
+  binary'lerden tokio düşürüldü; `overflow-checks=true`.
+
 ### Changed — Faz 1 doğrulama PR'ı için CI tetikleyici
 
 - Tüm 5 katman birikmiş `claude/hardened-linux-edge-os-cDH7d` branch'inde

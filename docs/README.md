@@ -27,10 +27,13 @@ docs/
   - [ADR-0005: dm-verity + Secure Boot](architecture/ADR-0005-dm-verity-secure-boot.md)
   - [ADR-0006: IEC 62443 SL 2 hedef seçimi (SL3 yerine)](architecture/ADR-0006-iec-62443-sl2-vs-sl3.md)
   - [ADR-0007: ARM doğrulanmış boot + dm-verity + A/B zinciri](architecture/ADR-0007-arm-verity-ab-boot-chain.md)
+  - [ADR-0008: Cihaz-içi runtime güven mimarisi (Eksen B) — bütünsel çözüm](architecture/ADR-0008-device-trust-architecture.md)
+  - [ADR-0009: TPM 2.0 implementasyon seçimleri (subprocess, NV, anahtar hiyerarşisi)](architecture/ADR-0009-tpm-implementation.md)
   - [ADR-template.md](architecture/ADR-template.md)
 
 ### Güvenlik
 
+- [system-audit-2026-07.md](security/system-audit-2026-07.md) — tam sistem denetimi (tüm branch'ler) + fazlı iyileştirme yol haritası
 - [threat-model.md](security/threat-model.md) — STRIDE tehdit modeli
 - [field-appliance-hardening.md](security/field-appliance-hardening.md) — sahada agent-only kilitli appliance güvenlik modeli
 - [kernel-hardening.md](security/kernel-hardening.md) — hangi CONFIG'ler açık/kapalı, neden

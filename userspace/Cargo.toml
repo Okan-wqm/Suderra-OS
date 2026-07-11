@@ -27,9 +27,19 @@ readme = "README.md"
 
 # Ortak bağımlılıklar — tek versiyon, tüm crate'ler aynısını kullanır
 # Bu pinning supply-chain tutarlılığını sağlar (CRA + reproducible build için)
+# Workspace-geneli lint politikası (MIN-3): unsafe kod varsayılan olarak REDDEDİLİR;
+# yalnız açıkça gerekli ve gerekçeli yerlerde (watchdog ioctl'leri) hedefli
+# #[allow(unsafe_code)] ile izin verilir. Gelecekte bir crate'in sessizce unsafe/lint
+# regresyonu sokmasını engeller.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.43", features = ["full"] }
+# Minimal ortak taban: tüm crate'ler yalnız #[tokio::main] kullanır. Ek ihtiyaçlar
+# (fs/io, process/signal/time) crate düzeyinde eklenir — "full"un getirdiği mio/net/fs
+# yığını shipped binary'lere gereksiz saldırı yüzeyi + derleme yüküydü (ADR-0008 Dalga 6).
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -83,7 +93,11 @@ lto = "fat"              # link-time optimization (cross-crate inlining)
 codegen-units = 1        # tek codegen unit (LTO maksimum verim)
 strip = "symbols"        # debug sembolleri çıkar
 panic = "abort"          # panic'te abort (unwind tablosunu kaldır, binary küçülür)
-overflow-checks = false  # release'de runtime overflow check yok (perf)
+# AUD-10: overflow-checks AÇIK. Bu crate'ler saldırgan-etkili girdiyi (imzalı
+# manifest, SemVer, TPM-NV counter, watchdog eşik aritmetiği) işleyen bir
+# güvenlik cihazıdır; sessiz wrap yerine panic (fail-closed) tercih edilir.
+# Maliyet: opt-level="z"+LTO yanında birkaç % CPU, boyut ihmal edilebilir.
+overflow-checks = true
 
 # Debug profile — hızlı iterasyon için
 [profile.dev]

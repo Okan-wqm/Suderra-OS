@@ -23,6 +23,11 @@ endef
 define SUDERRA_OTA_INSTALL_INIT_SYSTEMD
 	$(INSTALL) -D -m 0644 $(@D)/suderra-ota-mark-good.service \
 		$(TARGET_DIR)/usr/lib/systemd/system/suderra-ota-mark-good.service
+	$(INSTALL) -D -m 0644 $(@D)/suderra-ota-floor.service \
+		$(TARGET_DIR)/usr/lib/systemd/system/suderra-ota-floor.service
+	mkdir -p $(TARGET_DIR)/usr/lib/systemd/system/multi-user.target.wants
+	ln -sf ../suderra-ota-floor.service \
+		$(TARGET_DIR)/usr/lib/systemd/system/multi-user.target.wants/suderra-ota-floor.service
 endef
 
 $(eval $(generic-package))

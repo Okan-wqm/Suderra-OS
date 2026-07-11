@@ -20,12 +20,15 @@ path = "src/main.rs"
 [dependencies]
 suderra-config = { workspace = true }
 
-tokio = { workspace = true }
+# Senkron CLI — tokio YOK (RT-2 gerçek implementasyonu, Faz 5 footprint ile hizalı).
+clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-ed25519-dalek = { workspace = true }
+base64 = { workspace = true }
+
+[lints]
+workspace = true

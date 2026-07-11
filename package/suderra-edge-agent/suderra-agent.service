@@ -71,8 +71,10 @@ DeviceAllow=/dev/ttyUSB0 rw
 # daemon'udur; agent sd-notify (WatchdogSec) kullanır. Agent'a watchdog erişimi
 # vermek, ele geçirilmiş bir agent'ın magic-close'suz open/close ile cihazı
 # resetlemesine izin verirdi.
-DeviceAllow=/dev/tpm0 rw
-DeviceAllow=/dev/tpmrm0 rw
+# /dev/tpm0 ve /dev/tpmrm0 da BİLEREK yok (NEW-4): attestation ve cihaz kimliği
+# Suderra-sahipli daemon'ların işidir (suderra-attestation / firstboot, ADR-0009);
+# agent'ın ileride TPM'e ihtiyacı doğarsa erişim Suderra-sahipli bir broker
+# üzerinden verilir (emsal: suderra-provision-worker spool broker, ADR-0008 §4).
 DeviceAllow=char-rtc r
 
 StandardInput=null

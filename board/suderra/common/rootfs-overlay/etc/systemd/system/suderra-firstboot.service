@@ -75,7 +75,7 @@ ExecStart=/bin/sh -c ' \
         printf "SUDERRA_PROVISION_USER=provision\nSUDERRA_PROVISION_PASSWORD=%s\n" "${pass}" > /var/spool/suderra-provision/credentials.env; \
         chown root:root /var/spool/suderra-provision/credentials.env 2>/dev/null || true; \
         chmod 0600 /var/spool/suderra-provision/credentials.env; \
-        printf "Suderra OS provisioning user: provision\nPassword: %s\n" "${pass}" > /dev/console 2>/dev/null || true; \
+        printf "Suderra OS provisioning credentials written to /var/spool/suderra-provision/credentials.env (root, 0600).\n" > /dev/console 2>/dev/null || true; \
     fi; \
     \
     # 6. Done flag \

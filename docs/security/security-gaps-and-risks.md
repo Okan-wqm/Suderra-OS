@@ -5,7 +5,10 @@
 > temelinde doğrulanmıştır. Spekülasyon yok; her madde koddan kanıtlıdır.
 >
 > Nasıl çalıştığının anlatımı için: [security-architecture.md](security-architecture.md).
-> Tarih: 2026-07-06.
+> Tarih: 2026-07-06. **Güncelleme 2026-07-11:** ikinci bağımsız uçtan-uca inceleme
+> (güvenlik + kod-doğruluğu + performans) yapıldı; yeni bulgular ve çözüm durumu
+> [Kategori 6](#kategori-6--ikinci-bağımsız-inceleme-2026-07-11)'da. Bütünsel çözüm
+> mimarisi: [ADR-0008](../architecture/ADR-0008-device-trust-architecture.md).
 
 ## Nasıl okunmalı — iki risk türü
 
@@ -35,6 +38,37 @@
 | HW-3 | ARM verity-cmdline + module signing | Boot | Orta | GATED (G4) |
 | HW-4 | x86 cihaz-tarafı SB enrollment out-of-band | Boot | Orta | GATED |
 | MIN-* | Ölü/kullanılmayan güven materyali, lint policy, vb. | Hijyen | Düşük | AKSİYON |
+
+---
+
+## Güncelleme — Dalga 3 (2026-07-11): TPM yazılım tarafı kapatıldı
+
+**RT-2 / RT-3 / RT-6 yazılım tarafı UYGULANDI** (ADR-0009; donanım kanıtı G5'te
+`production_ready:false` ile dürüstçe korunur):
+
+- **RT-6 — Çözüldü (swtpm-kanıtı kaldı):** anti-rollback floor kaynağı env'den
+  imzalı `/etc/suderra/ota.conf`'a (dm-verity RO) taşındı; `suderra-ota floor
+  sync` gerçek TPM-NV monotonic counter'ı okur, imaj epoch'uyla çapraz doğrular,
+  downgrade fail-closed; `firstboot` counter'ı tanımlar/yükseltir, `mark-good`
+  ilerletir. Birim + contract testli. "Etikette TPM" durumu kapandı.
+- **RT-2 — Kod uygulandı; cihaz-üstü wiring + swtpm/G5 kanıtı BEKLİYOR:**
+  `suderra-attestation` placeholder → gerçek CLI (setup/baseline/quote/verify-local;
+  PCR 0-7 AK-imzalı quote; verify-local AK-pinlemeli). Doğrulayıcı sunucu bilinçli
+  kapsam dışı. **DİKKAT (kod incelemesi):** attestation firstboot tarafından
+  çağrılır, ama firstboot binary'si bugün hiçbir imajda çalışmıyor (bkz. RT-3) →
+  RT-2 cihazda henüz aktif değil.
+- **RT-3 — Kod uygulandı; cihaz-üstü wiring BEKLİYOR:** `firstboot` TPM-resident
+  ECC signing key + self-attested `device.json` üretir; X.509 CSR bilinçle
+  ertelendi. **DİKKAT (kod incelemesi):** `suderra-firstboot` Rust binary'si board
+  overlay'deki placeholder shell unit tarafından isim-gölgelenir ve prod'da hiç
+  enable edilmez → identity/attestation adımları cihazda çalışmıyor. Prod'da
+  devreye alma Dalga 3'ün kalan wiring adımı (ADR-0009). RT-6 anti-rollback ise
+  buna BAĞIMLI DEĞİL: floor sync NV counter'ı kendisi tanımlar (fail-closed brick
+  önlendi).
+- **Kalan:** QEMU+swtpm senaryoları (`production-runtime-qemu.yml` lane) ve G5
+  donanım kanıtı. `suderra_config::tpm` sarmalayıcısı sahte-tpm2 birim testleriyle
+  kapsanır. **RT-4** kısmen: firstboot/attestation gerçek; telemetry/factory-reset
+  hâlâ placeholder (bu denetimde kritik yolda değil).
 
 ---
 
@@ -197,3 +231,51 @@ kesin G4/G5 listesi olarak yazılı. Yeni "hata" değil; donanım gelince kapana
 5. **SC-3, SC-4, MIN-***: hijyen — non-prod TLS sıkılaştırma, native sigstore, ölü anahtar,
    workspace lints.
 6. **HW-1..HW-4 (G4/G5)**: donanım geldiğinde — ADR-0007'deki turnkey liste.
+
+---
+
+## Kategori 6 — İkinci bağımsız inceleme (2026-07-11)
+
+Dört bağımsız agent (build/CI performansı, runtime/boot ayak izi, bağımsız güvenlik
+doğrulama + yeni-bug avı, Rust kod-doğruluğu) + çapraz-doğrulama. Kategori 1–5
+teyit edildi (register sağlam). Aşağıdakiler **register'da OLMAYAN** yeni bulgular ve
+her birinin çözüm durumudur. Bütünsel mimari:
+[ADR-0008](../architecture/ADR-0008-device-trust-architecture.md).
+
+### Yeni güvenlik bulguları
+
+| # | Bulgu | Ciddiyet | Durum |
+|---|---|---|---|
+| NEW-1 | OTA `is_production()` yalnız hiçbir yerde set edilmeyen env'le true → anti-rollback trusted-floor + dev-override reddi her cihazda ölü; env ile bypass | **Yüksek** | **Çözüldü** (Dalga 1): prod-tespiti imzalı os-release VARIANT'ından; anti-rollback katmanlı (Tier-1/2); build gate VARIANT=prod assert eder |
+| NEW-2 | nftables egress hedefe göre kısıtsız (exfiltration; 502/4840 lateral) | Orta | **Çözüldü — politika** (Dalga 4): appliance ruleset'i fail-closed named-set allow-list'e çevrildi (egress_update/cloud/field/infra), imzalı RO `/etc/suderra/egress.d/*.nft`'ten doldurulur, `nft -c` ile doğrulandı + contract test. **Sahada aktifleşmesi NEW-5'e bağlı** (cihazın appliance-locked ruleset'e geçmesi) |
+| NEW-3 | `variant::is_production()` env ile prod'u DOWNGRADE edebiliyordu (+ boş-env fail-open) | Orta | **Çözüldü** (Dalga 1) |
+| NEW-4 | `suderra-agent.service` indirilen harici ajana `/dev/tpm0`+`/dev/watchdog` veriyor | Orta | **Çözüldü** (Dalga 4): board+paket agent unit'lerinden `DeviceAllow=/dev/watchdog\|tpm0\|tpmrm0` kaldırıldı (agent sd-notify; TPM Suderra daemon'larının işi — ADR-0009); `suderra-watchdog` ilk kez paketlendi (tek sahip) |
+| NEW-5 | Appliance firewall prod'da aktive olmuyor; provisioning ruleset kalıcı default | Düşük | **Çözüldü** (Dalga 4): `suderra-firewall` seçicisi imzalı `VARIANT=prod` güven köküne çapalandı → appliance ruleset KOŞULSUZ; yazılabilir marker prod'u provisioning'e düşüremez; contract test. NEW-2'yi sahada etkin kılar |
+| NEW-6 | Dev firstboot provisioning parolasını `/dev/console`'a basıyor (dev-only) | Düşük | **Çözüldü** (#84 Dalga 4) — 0600 `credentials.env` işaretçisi |
+| NEW-7 | Ed25519 `verify` (strict değil) + non-canonical imza serileştirme | Düşük | **Çözüldü**: `verify_strict` (Dalga 1) + kanonik imza baytları `suderra-config::canonical`'a birleştirildi, imza `-v2` temiz kırılımı + diller-arası golden vektör (AUD-4) |
+
+### Kod-doğruluğu bug'ları (gerçek crate'ler)
+
+| # | Bulgu | Ciddiyet | Durum |
+|---|---|---|---|
+| C-1 | `variant::is_production()` set-but-empty env → fail-open | Orta | **Çözüldü** (Dalga 1) |
+| C-2 | Watchdog besleme aralığı donanım timeout'una kısıtsız → sağlıklı cihazı reset döngüsü | Orta | **Çözüldü** (Dalga 1) |
+| C-3 | Watchdog tick'inde timeout'suz `systemctl` → wedge kick açlığı → reset | Orta | **Çözüldü** (Dalga 1) |
+| C-4 | `mark-good --version X` pending yokken floor'u kalıcı yükseltir → update-kilidi DoS | Orta | **Çözüldü** (Dalga 1) |
+| C-5 | `restart_after + 1` overflow (hostile env) | Düşük | **Çözüldü** (Dalga 1, `saturating_add`) |
+| C-6 | TOCTOU (verify→use) OTA bundle / installer manifest | Düşük–Orta | **Çözüldü**: installer tek-okuma (boyut+sha256+imza aynı tampon); ota root-0700 staging'e atomik rename + fd üzerinden yeniden hash (kalan risk kod yorumunda; RAUC bağımsız imza doğrular) |
+| C-7 | Non-SemVer `VERSION_ID` OTA'yı bricker (fail-closed availability) | Düşük | **Çözüldü**: post-build SemVer build kapısı + install girişinde erken teşhis; contract test |
+
+### Register kalemlerinde ilerleme
+
+- **RT-1** (`/data` LUKS2 provisioning yok) → **Çözüldü** (ADR-0008 Dalga 2): `suderra-data-provision`, TPM2-seal default + fail-closed; runtime kanıtı QEMU-swtpm/G5.
+- **RT-5** (`systemd-cryptsetup` yok) → **Çözüldü** (Dalga 2): 3 prod defconfig'te `BR2_PACKAGE_SYSTEMD_CRYPTSETUP=y`.
+- **DOC-1** (`/data` LUKS iddiası, kod yok) → **Çözüldü** (Dalga 2, provisioning uygulandı).
+- **RT-6** (TPM-NV anti-rollback etiket) → NEW-1 ile derinleşti; Tier-2 kaynağı ADR-0008 Dalga 3'te (gerçek TPM-NV).
+- **DOC-2 / DOC-3** → **Çözüldü** (Dalga 5): ARCHITECTURE ağ yüzeyi OS/iş-yükü ayrımıyla netleşti; ROADMAP gerçek-durum tablosuyla hizalandı.
+
+### Performans bulguları (özet — ADR-0008 Dalga 6)
+
+- **Build/CI:** cross-toolchain her build'de sıfırdan; dl/ccache cache defconfig-parçalı + `restore-keys` yok → 10 GB bütçe eviction thrash; Docker builder run başına ~5× layer-cache'siz; redundant smoke/parse + `msrv` cache'siz.
+- **Footprint (çoğu iyi optimize):** **Çözüldü** → kullanılmayan `reqwest` `ota`/`telemetry`/`attestation`'dan çıkarıldı (MIN-2); `tokio` `full` yerine crate-başı feature (48 satır transitive dep düştü); `i2c-tools` prod'dan çıkarıldı. **Açık:** ikili TLS yığını (OpenSSL+rustls, M-effort); `tpm2-tools` prod'da (post-image gate + Wave 3 attestation'a bağlı); `network-online.target` DHCP boot-stall (~120 s, boot-test gerekir).
+- **Hijyen:** **Çözüldü** → workspace-geneli `unsafe_code = "deny"` + hedefli watchdog allow (MIN-3, negatif testle kanıtlı).

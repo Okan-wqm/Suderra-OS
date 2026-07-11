@@ -12,7 +12,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -21,7 +21,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const MANIFEST_SCHEMA: &str = "suderra.os-update-manifest.v1";
 const STATE_SCHEMA: &str = "suderra.ota-state.v1";
@@ -51,6 +51,21 @@ enum Commands {
     Rollback(RollbackArgs),
     /// Mark the current slot good after health checks pass.
     MarkGood(MarkGoodArgs),
+    /// Sync the TPM-NV-anchored anti-rollback floor into the runtime path (RT-6).
+    Floor(FloorArgs),
+}
+
+#[derive(Args, Debug)]
+struct FloorArgs {
+    #[command(subcommand)]
+    action: FloorAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum FloorAction {
+    /// Read the TPM-NV monotonic counter, cross-check the image epoch, and write
+    /// the trusted SemVer floor to the runtime path (fail-closed on downgrade).
+    Sync,
 }
 
 #[derive(Args, Debug)]
@@ -60,7 +75,11 @@ struct InstallArgs {
     /// RAUC bundle referenced by the manifest.
     bundle: PathBuf,
     /// Ed25519 public key used to verify the manifest signature.
-    #[arg(long, env = "SUDERRA_OTA_MANIFEST_PUBKEY")]
+    /// NOT: env fallback bilinçli olarak clap'ten KALDIRILDI — env yalnız
+    /// non-prod'da (dev_override) geçerlidir; prod'da ambient env manifest
+    /// güven kökünü kaydıramaz (aksi halde her diğer güvenlik yolunu kapılayan
+    /// dev_override sözleşmesi delinirdi).
+    #[arg(long)]
     manifest_pubkey: Option<PathBuf>,
     /// Do not request reboot after a successful inactive-slot install.
     #[arg(long, env = "SUDERRA_OTA_NO_REBOOT", default_value_t = false)]
@@ -138,11 +157,10 @@ struct OtaState {
     last_error: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     init_logging(cli.verbose);
-    match run(cli.command).await {
+    match run(cli.command) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
             error!("{err:#}");
@@ -157,12 +175,15 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
-async fn run(command: Commands) -> Result<()> {
+fn run(command: Commands) -> Result<()> {
     match command {
         Commands::Install(args) => install(args),
         Commands::Status(args) => status(args),
         Commands::Rollback(args) => rollback(args),
         Commands::MarkGood(args) => mark_good(args),
+        Commands::Floor(args) => match args.action {
+            FloorAction::Sync => floor_sync(),
+        },
     }
 }
 
@@ -178,13 +199,33 @@ fn init_logging(verbose: bool) {
 
 fn install(args: InstallArgs) -> Result<()> {
     let mut state = load_state()?;
+    // C-7: cihazın kendi sürümü SemVer değilse her karşılaştırma derin policy
+    // katmanında anlaşılmaz biçimde ölürdü — burada erken ve eyleme dönük teşhis.
+    // (Kaynağında önleme: post-build.sh, SemVer-dışı SUDERRA_VERSION ile imaj
+    // build'ini keser; bu dal yalnız bozuk/elle yazılmış state için kalır.)
+    ParsedVersion::parse(&state.current_version).with_context(|| {
+        format!(
+            "device current_version '{}' is not SemVer (source: /etc/os-release VERSION_ID \
+             or /data OTA state) — the image build violated the C-7 contract; \
+             no update can be policy-checked until the image/state is fixed",
+            state.current_version
+        )
+    })?;
     let manifest = load_manifest(&args.manifest)?;
     verify_manifest_signature(&manifest, args.manifest_pubkey.as_deref())?;
     verify_manifest_policy(&manifest, &state)?;
     verify_bundle(&manifest, &args.bundle)?;
+    let staged_bundle = stage_bundle_for_install(&manifest, &args.bundle)?;
 
     info!(version = %manifest.version, target = %manifest.target, "installing RAUC bundle");
-    run_rauc(&["install", path_str(&args.bundle)?]).context("rauc install failed")?;
+    let rauc_result =
+        run_rauc(&["install", path_str(&staged_bundle)?]).context("rauc install failed");
+    // Staging temizliği her iki sonuçta da best-effort (bundle tüketildi).
+    let _ = fs::remove_file(&staged_bundle);
+    if let Some(dir) = staged_bundle.parent() {
+        let _ = fs::remove_dir(dir);
+    }
+    rauc_result?;
     let pending_boot_slot = pending_boot_slot_after_install()
         .context("cannot prove inactive RAUC slot selected for next boot")?;
 
@@ -265,13 +306,18 @@ fn rollback(args: RollbackArgs) -> Result<()> {
 
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
     let mut state = load_state()?;
-    let requested_version = args.version;
-    let version = requested_version
-        .or_else(|| state.pending_version.clone())
+    // mark-good YALNIZCA gerçekten pending (doğrulanmış install ile stage edilmiş)
+    // bir sürümü onaylar. `--version` verildiyse pending ile ÖRTÜŞMELİDİR; aksi
+    // halde pending olmayan keyfi bir sürüm current_version/rollback_floor'u
+    // yükseltip cihazı bu değerin altındaki her meşru update'e karşı kalıcı olarak
+    // kilitleyebilirdi (install olmadan tetiklenen DoS).
+    let version = state
+        .pending_version
+        .clone()
         .ok_or_else(|| anyhow!("no pending version to mark good"))?;
-    if let Some(pending) = state.pending_version.as_deref() {
-        if pending != version {
-            bail!("mark-good version {version} does not match pending version {pending}");
+    if let Some(requested) = args.version.as_deref() {
+        if requested != version {
+            bail!("mark-good version {requested} does not match pending version {version}");
         }
     }
     if let Some(expected_slot) = state.pending_boot_slot.as_deref() {
@@ -310,6 +356,15 @@ fn mark_good(args: MarkGoodArgs) -> Result<()> {
     state.last_event = Some(event.clone());
     save_state(&state)?;
     persist_rollback_floor(&state.rollback_floor)?;
+    // RT-6: onaylanmış (mark-good) bir ileri-sürüm, donanım çıpasını (TPM-NV
+    // monotonic counter) da ilerletir. YALNIZ başarı yolunda — başarısız bir
+    // güncelleme sayacı yakmaz. Sayaç yalnız artar; sonraki bir downgrade denemesi
+    // floor_sync tarafından (image epoch < nv) fail-closed yakalanır.
+    if let Err(err) = advance_rollback_anchor() {
+        // Çıpa ilerletme başarısızlığı mark-good'u geri almaz (boot zaten iyi);
+        // ama görünür şekilde uyar — bir sonraki floor_sync tutarsızlığı yakalar.
+        warn!(error = %err, "TPM-NV rollback çıpası ilerletilemedi (mark-good yine de geçerli)");
+    }
     print_json(&event)?;
     Ok(())
 }
@@ -333,9 +388,14 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
         .signature
         .as_ref()
         .ok_or_else(|| anyhow!("OS update manifest must carry an Ed25519 signature"))?;
-    if signature.algorithm != "ed25519-suderra-os-update-manifest-v1" {
+    // -v2: imza baytları sorted-key kanonik JSON'dur (suderra_config::canonical,
+    // installer ile aynı form). -v1 (struct-alan-sıralı bayt) temiz kırılımla
+    // kaldırıldı — sahada cihaz yok (production_ready:false), dual-accept ölü
+    // güvenlik kodu olurdu. Eski manifest'ler burada teşhis edilebilir hatayla düşer.
+    if signature.algorithm != "ed25519-suderra-os-update-manifest-v2" {
         bail!(
-            "unsupported manifest signature algorithm: {}",
+            "unsupported manifest signature algorithm: {} (expected ed25519-suderra-os-update-manifest-v2; \
+             v1 manifests must be re-signed with scripts/create-os-update-manifest.py)",
             signature.algorithm
         );
     }
@@ -344,11 +404,9 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     }
     let key_path = key_path
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("SUDERRA_OTA_MANIFEST_PUBKEY")
-                .ok()
-                .map(PathBuf::from)
-        })
+        // Env fallback prod'da KAPALI (dev_override): gerçek prod cihazda manifest
+        // pubkey'i yalnız imzalı RO default'tan gelir, ambient env ile değil.
+        .or_else(|| dev_override("SUDERRA_OTA_MANIFEST_PUBKEY").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/etc/suderra/os-update-manifest.ed25519.pub"));
     let public_key = read_public_key(&key_path)?;
     let public_key_sha256 = hex::encode(Sha256::digest(public_key.as_bytes()));
@@ -357,16 +415,21 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     }
     let signature_bytes = decode_fixed_hex::<64>(&signature.signature_hex, "signature_hex")?;
     let signature = Signature::from_bytes(&signature_bytes);
+    // `verify_strict`: non-canonical imza / karışık-sıra key reddedilir (malleability
+    // kapatılır). Meşru imzalayıcı canonical imza ürettiğinden gerçek manifest'ler
+    // etkilenmez.
     public_key
-        .verify(&manifest_signing_bytes(manifest)?, &signature)
+        .verify_strict(&manifest_signing_bytes(manifest)?, &signature)
         .context("manifest signature verification failed")?;
     Ok(())
 }
 
+/// İmza baytları: üst-düzey `signature` alanı düşülmüş, anahtarları sıralı kanonik
+/// JSON (paylaşılan sözleşme — struct alan sırasına bağımlılık yok; Python
+/// imzalayıcı `sort_keys=True` ile aynı baytları üretir, golden vektörlerle sınanır).
 fn manifest_signing_bytes(manifest: &SignedManifest) -> Result<Vec<u8>> {
-    let mut unsigned = manifest.clone();
-    unsigned.signature = None;
-    serde_json::to_vec(&unsigned).context("cannot canonicalize unsigned manifest")
+    suderra_config::canonical::canonical_without_signature(manifest)
+        .context("cannot canonicalize unsigned manifest")
 }
 
 fn read_public_key(path: &Path) -> Result<VerifyingKey> {
@@ -494,6 +557,58 @@ fn verify_bundle(manifest: &SignedManifest, bundle: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// C-6 (verify→use TOCTOU): doğrulanmış bundle'ı 0700 izinli bir staging
+/// dizinine ATOMİK `rename` ile alır (aynı dosya sistemi: bundle'ın kendi
+/// dizini altı) ve staged dosyayı AÇIK fd üzerinden yeniden hash'ler; rauc'a
+/// staged path verilir. Böylece hash ile rauc'un dosyayı açması arasındaki
+/// path-tabanlı swap penceresi kapanır (ayrıcalıksız yazar staging'e erişemez).
+/// Kalan risk dürüstçe: doğrulamadan ÖNCE elde tutulmuş bir yazma-fd'si aynı
+/// inode'a hâlâ yazabilir — derinlemesine savunma olarak RAUC, bundle imzasını
+/// keyring'e karşı bağımsız doğrular (verity bundle format).
+fn stage_bundle_for_install(manifest: &SignedManifest, bundle: &Path) -> Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = match bundle.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let staging = parent.join(".suderra-ota-staging");
+    fs::create_dir_all(&staging)
+        .with_context(|| format!("cannot create staging dir: {}", staging.display()))?;
+    let mut perms = fs::metadata(&staging)?.permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(&staging, perms)?;
+
+    let staged = staging.join(&manifest.bundle.name);
+    fs::rename(bundle, &staged).with_context(|| {
+        format!(
+            "cannot stage bundle {} -> {}",
+            bundle.display(),
+            staged.display()
+        )
+    })?;
+
+    // Yeniden doğrulama AÇIK fd üzerinden — path bir daha çözülmez.
+    let mut file = fs::File::open(&staged)
+        .with_context(|| format!("cannot open staged bundle: {}", staged.display()))?;
+    let meta = file.metadata()?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).context("cannot hash staged bundle")?;
+    let digest = hex::encode(hasher.finalize());
+    if meta.len() != manifest.bundle.bytes || digest != manifest.bundle.sha256 {
+        let _ = fs::remove_file(&staged);
+        let _ = fs::remove_dir(&staging);
+        bail!(
+            "staged bundle failed re-verification (size {} vs {}, sha256 {} vs {})",
+            meta.len(),
+            manifest.bundle.bytes,
+            digest,
+            manifest.bundle.sha256
+        );
+    }
+    Ok(staged)
 }
 
 fn run_rauc(args: &[&str]) -> Result<()> {
@@ -637,10 +752,21 @@ fn read_rollback_floor() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Prod binary'de güvenlik-kritik davranış env ile DEĞİŞTİRİLEMEZ. Bu bayrak
-/// açıkken tüm test/dev override'ları yok sayılır (fail-closed). Non-prod (dev,
-/// lab, CI-smoke) binary'lerde override'lar test kolaylığı için etkindir.
+/// Cihazın gerçekten bir ÜRETİM cihazı olup olmadığı. GÜVEN KÖKÜ, dm-verity
+/// altındaki imzalı, salt-okunur `/etc/os-release`'in `VARIANT`/`VARIANT_ID`
+/// alanıdır — sözleşme `suderra_config::variant`'ta paylaşılır (ADR-0008 §1
+/// çıkarması; installer aynı kökü kullanır). Bu bayrak `dev_override()`'ı
+/// kapılar: gerçek prod cihazda hiçbir env güvenlik davranışını GEVŞETEMEZ.
+///
+/// Env `SUDERRA_OTA_PRODUCTION=1` yalnız sınıflandırmayı ÜRETİM yönünde
+/// SIKILAŞTIRABİLİR (CI/dev'de prod davranışını zorlamak için); prod'u dev'e
+/// çekemez. VARIANT hiç yoksa (Suderra olmayan host / CI) dev sayılır; gerçek
+/// prod imajın `VARIANT=prod` taşıdığı `enforce_production_contract` build
+/// kapısıyla garanti edilir (fail-open residual'ı build katmanında kapatır).
 fn is_production() -> bool {
+    if suderra_config::variant::os_release_is_prod() {
+        return true;
+    }
     std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1")
 }
 
@@ -661,9 +787,146 @@ fn dev_override(key: &str) -> Option<String> {
 /// buradan okunur; yazılabilir `/data` üzerindeki floor dosyası prod'da yalnız
 /// bir ayna/cache'tir, güven çıpası DEĞİLDİR.
 fn trusted_floor_path() -> Option<PathBuf> {
-    std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")
-        .ok()
+    // RT-6: prod GÜVEN KÖKÜ imzalı `/etc/suderra/ota.conf`'tur; env yalnız
+    // dev/CI override (prod'da `dev_override` None döner → env prod'da yol
+    // beyan EDEMEZ, aksi halde saldırgan floor'u /tmp'ye yönlendirebilirdi).
+    ota_conf_value("rollback_floor_path")
+        .or_else(|| dev_override("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH"))
         .map(PathBuf::from)
+}
+
+/// İmzalı, dm-verity altındaki salt-okunur OTA config yolu. `SUDERRA_OTA_CONF`
+/// yeniden konumlandırma/test seam'idir; gerçek prod imajda dosya sabittir.
+fn ota_conf_path() -> PathBuf {
+    std::env::var("SUDERRA_OTA_CONF")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/etc/suderra/ota.conf"))
+}
+
+/// `/etc/suderra/ota.conf`'tan `key=value` okur (yorum `#`, tırnak soyulur).
+fn ota_conf_value(key: &str) -> Option<String> {
+    let content = fs::read_to_string(ota_conf_path()).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == key {
+                let v = v.trim().trim_matches('"').trim();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Anti-rollback floor kaynağı: imzalı config (prod kök) VEYA dev env override.
+fn rollback_floor_source() -> Option<String> {
+    ota_conf_value("rollback_floor_source")
+        .or_else(|| dev_override("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE"))
+}
+
+/// TPM-NV counter index'i (RT-6). Config'ten okunur; yoksa TCG owner-range
+/// varsayılanı.
+fn rollback_nv_index() -> u32 {
+    ota_conf_value("rollback_nv_index")
+        .and_then(|s| {
+            let s = s.trim();
+            let s = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .unwrap_or(s);
+            u32::from_str_radix(s, 16).ok()
+        })
+        .unwrap_or(0x0150_0001)
+}
+
+/// Bu imajın beyan ettiği anti-rollback epoch'u (config `rollback_epoch`).
+/// Güvenlik-ilgili her sürümde artan ordinal; TPM-NV counter'ın SemVer floor'a
+/// eşlemesidir (ADR-0009).
+fn image_rollback_epoch() -> Option<u64> {
+    ota_conf_value("rollback_epoch").and_then(|s| s.trim().parse::<u64>().ok())
+}
+
+/// RT-6 floor sync: TPM-NV monotonic counter'ı okur, imaj epoch'uyla çapraz
+/// doğrular ve güvenilir SemVer floor'u runtime yoluna yazar. Downgrade
+/// (imaj epoch'u < donanım counter'ı) fail-closed: floor YAZILMAZ → install
+/// yolu #84 invariantıyla fail-closed olur.
+fn floor_sync() -> Result<()> {
+    // Yalnız TPM-NV kaynağı bu sync'e ihtiyaç duyar; diğer kaynaklar (bootloader
+    // monotonic) çıpayı kendileri sağlar, Tier-1 (kaynak yok) no-op.
+    match rollback_floor_source().as_deref() {
+        Some("tpm-nv") => {}
+        _ => {
+            info!("rollback floor kaynağı tpm-nv değil; floor sync no-op");
+            return Ok(());
+        }
+    }
+    let floor = ota_conf_value("rollback_floor")
+        .ok_or_else(|| anyhow!("ota.conf tpm-nv beyan ediyor ama rollback_floor yok"))?;
+    ParsedVersion::parse(&floor)
+        .with_context(|| format!("ota.conf rollback_floor '{floor}' geçerli SemVer değil"))?;
+    let epoch = image_rollback_epoch()
+        .ok_or_else(|| anyhow!("ota.conf tpm-nv beyan ediyor ama rollback_epoch yok"))?;
+    let path = trusted_floor_path()
+        .ok_or_else(|| anyhow!("ota.conf tpm-nv beyan ediyor ama rollback_floor_path yok"))?;
+
+    let tpm = suderra_config::tpm::Tpm::new(is_production());
+    let index = rollback_nv_index();
+    // NV counter'ı BURADA idempotent tanımla: prod'da firstboot güven-tesis
+    // durum makinesi (identity/attestation) çalışmıyor olabilir, ama RT-6
+    // anti-rollback yolu buna BAĞIMLI OLMAMALI. Zaten tanımlıysa no-op; ilk
+    // boot'ta 0'dan başlar (mark-good epoch'a yükseltir). Böylece prod OTA yolu
+    // firstboot wiring'inden bağımsız çalışır (fail-closed brick önlenir).
+    tpm.nv_define_counter(index).with_context(|| {
+        format!("TPM-NV rollback counter {index:#x} tanımlanamadı (fail-closed)")
+    })?;
+    let nv = tpm
+        .nv_read_counter(index)
+        .with_context(|| format!("TPM-NV rollback counter {index:#x} okunamadı (fail-closed)"))?;
+
+    if epoch < nv {
+        // Bu imaj, donanımın onayladığı nesilden ESKİ → downgrade. Floor yazma.
+        bail!(
+            "downgrade tespit edildi: imaj epoch {epoch} < TPM-NV counter {nv} — \
+             güvenilir floor YAZILMADI, güncelleme yolu fail-closed olacak"
+        );
+    }
+
+    // İmaj çıpa kadar veya daha ileri → güvenilir floor'u runtime yoluna yaz.
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = fs::File::create(&tmp)?;
+        writeln!(file, "{floor}")?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, &path)?;
+    info!(floor = %floor, epoch, nv, "TPM-NV rollback floor senkronize edildi");
+    Ok(())
+}
+
+/// mark-good başarısında donanım çıpasını (TPM-NV counter) imaj epoch'una kadar
+/// ilerletir. Yalnız `tpm-nv` kaynağında ve counter < epoch iken artırır.
+fn advance_rollback_anchor() -> Result<()> {
+    if rollback_floor_source().as_deref() != Some("tpm-nv") {
+        return Ok(());
+    }
+    let Some(epoch) = image_rollback_epoch() else {
+        return Ok(());
+    };
+    let tpm = suderra_config::tpm::Tpm::new(is_production());
+    let index = rollback_nv_index();
+    // Idempotent tanımla (floor sync henüz koşmamış olabilir) + sınırlı,
+    // strict-advance yükseltme (ortak invariant suderra_config::tpm'de).
+    tpm.nv_define_counter(index)?;
+    tpm.nv_raise_to(index, epoch)?;
+    Ok(())
 }
 
 /// Güvenilir kaynaktan floor değerini okur ve SemVer olarak doğrular. Kaynak yolu
@@ -698,36 +961,64 @@ fn running_image_version() -> Option<String> {
     None
 }
 
+/// Prod anti-rollback KATMANLI bir politikadır (ADR-0008):
+///
+/// - **Tier 2 (donanım-çıpalı, güçlü):** `SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE`
+///   `tpm-nv`/`bootloader-monotonic` olarak BEYAN edilmişse KATI doğrulanır:
+///   kaynak yolu zorunludur, yazılabilir state dizininin DIŞINDA yaşamalı ve
+///   okunabilir+geçerli SemVer üretmelidir. Aksi halde fail-closed.
+/// - **Tier 1 (userspace floor — bugünün dürüst durumu):** kaynak beyan
+///   edilmemişse `/data` üzerindeki monotonik floor tek anti-rollback katmanıdır
+///   (HW-5'te "userspace-only" olarak dokümante). Cihaz KİLİTLENMEZ; ama bu, bir
+///   donanım çıpası olmadığını `degraded` seviyesinde AÇIKÇA sinyaller. Kritik
+///   olan: bu cihazda `is_production()` true olduğundan `dev_override` KAPALIDIR
+///   — yani floor env ile kurcalanamaz. Tier 2'ye geçiş G5 donanım kanıtıyla
+///   `production_ready` flip'inde tamamlanır.
+///
+/// Bu ayrım, NEW-1'in kök nedenini kapatır: eskiden tek bir env bayrağı hem
+/// dev-override reddini hem de TPM-NV zorunluluğunu birden kapılıyor ve hiçbir
+/// cihazda set edilmediğinden ikisi de ölüydü.
 fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
     if !is_production() {
         return Ok(());
     }
-    match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE").ok().as_deref() {
-        Some("tpm-nv") | Some("bootloader-monotonic") => {}
+    match rollback_floor_source().as_deref() {
+        Some("tpm-nv") | Some("bootloader-monotonic") => {
+            // Tier 2: kaynak beyan edildi → KATI doğrula. Floor'un GERÇEKTEN
+            // okunacağı yol zorunlu ve yazılabilir state dizininin dışında olmalı;
+            // yoksa "TPM-destekli" iddia teatral kalır (saldırgan /data'daki
+            // dosyayı silip floor'u düşüremesin).
+            let path = trusted_floor_path().ok_or_else(|| {
+                anyhow!("declared monotonic rollback floor source requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")
+            })?;
+            let sdir = state_dir();
+            if path.starts_with(&sdir) {
+                bail!(
+                    "rollback floor source path {} must not live under the writable state dir {}",
+                    path.display(),
+                    sdir.display()
+                );
+            }
+            trusted_rollback_floor()?.ok_or_else(|| {
+                anyhow!("monotonic rollback floor source is configured but produced no value")
+            })?;
+            Ok(())
+        }
         Some(other) => bail!(
-            "production anti-rollback requires TPM NV or bootloader monotonic state, got {other}"
+            "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE must be tpm-nv or bootloader-monotonic, got {other}"
         ),
-        None => bail!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE=tpm-nv or bootloader-monotonic"),
+        None => {
+            // Tier 1: donanım çıpası beyan edilmemiş → userspace /data floor tek
+            // katman. Kilitlemek yerine degraded-mode sinyali ver (sessiz değil).
+            warn!(
+                tier = "userspace-floor",
+                "anti-rollback donanım çıpası (TPM-NV/bootloader) yapılandırılmamış; \
+                 /data üzerindeki monotonik floor tek katman (HW-5, G5'te kapanır). \
+                 dev_override bu cihazda kapalı olduğundan floor env ile kurcalanamaz."
+            );
+            Ok(())
+        }
     }
-    // Floor'un GERÇEKTEN okunacağı kaynak yolu zorunlu olmalı ve yazılabilir
-    // state dizininin dışında yaşamalı — yoksa "TPM-destekli" iddiası teatral
-    // kalır (saldırgan /data'daki dosyayı silip floor'u düşürebilir).
-    let path = trusted_floor_path().ok_or_else(|| {
-        anyhow!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH backed by the declared monotonic source")
-    })?;
-    let sdir = state_dir();
-    if path.starts_with(&sdir) {
-        bail!(
-            "rollback floor source path {} must not live under the writable state dir {}",
-            path.display(),
-            sdir.display()
-        );
-    }
-    // Kaynak okunabilir ve geçerli olmalı (fail-closed).
-    trusted_rollback_floor()?.ok_or_else(|| {
-        anyhow!("production rollback floor source is configured but produced no value")
-    })?;
-    Ok(())
 }
 
 fn state_dir() -> PathBuf {
@@ -972,10 +1263,79 @@ fn compare_prerelease(left: &[PrereleaseIdentifier], right: &[PrereleaseIdentifi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::Mutex;
 
     // Env değiştiren testleri serileştir (process-global env yarışlarını önle).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn fake_tpm2(dir: &Path, name: &str, body: &str) {
+        let p = dir.join(name);
+        let mut f = std::fs::File::create(&p).unwrap();
+        writeln!(f, "#!/bin/sh\n{body}").unwrap();
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&p, perms).unwrap();
+    }
+
+    #[test]
+    fn floor_sync_writes_floor_and_rejects_downgrade() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("suderra-floor-sync-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bindir = dir.join("bin");
+        std::fs::create_dir_all(&bindir).unwrap();
+        let floor_path = dir.join("rollback-epoch");
+        let conf = dir.join("ota.conf");
+
+        // NV counter = 3 döndüren sahte tpm2_nvread (big-endian).
+        fake_tpm2(
+            &bindir,
+            "tpm2_nvread",
+            "printf '\\000\\000\\000\\000\\000\\000\\000\\003'",
+        );
+        // floor_sync artık counter'ı idempotent tanımlar (prod'da firstboot
+        // koşmayabilir); nvreadpublic=0 → "zaten tanımlı" → nvdefine no-op.
+        fake_tpm2(&bindir, "tpm2_nvreadpublic", "exit 0");
+        std::env::set_var("SUDERRA_TPM2_BIN_DIR", &bindir);
+
+        // İmaj epoch 5 (>= 3) → floor yazılmalı.
+        std::fs::write(
+            &conf,
+            "rollback_floor_source=tpm-nv\nrollback_epoch=5\n\
+             rollback_floor=v1.2.0\nrollback_floor_path="
+                .to_string()
+                + floor_path.to_str().unwrap()
+                + "\n",
+        )
+        .unwrap();
+        std::env::set_var("SUDERRA_OTA_CONF", &conf);
+
+        floor_sync().expect("epoch >= nv → floor yazılmalı");
+        assert_eq!(
+            std::fs::read_to_string(&floor_path).unwrap().trim(),
+            "v1.2.0"
+        );
+
+        // İmaj epoch 2 (< 3) → downgrade → fail-closed, floor DEĞİŞMEMELİ.
+        std::fs::remove_file(&floor_path).ok();
+        std::fs::write(
+            &conf,
+            "rollback_floor_source=tpm-nv\nrollback_epoch=2\n\
+             rollback_floor=v0.9.0\nrollback_floor_path="
+                .to_string()
+                + floor_path.to_str().unwrap()
+                + "\n",
+        )
+        .unwrap();
+        let err = floor_sync().unwrap_err();
+        assert!(err.to_string().contains("downgrade"), "{err}");
+        assert!(!floor_path.exists(), "downgrade'de floor yazılmamalı");
+
+        std::env::remove_var("SUDERRA_TPM2_BIN_DIR");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn dev_override_ignored_in_production() {
@@ -1016,24 +1376,70 @@ mod tests {
         assert!(trusted_rollback_floor().unwrap().is_none());
     }
 
+    /// Test için geçici imzalı-config vekili yazar ve `SUDERRA_OTA_CONF`'a bağlar.
+    /// (RT-6: prod'da kaynak beyanı env'den değil imzalı config'ten gelir.)
+    fn write_ota_conf(lines: &[&str]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "suderra-ota-conf-{}-{}",
+            std::process::id(),
+            lines.len()
+        ));
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+        std::env::set_var("SUDERRA_OTA_CONF", &path);
+        path
+    }
+
     #[test]
     fn production_gate_rejects_writable_floor_source() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
-        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "tpm-nv");
-        // Floor kaynağı yazılabilir state dizininin altında → reddedilmeli.
+        // Kaynak imzalı config'ten beyan edilir; floor yolu yazılabilir state
+        // dizininin altında → reddedilmeli.
         let inside = state_dir().join("rollback-floor");
-        std::env::set_var(
-            "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH",
-            inside.to_str().unwrap(),
-        );
+        let conf = write_ota_conf(&[
+            "rollback_floor_source=tpm-nv",
+            &format!("rollback_floor_path={}", inside.to_str().unwrap()),
+        ]);
         assert!(
             production_rollback_floor_requires_monotonic_state().is_err(),
             "yazılabilir state dizinindeki floor kaynağı prod'da reddedilmeli"
         );
         std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_file(&conf).ok();
+    }
+
+    #[test]
+    fn tier1_userspace_floor_does_not_brick_prod() {
+        // Prod cihaz + donanım çıpası BEYAN EDİLMEMİŞ → Tier 1: gate kilitlemez
+        // (Ok), userspace /data floor tek katman olarak enforce edilmeye devam eder.
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        std::env::remove_var("SUDERRA_OTA_CONF");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+        assert!(
+            production_rollback_floor_requires_monotonic_state().is_ok(),
+            "kaynak beyan edilmediğinde prod OTA kilitlenmemeli (Tier 1)"
+        );
+        // Beyan edilen ama geçersiz bir kaynak tipi ise fail-closed.
+        let conf = write_ota_conf(&["rollback_floor_source=file"]);
+        assert!(
+            production_rollback_floor_requires_monotonic_state().is_err(),
+            "geçersiz kaynak tipi reddedilmeli"
+        );
+        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        std::env::remove_var("SUDERRA_OTA_CONF");
+        std::fs::remove_file(&conf).ok();
+    }
+
+    #[test]
+    fn variant_classification_matches_installer_contract() {
+        // Sözleşme artık paylaşılan modülde — burada yalnız aynı kökü
+        // kullandığımızı sabitleyen bir duman testi kalır.
+        use suderra_config::variant::value_is_prod;
+        assert!(value_is_prod("prod-eu"));
+        assert!(!value_is_prod("preprod"));
     }
 
     #[test]
@@ -1070,7 +1476,7 @@ mod tests {
             rollback_floor: "v1.0.0".to_string(),
             release_notes: None,
             signature: Some(ManifestSignature {
-                algorithm: "ed25519-suderra-os-update-manifest-v1".to_string(),
+                algorithm: "ed25519-suderra-os-update-manifest-v2".to_string(),
                 key_id: "test".to_string(),
                 public_key_sha256: "b".repeat(64),
                 signature_hex: "c".repeat(128),
@@ -1079,5 +1485,26 @@ mod tests {
         let text = String::from_utf8(manifest_signing_bytes(&manifest).unwrap()).unwrap();
         assert!(!text.contains("signature_hex"));
         assert!(text.contains(MANIFEST_SCHEMA));
+        // -v2 sözleşmesi: imza baytları anahtar-sıralıdır; struct alan sırası
+        // (schema_version, version, target, artifact_sha256, ...) DEĞİL.
+        let artifact_pos = text.find("artifact_sha256").unwrap();
+        let version_pos = text.find("\"version\"").unwrap();
+        assert!(
+            artifact_pos < version_pos,
+            "kanonik form anahtar-sıralı olmalı: {text}"
+        );
+    }
+
+    /// Diller-arası uçtan uca kanıt: `scripts/create-os-update-manifest.py` ile
+    /// imzalanmış committed fixture, Rust doğrulayıcıdan geçmeli.
+    /// (Fixture'ı yeniden üretmek için: tests/ota/fixtures/signed-manifest/README.md)
+    #[test]
+    fn python_signed_fixture_verifies_in_rust() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/ota/fixtures/signed-manifest");
+        let manifest_path = dir.join("manifest.json");
+        let manifest = load_manifest(&manifest_path).expect("fixture manifest parse edilmeli");
+        verify_manifest_signature(&manifest, Some(&dir.join("test-key.ed25519.pub")))
+            .expect("Python imzalı fixture Rust'ta doğrulanmalı");
     }
 }

@@ -66,9 +66,15 @@ DeviceAllow=/dev/spidev0.0 rw
 DeviceAllow=/dev/spidev0.1 rw
 DeviceAllow=/dev/ttyAMA0 rw
 DeviceAllow=/dev/ttyUSB0 rw
-DeviceAllow=/dev/watchdog rw
-DeviceAllow=/dev/tpm0 rw
-DeviceAllow=/dev/tpmrm0 rw
+# /dev/watchdog BİLEREK yok (NEW-4): donanım watchdog'unun tek sahibi
+# suderra-watchdog daemon'udur; agent sd-notify (WatchdogSec) kullanır. Agent'a
+# watchdog erişimi vermek, ele geçirilmiş bir agent'ın magic-close'suz open/close
+# ile cihazı resetlemesine izin verirdi.
+# /dev/tpm0 ve /dev/tpmrm0 da BİLEREK yok (NEW-4): attestation ve cihaz kimliği
+# Suderra-sahipli daemon'ların işidir (suderra-attestation / firstboot, ADR-0009);
+# indirilen agent'ın ileride TPM'e ihtiyacı doğarsa erişim doğrudan cihaz değil,
+# Suderra-sahipli bir broker üzerinden verilir (emsal: suderra-provision-worker
+# spool broker deseni, ADR-0008 §4).
 DeviceAllow=char-rtc r
 
 StandardInput=null

@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# CodeQL semantik SAST (AUD-2). Depoda dataflow analizi eksikti — statik analiz
+# yalnız Clippy (Rust) + shellcheck (shell) ile sınırlıydı. Bu workflow Python
+# (scripts/evidence/* — ~35 release/HSM validator, en yüksek değerli hedef) ve
+# GitHub Actions workflow'ları için CodeQL çalıştırır.
+#
+# ADVISORY: required_checks'e ve ci/build-matrix.yml security_scans'a EKLENMEZ;
+# governance lockstep dosyalarına dokunmaz (bilinçli — önce sinyal kalitesi).
+# Terfi (gating + evidence sınıfı) tek-küme takip işi olarak docs/security/
+# sbom-process.md release-OS-scan sınıfına bırakılır.
+#
+# Rust (preview) bilinçle şimdilik dışarıda: build-mode/bundle uyumu doğrulanana
+# dek advisory lane'i gürültüsüz tutmak için — Clippy zaten -D warnings gate'liyor.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main, "claude/**"]
+  schedule:
+    - cron: "23 4 * * 1" # haftalık, Pazartesi
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - name: Analyze
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa
+        with:
+          category: "/language:${{ matrix.language }}"

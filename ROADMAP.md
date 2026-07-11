@@ -1,10 +1,33 @@
 # Suderra OS — Roadmap
 
-> **Aktif Faz:** Faz 0 tamam → **Faz 1 girişi** (Buildroot + ilk boot)
+> **Aktif durum:** Kod, aşağıdaki orijinal faz planının **çok önünde**. Faz 1–4
+> içeriğinin büyük kısmı **zaten uygulanmış**. Kalan iş, cihaz-içi runtime güveni
+> (Eksen B) ve donanım kanıtıdır.
 >
 > **Toplam tahmini süre:** Yarı-zamanlı tek geliştirici için 5-7 ay (Faz 1 → Pilot)
 >
 > Bu doküman canlıdır. Her faz sonunda revize edilir.
+
+## Gerçek durum (kod-temelli) — orijinal faz planı vs bugün
+
+Aşağıdaki fazlar tarihsel plandır; bugünkü **kod gerçeği** şudur (kaynak:
+[security-architecture.md](docs/security/security-architecture.md),
+[ADR-0008](docs/architecture/ADR-0008-device-trust-architecture.md)):
+
+| Eksen | Konu | Orijinal faz | Gerçek durum |
+|---|---|---|---|
+| A | İmzalı boot (UEFI/UKI, ARM signed-FIT) | Faz 3 | **Uygulandı** (fail-closed) |
+| A | dm-verity (RO rootfs bütünlüğü) | Faz 3 | **Uygulandı** |
+| A | RAUC A/B OTA + anti-rollback | Faz 4 | **Uygulandı** |
+| A | HSM imzalama + provenance/SLSA + evidence | Faz 4/6 | **Uygulandı** |
+| A | Kernel/userspace sertleştirme, nftables | Faz 3 | **Uygulandı** |
+| B | `/data` LUKS2 at-rest provisioning | Faz 3 | **Uygulandı** (ADR-0008 Dalga 2; runtime kanıtı QEMU-swtpm/G5) |
+| B | TPM seal + attestation + cihaz kimliği | Faz 3/8 | Mimarisi kuruldu, **iskele** (ADR-0008 Dalga 3) |
+| — | Donanım kanıtı (G4/G5) | — | **Kapılı** (`production_ready:false`) |
+
+Yani orijinal "Faz 0 → Faz 1 girişi" ifadesi geçersizdir; Eksen A endüstriyel
+seviyede tamam, Eksen B [ADR-0008](docs/architecture/ADR-0008-device-trust-architecture.md)
+dalga planıyla kapanıyor. Aşağıdaki faz metni tarihsel referans olarak korunur.
 
 ## Felsefe: Rust-first userspace, C base layer
 

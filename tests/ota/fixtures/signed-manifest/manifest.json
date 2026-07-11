@@ -1,0 +1,22 @@
+{
+  "artifact_sha256": "54224d9bcd8a82e8c0585e9c1a54458f4a9c0dfb2f72f4a26b15567d98b8b45a",
+  "bundle": {
+    "bytes": 36,
+    "name": "fixture-bundle.raucb",
+    "sha256": "54224d9bcd8a82e8c0585e9c1a54458f4a9c0dfb2f72f4a26b15567d98b8b45a"
+  },
+  "expires_at": "2099-01-01T00:00:00Z",
+  "key_epoch": 1,
+  "min_current_version": "v0.1.0",
+  "release_notes": "Diller-aras\u0131 golden fixture \u2014 T\u00fcrk\u00e7e karakter: \u011f\u00fc\u015f\u00f6\u00e7\u0130",
+  "rollback_floor": "v0.1.0",
+  "schema_version": "suderra.os-update-manifest.v1",
+  "signature": {
+    "algorithm": "ed25519-suderra-os-update-manifest-v2",
+    "key_id": "canonical-v2-fixture",
+    "public_key_sha256": "bcbfb99d5ace59f73452248c1170846ad42ea4452fe2d176a9f291662276f426",
+    "signature_hex": "59683085af808daf35743ef8b1f921dbffb646adb91a0f24fc35ccf4fc91542aa260aa1cf71e395788e3eeca2d580119535d00b005d589bb8afe6c34542bf10c"
+  },
+  "target": "suderra-os-x86_64",
+  "version": "v0.2.0"
+}

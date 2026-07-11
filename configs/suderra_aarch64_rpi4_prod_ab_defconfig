@@ -168,8 +168,9 @@ BR2_PACKAGE_CHRONY=y
 # ============================================================================
 # Donanım yardımcı araçları
 # ============================================================================
-# I2C/SPI debug ve test için
-BR2_PACKAGE_I2C_TOOLS=y
+# I2C/SPI debug/test CLI'ları prod'da SEVK EDİLMEZ (kilitli appliance; scripted
+# runtime kullanımı yok). Yalnız dev variant'ta etkin. (ADR-0008 Dalga 6)
+# BR2_PACKAGE_I2C_TOOLS is not set
 
 # Hardware watchdog daemon (busybox watchdog yerine systemd-watchdog kullanılır)
 # BR2_PACKAGE_WATCHDOG=n
@@ -199,8 +200,13 @@ BR2_PACKAGE_TPM2_TSS=y
 BR2_PACKAGE_TPM2_TOOLS=y
 BR2_PACKAGE_LVM2=y
 BR2_PACKAGE_CRYPTSETUP=y
+# systemd-cryptsetup + systemd-cryptenroll + TPM2 token handler (RT-5): /data
+# LUKS2'nin TPM2-seal ile provision + unlock edilebilmesi için gerekli.
+BR2_PACKAGE_SYSTEMD_CRYPTSETUP=y
 # Version anti-rollback (M4): rollback-floor / monotonic install guard.
 BR2_PACKAGE_SUDERRA_OTA=y
+BR2_PACKAGE_SUDERRA_WATCHDOG=y
+BR2_PACKAGE_SUDERRA_ATTESTATION=y
 # BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
 

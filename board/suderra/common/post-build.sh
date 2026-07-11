@@ -64,6 +64,18 @@ else
 fi
 
 # 1. /etc/os-release
+# C-7 kapısı: VERSION_ID SemVer olmalı. suderra-ota her politika
+# karşılaştırmasında strict SemVer parse eder; SemVer-dışı bir imaj sürümü
+# cihazda TÜM güncellemeleri kilitler (fail-closed erişilebilirlik sorunu).
+# Hata sahada değil build'de yakalanır.
+SUDERRA_VERSION_FOR_ID="${SUDERRA_VERSION:-0.1.0}"
+if ! printf '%s\n' "${SUDERRA_VERSION_FOR_ID#v}" |
+    grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+    echo "ERROR: SUDERRA_VERSION '${SUDERRA_VERSION_FOR_ID}' SemVer değil (C-7):"
+    echo "       suderra-ota bu imajda hiçbir güncellemeyi kabul edemezdi."
+    exit 1
+fi
+
 echo "==> /etc/os-release güncelleniyor"
 cat > "${TARGET_DIR}/etc/os-release" <<EOF
 NAME="Suderra OS"
@@ -82,6 +94,25 @@ BUILD_DATE="${SUDERRA_BUILD_DATE:-unknown}"
 VARIANT="${SUDERRA_OS_VARIANT}"
 IMAGE_ROLE="${DEFCONFIG_NAME}"
 EOF
+
+# 1b. /etc/suderra/ota.conf — imzalı (dm-verity RO) anti-rollback kaynak beyanı (RT-6).
+# YALNIZ prod varyant: TPM-NV monotonic counter çıpası. rollback_epoch güvenlik-ilgili
+# her sürümde artan ordinal (SUDERRA_ROLLBACK_EPOCH build girdisi); rollback_floor
+# SemVer alt sınırı (VERSION_ID). suderra-ota floor sync bunu okur, NV counter ile
+# çapraz doğrular; downgrade fail-closed. dev/lab varyantı ota.conf ALMAZ → Tier-1.
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+    echo "==> /etc/suderra/ota.conf (prod anti-rollback çıpası) yazılıyor"
+    mkdir -p "${TARGET_DIR}/etc/suderra"
+    cat > "${TARGET_DIR}/etc/suderra/ota.conf" <<EOF
+# Suderra OS OTA anti-rollback — imzalı, salt-okunur (dm-verity). RT-6 / ADR-0009.
+rollback_floor_source=tpm-nv
+rollback_nv_index=0x01500001
+rollback_floor_path=/run/suderra/rollback-epoch
+rollback_floor=${SUDERRA_VERSION_FOR_ID}
+rollback_epoch=${SUDERRA_ROLLBACK_EPOCH:-1}
+EOF
+    chmod 0644 "${TARGET_DIR}/etc/suderra/ota.conf"
+fi
 
 # 2. Hostname
 case "${DEFCONFIG_NAME}" in
@@ -214,6 +245,22 @@ case "${DEFCONFIG_NAME}" in
         rm -f "${TARGET_DIR}/usr/sbin/suderra-runtime-scenario" \
               "${TARGET_DIR}/etc/systemd/system/suderra-runtime-scenario.service" \
               "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-runtime-scenario.service" \
+              2>/dev/null || true
+        ;;
+esac
+
+# 6c. QEMU semantic collector — yalnız qemu-x86_64 test imajında enable edilir
+# (yukarıda). Diğer TÜM imajlardan (saha/prod dahil) binary+unit SİLİNİR; aksi
+# halde atıl bir test binary'si prod rootfs'te kalırdı (AUD-5), suderra-runtime-
+# scenario ile aynı desen.
+case "${DEFCONFIG_NAME}" in
+    suderra_qemu_x86_64*)
+        : # collector burada enable — dokunma
+        ;;
+    *)
+        rm -f "${TARGET_DIR}/usr/sbin/suderra-qemu-semantic-collector" \
+              "${TARGET_DIR}/etc/systemd/system/suderra-qemu-semantic-collector.service" \
+              "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-qemu-semantic-collector.service" \
               2>/dev/null || true
         ;;
 esac

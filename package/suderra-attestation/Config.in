@@ -1,0 +1,14 @@
+config BR2_PACKAGE_SUDERRA_ATTESTATION
+	bool "suderra-attestation"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_HOST_RUSTC
+	select BR2_PACKAGE_TPM2_TOOLS
+	help
+	  TPM 2.0 PCR remote attestation istemcisi (RT-2). PCR 0-7 üzerinden
+	  AK ile imzalı tpm2_quote üretir, known-good baseline ile karşılaştırır.
+	  tpm2-tools'a shell-out eder (ADR-0009). Always-on servis yok; firstboot
+	  (baseline) ve operatör (quote) tarafından çağrılır.
+
+comment "suderra-attestation needs threads and a Rust-supported target"
+	depends on !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

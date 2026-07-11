@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# RT-6: TPM-NV-çıpalı anti-rollback floor'unu boot'ta runtime yoluna senkronize
+# eder. Downgrade (imaj epoch'u < donanım counter'ı) fail-closed: floor yazılmaz,
+# güncelleme yolu #84 invariantıyla kilitlenir. mark-good'dan ÖNCE çalışır.
+# Yalnız /etc/suderra/ota.conf tpm-nv beyan ettiğinde anlamlı (aksi halde no-op).
+
+[Unit]
+Description=Suderra OTA rollback floor sync (TPM-NV anchor)
+Documentation=https://github.com/Okan-wqm/Suderra-OS
+After=suderra-data.service
+Before=suderra-ota-mark-good.service
+ConditionPathExists=/etc/suderra/ota.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/suderra-ota floor sync
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+# /run tmpfs her boot sıfırdan gelir; ReadWritePaths=/run/suderra var-olmayan
+# dizinde namespace kurulumunu (ExecStart'tan ÖNCE) 226/NAMESPACE ile patlatırdı.
+# RuntimeDirectory systemd'ye /run/suderra'yı ExecStart'tan önce oluşturtur;
+# Preserve=yes ile install/mark-good yollarının okuduğu floor dosyası kalıcı olur.
+RuntimeDirectory=suderra
+RuntimeDirectoryPreserve=yes
+DevicePolicy=closed
+DeviceAllow=/dev/tpmrm0 rw
+DeviceAllow=/dev/tpm0 rw
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+config BR2_PACKAGE_SUDERRA_WATCHDOG
+	bool "suderra-watchdog"
+	depends on BR2_INIT_SYSTEMD
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  Hardware watchdog daemon — /dev/watchdog'un TEK sahibi (NEW-4:
+	  indirilen agent'a watchdog erişimi verilmez). Donanım watchdog'unu
+	  besler; opsiyonel SUDERRA_WATCHDOG_HEALTH_UNIT ile bir systemd
+	  unit'inin sağlığını izleyip kademeli restart→reboot eskalasyonu
+	  uygular; beslemeyi keserek donanım resetine fail-safe düşer.
+
+comment "suderra-watchdog needs systemd, threads, and a Rust-supported target"
+	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
