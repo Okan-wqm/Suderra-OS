@@ -636,8 +636,12 @@ build_signed_slot_fit() {
         # config against the running board (fit_conf_get_node), instead of a
         # fragile board-name string match in boot.scr. Falls back to no
         # compatible (default config) if extraction fails.
+        # NOTE: sed self-terminates on the first match (q) — do NOT pipe into
+        # `head`, which closes the pipe early and SIGPIPEs sed; under the
+        # script's `set -euo pipefail` that aborts the build mid-loop when a
+        # real board DTB has many `compatible` properties (buffer-size race).
         board_compat="$(dtc -I dtb -O dts "${dtbfile}" 2>/dev/null \
-            | sed -n 's/^[[:space:]]*compatible = \(.*\);[[:space:]]*$/\1/p' | head -n 1)"
+            | sed -n '/^[[:space:]]*compatible = /{s/^[[:space:]]*compatible = \(.*\);[[:space:]]*$/\1/p;q;}' || true)"
         fdt_nodes="${fdt_nodes}
         fdt-${idx} {
             data = /incbin/(\"${dtbfile}\");

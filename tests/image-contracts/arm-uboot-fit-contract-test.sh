@@ -16,7 +16,10 @@ CONFIG_TXT="${ROOT}/board/suderra/aarch64-rpi4/config.txt"
 
 [ -f "${FRAGMENT}" ] || { echo "ERROR: U-Boot fragment eksik" >&2; exit 1; }
 
-for token in 'CONFIG_FIT=y' 'CONFIG_FIT_SIGNATURE=y' 'CONFIG_RSA=y' 'CONFIG_OF_CONTROL=y'; do
+# CONFIG_FIT_BEST_MATCH: 'bootm ${fitaddr}' (#conf'suz) çok-kartlı FIT'te doğru
+# config'i çalışan-kartın compatible'ıyla YALNIZ bu açıkken seçer; olmadan default
+# (alfabetik ilk) boot edilir ve multi-board üretici boot'ta etkisiz kalır (HIGH1).
+for token in 'CONFIG_FIT=y' 'CONFIG_FIT_SIGNATURE=y' 'CONFIG_RSA=y' 'CONFIG_OF_CONTROL=y' 'CONFIG_FIT_BEST_MATCH=y'; do
     grep -qF -e "${token}" "${FRAGMENT}" || {
         echo "ERROR: U-Boot fragment eksik: ${token}" >&2; exit 1; }
 done
