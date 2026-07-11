@@ -205,6 +205,11 @@ DOCKER_COMMON_ARGS=(
     "${DOCKER_USER_ARGS[@]}"
     -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
     -e BR2_CCACHE_DIR=/workspace/.ccache
+    # ccache'i sınırla: varsayılan 5G × birden çok matrix cache'i GitHub'ın 10 GB
+    # cache bütçesini aşıp eviction-thrash yaratıyordu (Wave 6 build-perf). ccache
+    # CCACHE_MAXSIZE env'ini runtime'da onurlar; worst-case yalnız cache-miss.
+    # SUDERRA_CCACHE_MAXSIZE ile tune edilebilir.
+    -e CCACHE_MAXSIZE="${SUDERRA_CCACHE_MAXSIZE:-2G}"
     -e SUDERRA_TRUST_ROOTS_DIR="${CONTAINER_KEYS_DIR}"
     "${EXTRA_ENV[@]}"
     -w /workspace
