@@ -34,7 +34,15 @@ openssl req -batch -new -x509 -key "${KEYS}/fit-signing.key" -days 30 \
 
 # Sentetik build çıktıları.
 printf 'KERNELIMAGE-Image' > "${BIN}/Image"
-printf 'BOARDDTB' > "${BIN}/bcm2711-rpi-4-b.dtb"
+# Çok-kartlı FIT (HIGH1): her kartın kendi DTB'si + farklı compatible. Üretici
+# her biri için ayrı imzalı config yaymalı; U-Boot çalışan kartın compatible'ıyla
+# doğru config'i otomatik seçer (alfabetik-ilk DTB'ye sabitlenmez).
+printf '/dts-v1/; / { model="Pi 4 B"; compatible="raspberrypi,4-model-b","brcm,bcm2711"; };' > "${WORK}/b1.dts"
+dtc -O dtb -o "${BIN}/bcm2711-rpi-4-b.dtb" "${WORK}/b1.dts" 2>/dev/null
+printf '/dts-v1/; / { model="CM4"; compatible="raspberrypi,4-compute-module","brcm,bcm2711"; };' > "${WORK}/b2.dts"
+dtc -O dtb -o "${BIN}/bcm2711-rpi-cm4.dtb" "${WORK}/b2.dts" 2>/dev/null
+printf '/dts-v1/; / { model="CM4 IO"; compatible="raspberrypi,4-compute-module","brcm,bcm2711"; };' > "${WORK}/b3.dts"
+dtc -O dtb -o "${BIN}/bcm2711-rpi-cm4-io.dtb" "${WORK}/b3.dts" 2>/dev/null
 printf '/dts-v1/; / { };' > "${WORK}/u-boot.dts"; dtc -O dtb -o "${BIN}/u-boot.dtb" "${WORK}/u-boot.dts" 2>/dev/null
 dd if=/dev/zero of="${BIN}/rootfs.ext4" bs=1M count=8 status=none
 mkfs.ext4 -q -F "${BIN}/rootfs.ext4" 2>/dev/null || true
@@ -53,14 +61,27 @@ for slot in A B; do
     [ -s "${fit}" ] || { echo "ERROR: ${slot} slot FIT üretilmedi" >&2; exit 1; }
     [ -s "${fit}.sig" ] || { echo "ERROR: ${slot} slot FIT .sig yok" >&2; exit 1; }
     [ -s "${fit}.cert" ] || { echo "ERROR: ${slot} slot FIT .cert yok" >&2; exit 1; }
+    # FIT listesini BİR KEZ al: 'mkimage -l | grep -q' deseni pipefail altında
+    # SIGPIPE yarışına açık (grep -q erken eşleşip çıkınca mkimage 141 döner →
+    # pipefail hatası). Listeyi değişkene alıp here-string ile grep'lemek bunu
+    # tamamen ortadan kaldırır (mkimage tamamlanır, tek çağrı).
+    listing="$(mkimage -l "${fit}" 2>/dev/null)"
     # FIT imzalı config içermeli.
-    mkimage -l "${fit}" 2>/dev/null | grep -qiE 'Sign algo:.*rsa2048' || {
+    grep -qiE 'Sign algo:.*rsa2048' <<<"${listing}" || {
         echo "ERROR: ${slot} FIT config imzalı değil" >&2; exit 1; }
     # kernel + fdt + ramdisk mevcut.
     for img in Kernel 'Flat Device Tree' RAMDisk; do
-        mkimage -l "${fit}" 2>/dev/null | grep -qi "${img}" || {
+        grep -qi "${img}" <<<"${listing}" || {
             echo "ERROR: ${slot} FIT eksik image: ${img}" >&2; exit 1; }
     done
+    # Çok-kartlı (HIGH1): her board DTB için ayrı config, hepsi imzalı.
+    for board in bcm2711-rpi-4-b bcm2711-rpi-cm4 bcm2711-rpi-cm4-io; do
+        grep -q "conf-${board}" <<<"${listing}" || {
+            echo "ERROR: ${slot} FIT ${board} config'i yok (çok-kartlı değil)" >&2; exit 1; }
+    done
+    nsig="$(grep -ciE 'Sign algo:.*rsa2048' <<<"${listing}")"
+    [ "${nsig}" -ge 3 ] || {
+        echo "ERROR: ${slot} FIT'te >=3 imzalı config beklenirdi, ${nsig} bulundu" >&2; exit 1; }
     # Detached sidecar cert'e karşı doğrulanmalı.
     openssl dgst -sha256 -verify \
         <(openssl x509 -in "${fit}.cert" -pubkey -noout 2>/dev/null) \
@@ -75,9 +96,14 @@ for slot in A B; do
     grep -q "rauc.slot=${slot}" "${cmdline}" || { echo "ERROR: ${slot} rauc.slot yok" >&2; exit 1; }
 done
 
-# FIT doğrulama pubkey'i u-boot.dtb'ye gömülmeli.
-dtc -I dtb -O dts "${BIN}/u-boot.dtb" 2>/dev/null | grep -q 'key-name-hint = "fit-signing"' || {
+# FIT doğrulama pubkey'i u-boot.dtb kontrol FDT'sine gömülmeli VE required olmalı.
+# 'required = "conf"' olmadan U-Boot imzayı zorlamaz (fit_config_verify_required_sigs
+# hiçbir required anahtar bulamaz) → sessiz fail-open. ADR-0007 root-of-trust.
+uboot_dts="$(dtc -I dtb -O dts "${BIN}/u-boot.dtb" 2>/dev/null)"
+printf '%s' "${uboot_dts}" | grep -q 'key-name-hint = "fit-signing"' || {
     echo "ERROR: FIT pubkey u-boot.dtb'ye gömülmedi" >&2; exit 1; }
+printf '%s' "${uboot_dts}" | grep -q 'required = "conf"' || {
+    echo "ERROR: u-boot.dtb fit-signing anahtarı required değil — boot'ta imza zorlanmaz (fail-open)" >&2; exit 1; }
 
 # roothash veritysetup verify ile eşleşmeli.
 . "${BIN}/rootfs.verity.env"
