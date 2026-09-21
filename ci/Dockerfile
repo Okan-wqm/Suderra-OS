@@ -9,7 +9,7 @@
 # Çalıştır:
 #   ./scripts/build-in-docker.sh suderra_qemu_x86_64_defconfig
 
-FROM ubuntu:24.04@sha256:80dd3c3b9c6cecb9f1667e9290b3bc61b78c2678c02cbdae5f0fea92cc6734ab
+FROM ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BUILDROOT_VERSION=2025.05
