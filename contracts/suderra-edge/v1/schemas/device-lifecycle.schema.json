@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:device-lifecycle",
+  "title": "suderra.device-lifecycle.v1",
+  "description": "Signed by the device-lifecycle key, pinned in the OS image (ADR-048 DEC-5.14, DEC-12, DEC-17). The agent writes it to $DATA/state/lifecycle-request.dsse and does nothing else; root copies, verifies and performs the transition. enter-maintenance carries a purpose and lasts until expires_at at most; decommission and rma carry none. P0 root implements enter-maintenance/reprovision; the other actions arrive in P3 with the same statement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_binding",
+    "action",
+    "update_seq",
+    "not_before",
+    "expires_at"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.device-lifecycle.v1"
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "action": {
+      "enum": ["enter-maintenance", "decommission", "rma"]
+    },
+    "purpose": {
+      "enum": ["reprovision", "break-glass"]
+    },
+    "update_seq": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "not_before": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "action": {
+          "const": "enter-maintenance"
+        },
+        "purpose": {
+          "enum": ["reprovision", "break-glass"]
+        }
+      },
+      "required": ["purpose"]
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": ["decommission", "rma"]
+        },
+        "purpose": false
+      }
+    }
+  ]
+}

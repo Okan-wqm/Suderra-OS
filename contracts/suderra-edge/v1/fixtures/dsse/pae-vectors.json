@@ -1,0 +1,23 @@
+{
+  "test_only": true,
+  "vectors": [
+    {
+      "payload_type": "http://example.com/HelloWorld",
+      "payload": "aGVsbG8gd29ybGQ=",
+      "pae_hex": "44535345763120323920687474703a2f2f6578616d706c652e636f6d2f48656c6c6f576f726c642031312068656c6c6f20776f726c64",
+      "note": "The DSSE v1 protocol example."
+    },
+    {
+      "payload_type": "application/vnd.suderra.edge-release.v1+json",
+      "payload": "xJ/DvMWfxLHDtsOn",
+      "pae_hex": "445353457631203434206170706c69636174696f6e2f766e642e737564657272612e656467652d72656c656173652e76312b6a736f6e20313220c49fc3bcc59fc4b1c3b6c3a7",
+      "note": "Six two-byte UTF-8 characters: LEN counts 12 bytes, not 6 characters."
+    },
+    {
+      "payload_type": "application/vnd.suderra.edge-provisioning.v2+json",
+      "payload": "",
+      "pae_hex": "445353457631203439206170706c69636174696f6e2f766e642e737564657272612e656467652d70726f766973696f6e696e672e76322b6a736f6e203020",
+      "note": "Empty body: LEN is 0."
+    }
+  ]
+}

@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:fixture-index",
+  "title": "fixtures/index.json golden fixture index",
+  "description": "Every golden fixture with the verdict each conforming verifier must reach. Paths are relative to fixtures/. A rejected statement carries exactly one defect, so its reason is the only check that fails. Every fixture is TEST-ONLY.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "test_only",
+    "description",
+    "evaluation_time",
+    "device_contexts",
+    "statements",
+    "documents",
+    "units",
+    "pae_vectors",
+    "signature_vectors"
+  ],
+  "properties": {
+    "test_only": {
+      "const": true
+    },
+    "description": {
+      "type": "string"
+    },
+    "evaluation_time": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "device_contexts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "board_profile",
+          "arch",
+          "device_binding",
+          "tenant_id",
+          "device_id",
+          "security_version_floor",
+          "sequences",
+          "ratchet",
+          "installed_manifest"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "board_profile": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+          },
+          "arch": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch"
+          },
+          "device_binding": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+          },
+          "tenant_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+              }
+            ]
+          },
+          "device_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+              }
+            ]
+          },
+          "security_version_floor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sequences": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$"
+            },
+            "additionalProperties": {
+              "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+            }
+          },
+          "ratchet": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch"
+            }
+          },
+          "installed_manifest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/path"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "statements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "statement_type", "expect", "device_context", "inputs", "description"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "statement_type": {
+            "type": "string",
+            "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$"
+          },
+          "expect": {
+            "enum": ["accept", "reject"]
+          },
+          "reason": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "device_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+              }
+            ]
+          },
+          "inputs": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "release_statement": {
+                "$ref": "#/$defs/path"
+              },
+              "config_payload": {
+                "$ref": "#/$defs/path"
+              },
+              "trust_anchors": {
+                "$ref": "#/$defs/path"
+              },
+              "request_nonce": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32,128}$"
+              }
+            }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "expect": {
+                "const": "accept"
+              },
+              "reason": false
+            }
+          },
+          {
+            "properties": {
+              "expect": {
+                "const": "reject"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": ["reason"]
+          }
+        ]
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "document_type", "expect", "description"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "document_type": {
+            "const": "suderra.result.v1"
+          },
+          "expect": {
+            "enum": ["accept", "reject"]
+          },
+          "reason": {
+            "enum": ["payload-json-invalid", "schema-invalid"]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "expect": {
+                "const": "accept"
+              },
+              "reason": false
+            }
+          },
+          {
+            "properties": {
+              "expect": {
+                "const": "reject"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": ["reason"]
+          }
+        ]
+      }
+    },
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profile", "board_profile", "unit", "dropin", "expect", "description"],
+        "properties": {
+          "profile": {
+            "enum": ["suderra-os", "generic"]
+          },
+          "board_profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+              }
+            ]
+          },
+          "unit": {
+            "$ref": "#/$defs/path"
+          },
+          "dropin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/path"
+              }
+            ]
+          },
+          "expect": {
+            "enum": ["accept", "reject"]
+          },
+          "violations": {
+            "description": "Every rule hit the one defect produces, as <category>:<Section>.<Key> with category exact, required, present, forbidden, unknown or dropin. A key named by a key-level forbidden rule is reported as forbidden, not unknown.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^(exact|required|present|forbidden|unknown|dropin):(Unit|Service|Install)\\.[A-Z][A-Za-z]+$"
+            }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "expect": {
+                "const": "accept"
+              },
+              "violations": false
+            }
+          },
+          {
+            "properties": {
+              "expect": {
+                "const": "reject"
+              },
+              "violations": {
+                "type": "array"
+              }
+            },
+            "required": ["violations"]
+          }
+        ]
+      }
+    },
+    "pae_vectors": {
+      "const": "dsse/pae-vectors.json"
+    },
+    "signature_vectors": {
+      "const": "dsse/signature-vectors.json"
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+(/[A-Za-z0-9._-]+)+$"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:artifact-naming",
+  "title": "artifact-naming.json release artifact naming",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "suderra_os_channel", "generic_channel"],
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "suderra_os_channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "statement", "format", "binary_name", "archive_members"],
+      "properties": {
+        "artifact": {
+          "const": "suderra-agent-os-{version}-{board_profile}-{arch}.tar.gz"
+        },
+        "statement": {
+          "const": "{artifact}.release.dsse.json"
+        },
+        "format": {
+          "const": "tar.gz"
+        },
+        "binary_name": {
+          "const": "suderra-agent"
+        },
+        "archive_members": {
+          "description": "The archive holds exactly these members; the installer extracts the one binary by exact path (DEC-1.10).",
+          "const": ["suderra-agent"]
+        }
+      }
+    },
+    "generic_channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "artifact", "binary_name", "slugs"],
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "artifact": {
+          "const": "suderra-agent-{version}-{slug}.tar.gz"
+        },
+        "binary_name": {
+          "const": "edge-agent"
+        },
+        "slugs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slug", "rust_target"],
+            "properties": {
+              "slug": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+-linux$"
+              },
+              "rust_target": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+-unknown-linux-[a-z]+$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

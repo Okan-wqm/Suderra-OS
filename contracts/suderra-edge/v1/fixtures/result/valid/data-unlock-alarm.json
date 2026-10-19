@@ -1,0 +1,15 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "unsynced",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 4,
+  "kind": "data-unlock",
+  "outcome": "alarm",
+  "reason": "data-unmountable",
+  "subject": {
+    "lifecycle_to": "LOCKED"
+  },
+  "detail": "LUKS2 unseal failed; lifecycle reads LOCKED (DEC-12)"
+}

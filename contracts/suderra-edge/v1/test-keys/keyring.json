@@ -1,0 +1,87 @@
+{
+  "test_only": true,
+  "description": "TEST-ONLY keys of the Suderra edge contract fixtures. Dev, QEMU and CI images may pin the os_pinned keys under /etc/suderra/keys/<purpose>/<epoch>.pub; a production image or production keyid allowlist that contains any keyid listed here is a defect (ADR-048 DEC-3.9).",
+  "derivation": "seed = SHA-256(UTF-8 seed_label); the Ed25519 private key is the RFC 8032 key with that seed. The derivation is public, so these keys prove nothing outside tests (tools/generate.py).",
+  "keys": [
+    {
+      "purpose": "edge-release",
+      "epoch": 1,
+      "keyid": "db2ece11a39c4cb39f98ad5fa8b57364e541d75a1d472cc1888419511e7fe960",
+      "public_key": "gtGzuUbn+whkFZwjWBC319r7gPerdwHXRoCakiNTeSs=",
+      "path": "test-keys/edge-release/1.pub",
+      "os_pinned": true,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:edge-release:1"
+    },
+    {
+      "purpose": "edge-provisioning",
+      "epoch": 1,
+      "keyid": "c6ccc90002dec0e2f1865bf9b50cae1fd74a1cd1c702f42581e04ed14dfadf62",
+      "public_key": "3FXwh2f6J5jv7EV4aw0MIsKZO68B6RcOPRVa+GxD2uE=",
+      "path": "test-keys/edge-provisioning/1.pub",
+      "os_pinned": true,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:edge-provisioning:1"
+    },
+    {
+      "purpose": "edge-provisioning",
+      "epoch": 2,
+      "keyid": "764ec4404fabe892613c0099b16c522e887f2267296c6fb492a2e4c978280d1c",
+      "public_key": "e0rihD7vYureGfaJUZMt4jBFU2zNfEv+OrB3gznsrLg=",
+      "path": "test-keys/edge-provisioning/2.pub",
+      "os_pinned": true,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:edge-provisioning:2"
+    },
+    {
+      "purpose": "fleet-root",
+      "epoch": 1,
+      "keyid": "8f988d1b618c110b257473e63edda9a57883c0b6d14ab66c3b4be45ebf83a966",
+      "public_key": "CcASDYFgiGAWFMGiI01vr83ptXz7emti9BH36owB1U8=",
+      "path": "test-keys/fleet-root/1.pub",
+      "os_pinned": true,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:fleet-root:1"
+    },
+    {
+      "purpose": "device-lifecycle",
+      "epoch": 1,
+      "keyid": "aceb2263f3d33a06ea83b2354a81a8e8122c6b46d6242a21821dd3f381d637f8",
+      "public_key": "5PXL7sY7IyCyuxSmpRPENolYA9Wny8b4gCClVNw9gfM=",
+      "path": "test-keys/device-lifecycle/1.pub",
+      "os_pinned": true,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:device-lifecycle:1"
+    },
+    {
+      "purpose": "config-integrity",
+      "epoch": 1,
+      "keyid": "bcd0a5d3f56388b013455d45f0c0285d9aa35770d237ab7b32db7f9b9bd4952a",
+      "public_key": "gU/rJrIc1hz5zNvvIQfJEm0dBZZ7dnKc8bMMssCZvas=",
+      "path": "test-keys/config-integrity/1.pub",
+      "os_pinned": false,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:config-integrity:1"
+    },
+    {
+      "purpose": "rbac-manifest",
+      "epoch": 1,
+      "keyid": "5d1b012be5cf4c6710362cdb29f0773ef6682f4fab94d290473ac1c8715476c4",
+      "public_key": "AYK6huCqeZghUFHz+/h7Kn6haJY8XlgmZmtI8bxJ5iA=",
+      "path": "test-keys/rbac-manifest/1.pub",
+      "os_pinned": false,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:rbac-manifest:1"
+    },
+    {
+      "purpose": "command",
+      "epoch": 1,
+      "keyid": "a280c5390dfc828353d3fe865d46b8fbee0536f17a2f445bc8e06be4b2e71dc5",
+      "public_key": "or2GtcVPZ5N3oJudqLsIbwy/znVg+8Lu+6GdKnM1bIc=",
+      "path": "test-keys/command/1.pub",
+      "os_pinned": false,
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:command:1"
+    }
+  ],
+  "mqtt_ca": [
+    {
+      "epoch": 1,
+      "certificate": "-----BEGIN CERTIFICATE-----\nMIIBmjCCAUygAwIBAgICflcwBQYDK2VwMFQxJzAlBgNVBAoMHlN1ZGVycmEgZWRn\nZSBjb250cmFjdCBmaXh0dXJlczEpMCcGA1UEAwwgVEVTVC1PTkxZIFN1ZGVycmEg\nTVFUVCByb290IENBIDEwHhcNMjYwMTAxMDAwMDAwWhcNMzYwMTAxMDAwMDAwWjBU\nMScwJQYDVQQKDB5TdWRlcnJhIGVkZ2UgY29udHJhY3QgZml4dHVyZXMxKTAnBgNV\nBAMMIFRFU1QtT05MWSBTdWRlcnJhIE1RVFQgcm9vdCBDQSAxMCowBQYDK2VwAyEA\nHEY0U8qSTDkworBkgcHDkJ4rRIsjldmqaDqkGe89t1GjQjBAMA8GA1UdEwEB/wQF\nMAMBAf8wDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBRps76fFEydkjdCsMipxjKG\njK8kYjAFBgMrZXADQQDaj1BSBs+BlrEQZN6tkvvN5LPZ7Oqu5/MWNesqMprqmyLe\nGBR+xVc0X2Y4VLew0lUdiLdiuE+SZ0E1l0hzYc4M\n-----END CERTIFICATE-----\n",
+      "certificate_sha256": "91afd3dec4e75efda6db6edc2b12805120c0d7a64358a41229d1a18deb2e3d1c",
+      "seed_label": "suderra-edge-contract:v1:TEST-ONLY:mqtt-ca:1"
+    }
+  ]
+}

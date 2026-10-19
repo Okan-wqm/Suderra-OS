@@ -1,0 +1,135 @@
+{
+  "description": "The one board vocabulary (ADR-048 DEC-8.4). board_profile is the value of /etc/suderra/board in the signed OS image, the provisioning manifest board, the release statement board_profile and the release artifact name (artifact-naming.json); every other vocabulary (Suderra OS build targets, cloud DeviceModel, RAUC compatible, cargo features, Rust target) is mapped onto it here and nowhere else.",
+  "boards": [
+    {
+      "board_profile": "revpi-connect4",
+      "role": "production-primary",
+      "arch": "aarch64",
+      "rust_target": "aarch64-unknown-linux-gnu",
+      "agent_profile": "suderra-os",
+      "cargo_features": ["revpi-io", "scada-display", "suderra-os", "tpm"],
+      "rauc_compatible": "suderra-os-revpi-connect4",
+      "device_binding_method": "tpm-ek-sha256",
+      "identity_cross_check": {
+        "source": "device-tree-compatible",
+        "values": ["kunbus,revpi-connect4"]
+      },
+      "cloud_device_models": ["revolution_pi_connect_4"],
+      "os_images": [
+        {
+          "defconfig": "suderra_aarch64_revpi4_defconfig",
+          "build_target": "revpi4"
+        },
+        {
+          "defconfig": "suderra_aarch64_revpi4_prod_ab_defconfig",
+          "build_target": "revpi4-prod-ab"
+        }
+      ]
+    },
+    {
+      "board_profile": "industrial-x86_64",
+      "role": "production-secondary",
+      "arch": "x86_64",
+      "rust_target": "x86_64-unknown-linux-gnu",
+      "agent_profile": "suderra-os",
+      "cargo_features": ["scada-display", "suderra-os", "tpm"],
+      "rauc_compatible": "suderra-os-industrial-x86_64",
+      "device_binding_method": "tpm-ek-sha256",
+      "identity_cross_check": {
+        "source": "dmi-allowlist",
+        "values": []
+      },
+      "cloud_device_models": ["industrial_pc"],
+      "os_images": [
+        {
+          "defconfig": "suderra_x86_64_defconfig",
+          "build_target": "x86_64"
+        }
+      ]
+    },
+    {
+      "board_profile": "rpi4-cm4",
+      "role": "production-tertiary",
+      "arch": "aarch64",
+      "rust_target": "aarch64-unknown-linux-gnu",
+      "agent_profile": "suderra-os",
+      "cargo_features": ["gpio", "scada-display", "suderra-os"],
+      "rauc_compatible": "suderra-os-rpi4-cm4",
+      "device_binding_method": "bcm2711-serial-otp-sha256",
+      "identity_cross_check": {
+        "source": "device-tree-compatible",
+        "values": ["raspberrypi,4-compute-module", "raspberrypi,4-model-b"]
+      },
+      "cloud_device_models": ["raspberry_pi_4"],
+      "os_images": [
+        {
+          "defconfig": "suderra_aarch64_rpi4_defconfig",
+          "build_target": "rpi4"
+        },
+        {
+          "defconfig": "suderra_aarch64_rpi4_prod_ab_defconfig",
+          "build_target": "rpi4-prod-ab"
+        }
+      ]
+    },
+    {
+      "board_profile": "qemu-x86_64",
+      "role": "ci",
+      "arch": "x86_64",
+      "rust_target": "x86_64-unknown-linux-gnu",
+      "agent_profile": "suderra-os",
+      "cargo_features": ["scada-display", "suderra-os", "tpm"],
+      "rauc_compatible": "suderra-os-qemu-x86_64",
+      "device_binding_method": "tpm-ek-sha256",
+      "identity_cross_check": {
+        "source": "dmi-allowlist",
+        "values": ["QEMU"]
+      },
+      "cloud_device_models": [],
+      "os_images": [
+        {
+          "defconfig": "suderra_qemu_x86_64_defconfig",
+          "build_target": "qemu-x86_64"
+        },
+        {
+          "defconfig": "suderra_qemu_x86_64_prod_ab_defconfig",
+          "build_target": "qemu-x86_64-prod-ab"
+        }
+      ]
+    }
+  ],
+  "excluded_os_images": [
+    {
+      "defconfig": "suderra_aarch64_defconfig",
+      "build_target": "generic-aarch64-template",
+      "reason": "Unsupported template with no board, kernel or acceptance path; it runs no agent."
+    },
+    {
+      "defconfig": "suderra_aarch64_rpi4_usb_installer_defconfig",
+      "build_target": "pi-cm4-revpi-usb-installer",
+      "reason": "USB self-installer that flashes the rpi4 and revpi4 payload images; it runs no agent."
+    }
+  ],
+  "unmapped_device_models": [
+    {
+      "device_model": "revolution_pi_compact",
+      "reason": "No Suderra OS image targets the RevPi Compact; such devices stay on the generic-Linux channel (DEC-28)."
+    },
+    {
+      "device_model": "raspberry_pi_5",
+      "reason": "No Suderra OS image targets the Raspberry Pi 5; generic-Linux channel only (DEC-28)."
+    },
+    {
+      "device_model": "raspberry_pi_4_lora",
+      "reason": "The SX1302 LoRa concentrator needs the lorawan and sx1302-vendor-hal features, which no Suderra OS profile builds; generic-Linux channel only (DEC-28)."
+    },
+    {
+      "device_model": "raspberry_pi_5_lora",
+      "reason": "No Suderra OS image targets the Raspberry Pi 5 and no profile builds LoRa; generic-Linux channel only (DEC-28)."
+    },
+    {
+      "device_model": "custom",
+      "reason": "Unknown hardware has no signed board identity, so the cloud never issues a Suderra OS manifest for it (DEC-8.2)."
+    }
+  ]
+}

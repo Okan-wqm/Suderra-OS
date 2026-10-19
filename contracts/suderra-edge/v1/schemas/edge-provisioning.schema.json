@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-provisioning",
+  "title": "suderra.edge-provisioning.v2 device-bound provisioning manifest",
+  "description": "Signed by the edge-provisioning key (ADR-048 DEC-3.1, DEC-5.5, DEC-5.6, DEC-22). It binds one device (device_binding, device_id, tenant_id, nonce) to one release statement, one config payload and one trust-anchor bundle by digest; root verifies each of those against its own key. v2 because suderra.edge-provisioning.v1 names the earlier non-DSSE, re-serialized format of Suderra-OS userspace/suderra-installer/src/contracts.rs, which this format replaces; one name never denotes two shapes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_code",
+    "device_binding",
+    "nonce",
+    "board",
+    "arch",
+    "agent_profile",
+    "version",
+    "security_version",
+    "key_epoch",
+    "update_seq",
+    "not_before",
+    "expires_at",
+    "release_statement",
+    "artifact_url",
+    "config_payload",
+    "trust_anchors"
+  ],
+  "properties": {
+    "_type": { "const": "suderra.edge-provisioning.v2" },
+    "tenant_id": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid" },
+    "device_id": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid" },
+    "device_code": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_code" },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "nonce": {
+      "description": "Echo of the nonce the device sent with GET /install/:code/suderra-os (DEC-5.5).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32,128}$"
+    },
+    "board": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile" },
+    "arch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch" },
+    "agent_profile": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/agent_profile"
+    },
+    "version": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver" },
+    "security_version": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "key_epoch": {
+      "description": "Must equal the epoch of the key the DSSE keyid resolved to; it never selects a key (DEC-3.4).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch"
+    },
+    "update_seq": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence" },
+    "not_before": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" },
+    "expires_at": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" },
+    "release_statement": {
+      "description": "Where root fetches the suderra.edge-release.v1 envelope and the statement digest it must have.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "digest"],
+      "properties": {
+        "url": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url" },
+        "digest": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest" }
+      }
+    },
+    "artifact_url": {
+      "description": "Download location of the release artifact; its integrity comes from the release statement, not from this URL.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+    },
+    "config_payload": {
+      "description": "Digest and size of the config payload delivered with the manifest. Its format is the suderra.site-config.v1 statement (DEC-4.12), which contract 1.0.0 does not define; root binds the bytes by digest and size.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "size_bytes"],
+      "properties": {
+        "digest": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest" },
+        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+      }
+    },
+    "trust_anchors": {
+      "description": "Statement digest and bundle_seq of the suderra.trust-anchors.v1 bundle delivered with the manifest (DEC-3.7).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "bundle_seq"],
+      "properties": {
+        "digest": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest" },
+        "bundle_seq": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence" }
+      }
+    }
+  }
+}

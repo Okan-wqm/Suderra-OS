@@ -1,0 +1,186 @@
+{
+  "description": "Registry of the signed statement types of the Suderra edge contract (ADR-048 DEC-3, DEC-5, DEC-12, DEC-22, DEC-27). Every verifier (OS root installer, edge agent, cloud) resolves payloadType, schema, signing purpose and statement checks from this file; none hardcodes a second copy.",
+  "dsse": {
+    "envelope_schema": "schemas/dsse-envelope.schema.json",
+    "pae": "DSSEv1 SP LEN(payloadType) SP payloadType SP LEN(payload) SP payload, where SP is one 0x20 byte and LEN is the ASCII decimal byte length with no leading zeros (DSSE v1 protocol). The signature covers exactly these PAE bytes.",
+    "payload_encoding": "RFC 4648 section 4 standard base64 with padding, for both payload and sig.",
+    "signed_bytes": "The base64-decoded payload bytes are signed, verified and then parsed, in that order. Nothing is re-serialized or canonicalized before verification; a statement is never parsed before its signature verifies.",
+    "signature_algorithm": "Ed25519 with ed25519-dalek verify_strict semantics: S must be canonical (S < L), the public key A and the commitment R must not be small-order points, and the cofactorless equation [S]B = R + [k]A must hold. Cofactorless verifiers without small-order rejection (OpenSSL, ed25519-dalek verify()) are not conforming; fixtures/dsse/signature-vectors.json contains a vector they accept.",
+    "signatures": "Exactly one signature per envelope.",
+    "keyid": "Lowercase hex SHA-256 of the 32-byte raw Ed25519 public key. The verifier resolves keyid to (purpose, epoch, key) from its own pinned key store; the purpose is the directory the key is pinned under, never a value the statement declares.",
+    "json": "UTF-8, RFC 8259, a top-level object, duplicate member names rejected, unknown members rejected (every schema sets additionalProperties to false).",
+    "statement_digest": "SHA-256 over the base64-decoded DSSE payload bytes of the referenced statement, so a digest does not depend on how the envelope JSON is formatted or stored.",
+    "time_window": "A statement is valid when not_before <= now < expires_at. There is no skew allowance: installs wait for an authenticated time sync (DEC-7.5)."
+  },
+  "verification_order": [
+    "envelope-invalid",
+    "payload-type-mismatch",
+    "key-unknown",
+    "key-purpose-mismatch",
+    "key-epoch-below-ratchet",
+    "signature-invalid",
+    "payload-json-invalid",
+    "schema-invalid"
+  ],
+  "rejection_reasons": {
+    "envelope-invalid": "The envelope is not strict JSON or does not match schemas/dsse-envelope.schema.json.",
+    "payload-type-mismatch": "payloadType differs from the one the call site expects; every call site pins exactly one statement type.",
+    "key-unknown": "The keyid is not in the verifier's pinned key store.",
+    "key-purpose-mismatch": "The key is pinned under a purpose other than the statement's signing_purpose (DEC-3.3).",
+    "key-epoch-below-ratchet": "The key's epoch is below the device's min-epoch ratchet for that purpose (DEC-3.5).",
+    "signature-invalid": "The signature does not verify under verify_strict over the PAE bytes.",
+    "payload-json-invalid": "The verified payload is not UTF-8 strict JSON (duplicate member names included) or not an object.",
+    "schema-invalid": "The payload does not match the statement schema; unknown members are rejected here.",
+    "key-epoch-mismatch": "The statement's key_epoch differs from the epoch of the key that verified it; key_epoch is a consistency check and never selects a key (DEC-3.4).",
+    "not-yet-valid": "now < not_before.",
+    "expired": "now >= expires_at.",
+    "device-binding-mismatch": "device_binding differs from the device's own hardware binding record (DEC-3.6).",
+    "device-id-mismatch": "device_id differs from the device identity recorded by root.",
+    "tenant-mismatch": "tenant_id differs from the device's tenant binding (DEC-22).",
+    "tenant-scope-mismatch": "The device's tenant is not in the bundle's tenant_scope (DEC-22).",
+    "nonce-mismatch": "The manifest does not echo the nonce the device sent with its request (DEC-5.5).",
+    "board-mismatch": "board or board_profile differs from the board declared by the signed OS image (DEC-8.2).",
+    "arch-mismatch": "arch differs from the device architecture.",
+    "rollback-below-floor": "security_version is below the device's rollback floor (DEC-2.5).",
+    "sequence-replay": "update_seq or bundle_seq is not greater than the last accepted value for this device and statement kind (DEC-2.4, DEC-3.7).",
+    "release-digest-mismatch": "The release statement supplied with the manifest does not have the digest the manifest names.",
+    "release-mismatch": "version, board, arch, security_version or agent_profile differ between the manifest and its release statement (DEC-3.1).",
+    "release-profile-mismatch": "The release statement's arch, agent_profile or cargo features differ from boards.json for its board_profile, or its artifact name from artifact-naming.json (DEC-8.4, DEC-8.5).",
+    "config-digest-mismatch": "The config payload supplied with the manifest does not have the digest or size the manifest names.",
+    "trust-anchors-digest-mismatch": "The trust-anchor bundle supplied with the manifest does not have the digest or bundle_seq the manifest names.",
+    "manifest-digest-mismatch": "The receipt names a provisioning manifest other than the one root installed (DEC-5.8).",
+    "anchor-not-os-pinned": "An edge-release or edge-provisioning anchor in the bundle is not a keyid pinned in the OS image (DEC-3.3).",
+    "anchor-invalid": "An anchor's keyid is not the SHA-256 of its public key, or one (purpose, epoch) appears twice."
+  },
+  "purposes": {
+    "edge-release": {
+      "algorithm": "ed25519",
+      "anchored_in": ["os-image", "trust-anchors-bundle"]
+    },
+    "edge-provisioning": {
+      "algorithm": "ed25519",
+      "anchored_in": ["os-image", "trust-anchors-bundle"]
+    },
+    "fleet-root": {
+      "algorithm": "ed25519",
+      "anchored_in": ["os-image"]
+    },
+    "device-lifecycle": {
+      "algorithm": "ed25519",
+      "anchored_in": ["os-image"]
+    },
+    "config-integrity": {
+      "algorithm": "ed25519",
+      "anchored_in": ["trust-anchors-bundle"]
+    },
+    "rbac-manifest": {
+      "algorithm": "ed25519",
+      "anchored_in": ["trust-anchors-bundle"]
+    },
+    "command": {
+      "algorithm": "ed25519",
+      "anchored_in": ["trust-anchors-bundle"]
+    },
+    "mqtt-ca": {
+      "algorithm": "x509",
+      "anchored_in": ["trust-anchors-bundle"]
+    }
+  },
+  "os_key_pin_layout": "/etc/suderra/keys/<purpose>/<epoch>.pub (PEM SubjectPublicKeyInfo) on the verity rootfs (DEC-3.4)",
+  "statements": {
+    "suderra.edge-release.v1": {
+      "payload_type": "application/vnd.suderra.edge-release.v1+json",
+      "schema": "schemas/edge-release.schema.json",
+      "signing_purpose": "edge-release",
+      "verified_by": ["os-root", "agent"],
+      "device_bound": false,
+      "tenant_bound": false,
+      "sequence": null,
+      "checks": ["release-profile-mismatch", "board-mismatch", "arch-mismatch"]
+    },
+    "suderra.edge-provisioning.v2": {
+      "payload_type": "application/vnd.suderra.edge-provisioning.v2+json",
+      "schema": "schemas/edge-provisioning.schema.json",
+      "signing_purpose": "edge-provisioning",
+      "verified_by": ["os-root"],
+      "device_bound": true,
+      "tenant_bound": true,
+      "sequence": "update_seq",
+      "checks": [
+        "key-epoch-mismatch",
+        "not-yet-valid",
+        "expired",
+        "device-binding-mismatch",
+        "device-id-mismatch",
+        "tenant-mismatch",
+        "nonce-mismatch",
+        "board-mismatch",
+        "arch-mismatch",
+        "rollback-below-floor",
+        "sequence-replay",
+        "release-digest-mismatch",
+        "release-mismatch",
+        "config-digest-mismatch",
+        "trust-anchors-digest-mismatch",
+        "tenant-scope-mismatch"
+      ]
+    },
+    "suderra.edge-activation-receipt.v1": {
+      "payload_type": "application/vnd.suderra.edge-activation-receipt.v1+json",
+      "schema": "schemas/edge-activation-receipt.schema.json",
+      "signing_purpose": "edge-provisioning",
+      "verified_by": ["os-root"],
+      "device_bound": true,
+      "tenant_bound": true,
+      "sequence": null,
+      "checks": [
+        "not-yet-valid",
+        "expired",
+        "device-binding-mismatch",
+        "device-id-mismatch",
+        "tenant-mismatch",
+        "manifest-digest-mismatch"
+      ]
+    },
+    "suderra.trust-anchors.v1": {
+      "payload_type": "application/vnd.suderra.trust-anchors.v1+json",
+      "schema": "schemas/trust-anchors.schema.json",
+      "signing_purpose": "fleet-root",
+      "verified_by": ["os-root", "agent"],
+      "device_bound": false,
+      "tenant_bound": true,
+      "sequence": "bundle_seq",
+      "checks": [
+        "tenant-scope-mismatch",
+        "sequence-replay",
+        "anchor-not-os-pinned",
+        "anchor-invalid"
+      ]
+    },
+    "suderra.device-lifecycle.v1": {
+      "payload_type": "application/vnd.suderra.device-lifecycle.v1+json",
+      "schema": "schemas/device-lifecycle.schema.json",
+      "signing_purpose": "device-lifecycle",
+      "verified_by": ["os-root"],
+      "device_bound": true,
+      "tenant_bound": true,
+      "sequence": "update_seq",
+      "checks": [
+        "not-yet-valid",
+        "expired",
+        "device-binding-mismatch",
+        "device-id-mismatch",
+        "tenant-mismatch",
+        "sequence-replay"
+      ]
+    }
+  },
+  "unsigned_documents": {
+    "suderra.result.v1": {
+      "schema": "schemas/result.schema.json",
+      "written_by": "os-root",
+      "locations": ["/data/suderra/os/results/", "/run/suderra/results/"],
+      "trust": "Observation only: results are not signed, so the cloud records them as device-reported evidence and never as authority (DEC-27)."
+    }
+  }
+}

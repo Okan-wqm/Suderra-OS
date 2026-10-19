@@ -1,0 +1,978 @@
+{
+  "test_only": true,
+  "description": "TEST-ONLY golden fixtures of contract v1. Evaluate every statement at evaluation_time against its device_context and inputs; accept or reject exactly as listed, for exactly the listed reason.",
+  "evaluation_time": "2026-10-20T12:00:00Z",
+  "device_contexts": {
+    "revpi-factory": {
+      "description": "Factory-fresh revpi-connect4 in PROVISIONING: no tenant or device identity bound yet, no sequences, floor 0.",
+      "board_profile": "revpi-connect4",
+      "arch": "aarch64",
+      "device_binding": {
+        "method": "tpm-ek-sha256",
+        "digest": {
+          "sha256": "7dc1225201ce83c48f502d0421ad7bfe59aaf9c0088fecab0c5a6bb80d360af4"
+        }
+      },
+      "tenant_id": null,
+      "device_id": null,
+      "security_version_floor": 0,
+      "sequences": {},
+      "ratchet": {
+        "edge-release": 1,
+        "edge-provisioning": 1,
+        "fleet-root": 1,
+        "device-lifecycle": 1
+      },
+      "installed_manifest": null
+    },
+    "revpi-provisioning": {
+      "description": "The same device after root installed the first manifest, waiting for the activation receipt.",
+      "board_profile": "revpi-connect4",
+      "arch": "aarch64",
+      "device_binding": {
+        "method": "tpm-ek-sha256",
+        "digest": {
+          "sha256": "7dc1225201ce83c48f502d0421ad7bfe59aaf9c0088fecab0c5a6bb80d360af4"
+        }
+      },
+      "tenant_id": "7e570000-0000-4000-8000-000000000001",
+      "device_id": "7e570000-0000-4000-8000-0000000000d1",
+      "security_version_floor": 0,
+      "sequences": {
+        "suderra.edge-provisioning.v2": 1,
+        "suderra.trust-anchors.v1": 1
+      },
+      "ratchet": {
+        "edge-release": 1,
+        "edge-provisioning": 1,
+        "fleet-root": 1,
+        "device-lifecycle": 1
+      },
+      "installed_manifest": "edge-provisioning/valid/revpi-connect4-first.dsse.json"
+    },
+    "revpi-active": {
+      "description": "ACTIVE revpi-connect4 with floor 5 and accepted sequences provisioning 3, lifecycle 2, bundle 1.",
+      "board_profile": "revpi-connect4",
+      "arch": "aarch64",
+      "device_binding": {
+        "method": "tpm-ek-sha256",
+        "digest": {
+          "sha256": "7dc1225201ce83c48f502d0421ad7bfe59aaf9c0088fecab0c5a6bb80d360af4"
+        }
+      },
+      "tenant_id": "7e570000-0000-4000-8000-000000000001",
+      "device_id": "7e570000-0000-4000-8000-0000000000d1",
+      "security_version_floor": 5,
+      "sequences": {
+        "suderra.edge-provisioning.v2": 3,
+        "suderra.device-lifecycle.v1": 2,
+        "suderra.trust-anchors.v1": 1
+      },
+      "ratchet": {
+        "edge-release": 1,
+        "edge-provisioning": 1,
+        "fleet-root": 1,
+        "device-lifecycle": 1
+      },
+      "installed_manifest": null
+    },
+    "revpi-active-ratchet-2": {
+      "description": "revpi-active after a key-epoch-advance moved the edge-provisioning ratchet to 2.",
+      "board_profile": "revpi-connect4",
+      "arch": "aarch64",
+      "device_binding": {
+        "method": "tpm-ek-sha256",
+        "digest": {
+          "sha256": "7dc1225201ce83c48f502d0421ad7bfe59aaf9c0088fecab0c5a6bb80d360af4"
+        }
+      },
+      "tenant_id": "7e570000-0000-4000-8000-000000000001",
+      "device_id": "7e570000-0000-4000-8000-0000000000d1",
+      "security_version_floor": 5,
+      "sequences": {
+        "suderra.edge-provisioning.v2": 3,
+        "suderra.device-lifecycle.v1": 2,
+        "suderra.trust-anchors.v1": 1
+      },
+      "ratchet": {
+        "edge-release": 1,
+        "edge-provisioning": 2,
+        "fleet-root": 1,
+        "device-lifecycle": 1
+      },
+      "installed_manifest": null
+    }
+  },
+  "statements": [
+    {
+      "path": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "accept",
+      "device_context": null,
+      "inputs": {},
+      "description": "Release statement for revpi-connect4/aarch64 whose features and artifact name match boards.json."
+    },
+    {
+      "path": "edge-release/valid/industrial-x86_64-x86_64-1.6.0.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "accept",
+      "device_context": null,
+      "inputs": {},
+      "description": "Release statement for industrial-x86_64/x86_64 whose features and artifact name match boards.json."
+    },
+    {
+      "path": "edge-release/valid/rpi4-cm4-aarch64-1.6.0.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "accept",
+      "device_context": null,
+      "inputs": {},
+      "description": "Release statement for rpi4-cm4/aarch64 whose features and artifact name match boards.json."
+    },
+    {
+      "path": "edge-release/valid/qemu-x86_64-x86_64-1.6.0.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "accept",
+      "device_context": null,
+      "inputs": {},
+      "description": "Release statement for qemu-x86_64/x86_64 whose features and artifact name match boards.json."
+    },
+    {
+      "path": "edge-release/valid/revpi-connect4-aarch64-1.4.0.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "accept",
+      "device_context": null,
+      "inputs": {},
+      "description": "Older revpi-connect4 release (security_version 4) used by the rollback fixture."
+    },
+    {
+      "path": "edge-release/invalid/signed-by-provisioning-key.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "reject",
+      "device_context": null,
+      "inputs": {},
+      "description": "The online provisioning key cannot label a binary as a release (DEC-3.1, DEC-3.3).",
+      "reason": "key-purpose-mismatch"
+    },
+    {
+      "path": "edge-release/invalid/bad-signature.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "reject",
+      "device_context": null,
+      "inputs": {},
+      "description": "Payload bytes changed after signing (whitespace only, still valid JSON).",
+      "reason": "signature-invalid"
+    },
+    {
+      "path": "edge-release/invalid/missing-board-feature.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "reject",
+      "device_context": null,
+      "inputs": {},
+      "description": "rpi4-cm4 release built without the gpio feature (INFRA-CRITICAL-236 class).",
+      "reason": "release-profile-mismatch"
+    },
+    {
+      "path": "edge-release/invalid/path-unsafe-version.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "reject",
+      "device_context": null,
+      "inputs": {},
+      "description": "version is a path component, so a traversal string fails the path-safe semver pattern (DEC-1.10).",
+      "reason": "schema-invalid"
+    },
+    {
+      "path": "edge-release/invalid/unknown-field.dsse.json",
+      "statement_type": "suderra.edge-release.v1",
+      "expect": "reject",
+      "device_context": null,
+      "inputs": {},
+      "description": "Signed payload with a member the schema does not define; unknown members are rejected, never dropped (EI-054).",
+      "reason": "schema-invalid"
+    },
+    {
+      "path": "trust-anchors/valid/bundle-seq-1.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "accept",
+      "device_context": "revpi-factory",
+      "inputs": {},
+      "description": "P0 bundle (command, rbac-manifest, config-integrity, edge-release, edge-provisioning, mqtt-ca) signed by fleet-root."
+    },
+    {
+      "path": "trust-anchors/valid/bundle-seq-1.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "The same bundle on a device that already accepted bundle_seq 1: bundle_seq cannot go back or repeat.",
+      "reason": "sequence-replay"
+    },
+    {
+      "path": "trust-anchors/valid/bundle-seq-2.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "accept",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "Next bundle for a device that accepted bundle_seq 1."
+    },
+    {
+      "path": "trust-anchors/invalid/signed-by-provisioning-key.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "An anchor bundle signed by the online provisioning key is rejected; only fleet-root roots agent trust (DEC-3.7).",
+      "reason": "key-purpose-mismatch"
+    },
+    {
+      "path": "trust-anchors/invalid/bad-signature.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "Payload bytes changed after signing.",
+      "reason": "signature-invalid"
+    },
+    {
+      "path": "trust-anchors/invalid/tenant-scope-excludes-device.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "Correctly signed bundle whose tenant_scope does not contain the device's tenant (DEC-22).",
+      "reason": "tenant-scope-mismatch"
+    },
+    {
+      "path": "trust-anchors/invalid/anchor-not-os-pinned.dsse.json",
+      "statement_type": "suderra.trust-anchors.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "edge-provisioning anchor whose keyid no OS image pins; root rejects the bundle (DEC-3.3).",
+      "reason": "anchor-not-os-pinned"
+    },
+    {
+      "path": "edge-provisioning/valid/revpi-connect4-first.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "accept",
+      "device_context": "revpi-factory",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-1.dsse.json",
+        "request_nonce": "0ab05211b2bb9ff799cce532f64ddbe3"
+      },
+      "description": "First provisioning of a factory-fresh revpi-connect4: binds tenant, device, binding and nonce to release 1.6.0, the config payload and bundle_seq 1."
+    },
+    {
+      "path": "edge-provisioning/valid/revpi-connect4-reprovision.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "accept",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Re-provisioning in MAINTENANCE: update_seq 4 after 3, security_version 6 above floor 5 (DEC-5.14)."
+    },
+    {
+      "path": "edge-provisioning/valid/revpi-connect4-noncanonical-json.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "accept",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Same manifest with reversed member order, 4-space indentation and a trailing newline: the signature covers these exact bytes, so a verifier that re-serializes before verifying fails here (EI-054)."
+    },
+    {
+      "path": "edge-provisioning/valid/revpi-connect4-key-epoch-2.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "accept",
+      "device_context": "revpi-active-ratchet-2",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Signed with the epoch-2 provisioning key on a device whose ratchet is at 2 (DEC-3.5)."
+    },
+    {
+      "path": "edge-provisioning/invalid/bad-signature.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Payload bytes changed after signing (one added space).",
+      "reason": "signature-invalid"
+    },
+    {
+      "path": "edge-provisioning/invalid/non-canonical-signature.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "S replaced by S + L. verify_strict requires S < L; a verifier that reduces S accepts it.",
+      "reason": "signature-invalid"
+    },
+    {
+      "path": "edge-provisioning/invalid/wrong-payload-type.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Correctly signed by the provisioning key but as edge-update: a manifest cannot be replayed as another statement kind (DEC-2.4).",
+      "reason": "payload-type-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/signed-by-release-key.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Manifest signed by the edge-release key, which signs only release statements (DEC-3.3).",
+      "reason": "key-purpose-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/unknown-keyid.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Signed by a key the device does not pin.",
+      "reason": "key-unknown"
+    },
+    {
+      "path": "edge-provisioning/invalid/key-epoch-below-ratchet.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active-ratchet-2",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Valid epoch-1 manifest on a device whose provisioning ratchet advanced to 2 (DEC-3.5).",
+      "reason": "key-epoch-below-ratchet"
+    },
+    {
+      "path": "edge-provisioning/invalid/two-signatures.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Two signatures; contract 1.x envelopes carry exactly one.",
+      "reason": "envelope-invalid"
+    },
+    {
+      "path": "edge-provisioning/invalid/duplicate-member.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "board appears twice; a last-member-wins parser would read revpi-connect4 and accept. Duplicate members are rejected.",
+      "reason": "payload-json-invalid"
+    },
+    {
+      "path": "edge-provisioning/invalid/unknown-field.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Signed payload with a member the schema does not define.",
+      "reason": "schema-invalid"
+    },
+    {
+      "path": "edge-provisioning/invalid/key-epoch-mismatch.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Signed with the epoch-1 key but claims key_epoch 2; the claim never selects a key (DEC-3.4).",
+      "reason": "key-epoch-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/wrong-device-binding.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Bound to another device's TPM EK hash: replay to a second device of the same board (EI-038).",
+      "reason": "device-binding-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/wrong-device-id.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "device_id differs from the identity root recorded at first provisioning.",
+      "reason": "device-id-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/wrong-tenant.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Another tenant's manifest for this device (DEC-22).",
+      "reason": "tenant-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/nonce-mismatch.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Echoes the nonce of an earlier request instead of this one (DEC-5.5).",
+      "reason": "nonce-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/expired.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Validity window ended before the evaluation time.",
+      "reason": "expired"
+    },
+    {
+      "path": "edge-provisioning/invalid/not-yet-valid.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Validity window starts after the evaluation time.",
+      "reason": "not-yet-valid"
+    },
+    {
+      "path": "edge-provisioning/invalid/wrong-board.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/rpi4-cm4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Consistent rpi4-cm4 manifest and release delivered to a revpi-connect4, whose CM4 GPIO lines drive PiBridge relays (DEC-8.2).",
+      "reason": "board-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/rollback-below-floor.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.4.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Consistent manifest for release 1.4.0 (security_version 4) on a device whose floor is 5 (DEC-2.5).",
+      "reason": "rollback-below-floor"
+    },
+    {
+      "path": "edge-provisioning/invalid/sequence-replay.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "update_seq equal to the last accepted one (DEC-2.4).",
+      "reason": "sequence-replay"
+    },
+    {
+      "path": "edge-provisioning/invalid/release-digest-mismatch.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Names the 1.4.0 release statement digest while release 1.6.0 is delivered.",
+      "reason": "release-digest-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/release-mismatch.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Claims version 1.6.1 for the 1.6.0 release statement it names (DEC-3.1).",
+      "reason": "release-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/config-digest-mismatch.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "The delivered config payload is not the one the manifest names.",
+      "reason": "config-digest-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/trust-anchors-digest-mismatch.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/valid/bundle-seq-2.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Names bundle_seq 3 for the bundle_seq 2 bundle it digests.",
+      "reason": "trust-anchors-digest-mismatch"
+    },
+    {
+      "path": "edge-provisioning/invalid/trust-anchors-tenant-scope.dsse.json",
+      "statement_type": "suderra.edge-provisioning.v2",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {
+        "release_statement": "edge-release/valid/revpi-connect4-aarch64-1.6.0.dsse.json",
+        "config_payload": "edge-provisioning/inputs/config-payload.txt",
+        "trust_anchors": "trust-anchors/invalid/tenant-scope-excludes-device.dsse.json",
+        "request_nonce": "2770a088c0c5172f954d8c31af967622"
+      },
+      "description": "Delivers, and binds by digest, a fleet-root bundle whose tenant_scope excludes the manifest's tenant (DEC-22).",
+      "reason": "tenant-scope-mismatch"
+    },
+    {
+      "path": "edge-activation-receipt/valid/revpi-connect4.dsse.json",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "expect": "accept",
+      "device_context": "revpi-provisioning",
+      "inputs": {},
+      "description": "Receipt for the manifest root installed; root verifies it and moves the lifecycle to ACTIVE (DEC-5.8)."
+    },
+    {
+      "path": "edge-activation-receipt/invalid/wrong-manifest-digest.dsse.json",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "expect": "reject",
+      "device_context": "revpi-provisioning",
+      "inputs": {},
+      "description": "Names a manifest other than the one root installed.",
+      "reason": "manifest-digest-mismatch"
+    },
+    {
+      "path": "edge-activation-receipt/invalid/wrong-device-binding.dsse.json",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "expect": "reject",
+      "device_context": "revpi-provisioning",
+      "inputs": {},
+      "description": "Receipt for another device's binding.",
+      "reason": "device-binding-mismatch"
+    },
+    {
+      "path": "edge-activation-receipt/invalid/signed-by-lifecycle-key.dsse.json",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "expect": "reject",
+      "device_context": "revpi-provisioning",
+      "inputs": {},
+      "description": "Receipts are signed by the provisioning key only (DEC-3.3).",
+      "reason": "key-purpose-mismatch"
+    },
+    {
+      "path": "edge-activation-receipt/invalid/expired.dsse.json",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "expect": "reject",
+      "device_context": "revpi-provisioning",
+      "inputs": {},
+      "description": "Receipt presented after its window.",
+      "reason": "expired"
+    },
+    {
+      "path": "device-lifecycle/valid/enter-maintenance-reprovision.dsse.json",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "expect": "accept",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "ACTIVE -> MAINTENANCE for re-provisioning until expires_at (DEC-5.14, DEC-12)."
+    },
+    {
+      "path": "device-lifecycle/invalid/expired.dsse.json",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "Maintenance request presented after its window.",
+      "reason": "expired"
+    },
+    {
+      "path": "device-lifecycle/invalid/wrong-device-binding.dsse.json",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "Maintenance request for another device.",
+      "reason": "device-binding-mismatch"
+    },
+    {
+      "path": "device-lifecycle/invalid/sequence-replay.dsse.json",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "update_seq equal to the last accepted lifecycle statement.",
+      "reason": "sequence-replay"
+    },
+    {
+      "path": "device-lifecycle/invalid/signed-by-provisioning-key.dsse.json",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "Opening the provisioning surface needs the separate device-lifecycle signer (DEC-12).",
+      "reason": "key-purpose-mismatch"
+    },
+    {
+      "path": "device-lifecycle/invalid/maintenance-without-purpose.dsse.json",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "expect": "reject",
+      "device_context": "revpi-active",
+      "inputs": {},
+      "description": "enter-maintenance must say why (reprovision or break-glass).",
+      "reason": "schema-invalid"
+    }
+  ],
+  "documents": [
+    {
+      "path": "result/valid/edge-install-ok.json",
+      "document_type": "suderra.result.v1",
+      "expect": "accept",
+      "description": "edge-install result, outcome ok."
+    },
+    {
+      "path": "result/valid/verify-current-rejected.json",
+      "document_type": "suderra.result.v1",
+      "expect": "accept",
+      "description": "verify-current result, outcome rejected."
+    },
+    {
+      "path": "result/valid/lifecycle-active.json",
+      "document_type": "suderra.result.v1",
+      "expect": "accept",
+      "description": "lifecycle result, outcome ok."
+    },
+    {
+      "path": "result/valid/data-unlock-alarm.json",
+      "document_type": "suderra.result.v1",
+      "expect": "accept",
+      "description": "data-unlock result, outcome alarm."
+    },
+    {
+      "path": "result/invalid/unknown-kind.json",
+      "document_type": "suderra.result.v1",
+      "expect": "reject",
+      "reason": "schema-invalid",
+      "description": "kind outside the DEC-27 result set."
+    },
+    {
+      "path": "result/invalid/rejected-without-reason.json",
+      "document_type": "suderra.result.v1",
+      "expect": "reject",
+      "reason": "schema-invalid",
+      "description": "A non-ok outcome must carry a reason code."
+    },
+    {
+      "path": "result/invalid/ok-with-reason.json",
+      "document_type": "suderra.result.v1",
+      "expect": "reject",
+      "reason": "schema-invalid",
+      "description": "An ok outcome carries no reason."
+    },
+    {
+      "path": "result/invalid/unknown-field.json",
+      "document_type": "suderra.result.v1",
+      "expect": "reject",
+      "reason": "schema-invalid",
+      "description": "Unknown members are rejected."
+    },
+    {
+      "path": "result/invalid/fractional-seconds.json",
+      "document_type": "suderra.result.v1",
+      "expect": "reject",
+      "reason": "schema-invalid",
+      "description": "toISOString() milliseconds are not the contract timestamp form."
+    }
+  ],
+  "units": [
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/valid/suderra-os/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "accept",
+      "description": "Overlay unit plus the revpi-connect4 drop-in."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "industrial-x86_64",
+      "unit": "unit/valid/suderra-os/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-industrial-x86_64.conf",
+      "expect": "accept",
+      "description": "Overlay unit plus the industrial-x86_64 drop-in."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "rpi4-cm4",
+      "unit": "unit/valid/suderra-os/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-rpi4-cm4.conf",
+      "expect": "accept",
+      "description": "Overlay unit plus the rpi4-cm4 drop-in."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "qemu-x86_64",
+      "unit": "unit/valid/suderra-os/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-qemu-x86_64.conf",
+      "expect": "accept",
+      "description": "Overlay unit plus the qemu-x86_64 drop-in."
+    },
+    {
+      "profile": "generic",
+      "board_profile": null,
+      "unit": "unit/valid/generic/suderra-agent.service",
+      "dropin": null,
+      "expect": "accept",
+      "description": "Generic-Linux reference unit (DEC-1.9, DEC-28)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/watchdog-granted/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "exact:Service.DeviceAllow",
+        "forbidden:Service.DeviceAllow"
+      ],
+      "description": "Grants the hardware watchdog, which PID1 owns (DEC-6.6, EI-042)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/ambient-capabilities/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "forbidden:Service.AmbientCapabilities"
+      ],
+      "description": "Ambient capability with an otherwise empty bounding set (DEC-1.8)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/requires-time-sync/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "forbidden:Unit.Requires"
+      ],
+      "description": "Hard dependency on time-sync.target (DEC-7.4)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/suderra-config-env/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "forbidden:Service.Environment"
+      ],
+      "description": "Selects the config path from the environment (DEC-4.5, DEC-19)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/condition-on-current/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "forbidden:Unit.ConditionPathExists"
+      ],
+      "description": "A missing release would become a silent condition failure (DEC-1.4)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/reboot-on-failure/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "forbidden:Unit.FailureAction"
+      ],
+      "description": "Escalates an agent failure to an OS reboot (DEC-6.5)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/missing-verify-current/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "exact:Service.ExecStartPre"
+      ],
+      "description": "Starts the binary without re-verifying it (DEC-1.5)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/agent-root-writable/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "exact:Service.ReadWritePaths"
+      ],
+      "description": "Makes the whole agent data root writable instead of its subdirectories (DEC-4.11)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/missing-start-limit/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "present:Unit.StartLimitBurst"
+      ],
+      "description": "Restart loop without a start limit (DEC-6.5)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/invalid/unlisted-key/suderra-agent.service",
+      "dropin": "unit/valid/suderra-os/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "unknown:Service.PrivateNetwork"
+      ],
+      "description": "A key outside the allowlist, even a harmless-looking one."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/valid/suderra-os/suderra-agent.service",
+      "dropin": "unit/invalid/dropin-extra-device/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "dropin:Service.DeviceAllow"
+      ],
+      "description": "revpi drop-in also grants /dev/gpiomem, which races the kernel pibridge driver (DEC-8.8)."
+    },
+    {
+      "profile": "suderra-os",
+      "board_profile": "revpi-connect4",
+      "unit": "unit/valid/suderra-os/suderra-agent.service",
+      "dropin": "unit/invalid/dropin-tpm/suderra-agent.service.d/10-board-revpi-connect4.conf",
+      "expect": "reject",
+      "violations": [
+        "dropin:Service.DeviceAllow",
+        "forbidden:Service.DeviceAllow"
+      ],
+      "description": "Board drop-in grants the TPM resource manager before the P2 keystore (DEC-21)."
+    }
+  ],
+  "pae_vectors": "dsse/pae-vectors.json",
+  "signature_vectors": "dsse/signature-vectors.json"
+}

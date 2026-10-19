@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:mutable-state",
+  "title": "mutable-state.json read-only-root mutable-state table",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "rootfs", "data_partition", "run_tmpfiles", "entries"],
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "rootfs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mount",
+        "etc_overlay",
+        "var_overlay",
+        "buildroot_remount_rootfs_rw",
+        "etc_runtime_writes"
+      ],
+      "properties": {
+        "mount": {
+          "const": "dm-verity read-only"
+        },
+        "etc_overlay": {
+          "const": false
+        },
+        "var_overlay": {
+          "const": false
+        },
+        "buildroot_remount_rootfs_rw": {
+          "const": false
+        },
+        "etc_runtime_writes": {
+          "const": false
+        }
+      }
+    },
+    "data_partition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mount_point",
+        "mount_options",
+        "encryption",
+        "layout_tmpfiles",
+        "layout_applied_by"
+      ],
+      "properties": {
+        "mount_point": {
+          "const": "/data"
+        },
+        "mount_options": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["nosuid", "nodev", "noexec"]
+          },
+          "minItems": 3
+        },
+        "encryption": {
+          "type": "string"
+        },
+        "layout_tmpfiles": {
+          "const": "/usr/lib/suderra/data-layout.tmpfiles.conf"
+        },
+        "layout_applied_by": {
+          "type": "string"
+        }
+      }
+    },
+    "run_tmpfiles": {
+      "const": "/usr/lib/tmpfiles.d/suderra.conf"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "backing", "writer", "agent_access", "contents", "decisions"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/abs_path"
+          },
+          "backing": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "data-bind",
+                  "data-dir",
+                  "data-layout-dir",
+                  "tmpfs",
+                  "tmpfs-bind",
+                  "runtime-directory",
+                  "rootfs-empty-file",
+                  "rauc-window",
+                  "unused"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/abs_path"
+              },
+              "mount_options": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "enum": ["ro", "nosuid", "nodev", "exec", "noexec"]
+                }
+              }
+            }
+          },
+          "owner": {
+            "$ref": "#/$defs/account"
+          },
+          "group": {
+            "$ref": "#/$defs/account"
+          },
+          "mode": {
+            "$ref": "#/$defs/mode"
+          },
+          "file_mode": {
+            "$ref": "#/$defs/mode"
+          },
+          "writer": {
+            "enum": [
+              "os-root",
+              "os-root-installer",
+              "agent",
+              "chronyd",
+              "rauc",
+              "systemd",
+              "suderra-provision-mode",
+              "provision-forced-command",
+              "none"
+            ]
+          },
+          "agent_access": {
+            "enum": ["none", "read", "read-only-bind", "read-write", "exec"]
+          },
+          "contents": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "decisions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^DEC-[0-9]+(\\.[0-9]+)?$"
+            }
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "backing": {
+                "properties": {
+                  "kind": {
+                    "const": "unused"
+                  }
+                }
+              },
+              "writer": {
+                "const": "none"
+              },
+              "agent_access": {
+                "const": "none"
+              },
+              "owner": false,
+              "group": false,
+              "mode": false,
+              "file_mode": false
+            }
+          },
+          {
+            "properties": {
+              "backing": {
+                "properties": {
+                  "kind": {
+                    "not": {
+                      "const": "unused"
+                    }
+                  }
+                }
+              },
+              "owner": true,
+              "group": true,
+              "mode": true
+            },
+            "required": ["owner", "group", "mode"]
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "abs_path": {
+      "type": "string",
+      "pattern": "^/[A-Za-z0-9._/-]*[A-Za-z0-9._-]$"
+    },
+    "account": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]*$"
+    },
+    "mode": {
+      "type": "string",
+      "pattern": "^0[0-7]{3}$"
+    }
+  }
+}

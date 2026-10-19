@@ -1,0 +1,37 @@
+{
+  "test_only": true,
+  "vectors": [
+    {
+      "id": "valid",
+      "public_key_hex": "82d1b3b946e7fb0864159c235810b7d7dafb80f7ab7701d746809a922353792b",
+      "message_hex": "737564657272612d656467652d636f6e7472616374207369676e617475726520766563746f72",
+      "signature_hex": "5cdc7a1a0220c0b77379d13d118c380a485e9ef768e193932a154246cd98e644b9bea9e238be2c00f1a09d7fc7a6aed6b0ebeafc67edcebfb8b15169a3ae510e",
+      "verify_strict": true,
+      "note": "edge-release/1 TEST-ONLY key."
+    },
+    {
+      "id": "non-canonical-s",
+      "public_key_hex": "82d1b3b946e7fb0864159c235810b7d7dafb80f7ab7701d746809a922353792b",
+      "message_hex": "737564657272612d656467652d636f6e7472616374207369676e617475726520766563746f72",
+      "signature_hex": "5cdc7a1a0220c0b77379d13d118c380a485e9ef768e193932a154246cd98e644a6929f3f53213f58c73d9522a6a08debb0ebeafc67edcebfb8b15169a3ae511e",
+      "verify_strict": false,
+      "note": "S + L: rejected because S is not reduced."
+    },
+    {
+      "id": "wrong-message",
+      "public_key_hex": "82d1b3b946e7fb0864159c235810b7d7dafb80f7ab7701d746809a922353792b",
+      "message_hex": "737564657272612d656467652d636f6e7472616374207369676e617475726520766563746f7221",
+      "signature_hex": "5cdc7a1a0220c0b77379d13d118c380a485e9ef768e193932a154246cd98e644b9bea9e238be2c00f1a09d7fc7a6aed6b0ebeafc67edcebfb8b15169a3ae510e",
+      "verify_strict": false,
+      "note": "Signature of a different message."
+    },
+    {
+      "id": "small-order-public-key",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "message_hex": "616e79206d65737361676520617420616c6c",
+      "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "verify_strict": false,
+      "note": "A and R are the identity point and S is 0, so [S]B = R + [k]A holds for every message. OpenSSL and ed25519-dalek verify() accept it; verify_strict rejects small-order A and R."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "description": "Release artifact naming (ADR-048 DEC-3.8, DEC-8.5, DEC-28). The Suderra OS channel ships one artifact per (board_profile, arch) from boards.json with its DSSE release statement beside it; the generic-Linux channel keeps its frozen names. Release workflow, cloud manifest builder, root installer and agent all derive names from here.",
+  "suderra_os_channel": {
+    "artifact": "suderra-agent-os-{version}-{board_profile}-{arch}.tar.gz",
+    "statement": "{artifact}.release.dsse.json",
+    "format": "tar.gz",
+    "binary_name": "suderra-agent",
+    "archive_members": ["suderra-agent"]
+  },
+  "generic_channel": {
+    "description": "Frozen generic-Linux release contract (DEC-28); not a Suderra OS board.",
+    "artifact": "suderra-agent-{version}-{slug}.tar.gz",
+    "binary_name": "edge-agent",
+    "slugs": [
+      {
+        "slug": "x86_64-linux",
+        "rust_target": "x86_64-unknown-linux-gnu"
+      },
+      {
+        "slug": "aarch64-linux",
+        "rust_target": "aarch64-unknown-linux-gnu"
+      },
+      {
+        "slug": "armv7-linux",
+        "rust_target": "armv7-unknown-linux-gnueabihf"
+      }
+    ]
+  }
+}

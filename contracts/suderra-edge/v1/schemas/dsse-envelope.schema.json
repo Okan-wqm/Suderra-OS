@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:dsse-envelope",
+  "title": "DSSE v1 envelope carrying one Suderra edge statement",
+  "description": "Signature over PAE(payloadType, payload bytes); see statements.json dsse for the exact rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payloadType", "payload", "signatures"],
+  "properties": {
+    "payloadType": {
+      "type": "string",
+      "pattern": "^application/vnd\\.suderra\\.[a-z0-9]+(-[a-z0-9]+)*\\.v[1-9][0-9]*\\+json$"
+    },
+    "payload": {
+      "description": "Canonical standard base64 with padding (unused trailing bits zero) of the exact signed JSON bytes.",
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 1048576,
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$"
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["keyid", "sig"],
+        "properties": {
+          "keyid": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/keyid" },
+          "sig": {
+            "description": "Canonical standard base64 of the 64-byte Ed25519 signature.",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+/]{85}[AQgw]==$"
+          }
+        }
+      }
+    }
+  }
+}

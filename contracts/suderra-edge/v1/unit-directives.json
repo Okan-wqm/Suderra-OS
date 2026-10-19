@@ -1,0 +1,276 @@
+{
+  "description": "Security-relevant directive allowlist of suderra-agent.service (ADR-048 DEC-1.8, DEC-1.9, DEC-4.5, DEC-4.11, DEC-6, DEC-7.4, DEC-11.2, DEC-19, DEC-21). Units are parsed into (section, key, values) and compared as sets, never as text: comments, line order and whitespace do not matter. A key outside exact, required, present, allowed and the profile keys is a violation (reported as forbidden when a key-level forbidden rule names it). exact: the value set must equal the list (an empty list means no value; with present it means an explicit empty assignment). required: the value set must contain the list. present: the key must appear. forbidden: a matching key, or key and value_pattern, is a violation. The Suderra OS overlay unit plus its board drop-in, the generic-Linux reference unit and the cloud-generated fleet unit are all checked against this file.",
+  "unit": "suderra-agent.service",
+  "parsing": {
+    "list_keys": [
+      "After",
+      "Wants",
+      "ReadOnlyPaths",
+      "ReadWritePaths",
+      "RestrictAddressFamilies",
+      "SupplementaryGroups",
+      "CapabilityBoundingSet",
+      "AmbientCapabilities"
+    ],
+    "rule": "Each occurrence of a key contributes values. For list_keys the value is split on ASCII whitespace into separate values; for every other key the whole trimmed value is one value. A board drop-in contributes its values to the same keys of the base unit."
+  },
+  "exact": {
+    "Service": {
+      "Type": ["notify"],
+      "NotifyAccess": ["main"],
+      "Restart": ["on-failure"],
+      "WatchdogSec": ["60s"],
+      "User": ["suderra"],
+      "Group": ["suderra"],
+      "UMask": ["0077"],
+      "LimitCORE": ["0"],
+      "CapabilityBoundingSet": [],
+      "NoNewPrivileges": ["true"],
+      "ProtectSystem": ["strict"],
+      "ProtectHome": ["true"],
+      "PrivateTmp": ["true"],
+      "ProtectKernelTunables": ["true"],
+      "ProtectKernelModules": ["true"],
+      "ProtectKernelLogs": ["true"],
+      "ProtectControlGroups": ["true"],
+      "ProtectHostname": ["true"],
+      "ProtectClock": ["true"],
+      "ProtectProc": ["invisible"],
+      "ProcSubset": ["pid"],
+      "RestrictNamespaces": ["true"],
+      "RestrictSUIDSGID": ["true"],
+      "RestrictRealtime": ["true"],
+      "LockPersonality": ["true"],
+      "RemoveIPC": ["true"],
+      "MemoryDenyWriteExecute": ["true"],
+      "SystemCallArchitectures": ["native"],
+      "SystemCallFilter": [
+        "@system-service",
+        "~@debug @mount @module @raw-io @reboot @swap @privileged"
+      ],
+      "SystemCallErrorNumber": ["EPERM"],
+      "DevicePolicy": ["closed"],
+      "StandardInput": ["null"],
+      "SyslogIdentifier": ["suderra-agent"]
+    },
+    "Install": {
+      "WantedBy": ["multi-user.target"]
+    }
+  },
+  "required": {
+    "Unit": {
+      "After": ["nftables.service", "time-sync.target"],
+      "Wants": ["time-sync.target"]
+    }
+  },
+  "present": {
+    "Unit": ["StartLimitIntervalSec", "StartLimitBurst"],
+    "Service": [
+      "CapabilityBoundingSet",
+      "TimeoutStartSec",
+      "TimeoutStopSec",
+      "MemoryMax",
+      "TasksMax",
+      "LimitNOFILE"
+    ]
+  },
+  "allowed": {
+    "Unit": ["Description", "Documentation", "ConditionPathExists"],
+    "Service": [
+      "Environment",
+      "RestartSec",
+      "CPUQuota",
+      "StandardOutput",
+      "StandardError",
+      "SyslogLevelPrefix"
+    ]
+  },
+  "forbidden": [
+    {
+      "section": "Unit",
+      "key": "Requires",
+      "reason": "A firewall or time-sync failure must not stop local control: ordering uses After=/Wants= only (DEC-7.4, DEC-11.2)."
+    },
+    {
+      "section": "Unit",
+      "key": "BindsTo",
+      "reason": "Same as Requires= (DEC-6.2)."
+    },
+    {
+      "section": "Unit",
+      "key": "Requisite",
+      "reason": "Same as Requires= (DEC-6.2)."
+    },
+    {
+      "section": "Unit",
+      "key": "FailureAction",
+      "reason": "Agent failures never escalate to an OS reboot, which would cut ventilation and pump outputs (DEC-6.5)."
+    },
+    {
+      "section": "Unit",
+      "key": "StartLimitAction",
+      "reason": "Same as FailureAction= (DEC-6.5)."
+    },
+    {
+      "section": "Unit",
+      "key": "SuccessAction",
+      "reason": "Same as FailureAction= (DEC-6.5)."
+    },
+    {
+      "section": "Unit",
+      "key": "ConditionPathExists",
+      "value_pattern": "^!?/opt/suderra/edge/",
+      "reason": "A missing release must fail verify-current loudly, not turn into a silent condition failure (DEC-1.4, DEC-1.5)."
+    },
+    {
+      "section": "Service",
+      "key": "AmbientCapabilities",
+      "reason": "The agent runs with no capabilities; nothing binds below 1024 (DEC-1.8)."
+    },
+    {
+      "section": "Service",
+      "key": "DeviceAllow",
+      "value_pattern": "^/dev/watchdog",
+      "reason": "The hardware watchdog belongs to PID1 alone (DEC-6.6)."
+    },
+    {
+      "section": "Service",
+      "key": "DeviceAllow",
+      "value_pattern": "^/dev/tpm",
+      "reason": "No TPM device in contract 1.x: /dev/tpm0 is never granted and /dev/tpmrm0 arrives only with the P2 TPM keystore through a board drop-in (DEC-21)."
+    },
+    {
+      "section": "Service",
+      "key": "DeviceAllow",
+      "value_pattern": "^char-(misc|tpm|tpmrm|watchdog)\\b",
+      "reason": "Device classes that cover the watchdog or the TPM (DEC-6.6, DEC-21)."
+    },
+    {
+      "section": "Service",
+      "key": "DeviceAllow",
+      "value_pattern": "^(block-|/dev/(k?mem|port)\\b)",
+      "reason": "Block devices and raw memory are never part of field I/O (DEC-1.8)."
+    },
+    {
+      "section": "Service",
+      "key": "Delegate",
+      "reason": "The agent manages no cgroups."
+    },
+    {
+      "section": "Service",
+      "key": "ExecStartPost",
+      "value_pattern": "^[+!]",
+      "reason": "The only privileged hook is ExecStartPre=+ verify-current (DEC-1.5)."
+    },
+    {
+      "section": "Service",
+      "key": "ExecStop",
+      "value_pattern": "^[+!]",
+      "reason": "The only privileged hook is ExecStartPre=+ verify-current (DEC-1.5)."
+    },
+    {
+      "section": "Service",
+      "key": "ExecStopPost",
+      "value_pattern": "^[+!]",
+      "reason": "The only privileged hook is ExecStartPre=+ verify-current (DEC-1.5)."
+    },
+    {
+      "section": "Service",
+      "key": "Environment",
+      "value_pattern": "SUDERRA_",
+      "profiles": ["suderra-os"],
+      "reason": "Paths and security modes are compile-time constants in the suderra-os profile; no environment variable selects them (DEC-4.5, DEC-19)."
+    },
+    {
+      "section": "Service",
+      "key": "EnvironmentFile",
+      "profiles": ["suderra-os"],
+      "reason": "Same as Environment= (DEC-19)."
+    }
+  ],
+  "profiles": {
+    "suderra-os": {
+      "unit_path": "board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service",
+      "repository": "Suderra-OS",
+      "exact": {
+        "Service": {
+          "ExecStart": ["/opt/suderra/edge/current/suderra-agent"],
+          "ExecStartPre": ["+/usr/bin/suderra-installer edge verify-current"],
+          "ReadOnlyPaths": ["/var/lib/suderra-site"],
+          "ReadWritePaths": [
+            "/var/lib/suderra/policy-cache",
+            "/var/lib/suderra/queue",
+            "/var/lib/suderra/scripts",
+            "/var/lib/suderra/secrets",
+            "/var/lib/suderra/state",
+            "/var/lib/suderra/update-requests",
+            "/var/log/suderra"
+          ],
+          "DeviceAllow": ["char-rtc r"],
+          "RestrictAddressFamilies": ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"],
+          "SupplementaryGroups": []
+        }
+      },
+      "board_dropins": {
+        "path": "board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service.d/10-board-{board_profile}.conf",
+        "rule": "A drop-in may set only the keys listed for its board, under [Service]; its values are added to the base unit's values and the union must equal base + drop-in exactly.",
+        "boards": {
+          "revpi-connect4": {
+            "DeviceAllow": ["/dev/piControl0 rw", "/dev/ttyAMA5 rw"],
+            "SupplementaryGroups": ["dialout", "suderra-io"]
+          },
+          "industrial-x86_64": {
+            "DeviceAllow": ["char-ttyACM rw", "char-ttyS rw", "char-ttyUSB rw"],
+            "SupplementaryGroups": ["dialout"],
+            "RestrictAddressFamilies": ["AF_CAN"]
+          },
+          "rpi4-cm4": {
+            "DeviceAllow": [
+              "/dev/gpiomem rw",
+              "/dev/i2c-1 rw",
+              "/dev/spidev0.0 rw",
+              "/dev/spidev0.1 rw",
+              "/dev/ttyAMA0 rw"
+            ],
+            "SupplementaryGroups": ["dialout", "gpio", "i2c", "spi"]
+          },
+          "qemu-x86_64": {
+            "DeviceAllow": ["char-ttyACM rw", "char-ttyS rw", "char-ttyUSB rw"],
+            "SupplementaryGroups": ["dialout"],
+            "RestrictAddressFamilies": ["AF_CAN"]
+          }
+        }
+      }
+    },
+    "generic": {
+      "unit_path": "sens-api-gateway/systemd/suderra-agent.service",
+      "repository": "aquaculture_platform",
+      "exact": {
+        "Service": {
+          "ExecStart": ["/usr/local/bin/suderra-agent"],
+          "ReadOnlyPaths": ["/etc/suderra"],
+          "ReadWritePaths": ["/var/lib/suderra", "/var/log/suderra"],
+          "DeviceAllow": [
+            "/dev/gpiomem rw",
+            "/dev/i2c-1 rw",
+            "/dev/spidev0.0 rw",
+            "/dev/spidev0.1 rw",
+            "/dev/ttyAMA0 rw",
+            "/dev/ttyUSB0 rw",
+            "char-rtc r"
+          ],
+          "RestrictAddressFamilies": ["AF_INET", "AF_INET6", "AF_NETLINK", "AF_UNIX"]
+        }
+      }
+    }
+  },
+  "profile_specific_keys": [
+    "ExecStart",
+    "ExecStartPre",
+    "ReadOnlyPaths",
+    "ReadWritePaths",
+    "DeviceAllow",
+    "RestrictAddressFamilies",
+    "SupplementaryGroups"
+  ]
+}

@@ -1,0 +1,339 @@
+{
+  "description": "Read-only-root mutable-state table (ADR-048 DEC-24 with the /data layout of DEC-4.2). The production root is a read-only dm-verity mount with no /etc or /var overlay; every path that changes at run time is listed here once, with its single writer, owner, mode and backing store. A path that is not listed is read-only at run time.",
+  "rootfs": {
+    "mount": "dm-verity read-only",
+    "etc_overlay": false,
+    "var_overlay": false,
+    "buildroot_remount_rootfs_rw": false,
+    "etc_runtime_writes": false
+  },
+  "data_partition": {
+    "mount_point": "/data",
+    "mount_options": ["nosuid", "nodev", "noexec"],
+    "encryption": "LUKS2 sealed to the TPM on production images; plain ext4 labelled SUDERRA-DATA on dev images (DEC-12)",
+    "layout_tmpfiles": "/usr/lib/suderra/data-layout.tmpfiles.conf",
+    "layout_applied_by": "suderra-data-unlock, after /data is mounted (DEC-4.2, DEC-4.3)"
+  },
+  "run_tmpfiles": "/usr/lib/tmpfiles.d/suderra.conf",
+  "entries": [
+    {
+      "path": "/var/lib/suderra-os",
+      "backing": { "kind": "data-bind", "source": "/data/suderra/os" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0700",
+      "writer": "os-root",
+      "agent_access": "none",
+      "contents": [
+        "lifecycle",
+        "installer state and receipts",
+        "rollback floors",
+        "key-epoch ratchets",
+        "seq/<kind>",
+        "provisioning state",
+        "time floor",
+        "firewall last-known-good",
+        "identity",
+        "results"
+      ],
+      "decisions": ["DEC-4.2", "DEC-4.4", "DEC-12", "DEC-27"]
+    },
+    {
+      "path": "/var/lib/suderra-installer",
+      "backing": { "kind": "data-bind", "source": "/data/suderra/os/installer" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0700",
+      "writer": "os-root",
+      "agent_access": "none",
+      "contents": ["installer work state"],
+      "decisions": ["DEC-24"]
+    },
+    {
+      "path": "/var/lib/chrony",
+      "backing": { "kind": "data-bind", "source": "/data/suderra/os/chrony" },
+      "owner": "chrony",
+      "group": "chrony",
+      "mode": "0750",
+      "writer": "chronyd",
+      "agent_access": "none",
+      "contents": ["drift", "dump"],
+      "decisions": ["DEC-4.2", "DEC-7.1"]
+    },
+    {
+      "path": "/etc/dropbear",
+      "backing": { "kind": "data-bind", "source": "/data/suderra/os/ssh" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0700",
+      "writer": "os-root",
+      "agent_access": "none",
+      "contents": ["provisioning SSH host key"],
+      "decisions": ["DEC-5.3", "DEC-24"]
+    },
+    {
+      "path": "/data/rauc",
+      "backing": { "kind": "data-dir", "source": "/data/rauc" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0700",
+      "writer": "rauc",
+      "agent_access": "none",
+      "contents": [
+        "status.ini",
+        "boot-state.json",
+        "health-preflight.json",
+        "pre-mark-good.json",
+        "mark-good.json",
+        "pre-update.json"
+      ],
+      "decisions": ["DEC-4.2", "DEC-6.8"]
+    },
+    {
+      "path": "/var/lib/suderra-site",
+      "backing": {
+        "kind": "data-bind",
+        "source": "/data/suderra/site",
+        "mount_options": ["ro"]
+      },
+      "owner": "root",
+      "group": "suderra",
+      "mode": "0750",
+      "file_mode": "0640",
+      "writer": "os-root-installer",
+      "agent_access": "read-only-bind",
+      "contents": [
+        "config.yaml",
+        "site-config.dsse",
+        "trust-anchor bundle",
+        "RBAC manifest",
+        "site policy",
+        "revpi/config.rsc",
+        "hardware inventory"
+      ],
+      "decisions": ["DEC-4.2", "DEC-4.6", "DEC-4.12"]
+    },
+    {
+      "path": "/opt/suderra/edge",
+      "backing": {
+        "kind": "data-bind",
+        "source": "/data/suderra/edge",
+        "mount_options": ["ro", "nosuid", "nodev", "exec"]
+      },
+      "owner": "root",
+      "group": "root",
+      "mode": "0755",
+      "writer": "os-root-installer",
+      "agent_access": "exec",
+      "contents": ["releases/<version>/", "current"],
+      "decisions": ["DEC-1.3", "DEC-1.4", "DEC-4.2"]
+    },
+    {
+      "path": "/var/lib/suderra",
+      "backing": { "kind": "data-bind", "source": "/data/suderra/agent" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "writer": "agent",
+      "agent_access": "read",
+      "contents": ["agent data root; the agent writes only the subdirectories below"],
+      "decisions": ["DEC-4.2", "DEC-4.3"]
+    },
+    {
+      "path": "/var/lib/suderra/state",
+      "backing": { "kind": "data-layout-dir", "source": "/data/suderra/agent/state" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "file_mode": "0600",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": [
+        "activation.json",
+        "activation-receipt.dsse",
+        "lifecycle-request.dsse",
+        "broker credentials"
+      ],
+      "decisions": ["DEC-4.6", "DEC-5.8", "DEC-12"]
+    },
+    {
+      "path": "/var/lib/suderra/secrets",
+      "backing": { "kind": "data-layout-dir", "source": "/data/suderra/agent/secrets" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0700",
+      "file_mode": "0400",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": ["db.key"],
+      "decisions": ["DEC-4.8"]
+    },
+    {
+      "path": "/var/lib/suderra/queue",
+      "backing": { "kind": "data-layout-dir", "source": "/data/suderra/agent/queue" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": ["offline queue"],
+      "decisions": ["DEC-4.2"]
+    },
+    {
+      "path": "/var/lib/suderra/scripts",
+      "backing": { "kind": "data-layout-dir", "source": "/data/suderra/agent/scripts" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": ["script runtime storage"],
+      "decisions": ["DEC-4.2"]
+    },
+    {
+      "path": "/var/lib/suderra/policy-cache",
+      "backing": { "kind": "data-layout-dir", "source": "/data/suderra/agent/policy-cache" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": ["RBAC policy version store"],
+      "decisions": ["DEC-4.2"]
+    },
+    {
+      "path": "/var/lib/suderra/update-requests",
+      "backing": {
+        "kind": "data-layout-dir",
+        "source": "/data/suderra/agent/update-requests"
+      },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": ["update and lifecycle requests for the root worker"],
+      "decisions": ["DEC-2.3"]
+    },
+    {
+      "path": "/var/log/suderra",
+      "backing": { "kind": "data-bind", "source": "/data/suderra/log" },
+      "owner": "suderra",
+      "group": "suderra",
+      "mode": "0750",
+      "writer": "agent",
+      "agent_access": "read-write",
+      "contents": ["application logs", "audit.log"],
+      "decisions": ["DEC-4.2", "DEC-4.9"]
+    },
+    {
+      "path": "/run/suderra",
+      "backing": { "kind": "tmpfs" },
+      "owner": "root",
+      "group": "suderra",
+      "mode": "0750",
+      "file_mode": "0640",
+      "writer": "os-root",
+      "agent_access": "read",
+      "contents": ["identity.json", "time-state", "board", "lifecycle"],
+      "decisions": ["DEC-3.6", "DEC-4.2", "DEC-7.3", "DEC-12"]
+    },
+    {
+      "path": "/run/suderra/results",
+      "backing": { "kind": "tmpfs" },
+      "owner": "root",
+      "group": "suderra",
+      "mode": "0750",
+      "file_mode": "0640",
+      "writer": "os-root",
+      "agent_access": "read",
+      "contents": ["typed result documents (schemas/result.schema.json)"],
+      "decisions": ["DEC-27"]
+    },
+    {
+      "path": "/run/suderra-os",
+      "backing": { "kind": "tmpfs" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0700",
+      "writer": "os-root",
+      "agent_access": "none",
+      "contents": ["provisioning OTP shadow", "data-created evidence", "provisioning manifest"],
+      "decisions": ["DEC-4.2", "DEC-5.2", "DEC-5.6", "DEC-12"]
+    },
+    {
+      "path": "/var/spool/suderra-provision",
+      "backing": { "kind": "tmpfs-bind", "source": "/run/suderra-provision" },
+      "owner": "root",
+      "group": "provision",
+      "mode": "0750",
+      "file_mode": "0640",
+      "writer": "provision-forced-command",
+      "agent_access": "none",
+      "contents": ["inbox/ (provision:provision 0700)", "worker results"],
+      "decisions": ["DEC-4.2", "DEC-5.5"]
+    },
+    {
+      "path": "/run/suderra-installer",
+      "backing": { "kind": "runtime-directory" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0700",
+      "writer": "os-root-installer",
+      "agent_access": "none",
+      "contents": ["installer scratch space (RuntimeDirectory= of the worker unit)"],
+      "decisions": ["DEC-24"]
+    },
+    {
+      "path": "/etc/machine-id",
+      "backing": { "kind": "rootfs-empty-file" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0444",
+      "writer": "systemd",
+      "agent_access": "none",
+      "contents": [
+        "empty on the image; systemd binds a transient id each boot and nothing persistent derives from it"
+      ],
+      "decisions": ["DEC-4.9", "DEC-24"]
+    },
+    {
+      "path": "/etc/shadow",
+      "backing": { "kind": "tmpfs-bind", "source": "/run/suderra-os/shadow" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0600",
+      "writer": "suderra-provision-mode",
+      "agent_access": "none",
+      "contents": ["provisioning one-time-password shadow"],
+      "decisions": ["DEC-5.2", "DEC-24"]
+    },
+    {
+      "path": "/var/log/journal",
+      "backing": { "kind": "unused" },
+      "writer": "none",
+      "agent_access": "none",
+      "contents": ["journald runs with Storage=volatile into /run/log/journal"],
+      "decisions": ["DEC-4.9", "DEC-24"]
+    },
+    {
+      "path": "/var/lib/systemd/timesync",
+      "backing": { "kind": "unused" },
+      "writer": "none",
+      "agent_access": "none",
+      "contents": ["time floor is DEC-7, not systemd-timesyncd"],
+      "decisions": ["DEC-7.2", "DEC-24"]
+    },
+    {
+      "path": "/boot",
+      "backing": { "kind": "rauc-window" },
+      "owner": "root",
+      "group": "root",
+      "mode": "0755",
+      "writer": "rauc",
+      "agent_access": "none",
+      "contents": ["writable only during a RAUC install and mark-good"],
+      "decisions": ["DEC-24"]
+    }
+  ]
+}

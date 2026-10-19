@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-activation-receipt",
+  "title": "suderra.edge-activation-receipt.v1",
+  "description": "Signed by the edge-provisioning key after the device's first authenticated MQTT CONNECT commits the activation (ADR-048 DEC-5.7, DEC-5.8). The agent stores it as $DATA/state/activation-receipt.dsse; root copies and verifies it, then moves the lifecycle to ACTIVE. An agent-written marker is never registration evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_binding",
+    "manifest_digest",
+    "activation_id",
+    "activated_at",
+    "not_before",
+    "expires_at"
+  ],
+  "properties": {
+    "_type": { "const": "suderra.edge-activation-receipt.v1" },
+    "tenant_id": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid" },
+    "device_id": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid" },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "manifest_digest": {
+      "description": "Statement digest of the suderra.edge-provisioning.v2 manifest root installed.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+    },
+    "activation_id": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid" },
+    "activated_at": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" },
+    "not_before": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" },
+    "expires_at": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" }
+  }
+}

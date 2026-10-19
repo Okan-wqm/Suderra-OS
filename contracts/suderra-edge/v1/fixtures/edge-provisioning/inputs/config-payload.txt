@@ -1,0 +1,3 @@
+TEST-ONLY opaque config payload of the suderra edge contract fixtures.
+Contract 1.0.0 binds the config payload by sha256 and size only; its format, the
+suderra.site-config.v1 statement (ADR-048 DEC-4.12), is not part of this version.

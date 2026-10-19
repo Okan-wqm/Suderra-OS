@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:trust-anchors",
+  "title": "suderra.trust-anchors.v1 trust-anchor bundle",
+  "description": "Signed by fleet-root and verified against the fleet-root key pinned in the OS image, by root and again by the agent (ADR-048 DEC-3.7, DEC-22). The single source of agent trust anchors from P0. An anchor signed by any other key is rejected; edge-release and edge-provisioning anchors must equal a keyid pinned in the OS image.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "bundle_seq", "issued_at", "tenant_scope", "anchors"],
+  "properties": {
+    "_type": { "const": "suderra.trust-anchors.v1" },
+    "bundle_seq": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence" },
+    "issued_at": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" },
+    "tenant_scope": {
+      "description": "Tenants this bundle may serve; root and agent reject it when the device's tenant is absent.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid" }
+    },
+    "anchors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [{ "$ref": "#/$defs/ed25519_anchor" }, { "$ref": "#/$defs/x509_anchor" }]
+      }
+    }
+  },
+  "$defs": {
+    "ed25519_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "algorithm", "keyid", "epoch", "public_key"],
+      "properties": {
+        "purpose": {
+          "enum": [
+            "command",
+            "rbac-manifest",
+            "config-integrity",
+            "edge-release",
+            "edge-provisioning"
+          ]
+        },
+        "algorithm": { "const": "ed25519" },
+        "keyid": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/keyid" },
+        "epoch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch" },
+        "public_key": {
+          "description": "Canonical standard base64 of the raw 32-byte public key; keyid is its SHA-256.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$"
+        }
+      }
+    },
+    "x509_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "algorithm", "certificates"],
+      "properties": {
+        "purpose": { "const": "mqtt-ca" },
+        "algorithm": { "const": "x509" },
+        "certificates": {
+          "description": "PEM-encoded root certificates the agent accepts for the broker (DEC-10.6).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^-----BEGIN CERTIFICATE-----\\n[A-Za-z0-9+/=\\n]+-----END CERTIFICATE-----\\n$"
+          }
+        }
+      }
+    }
+  }
+}

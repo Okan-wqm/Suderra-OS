@@ -1,0 +1,10 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 5,
+  "kind": "edge-update",
+  "outcome": "rejected"
+}

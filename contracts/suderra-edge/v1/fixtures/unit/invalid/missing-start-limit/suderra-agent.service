@@ -1,0 +1,73 @@
+# TEST-ONLY golden unit for the suderra-os profile (contracts/suderra-edge/v1/unit-directives.json).
+[Unit]
+Description=Suderra edge agent
+Documentation=https://github.com/Okan-wqm/aquaculture_platform/tree/main/sens-api-gateway
+After=nftables.service time-sync.target
+Wants=time-sync.target
+StartLimitIntervalSec=600
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStartPre=+/usr/bin/suderra-installer edge verify-current
+ExecStart=/opt/suderra/edge/current/suderra-agent
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=300s
+TimeoutStopSec=90s
+WatchdogSec=60s
+
+User=suderra
+Group=suderra
+UMask=0077
+
+LimitCORE=0
+LimitNOFILE=4096
+MemoryMax=256M
+CPUQuota=75%
+TasksMax=64
+
+CapabilityBoundingSet=
+NoNewPrivileges=true
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/suderra-site
+ReadWritePaths=/var/lib/suderra/state /var/lib/suderra/secrets /var/lib/suderra/queue
+ReadWritePaths=/var/lib/suderra/scripts /var/lib/suderra/policy-cache /var/lib/suderra/update-requests
+ReadWritePaths=/var/log/suderra
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+ProcSubset=pid
+
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=true
+RemoveIPC=true
+MemoryDenyWriteExecute=true
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@debug @mount @module @raw-io @reboot @swap @privileged
+SystemCallErrorNumber=EPERM
+
+DevicePolicy=closed
+DeviceAllow=char-rtc r
+
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suderra-agent
+SyslogLevelPrefix=true
+
+[Install]
+WantedBy=multi-user.target

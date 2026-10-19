@@ -1,0 +1,18 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 1,
+  "kind": "edge-install",
+  "outcome": "ok",
+  "subject": {
+    "version": "1.6.0",
+    "security_version": 6,
+    "statement_type": "suderra.edge-release.v1",
+    "statement_digest": {
+      "sha256": "9b8320235840c001f91cbf145fbf9ad44fd75b3d4fe8700213b5215510fae932"
+    }
+  }
+}

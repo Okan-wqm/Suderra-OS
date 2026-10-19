@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:result",
+  "title": "suderra.result.v1 install and update result",
+  "description": "Typed result that root workers write to /data/suderra/os/results/ and expose under /run/suderra/results/ (directory root:suderra 0750, files 0640); the agent publishes it on its result topic and the cloud stores it per device (ADR-048 DEC-27). Unsigned: an observation, never authority. reason uses the rejection codes of statements.json when a statement was refused.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "seq",
+    "kind",
+    "outcome",
+    "occurred_at",
+    "time_state",
+    "board_profile",
+    "os_version"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.result.v1"
+    },
+    "seq": {
+      "description": "Monotonic per device, assigned by root.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "kind": {
+      "enum": [
+        "provisioning",
+        "edge-install",
+        "edge-update",
+        "edge-rollback",
+        "verify-current",
+        "site-config",
+        "lockdown",
+        "lifecycle",
+        "health-gate",
+        "data-unlock",
+        "time-state"
+      ]
+    },
+    "outcome": {
+      "enum": ["ok", "rejected", "failed", "alarm"]
+    },
+    "reason": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "occurred_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "time_state": {
+      "description": "Clock trust when occurred_at was taken (DEC-7.3).",
+      "enum": ["unsynced", "synced-unauthenticated", "synced-nts"]
+    },
+    "board_profile": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+    },
+    "os_version": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "version": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver"
+        },
+        "security_version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "statement_type": {
+          "type": "string",
+          "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$"
+        },
+        "statement_digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "update_seq": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+        },
+        "lifecycle_from": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state"
+        },
+        "lifecycle_to": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state"
+        }
+      }
+    },
+    "detail": {
+      "type": "string",
+      "maxLength": 512
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "outcome": {
+          "const": "ok"
+        },
+        "reason": false
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "enum": ["rejected", "failed", "alarm"]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": ["reason"]
+    }
+  ]
+}

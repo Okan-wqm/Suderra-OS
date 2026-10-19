@@ -1,0 +1,8 @@
+# Vendored copy of Okan-wqm/aquaculture_platform contracts/suderra-edge (ADR-048 DEC-25).
+# Do not edit the vendored tree or this file: change the contract in
+# Okan-wqm/aquaculture_platform and run scripts/edge/vendor-contracts-to-suderra-os.sh there.
+source_repo=Okan-wqm/aquaculture_platform
+source_path=contracts/suderra-edge
+source_commit=c24ed7f65fa73c6c8180b788c2b5510af3828acc
+v1_version=1.0.0
+v1_sha256sums_sha256=f823ce234b380f94de082912d6ae69a0e5efee19f8179bb8dda025d21b94a242

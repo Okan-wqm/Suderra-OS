@@ -1,0 +1,16 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 2,
+  "kind": "verify-current",
+  "outcome": "rejected",
+  "reason": "signature-invalid",
+  "subject": {
+    "version": "1.6.0",
+    "statement_type": "suderra.edge-release.v1"
+  },
+  "detail": "release statement signature did not verify; start refused"
+}
