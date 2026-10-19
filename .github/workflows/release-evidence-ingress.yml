@@ -232,7 +232,7 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: Upload immutable operator evidence ingress
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rei-${{ inputs.version }}-${{ inputs.source_sha }}-${{ inputs.source_image_build_run_id }}-${{ inputs.source_image_build_run_attempt }}
           path: |

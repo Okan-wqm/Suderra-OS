@@ -179,7 +179,7 @@ jobs:
             --expected-workflow-path .github/workflows/governance-drift.yml \
             --expected-branch main
       - name: Upload governance evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-governance-${{ needs.validate.outputs.version }}
           path: release-governance/
@@ -284,7 +284,7 @@ jobs:
             --evidence-ingress-certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --check-files
       - name: Upload preflight governance inputs for tag governance gate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-governance-inputs-${{ needs.validate.outputs.version }}
           path: |
@@ -294,7 +294,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
       - name: Upload release input bundle for tag workflow
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-inputs-${{ needs.validate.outputs.version }}
           path: |
@@ -608,7 +608,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Upload staged release bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staged-release-${{ needs.validate.outputs.version }}
           path: |
@@ -897,7 +897,7 @@ jobs:
             --require-asset-sidecars
 
       - name: Upload signed release evidence inputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: signed-release-${{ needs.validate.outputs.version }}
           path: |
@@ -1229,7 +1229,7 @@ jobs:
             > post-publication-verification/final-release.json
 
       - name: Upload post-publication verification evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: post-publication-verification-${{ needs.validate.outputs.version }}
           path: post-publication-verification/
