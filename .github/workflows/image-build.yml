@@ -302,7 +302,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-build-logs
           path: build-logs/
@@ -318,7 +318,7 @@ jobs:
 
       - name: Upload image artifact
         if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-image
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
@@ -579,7 +579,7 @@ jobs:
 
       - name: Upload installer base build logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-base-build-logs
           path: |
@@ -594,7 +594,7 @@ jobs:
 
       - name: Upload installer base artifact
         if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: usb-installer-base-${{ steps.base_identity.outputs.identity_digest }}
           path: build-logs/${{ matrix.defconfig }}-base-artifact/
@@ -603,7 +603,7 @@ jobs:
 
       - name: Upload installer base identity index
         if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-base-index
           path: |
@@ -974,7 +974,7 @@ jobs:
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-build-logs
           path: build-logs/
@@ -990,7 +990,7 @@ jobs:
 
       - name: Upload image artifact
         if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-image
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
@@ -1067,7 +1067,7 @@ jobs:
           sha256sum "${out}" > "${out}.sha256"
           ls -lh "${out}" "${out}.sha256"
       - name: Upload installer artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: installer-${{ matrix.arch }}
           path: |
@@ -1132,7 +1132,7 @@ jobs:
 
       - name: Upload boot logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.defconfig }}-qemu-boot-logs
           path: output/qemu-boot-logs/
@@ -1188,7 +1188,7 @@ jobs:
             echo "| Contract | image-build-contract.json |"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload image build contract
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: image-build-contract
           path: image-build-contract/
