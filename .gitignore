@@ -5,6 +5,8 @@
 /output/
 /dl/
 /build/
+# scripts/build.sh default BR2_CCACHE_DIR
+/.ccache/
 *.tar.gz
 *.tar.xz
 *.tar.bz2
