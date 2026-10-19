@@ -27,6 +27,7 @@ docs/
   - [ADR-0005: dm-verity + Secure Boot](architecture/ADR-0005-dm-verity-secure-boot.md)
   - [ADR-0006: IEC 62443 SL 2 hedef seçimi (SL3 yerine)](architecture/ADR-0006-iec-62443-sl2-vs-sl3.md)
   - [ADR-0007: ARM doğrulanmış boot + dm-verity + A/B zinciri](architecture/ADR-0007-arm-verity-ab-boot-chain.md)
+  - [ADR-0008: Edge agent entegrasyon sözleşmesi — Suderra OS yükümlülükleri](architecture/ADR-0008-edge-agent-integration-contract.md) (kayıt kararı: aquaculture_platform ADR-048)
   - [ADR-template.md](architecture/ADR-template.md)
 
 ### Güvenlik
