@@ -28,9 +28,12 @@ fail() {
 # 1. The repository itself.
 python3 -I "${CHECK}" --root "${ROOT}" static
 
-# post-build enforces the resolved mode on every image it builds.
-grep -q 'check-kernel-config.py" resolved' "${ROOT}/board/suderra/common/post-build.sh" ||
-    fail "post-build.sh must run check-kernel-config.py resolved on the image's kernel tree"
+# post-build enforces the resolved mode on every image it builds, with the
+# argument shape this test runs below (--root is a global option, before the
+# subcommand; after it, argparse refuses the call and every image build fails).
+grep -qF 'check-kernel-config.py" --root "${SUDERRA_EXTERNAL_DIR}" resolved' \
+    "${ROOT}/board/suderra/common/post-build.sh" ||
+    fail "post-build.sh must run check-kernel-config.py --root <external> resolved on the image's kernel tree"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
