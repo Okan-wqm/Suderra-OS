@@ -78,8 +78,40 @@ make_canary() {
     chmod -R u+w "${CANARY}"
 }
 
+# What a tree holds, without following links: every entry with its type and
+# its content (the SHA-256 of a file, the target of a link). Owners and modes
+# are left out, since the canary's are rewritten on purpose.
+tree_manifest() {
+    (cd "$1" && find . -xdev | sort | while IFS= read -r entry; do
+        if [ -L "${entry}" ]; then
+            printf 'L %s -> %s\n' "${entry}" "$(readlink "${entry}")"
+        elif [ -d "${entry}" ]; then
+            printf 'D %s\n' "${entry}"
+        elif [ -f "${entry}" ]; then
+            printf 'F %s %s\n' "${entry}" "$(sha256sum < "${entry}" | cut -d' ' -f1)"
+        else
+            printf 'O %s\n' "${entry}"
+        fi
+    done)
+}
+
+# Drops the manifest entries at and below the mount points inside /etc (the
+# /data-backed /etc/dropbear, the one-time-password shadow): /etc's listing
+# stops at them while the canary's copy descends, and neither is /etc.
+drop_etc_mounts() {
+    awk 'NR == FNR { if (index($5, "/etc/") == 1) mounts["." substr($5, 5)] = 1; next }
+        {
+            path = $2
+            for (m in mounts) if (path == m || index(path, m "/") == 1) next
+            print
+        }' /proc/self/mountinfo -
+}
+
+# Entries the canary gained, lost or changed against the image's /etc.
 canary_diff() {
-    diff -r /etc "${CANARY}" 2>&1 || true
+    tree_manifest /etc | drop_etc_mounts > "${WORK}/etc.manifest"
+    tree_manifest "${CANARY}" | drop_etc_mounts > "${WORK}/canary.manifest"
+    diff -u "${WORK}/etc.manifest" "${WORK}/canary.manifest" | grep '^[-+][^-+]' || true
 }
 
 # Files under the writable file systems (the dev image's root and /data)
