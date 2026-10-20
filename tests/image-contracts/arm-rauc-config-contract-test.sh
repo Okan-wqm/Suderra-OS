@@ -13,11 +13,13 @@ IFS=$'\n\t'
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 P="${ROOT}/package/suderra-rauc-config"
 
-# system.conf.arm: U-Boot backend, aarch64 device class, by-partlabel slots, hook.
+# system.conf.arm: U-Boot backend, per-board compatible placeholder (filled
+# by post-build from the OTA target contract, rauc-compatible-contract-test.sh),
+# by-partlabel slots, hook.
 arm_conf="${P}/system.conf.arm"
 [ -f "${arm_conf}" ] || { echo "ERROR: system.conf.arm yok" >&2; exit 1; }
 grep -q '^bootloader=uboot' "${arm_conf}" || { echo "ERROR: ARM bootloader=uboot değil" >&2; exit 1; }
-grep -q '^compatible=suderra-os-aarch64' "${arm_conf}" || { echo "ERROR: ARM compatible aarch64 değil" >&2; exit 1; }
+grep -qx 'compatible=@SUDERRA_RAUC_COMPATIBLE@' "${arm_conf}" || { echo "ERROR: ARM compatible kart başına placeholder değil (DEC-8.3)" >&2; exit 1; }
 grep -q 'suderra-rauc-arm-slot-hook.sh' "${arm_conf}" || { echo "ERROR: ARM system.conf slot hook bağlamıyor" >&2; exit 1; }
 grep -q 'by-partlabel/rootfs-a$' "${arm_conf}" || { echo "ERROR: ARM slotlar by-partlabel değil" >&2; exit 1; }
 if grep -q 'grubenv' "${arm_conf}"; then echo "ERROR: ARM system.conf grubenv içermemeli" >&2; exit 1; fi
@@ -56,7 +58,8 @@ grep -q 'fw_env.config' "${mk}" || { echo "ERROR: .mk fw_env.config kurmuyor" >&
 crb="${ROOT}/scripts/create-rauc-bundle.sh"
 bash -n "${crb}"
 grep -q 'create_arm_bundle' "${crb}" || { echo "ERROR: create-rauc-bundle arm subcommand yok" >&2; exit 1; }
-grep -q 'compatible=suderra-os-aarch64' "${crb}" || { echo "ERROR: arm bundle aarch64 compatible değil" >&2; exit 1; }
+grep -q 'compatible=\${compatible}' "${crb}" || { echo "ERROR: arm bundle compatible OTA target'tan gelmiyor" >&2; exit 1; }
+if grep -q 'compatible=suderra-os-aarch64' "${crb}"; then echo "ERROR: arm bundle paylaşılan aarch64 compatible taşıyor (EI-045)" >&2; exit 1; fi
 grep -q 'suderra-A.fit' "${crb}" || { echo "ERROR: arm bundle FIT staging yapmıyor" >&2; exit 1; }
 
 # PROD defconfig'ler RAUC + config paketini seçmeli (dev = minimal, x86 desenine

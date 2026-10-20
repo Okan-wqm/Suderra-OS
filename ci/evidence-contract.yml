@@ -633,7 +633,7 @@
       "qemu-x86_64-prod-ab": {
         "backend": "grub-rauc",
         "boot_backend": "grub-rauc",
-        "compatible": "suderra-os-x86_64",
+        "compatible": "suderra-os-qemu-x86_64",
         "bundle_artifacts": [
           "suderra-os-{version}-{target}.raucb",
           "suderra-os-update-manifest.json"
@@ -657,7 +657,7 @@
       "revpi4": {
         "backend": "none",
         "boot_backend": "provisioning-only",
-        "compatible": "suderra-os-revpi4",
+        "compatible": "suderra-os-revpi-connect4",
         "bundle_artifacts": [],
         "health_policy": "provisioning-only",
         "health_checks": [],
@@ -672,7 +672,7 @@
       "rpi4": {
         "backend": "none",
         "boot_backend": "provisioning-only",
-        "compatible": "suderra-os-rpi4",
+        "compatible": "suderra-os-rpi4-cm4",
         "bundle_artifacts": [],
         "health_policy": "provisioning-only",
         "health_checks": [],
@@ -687,7 +687,7 @@
       "rpi4-prod-ab": {
         "backend": "uboot-rauc",
         "boot_backend": "uboot-rauc",
-        "compatible": "suderra-os-aarch64",
+        "compatible": "suderra-os-rpi4-cm4",
         "bundle_artifacts": [
           "suderra-os-{version}-{target}.raucb",
           "suderra-os-update-manifest.json"
@@ -711,7 +711,7 @@
       "revpi4-prod-ab": {
         "backend": "uboot-rauc",
         "boot_backend": "uboot-rauc",
-        "compatible": "suderra-os-aarch64",
+        "compatible": "suderra-os-revpi-connect4",
         "bundle_artifacts": [
           "suderra-os-{version}-{target}.raucb",
           "suderra-os-update-manifest.json"

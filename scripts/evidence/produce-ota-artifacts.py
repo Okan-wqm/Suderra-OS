@@ -176,7 +176,10 @@ def create_command(args: argparse.Namespace) -> int:
         args.binaries_dir.mkdir(parents=True, exist_ok=True)
         bundle = args.binaries_dir / bundle_name_for(args.version, args.target, policy)
         subcommand = bundle_subcommand_for(args.target, policy)
-        run([str(args.rauc_bundle_tool), subcommand, str(args.binaries_dir), args.version, str(bundle)])
+        run([
+            str(args.rauc_bundle_tool), subcommand, str(args.binaries_dir), args.version, str(bundle),
+            policy["compatible"],
+        ])
         if not bundle.is_file() or bundle.stat().st_size <= 0:
             raise ValueError(f"RAUC bundle was not produced: {bundle}")
         manifest_path = args.binaries_dir / "suderra-os-update-manifest.json"

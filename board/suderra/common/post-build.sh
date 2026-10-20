@@ -199,6 +199,26 @@ else
     echo "==> ${DEFCONFIG_NAME} declares no board_profile; it runs no edge agent"
 fi
 
+# RAUC compatible (ADR-048 DEC-8.3): one per board, so no board's bundle
+# installs on another. scripts/ci/rauc-compatible.py takes the compatible of
+# the image's OTA target from ci/evidence-contract.yml (the value the bundle
+# tool signs into every bundle of that target) and fails unless it equals the
+# board's boards.json rauc_compatible (and so RAUC_COMPATIBLE above), or, for
+# an image with no board, unless it differs from every board's.
+RAUC_SYSTEM_CONF="${TARGET_DIR}/etc/rauc/system.conf"
+if [ -f "${RAUC_SYSTEM_CONF}" ]; then
+    rauc_compatible="$(python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/rauc-compatible.py" \
+        --root "${SUDERRA_EXTERNAL_DIR}" image "${DEFCONFIG_NAME}_defconfig")"
+    # Idempotent: Buildroot reruns post-build on an already filled target.
+    sed -i "s/^compatible=@SUDERRA_RAUC_COMPATIBLE@\$/compatible=${rauc_compatible}/" "${RAUC_SYSTEM_CONF}"
+    if ! grep -qx "compatible=${rauc_compatible}" "${RAUC_SYSTEM_CONF}" ||
+       [ "$(grep -c '^compatible=' "${RAUC_SYSTEM_CONF}")" -ne 1 ]; then
+        echo "ERROR: ${RAUC_SYSTEM_CONF} must carry exactly compatible=${rauc_compatible}"
+        exit 1
+    fi
+    echo "==> RAUC compatible ${rauc_compatible}"
+fi
+
 # Kernel config list (statements.json compatibility.kernel_config): one
 # CONFIG_<NAME>=y|m line per enabled symbol of the kernel this image boots.
 if [ -n "${BUILD_DIR:-}" ]; then

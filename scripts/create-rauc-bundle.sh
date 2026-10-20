@@ -8,8 +8,12 @@ IFS=$'\n\t'
 usage() {
     cat <<'EOF'
 Usage:
-  create-rauc-bundle.sh x86 <BINARIES_DIR> <VERSION> <OUTPUT.raucb>
-  create-rauc-bundle.sh arm <BINARIES_DIR> <VERSION> <OUTPUT.raucb>
+  create-rauc-bundle.sh x86 <BINARIES_DIR> <VERSION> <OUTPUT.raucb> <COMPATIBLE>
+  create-rauc-bundle.sh arm <BINARIES_DIR> <VERSION> <OUTPUT.raucb> <COMPATIBLE>
+
+COMPATIBLE is the OTA target's RAUC compatible from ci/evidence-contract.yml,
+the same value post-build.sh writes into the image's /etc/rauc/system.conf
+(ADR-048 DEC-8.3: one compatible per board, from boards.json).
 
 Required environment:
   SUDERRA_RAUC_SIGNING_CERT      RAUC bundle signing certificate
@@ -31,6 +35,16 @@ die() {
 
 need_file() {
     [ -s "$1" ] || die "required file missing or empty: $1"
+}
+
+need_compatible() {
+    case "$1" in
+        suderra-os-[a-z0-9]*) ;;
+        *) die "RAUC compatible must be a suderra-os-<board> value: '$1'" ;;
+    esac
+    case "$1" in
+        *[!a-z0-9_-]*) die "RAUC compatible contains unsupported characters: '$1'" ;;
+    esac
 }
 
 production_mode() {
@@ -120,10 +134,11 @@ write_manifest() {
     local version="$2"
     local rootfs="$3"
     local verity="$4"
+    local compatible="$5"
 
     cat > "${manifest}" <<EOF
 [update]
-compatible=suderra-os-x86_64
+compatible=${compatible}
 version=${version}
 
 [bundle]
@@ -149,6 +164,7 @@ create_x86_bundle() {
     local binaries_dir="$1"
     local version="$2"
     local output="$3"
+    local compatible="$4"
     local rauc_tool
     local signing_key="${SUDERRA_RAUC_SIGNING_KEY:-}"
     local signing_cert="${SUDERRA_RAUC_SIGNING_CERT:-}"
@@ -159,6 +175,7 @@ create_x86_bundle() {
     local verity
 
     [ -n "${version}" ] || die "version must not be empty"
+    need_compatible "${compatible}"
     case "${version}" in
         *[!A-Za-z0-9._+-]*)
             die "version contains unsupported characters: ${version}"
@@ -196,7 +213,7 @@ create_x86_bundle() {
     stage_file "${script_dir}/rauc-x86-slot-hook.sh" "${stage_dir}/suderra-rauc-x86-slot-hook.sh"
     chmod 0755 "${stage_dir}/suderra-rauc-x86-slot-hook.sh"
 
-    write_manifest "${stage_dir}/manifest.raucm" "${version}" "${rootfs}" "${verity}"
+    write_manifest "${stage_dir}/manifest.raucm" "${version}" "${rootfs}" "${verity}" "${compatible}"
     if production_mode; then
         production_signing_evidence
     fi
@@ -222,13 +239,14 @@ write_arm_manifest() {
     local version="$2"
     local rootfs="$3"
     local verity="$4"
+    local compatible="$5"
 
-    # ARM: aarch64 device class + U-Boot signed-FIT slot hook. rootfs/verity
+    # ARM: per-board compatible + U-Boot signed-FIT slot hook. rootfs/verity
     # are the A/B slot images; suderra-A/B.fit are staged as bundle files that
     # the hook copies into the boot FAT (not RAUC slot images).
     cat > "${manifest}" <<EOF
 [update]
-compatible=suderra-os-aarch64
+compatible=${compatible}
 version=${version}
 
 [bundle]
@@ -254,6 +272,7 @@ create_arm_bundle() {
     local binaries_dir="$1"
     local version="$2"
     local output="$3"
+    local compatible="$4"
     local rauc_tool
     local signing_key="${SUDERRA_RAUC_SIGNING_KEY:-}"
     local signing_cert="${SUDERRA_RAUC_SIGNING_CERT:-}"
@@ -261,6 +280,7 @@ create_arm_bundle() {
     local script_dir stage_dir rootfs verity
 
     [ -n "${version}" ] || die "version must not be empty"
+    need_compatible "${compatible}"
     case "${version}" in
         *[!A-Za-z0-9._+-]*) die "version contains unsupported characters: ${version}" ;;
     esac
@@ -295,7 +315,7 @@ create_arm_bundle() {
         "${stage_dir}/suderra-rauc-arm-slot-hook.sh"
     chmod 0755 "${stage_dir}/suderra-rauc-arm-slot-hook.sh"
 
-    write_arm_manifest "${stage_dir}/manifest.raucm" "${version}" "${rootfs}" "${verity}"
+    write_arm_manifest "${stage_dir}/manifest.raucm" "${version}" "${rootfs}" "${verity}" "${compatible}"
     if production_mode; then
         production_signing_evidence
     fi
@@ -318,18 +338,18 @@ create_arm_bundle() {
 command="${1:-}"
 case "${command}" in
     x86)
-        [ "$#" -eq 4 ] || {
+        [ "$#" -eq 5 ] || {
             usage >&2
             exit 2
         }
-        create_x86_bundle "$2" "$3" "$4"
+        create_x86_bundle "$2" "$3" "$4" "$5"
         ;;
     arm)
-        [ "$#" -eq 4 ] || {
+        [ "$#" -eq 5 ] || {
             usage >&2
             exit 2
         }
-        create_arm_bundle "$2" "$3" "$4"
+        create_arm_bundle "$2" "$3" "$4" "$5"
         ;;
     --help|-h|help)
         usage
