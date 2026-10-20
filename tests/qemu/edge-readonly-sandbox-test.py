@@ -120,11 +120,12 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
                 sandbox.get("etc_diff", "")[:600])
         allowed = [p for p in sandbox.get("allowed", "").splitlines() if p]
         written = [p for p in sandbox.get("written", "").splitlines() if p]
-        state_root = allowed[0] if allowed else "/var/lib/suderra"
+        # /var/lib/suderra is bound from /data/suderra/agent (mutable-state.json).
+        state_roots = [p for p in allowed if p == "/var/lib/suderra" or under(p, ["/data/suderra/agent"])]
         c.check("the agent writes only inside its ReadWritePaths", all(under(p, allowed) for p in written),
                 str([p for p in written if not under(p, allowed)]))
         c.check("the agent's state goes under /var/lib/suderra",
-                any(under(p, [state_root]) for p in written), str(written[:20]))
+                bool(written) and any(under(p, state_roots) for p in written), str(written[:20]))
         journal = sandbox.get("journal", "")
         c.check("no read-only file system error in the agent's journal",
                 "Read-only file system" not in journal and "os error 30" not in journal,

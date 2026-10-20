@@ -90,6 +90,16 @@ written_since() {
     done
 }
 
+# The /data directory a bind-mounted tree of the root is backed by (empty
+# when it is not bound from /data): mountinfo field 4 is the bound root
+# within the file system mounted at /data.
+backing_of() {
+    awk -v target="$1" '
+        $5 == "/data" { data_dev = $3 }
+        $5 == target { dev = $3; root = $4 }
+        END { if (dev != "" && dev == data_dev) print "/data" root }' /proc/self/mountinfo
+}
+
 probe_facts() {
     emit_cmd lifecycle "${INSTALLER}" lifecycle status
     emit provisioning_open "$([ -e /run/suderra-os/provisioning-open ] && echo yes || echo no)"
@@ -191,8 +201,12 @@ probe_sandbox_agent() {
     emit_cmd journal journalctl --no-pager -o cat -u "${SANDBOX_UNIT}.service"
     emit etc_diff "$(canary_diff)"
     emit written "$(written_since "${marker}" "${agent_uid}")"
+    # The unit's writable trees and, for the ones bound from /data, the
+    # backing directory the writes land in (written_since scans /data).
     emit allowed "$(for d in /var/lib/suderra /var/log/suderra /run/suderra/agent-health; do
-        realpath "${d}" 2>/dev/null || true; done)"
+        printf '%s\n' "${d}"
+        backing_of "${d}"
+    done)"
     systemctl reset-failed "${SANDBOX_UNIT}.service" 2>/dev/null || true
     rm -rf "${CANARY:?}"
     systemctl start --no-block "${AGENT_UNIT}" || true
