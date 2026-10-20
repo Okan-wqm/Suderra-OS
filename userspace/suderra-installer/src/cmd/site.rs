@@ -169,8 +169,10 @@ fn read_envelope(path: &Path) -> Result<Result<Envelope, Reason>> {
     Ok(Envelope::parse(&bytes))
 }
 
-/// Re-verifies the installed site set against the receipt (DEC-4.10):
-/// bundle, site config, RBAC manifest and every site file.
+/// Re-verifies the installed site set (DEC-4.10): bundle, site config, RBAC
+/// manifest and every site file. `device` is the receipt's installed record
+/// (`Records::installed_record`), so each statement must be the one the
+/// receipt recorded (installed-digest-mismatch otherwise).
 pub(crate) fn reverify(
     paths: &Paths,
     keys: &KeyStore,
@@ -221,11 +223,5 @@ pub(crate) fn reverify(
     }
     let (verdict, _) = verify_site_config(&site, &scope, identity, &anchors, &rbac, &files);
     reasons.extend(verdict.reasons);
-    let digests_match = receipt.trust_anchors_digest.sha256 == ta.statement_digest()
-        && receipt.site_config_digest.sha256 == site.statement_digest()
-        && receipt.rbac_manifest_digest.sha256 == rbac.statement_digest();
-    if !digests_match {
-        reasons.insert(Reason::InstalledDigestMismatch);
-    }
     Ok(reasons)
 }

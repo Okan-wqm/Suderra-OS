@@ -12,12 +12,19 @@
 //! | min-epoch ratchet | `ratchet/<purpose>` | key-epoch-advance (DEC-15) |
 //! | rollback floor | `edge/floor` | lifecycle activate |
 //! | install receipt | `edge/receipt.json` (+ `receipt.previous.json`) | installer |
-//! | installed release statement | `edge/release.dsse.json` | installer |
+//! | release statements | `edge/statements/<statement digest>.dsse.json` | installer |
+//!
+//! The receipt is the commit point of an install. Release statements are
+//! named by their digest, so writing the next release's statement never
+//! touches the one the committed receipt names, and the update_seq records
+//! (written before the receipt, so a replay is refused even after an
+//! interrupted install) are anti-replay state only: re-verification compares
+//! with the digests the receipt records ([`Records::installed_record`]).
 //!
 //! Every record is strict JSON or one decimal line, written atomically; a
 //! record that does not parse is an error, never a default.
 
-use crate::contracts::encoding::{is_semver, is_uuid};
+use crate::contracts::encoding::{is_semver, is_sha256_hex, is_uuid};
 use crate::contracts::json::check_strict_object;
 use crate::contracts::registry::{Arch, BoardProfile, Purpose, SitePath, StatementType};
 use crate::contracts::statements::{DeviceBinding, Digest, SiteFile};
@@ -176,9 +183,21 @@ impl<'a> Records<'a> {
         self.paths.edge_state().join("receipt.json")
     }
 
-    /// The installed release statement's envelope path.
-    pub(crate) fn release_statement_path(&self) -> std::path::PathBuf {
-        self.paths.edge_state().join("release.dsse.json")
+    fn statements_dir(&self) -> std::path::PathBuf {
+        self.paths.edge_state().join("statements")
+    }
+
+    /// Envelope path of the release statement with `digest`.
+    pub(crate) fn release_statement_path(&self, digest: &Digest) -> Result<std::path::PathBuf> {
+        if !is_sha256_hex(&digest.sha256) {
+            bail!(
+                "release statement digest {:?} is not a sha256",
+                digest.sha256
+            );
+        }
+        Ok(self
+            .statements_dir()
+            .join(format!("{}.dsse.json", digest.sha256)))
     }
 
     fn floor_path(&self) -> std::path::PathBuf {
@@ -316,16 +335,55 @@ impl<'a> Records<'a> {
         write_json(&path, receipt)
     }
 
-    /// Stores the installed release statement envelope.
-    pub(crate) fn write_release_statement(&self, envelope_json: &[u8]) -> Result<()> {
-        ensure_dir(&self.paths.edge_state(), 0o700)?;
-        write_atomic(&self.release_statement_path(), envelope_json, 0o600, None)
+    /// The receipt the current one replaced, if any.
+    pub(crate) fn previous_receipt(&self) -> Result<Option<InstallReceipt>> {
+        let receipt: Option<InstallReceipt> =
+            read_json(&self.paths.edge_state().join("receipt.previous.json"))?;
+        if let Some(r) = &receipt {
+            r.validate()?;
+        }
+        Ok(receipt)
     }
 
-    /// Root's view of the device for statement verification.
+    /// Stores a release statement envelope under its statement digest.
+    pub(crate) fn write_release_statement(
+        &self,
+        digest: &Digest,
+        envelope_json: &[u8],
+    ) -> Result<()> {
+        let path = self.release_statement_path(digest)?;
+        ensure_dir(&self.paths.edge_state(), 0o700)?;
+        ensure_dir(&self.statements_dir(), 0o700)?;
+        write_atomic(&path, envelope_json, 0o600, None)
+    }
+
+    /// Removes every release statement the receipt and the previous receipt
+    /// do not name (DEC-1.3: current and previous release only).
+    pub(crate) fn prune_release_statements(&self) -> Result<()> {
+        let keep: Vec<std::path::PathBuf> = [self.receipt()?, self.previous_receipt()?]
+            .into_iter()
+            .flatten()
+            .map(|r| self.release_statement_path(&r.release_statement_digest))
+            .collect::<Result<_>>()?;
+        let dir = self.statements_dir();
+        let listing = match std::fs::read_dir(&dir) {
+            Ok(listing) => listing,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e).with_context(|| format!("cannot list {}", dir.display())),
+        };
+        for entry in listing {
+            let path = entry?.path();
+            if !keep.contains(&path) {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("cannot prune {}", path.display()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Root's view of the device for accepting a statement: the update_seq
+    /// records decide replay.
     pub(crate) fn device_record(&self, facts: &ImageFacts) -> Result<DeviceRecord> {
-        let board = facts.board.board;
-        let receipt = self.receipt()?;
         let mut accepted = BTreeMap::new();
         for statement in StatementType::ALL {
             if statement.spec().sequence.is_some() {
@@ -334,15 +392,50 @@ impl<'a> Records<'a> {
                 }
             }
         }
-        if let Some(r) = &receipt {
-            accepted.insert(
+        let receipt = self.receipt()?;
+        self.record_with(facts, accepted, receipt.as_ref())
+    }
+
+    /// Root's view of the device for re-verifying what `receipt` installed
+    /// (statements.json `reverification`): each statement must be the one
+    /// the receipt recorded when it was accepted.
+    pub(crate) fn installed_record(
+        &self,
+        facts: &ImageFacts,
+        receipt: &InstallReceipt,
+    ) -> Result<DeviceRecord> {
+        let installed = |digest: &Digest| Accepted {
+            seq: None,
+            statement_digest: digest.sha256.clone(),
+        };
+        let accepted = BTreeMap::from([
+            (
                 StatementType::EdgeRelease,
-                Accepted {
-                    seq: None,
-                    statement_digest: r.release_statement_digest.sha256.clone(),
-                },
-            );
-        }
+                installed(&receipt.release_statement_digest),
+            ),
+            (
+                StatementType::TrustAnchors,
+                installed(&receipt.trust_anchors_digest),
+            ),
+            (
+                StatementType::SiteConfig,
+                installed(&receipt.site_config_digest),
+            ),
+            (
+                StatementType::RbacManifest,
+                installed(&receipt.rbac_manifest_digest),
+            ),
+        ]);
+        self.record_with(facts, accepted, Some(receipt))
+    }
+
+    fn record_with(
+        &self,
+        facts: &ImageFacts,
+        accepted: BTreeMap<StatementType, Accepted>,
+        receipt: Option<&InstallReceipt>,
+    ) -> Result<DeviceRecord> {
+        let board = facts.board.board;
         Ok(DeviceRecord {
             board,
             arch: facts.board.arch,
@@ -354,7 +447,7 @@ impl<'a> Records<'a> {
             security_version_floor: self.floor()?,
             accepted,
             ratchet: self.ratchets()?,
-            installed_manifest_digest: receipt.map(|r| r.manifest_digest.sha256),
+            installed_manifest_digest: receipt.map(|r| r.manifest_digest.sha256.clone()),
             os: facts.compat.clone(),
         })
     }

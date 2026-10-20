@@ -322,14 +322,16 @@ pub(crate) struct Installed {
     pub receipt: InstallReceipt,
 }
 
-/// Installs a verified provisioning set: binary, site set, root records,
-/// then the atomic switches. The receipt is the commit point.
-fn install_verified(
+/// Everything an install writes before its commit point: the binary, the
+/// staged site set, the identity, the update_seq records and the release
+/// statement. None of it changes what the committed receipt installed, so an
+/// install interrupted here leaves the previous install verifiable.
+fn stage_install(
     paths: &Paths,
     delivery: &Delivery,
     set: &ProvisioningSet,
     artifact: &Path,
-) -> std::result::Result<Installed, Rejection> {
+) -> std::result::Result<InstallReceipt, Rejection> {
     check_artifact(artifact, set)?;
     place_binary(paths, set, artifact)?;
     let site_version = site::stage(
@@ -345,7 +347,6 @@ fn install_verified(
     .map_err(io)?;
 
     let records = Records::new(paths);
-    let previous = records.receipt().map_err(io)?;
     let m = &set.manifest.statement;
     let r = &set.release.statement;
     if records.identity().map_err(io)?.is_none() {
@@ -357,6 +358,8 @@ fn install_verified(
             })
             .map_err(io)?;
     }
+    // Anti-replay first: a delivery whose install is interrupted after this
+    // point is spent and cannot be replayed (DEC-2.4).
     let accepted = [
         (
             StatementType::EdgeProvisioning,
@@ -384,10 +387,13 @@ fn install_verified(
             .write_accepted(statement, Some(seq), digest)
             .map_err(io)?;
     }
+    let release_statement_digest = Digest {
+        sha256: set.release.digest.clone(),
+    };
     records
-        .write_release_statement(&delivery.release.to_json())
+        .write_release_statement(&release_statement_digest, &delivery.release.to_json())
         .map_err(io)?;
-    let receipt = InstallReceipt {
+    Ok(InstallReceipt {
         type_: RECEIPT_TYPE.to_owned(),
         version: r.version.clone(),
         security_version: r.security_version,
@@ -396,9 +402,7 @@ fn install_verified(
         agent_abi: r.agent_abi,
         artifact_digest: r.artifact.digest.clone(),
         binary_digest: r.artifact.binary_digest.clone(),
-        release_statement_digest: Digest {
-            sha256: set.release.digest.clone(),
-        },
+        release_statement_digest,
         release_key_epoch: set.release.key_epoch,
         manifest_digest: Digest {
             sha256: set.manifest.digest.clone(),
@@ -413,7 +417,7 @@ fn install_verified(
         rbac_manifest_digest: Digest {
             sha256: set.rbac.digest.clone(),
         },
-        site_version: site_version.clone(),
+        site_version,
         site_files: set
             .site_config
             .statement
@@ -422,26 +426,43 @@ fn install_verified(
             .map(|(p, f)| (*p, f.clone()))
             .collect::<std::collections::BTreeMap<_, SiteFile>>(),
         installed_at: now_timestamp(),
-    };
-    records.write_receipt(&receipt).map_err(io)?;
+    })
+}
 
+/// Points `current` and the site set at what `receipt` installed, then
+/// keeps only its release and the previous receipt's (DEC-1.3, DEC-1.4).
+fn switch_to(paths: &Paths, receipt: &InstallReceipt) -> Result<()> {
+    let previous = Records::new(paths).previous_receipt()?;
     site::activate(
         paths,
-        &site_version,
+        &receipt.site_version,
         previous.as_ref().map(|p| p.site_version.as_str()),
-    )
-    .map_err(io)?;
+    )?;
     symlink_atomic(
-        &Path::new("releases").join(&r.version),
+        &Path::new("releases").join(&receipt.version),
         &paths.edge_root().join("current"),
-    )
-    .map_err(io)?;
+    )?;
     prune_releases(
         paths,
-        &r.version,
+        &receipt.version,
         previous.as_ref().map(|p| p.version.as_str()),
-    )
-    .map_err(io)?;
+    )?;
+    Records::new(paths).prune_release_statements()
+}
+
+/// Installs a verified provisioning set: everything is staged, the receipt
+/// is written (the commit point), then the atomic switches. An install
+/// interrupted after the commit is completed by `verify-current`
+/// ([`complete_interrupted_switch`]).
+fn install_verified(
+    paths: &Paths,
+    delivery: &Delivery,
+    set: &ProvisioningSet,
+    artifact: &Path,
+) -> std::result::Result<Installed, Rejection> {
+    let receipt = stage_install(paths, delivery, set, artifact)?;
+    Records::new(paths).write_receipt(&receipt).map_err(io)?;
+    switch_to(paths, &receipt).map_err(io)?;
     Ok(Installed { receipt })
 }
 
@@ -714,19 +735,72 @@ pub(crate) async fn provision(
     report(paths, facts, installed, Some(&delivery.manifest))
 }
 
+/// Completes an install that committed its receipt but was interrupted
+/// before `switch_to` finished. Only that exact state is completed: each of
+/// `current` and the site set still points where the previous receipt put
+/// it (nothing at all on a first install) or already where this receipt
+/// puts it. Any other target is drift and stays a verify-current rejection.
+/// Returns whether a switch was completed.
+fn complete_interrupted_switch(paths: &Paths, receipt: &InstallReceipt) -> Result<bool> {
+    let previous = Records::new(paths).previous_receipt()?;
+    let link = std::fs::read_link(paths.edge_root().join("current")).ok();
+    let site_link = std::fs::read_link(paths.site_root().join("current")).ok();
+    let release_at = |version: &str| Path::new("releases").join(version);
+    let site_at = |version: &str| Path::new("versions").join(version);
+    let committed = (release_at(&receipt.version), site_at(&receipt.site_version));
+    let before = previous
+        .as_ref()
+        .map(|p| (release_at(&p.version), site_at(&p.site_version)));
+    let release_done = link.as_ref() == Some(&committed.0);
+    let site_done = site_link.as_ref() == Some(&committed.1);
+    let release_before = link.as_ref() == before.as_ref().map(|b| &b.0);
+    let site_before = site_link.as_ref() == before.as_ref().map(|b| &b.1);
+    let interrupted = !(release_done && site_done)
+        && (release_done || release_before)
+        && (site_done || site_before);
+    if !interrupted {
+        return Ok(false);
+    }
+    let binary = releases_dir(paths)
+        .join(&receipt.version)
+        .join(naming::BINARY_NAME);
+    if std::fs::symlink_metadata(&binary).is_err()
+        || std::fs::symlink_metadata(versions_dir_of(paths, &receipt.site_version)).is_err()
+    {
+        return Ok(false);
+    }
+    switch_to(paths, receipt)?;
+    Ok(true)
+}
+
+fn versions_dir_of(paths: &Paths, site_version: &str) -> PathBuf {
+    paths.site_root().join("versions").join(site_version)
+}
+
+/// What verify-current proved.
+#[derive(Debug, Clone)]
+pub(crate) struct Current {
+    /// The receipt the installed release and site set match.
+    pub receipt: InstallReceipt,
+    /// An interrupted install's switch was completed first.
+    pub completed_switch: bool,
+}
+
 /// Re-verifies the installed release, binary and site set (DEC-1.5,
-/// DEC-4.10); every failure is a typed verify-current result.
+/// DEC-4.10) against the committed receipt; every failure is a typed
+/// verify-current result.
 pub(crate) fn verify_current(
     paths: &Paths,
     facts: &ImageFacts,
     keys: &KeyStore,
     now: &str,
-) -> std::result::Result<InstallReceipt, Rejection> {
+) -> std::result::Result<Current, Rejection> {
     let records = Records::new(paths);
     let receipt = records
         .receipt()
         .map_err(io)?
         .ok_or_else(|| Rejection::rejected(Reason::ReleaseNotInstalled, "no install receipt"))?;
+    let completed_switch = complete_interrupted_switch(paths, &receipt).map_err(io)?;
     let link = std::fs::read_link(paths.edge_root().join("current"))
         .map_err(|_| Rejection::rejected(Reason::ReleaseNotInstalled, "current is missing"))?;
     if link != Path::new("releases").join(&receipt.version) {
@@ -763,14 +837,17 @@ pub(crate) fn verify_current(
             ))
         }
     }
-    let device = records.device_record(facts).map_err(io)?;
+    let device = records.installed_record(facts, &receipt).map_err(io)?;
     let scope = Scope {
         os_keys: keys,
         device: Some(&device),
         now,
         mode: Mode::Reverify,
     };
-    let statement = read_root_file(&records.release_statement_path(), MAX_DELIVERY)
+    let statement_path = records
+        .release_statement_path(&receipt.release_statement_digest)
+        .map_err(io)?;
+    let statement = read_root_file(&statement_path, MAX_DELIVERY)
         .map_err(io)?
         .ok_or_else(|| {
             Rejection::rejected(Reason::ReleaseNotInstalled, "release statement is missing")
@@ -791,7 +868,10 @@ pub(crate) fn verify_current(
     if !site_reasons.is_empty() {
         return Err(Rejection::rejected(first(&site_reasons), "site set"));
     }
-    Ok(receipt)
+    Ok(Current {
+        receipt,
+        completed_switch,
+    })
 }
 
 fn read_request(path: &Path) -> Result<ProvisioningRequest> {
@@ -854,23 +934,26 @@ pub(crate) async fn run(args: EdgeArgs) -> Result<()> {
         EdgeCommand::VerifyCurrent => {
             let keys = load_os_pins(&paths, facts.variant)?;
             match verify_current(&paths, &facts, &keys, &now_timestamp()) {
-                Ok(receipt) => {
-                    record(
-                        &paths,
-                        &facts,
-                        Report::ok(
-                            ResultKind::VerifyCurrent,
-                            Some(Subject {
-                                version: Some(receipt.version.clone()),
-                                security_version: Some(receipt.security_version),
-                                statement_type: Some(
-                                    StatementType::EdgeRelease.as_str().to_owned(),
-                                ),
-                                statement_digest: Some(receipt.release_statement_digest.clone()),
-                                ..Subject::default()
-                            }),
-                        ),
-                    )?;
+                Ok(Current {
+                    receipt,
+                    completed_switch,
+                }) => {
+                    let mut report = Report::ok(
+                        ResultKind::VerifyCurrent,
+                        Some(Subject {
+                            version: Some(receipt.version.clone()),
+                            security_version: Some(receipt.security_version),
+                            statement_type: Some(StatementType::EdgeRelease.as_str().to_owned()),
+                            statement_digest: Some(receipt.release_statement_digest.clone()),
+                            ..Subject::default()
+                        }),
+                    );
+                    if completed_switch {
+                        report = report.with_detail(
+                            "completed the switch of an install interrupted after its receipt",
+                        );
+                    }
+                    record(&paths, &facts, report)?;
                     Ok(())
                 }
                 Err(rejection) => {
@@ -1245,7 +1328,11 @@ mod tests {
         assert_eq!(reason(&dev), Reason::SiteFileDigestMismatch);
         std::fs::write(&config, "site: test\nseq: 1\n").unwrap();
 
-        let statement = Records::new(&dev.paths).release_statement_path();
+        let records = Records::new(&dev.paths);
+        let installed = records.receipt().unwrap().unwrap();
+        let statement = records
+            .release_statement_path(&installed.release_statement_digest)
+            .unwrap();
         let mut env: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&statement).unwrap()).unwrap();
         env["signatures"][0]["sig"] = serde_json::Value::String(format!("{}A==", "B".repeat(85)));
@@ -1330,5 +1417,172 @@ mod tests {
             dev.last_result().reason.as_deref(),
             Some("manifest-digest-mismatch")
         );
+    }
+
+    /// Stages `spec` as an install that is cut off before its receipt.
+    fn stage_only(dev: &Device, spec: &Spec) {
+        let built = build_delivery(&dev.keys, spec);
+        let artifact = dev.tmp.path().join("staged.tar.gz");
+        std::fs::write(&artifact, &spec.artifact).unwrap();
+        let (delivery, set) = verify_delivery(
+            &dev.paths,
+            &dev.facts,
+            &dev.pins,
+            &built.delivery,
+            &built.request,
+            NOW,
+        )
+        .unwrap();
+        stage_install(&dev.paths, &delivery, &set, &artifact).unwrap();
+    }
+
+    /// Stages and commits `spec` as an install cut off before its switch.
+    fn commit_only(dev: &Device, spec: &Spec) -> InstallReceipt {
+        let built = build_delivery(&dev.keys, spec);
+        let artifact = dev.tmp.path().join("committed.tar.gz");
+        std::fs::write(&artifact, &spec.artifact).unwrap();
+        let (delivery, set) = verify_delivery(
+            &dev.paths,
+            &dev.facts,
+            &dev.pins,
+            &built.delivery,
+            &built.request,
+            NOW,
+        )
+        .unwrap();
+        let receipt = stage_install(&dev.paths, &delivery, &set, &artifact).unwrap();
+        Records::new(&dev.paths).write_receipt(&receipt).unwrap();
+        receipt
+    }
+
+    fn reprovisioning(dev: &Device) -> Spec {
+        lifecycle::write(
+            &dev.paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-21T00:00:00Z".into()),
+        )
+        .unwrap();
+        Spec {
+            update_seq: 2,
+            site_seq: 2,
+            version: "1.7.0",
+            security_version: 7,
+            ..Spec::default()
+        }
+    }
+
+    #[test]
+    fn an_install_cut_off_before_its_receipt_leaves_the_installed_release_verifiable() {
+        let dev = device(LifecycleState::Provisioning);
+        dev.install(&Spec::default()).unwrap();
+        let newer = reprovisioning(&dev);
+        stage_only(&dev, &newer);
+
+        // The update_seq records already name the new statements and the new
+        // release statement is on disk, but the committed receipt still names
+        // 1.6.0: verify-current re-verifies exactly that install.
+        let current = verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        assert_eq!(current.receipt.version, "1.6.0");
+        assert!(!current.completed_switch);
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
+
+        // The staged delivery is spent: its update_seq was recorded first.
+        assert!(dev.install(&newer).is_err());
+        assert_eq!(dev.last_result().reason.as_deref(), Some("sequence-replay"));
+    }
+
+    #[test]
+    fn an_install_cut_off_after_its_receipt_is_completed_by_verify_current() {
+        let dev = device(LifecycleState::Provisioning);
+        dev.install(&Spec::default()).unwrap();
+        let newer = reprovisioning(&dev);
+        let receipt = commit_only(&dev, &newer);
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
+
+        let current = verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        assert!(current.completed_switch);
+        assert_eq!(current.receipt, receipt);
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.7.0"));
+        assert_eq!(
+            std::fs::read_link(dev.paths.site_root().join("current")).unwrap(),
+            Path::new("versions").join(&receipt.site_version)
+        );
+        let again = verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        assert!(!again.completed_switch, "completed once");
+    }
+
+    #[test]
+    fn a_first_install_cut_off_after_its_receipt_is_completed() {
+        let dev = device(LifecycleState::Provisioning);
+        commit_only(&dev, &Spec::default());
+        assert!(dev.current().is_none());
+        let current = verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        assert!(current.completed_switch);
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
+        assert_eq!(
+            std::fs::read_to_string(dev.paths.site_root().join("config.yaml")).unwrap(),
+            "site: test\nseq: 1\n"
+        );
+    }
+
+    #[test]
+    fn only_the_interrupted_switch_state_is_completed() {
+        let dev = device(LifecycleState::Provisioning);
+        dev.install(&Spec::default()).unwrap();
+        let newer = reprovisioning(&dev);
+        commit_only(&dev, &newer);
+        // current points neither where the previous receipt put it nor where
+        // the committed one puts it: drift, not an interrupted switch.
+        std::fs::create_dir_all(dev.paths.edge_root().join("releases/9.9.9")).unwrap();
+        crate::fsutil::symlink_atomic(
+            Path::new("releases/9.9.9"),
+            &dev.paths.edge_root().join("current"),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_current(&dev.paths, &dev.facts, &dev.pins, NOW)
+                .unwrap_err()
+                .reason,
+            Reason::CurrentLinkMismatch
+        );
+    }
+
+    #[test]
+    fn release_statements_are_kept_for_the_current_and_previous_receipt_only() {
+        let dev = device(LifecycleState::Provisioning);
+        dev.install(&Spec::default()).unwrap();
+        let newer = reprovisioning(&dev);
+        dev.install(&newer).unwrap();
+        lifecycle::write(
+            &dev.paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-21T00:00:00Z".into()),
+        )
+        .unwrap();
+        dev.install(&Spec {
+            update_seq: 3,
+            site_seq: 3,
+            version: "1.8.0",
+            security_version: 8,
+            ..Spec::default()
+        })
+        .unwrap();
+        let records = Records::new(&dev.paths);
+        let keep: Vec<_> = [records.receipt(), records.previous_receipt()]
+            .into_iter()
+            .map(|r| {
+                records
+                    .release_statement_path(&r.unwrap().unwrap().release_statement_digest)
+                    .unwrap()
+            })
+            .collect();
+        let mut stored: Vec<_> = std::fs::read_dir(dev.paths.edge_state().join("statements"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        stored.sort();
+        let mut keep_sorted = keep.clone();
+        keep_sorted.sort();
+        assert_eq!(stored, keep_sorted);
     }
 }
