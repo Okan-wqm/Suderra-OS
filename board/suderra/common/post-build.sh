@@ -395,6 +395,16 @@ case "${DEFCONFIG_NAME}" in
         preset_enable suderra-os-install.service
         ;;
     *)
+        # The USB self-installer (suderra-os-install: it writes an OS image
+        # onto the internal disk) belongs to the installer image alone. The
+        # suderra-os-installer package also installs it, with an [Install]
+        # section, into every device image that carries the root installer,
+        # and a dev image's presets end without `disable *`, so preset-all
+        # enabled it and it ran at every boot (the QEMU edge e2e test found
+        # it). Device images do not ship it.
+        rm -f "${TARGET_DIR}/usr/sbin/suderra-os-install" \
+              "${TARGET_DIR}/usr/lib/systemd/system/suderra-os-install.service" \
+              "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-os-install.service"
         enable_unit suderra-data.service sysinit.target
         preset_enable suderra-data.service
         case "${DEFCONFIG_NAME}" in
