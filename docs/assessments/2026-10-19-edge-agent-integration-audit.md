@@ -22,9 +22,9 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 
 | Phase | CRITICAL | HIGH | MEDIUM | LOW | Toplam |
 |---|---|---|---|---|---|
-| P0 | 9 | 7 | 6 | 2 | 24 |
-| P1 | 5 | 16 | 9 | 1 | 31 |
-| P2 | 0 | 0 | 11 | 10 | 21 |
+| P0 | 9 | 8 | 6 | 2 | 25 |
+| P1 | 6 | 17 | 9 | 1 | 33 |
+| P2 | 0 | 0 | 16 | 13 | 29 |
 
 ## Dizin
 
@@ -107,6 +107,16 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 | [EI-075](#EI-075) | LOW | P2 | post-build strips setuid but not setgid bits, contrary to its whitelist comment |
 | [EI-076](#EI-076) | MEDIUM | P1 | The USB self-installer takes its payload key, verifier, rollback floor, key epoch, target board and confirmation from SUDERRA_INSTALLER_* environment variables |
 | [EI-077](#EI-077) | HIGH | P0 | systemd is built without seccomp on every image, so every unit's SystemCallFilter=, RestrictAddressFamilies=, MemoryDenyWriteExecute=, LockPersonality=, RestrictRealtime= and SystemCallArchitectures= are dropped, the agent's included |
+| [EI-078](#EI-078) | CRITICAL | P1 | No image selects e2fsprogs, so production first-boot /data provisioning dies at mkfs.ext4 after the LUKS volume is already formatted and TPM-sealed, and no image has fsck.ext4 |
+| [EI-079](#EI-079) | HIGH | P1 | Suderra OS userspace/Cargo.lock pins rustls 0.23.40 (four RUSTSEC TLS advisories) and the unmaintained unsafe-libyaml via serde_yaml, so cargo deny, Trivy and Grype fail on main and the root installer/ota/telemetry TLS clients carry known flaws |
+| [EI-080](#EI-080) | MEDIUM | P2 | The OS update manifest and the USB payload index are signed over a re-serialized struct, verified with non-strict Ed25519 verify, and accept unknown fields; the Python signer matches Rust only by dict order |
+| [EI-081](#EI-081) | MEDIUM | P2 | suderra-ota writes its state file with write+rename and no fsync, and the rollback-floor file without a directory fsync, so a power cut during an update can leave empty state or lose the floor |
+| [EI-082](#EI-082) | MEDIUM | P2 | suderra-ota checks the bundle's digest and size, then lets rauc install re-read the file by path, so a bundle swapped in between (removable media) bypasses the manifest and rollback-floor check |
+| [EI-083](#EI-083) | LOW | P2 | The rpi4 and revpi4 dev genimage data.ext4 has no 'empty = true', so genimage fills the SUDERRA-DATA partition with a copy of the whole target rootfs |
+| [EI-084](#EI-084) | MEDIUM | P2 | suderra-lockdown reports failures with reasons the lockdown result schema forbids (lifecycle-inconsistent, state-corrupt), so those failure paths record no result |
+| [EI-085](#EI-085) | MEDIUM | P2 | The QEMU semantic evidence collector fails on every boot: ProtectSystem=strict leaves /run read-only and the unit declares no RuntimeDirectory |
+| [EI-086](#EI-086) | LOW | P2 | The QEMU dev image sets BR2_PACKAGE_SYSTEMD_RESOLVED=n while /etc/resolv.conf points at ../run/resolv.conf, which nothing writes, so the image cannot resolve names |
+| [EI-087](#EI-087) | LOW | P2 | OS config and doc hygiene: kernel-hardening.md and ota.md name removed or old symbols, dead BR2 symbols in the QEMU defconfig, an unneeded CONFIG_TCG_VTPM_PROXY in the x86 kernel, and a build-order versus Kconfig inversion for suderra-ota |
 
 ## Bulgular
 
@@ -1443,3 +1453,113 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 - **Kök neden:** The unit sandbox was specified and tested as text (unit-directives.json, edge-agent-unit-contract-test.sh) but never against the systemd the images build.
 - **Mimari düzeltme yönü:** Select BR2_PACKAGE_LIBSECCOMP=y in every systemd defconfig; fail the image contract when a systemd defconfig lacks it; check +SECCOMP on the booted image.
 - **Doğrulama:** tests/image-contracts/edge-agent-unit-contract-test.sh refuses a systemd defconfig without libseccomp; tests/qemu/edge-provisioning-e2e.py requires +SECCOMP in the booted systemd's feature string and edge-readonly-sandbox-test.py runs the agent and the installer under their units' seccomp directives.
+
+<a id="EI-078"></a>
+
+### EI-078 — No image selects e2fsprogs, so production first-boot /data provisioning dies at mkfs.ext4 after the LUKS volume is already formatted and TPM-sealed, and no image has fsck.ext4
+
+- **Önem:** Kritik · **Faz:** P1 · **Son tarih:** 2026-11-30 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** Buildroot defconfigs (e2fsprogs, BusyBox applets) and suderra-data-unlock
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-os-no-e2fsprogs-mkfs-ext4)
+- **Kanıt (dosya:satır):** `board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock:155`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock:176`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock:179`, `configs/suderra_x86_64_defconfig:88`, `configs/suderra_aarch64_rpi4_prod_ab_defconfig:210`, `configs/suderra_aarch64_revpi4_prod_ab_defconfig:124`, `configs/suderra_qemu_x86_64_prod_ab_defconfig:82`, `buildroot/package/busybox/busybox.config:662`, `tests/image-contracts/data-luks-provision-contract-test.sh:34`
+- **Kök neden:** No defconfig selects BR2_PACKAGE_E2FSPROGS (resolved .config of suderra_x86_64, rpi4_prod_ab, revpi4_prod_ab and qemu_x86_64_prod_ab all say '# BR2_PACKAGE_E2FSPROGS is not set'), and BusyBox is built with only the mke2fs applet (CONFIG_MKE2FS=y, MKFS_EXT2 unset), so mkfs.ext4 and fsck.ext4 exist on no image (the built QEMU target has only usr/sbin/mke2fs). suderra-data-unlock runs mkfs.ext4 only on the boot that has just luksFormat-ed and TPM-enrolled the partition (fresh=1 exists only while isLuks fails). Under set -eu the missing command aborts the script with 127 after the volume is sealed. The next boot sees a LUKS header (fresh=0), skips mkfs, and mount_data fails with data-unmountable, so every production device is LOCKED after first boot until reflashed. It is hidden behind EI-020 (x86 prod kernel has no dm-crypt) and EI-029 (ARM prod has no TPM) and surfaces as soon as those are fixed. The image-contract test only greps for the string 'mkfs.ext4 ... mapper_dev', never for the binary. The same cause gives the dev QEMU boot log 'fsck.ext4 not found for /dev/vda2', and means the ext4-on-LUKS /data has no e2fsck after power loss. Verified by resolving the four production defconfigs out of tree and by listing the built QEMU target.
+- **Mimari düzeltme yönü:** Tier 1/2: have the package that owns suderra-data-unlock select BR2_PACKAGE_E2FSPROGS and its FSCK option through Config.in, so no defconfig can omit them. Tier 3: add a post-build image-fact gate that extracts every external command invoked by the root scripts (mkfs.ext4, fsck.ext4, cryptsetup, systemd-cryptenroll, ...) and asserts each resolves in the target, for every defconfig. Make provisioning transactional: a failed mkfs must erase the fresh LUKS header (as the TPM-enroll failure path already does) so the next boot re-provisions instead of leaving an unformatted sealed volume. Run the fresh-volume mkfs path in the QEMU prod_ab loopback test.
+
+<a id="EI-079"></a>
+
+### EI-079 — Suderra OS userspace/Cargo.lock pins rustls 0.23.40 (four RUSTSEC TLS advisories) and the unmaintained unsafe-libyaml via serde_yaml, so cargo deny, Trivy and Grype fail on main and the root installer/ota/telemetry TLS clients carry known flaws
+
+- **Önem:** Yüksek · **Faz:** P1 · **Son tarih:** 2026-11-30 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** userspace/Cargo.lock and deny.toml (suderra-installer, suderra-ota, suderra-attestation, suderra-telemetry)
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-os-rustls-advisories-cargo-lock)
+- **Kanıt (dosya:satır):** `userspace/Cargo.lock:1286`, `userspace/Cargo.lock:167`, `userspace/deny.toml:30`, `userspace/Cargo.toml:57`, `userspace/Cargo.toml:61`
+- **Kök neden:** The lockfile was last refreshed before RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption-level boundaries), -0346 (Debug impls expose TLS secrets), -0348 (Brotli certificate decompression allocates up to 1 GiB before authentication) and -0349 (unauthenticated ServerHello downgrades later connections to classical key exchange) were published; all are fixed in rustls >= 0.23.46. suderra-installer, suderra-ota, suderra-attestation and suderra-telemetry all use reqwest with rustls-tls, and the root installer is the activation/manifest TLS client. serde_yaml (deprecated) pulls unsafe-libyaml (RUSTSEC-2024-0449), for which no safe upgrade exists. The CI run on the P0 branch tip shows 'cargo deny check: advisories FAILED' with exactly these five advisories (deny.toml keeps ignore = [] on purpose), and the Security Scan job fails in Trivy fs (--exit-code 1, CRITICAL,HIGH) and Grype (--fail-on high --only-fixed). The last green Rust Userspace run on main is from 2026-07-11, so the advisory database moved under an unchanged lockfile; nothing refreshes the lockfile on a schedule. The agent side is not affected (monorepo Cargo.lock has rustls 0.23.46, rustls-webpki 0.103.15).
+- **Mimari düzeltme yönü:** Run cargo update -p rustls (and rustls-webpki) to >= 0.23.46 and re-run cargo deny. Remove serde_yaml from the workspace (Tier 1) by moving the OS-side config files to a maintained parser such as serde-saphyr or to TOML/JSON, instead of adding an ignore entry. Tier 2: add a scheduled cargo-update/dependabot lane for userspace/Cargo.lock so a published advisory produces a fix PR, and make cargo deny a required check for the release workflow.
+
+<a id="EI-080"></a>
+
+### EI-080 — The OS update manifest and the USB payload index are signed over a re-serialized struct, verified with non-strict Ed25519 verify, and accept unknown fields; the Python signer matches Rust only by dict order
+
+- **Önem:** Orta · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** suderra-ota SignedManifest, suderra-installer UsbPayloadIndex, scripts/create-os-update-manifest.py
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-os-signed-documents-reserialized-nonstrict)
+- **Kanıt (dosya:satır):** `userspace/suderra-ota/src/main.rs:121`, `userspace/suderra-ota/src/main.rs:578`, `userspace/suderra-ota/src/main.rs:586`, `userspace/suderra-installer/src/usb_payload.rs:47`, `userspace/suderra-installer/src/usb_payload.rs:91`, `userspace/suderra-installer/src/usb_payload.rs:583`, `scripts/create-os-update-manifest.py:54`, `scripts/create-os-update-manifest.py:75`
+- **Kök neden:** This is the EI-054 class, left in two documents the contract verifier does not cover. SignedManifest (suderra-ota) and UsbPayloadIndex have no deny_unknown_fields, so unknown fields are dropped before verification and are never signed. Both verify with ed25519-dalek VerifyingKey::verify (the contract path uses verify_strict), and the signed bytes are the re-serialization of the parsed struct (serde_json::to_vec for the OTA manifest, a sorted-key rewrite for the USB index). The OTA manifest signer (create-os-update-manifest.py canonical_bytes = json.dumps of a dict) reproduces the Rust bytes only because the dict's key order and null for release_notes happen to equal the struct's field order and Option serialization; reordering either side breaks every signature silently. The USB index sign path re-serializes through the same struct.
+- **Mimari düzeltme yönü:** Tier 1: sign and verify the received bytes (a DSSE-style envelope over the exact payload, as the contract statements do) and add deny_unknown_fields plus verify_strict; if the OS keeps its own document types, move them into the contract with golden cross-language vectors so a Python or TypeScript signer cannot diverge. Add a test that adding an unknown field or reordering keys fails verification.
+
+<a id="EI-081"></a>
+
+### EI-081 — suderra-ota writes its state file with write+rename and no fsync, and the rollback-floor file without a directory fsync, so a power cut during an update can leave empty state or lose the floor
+
+- **Önem:** Orta · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** suderra-ota state and rollback-floor persistence
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-ota-state-writes-not-durable)
+- **Kanıt (dosya:satır):** `userspace/suderra-ota/src/main.rs:802`, `userspace/suderra-ota/src/main.rs:808`, `userspace/suderra-ota/src/main.rs:810`, `userspace/suderra-ota/src/main.rs:827`, `userspace/suderra-ota/src/main.rs:839`
+- **Kök neden:** save_state does fs::write to a .tmp and fs::rename: neither the data nor the parent directory is fsynced, so on ext4 a power loss around install, mark-good or rollback can leave a zero-length or stale state.json. persist_rollback_floor fsyncs the file but not the directory, so the rename may not survive. In production load_state refuses to continue without the monotonic floor, so a corrupted state makes every suderra-ota command (mark-good, rollback, install) fail, which the mark-good unit turns into a failed health gate and slot ping-pong. Power loss during an OTA is the normal field failure on these devices.
+- **Mimari düzeltme yönü:** Tier 1: one durable-write helper (temp in the same directory, write, fsync file, rename, fsync directory) used for state, floor and the pre-update record; the userspace installer already has write_atomic for this, so share it from a common crate instead of a second implementation. Add a fault-injection test that truncates the temp file before rename.
+
+<a id="EI-082"></a>
+
+### EI-082 — suderra-ota checks the bundle's digest and size, then lets rauc install re-read the file by path, so a bundle swapped in between (removable media) bypasses the manifest and rollback-floor check
+
+- **Önem:** Orta · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** suderra-ota bundle verification and rauc install
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-ota-bundle-check-then-use)
+- **Kanıt (dosya:satır):** `userspace/suderra-ota/src/main.rs:679`, `userspace/suderra-ota/src/main.rs:699`, `userspace/suderra-ota/src/main.rs:220`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-runtime-scenario:85`
+- **Kök neden:** verify_bundle hashes the file and compares it with the signed manifest, then install() runs 'rauc install <path>', which opens the path again. RAUC verifies the bundle's own signature, so the swap cannot install an unsigned bundle, but an older validly signed bundle can be substituted after the manifest's version, rollback_floor and min_current_version checks, which RAUC itself does not enforce (EI-031). The bundle path comes from caller-controlled locations such as the payload mount. Same class as EI-061 for the USB installer.
+- **Mimari düzeltme yönü:** Tier 1: open the bundle once, verify the digest on that descriptor, and hand RAUC the descriptor (/proc/self/fd/N) or copy it into a root-only directory first and install from the copy; additionally have RAUC compare the bundle's version with the verified manifest (rauc info) before installing.
+
+<a id="EI-083"></a>
+
+### EI-083 — The rpi4 and revpi4 dev genimage data.ext4 has no 'empty = true', so genimage fills the SUDERRA-DATA partition with a copy of the whole target rootfs
+
+- **Önem:** Düşük · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** board/suderra/aarch64-rpi4 and aarch64-revpi4 genimage.cfg (dev data.ext4)
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-arm-dev-data-image-copies-rootfs)
+- **Kanıt (dosya:satır):** `board/suderra/aarch64-rpi4/genimage.cfg:47`, `board/suderra/aarch64-revpi4/genimage.cfg:26`, `board/suderra/x86_64/genimage-qemu.cfg:25`, `board/suderra/x86_64/genimage-qemu.cfg:29`
+- **Kök neden:** The x86 QEMU config documents the rule ('empty = true is required: without it genimage fills a filesystem image with the whole --rootpath'), but the ARM dev configs declare data.ext4 without it or a mountpoint, so /data on every RPi4 and RevPi dev image starts with a second copy of the rootfs (bin, etc, usr ...) beside the data layout the tmpfiles rules create. It wastes the fixed 512M, can make the build fail when the rootfs grows, and puts a duplicate /etc (including the dev provisioning material) on a partition that is writable and mounted by label.
+- **Mimari düzeltme yönü:** Tier 1: add empty = true to both data.ext4 images; Tier 3: a post-image check that fails when the data image contains anything but the layout directories, run for every defconfig.
+
+<a id="EI-084"></a>
+
+### EI-084 — suderra-lockdown reports failures with reasons the lockdown result schema forbids (lifecycle-inconsistent, state-corrupt), so those failure paths record no result
+
+- **Önem:** Orta · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** suderra-lockdown script and the lockdown result contract
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-lockdown-failure-reasons-refused)
+- **Kanıt (dosya:satır):** `board/suderra/common/rootfs-overlay/usr/sbin/suderra-lockdown:39`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-lockdown:55`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-lockdown:58`, `userspace/suderra-installer/src/contracts/registry.rs:713`, `contracts/suderra-edge/v1/schemas/result.schema.json:355`
+- **Kök neden:** The contract allows only receipt-missing, firewall-load-failed and io-error for a lockdown result (registry.rs:713-717, result.schema.json:355-362). The script calls 'result write --kind lockdown --reason lifecycle-inconsistent' when the lifecycle is not ACTIVE and '--reason state-corrupt' when dropbear is still running or the one-time shadow is still bound, i.e. exactly the failures that leave SSH open after provisioning. 'result write' validates and refuses, so nothing is recorded (the script still exits non-zero because the helper fails, but the technician-visible DEC-27 result is missing). The shell script's reason strings are not checked against the contract.
+- **Mimari düzeltme yönü:** Tier 1: take the reason from the result registry instead of string literals: either map these failures to the allowed reasons (io-error/receipt-missing) or extend the contract's lockdown reasons in a reviewed version; Tier 3: a test that greps every 'result write --kind K --reason R' in the overlay scripts and checks (K,R) against registry.rs.
+
+<a id="EI-085"></a>
+
+### EI-085 — The QEMU semantic evidence collector fails on every boot: ProtectSystem=strict leaves /run read-only and the unit declares no RuntimeDirectory
+
+- **Önem:** Orta · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** suderra-qemu-semantic-collector unit and script (QEMU images)
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-qemu-semantic-collector-cannot-write-run)
+- **Kanıt (dosya:satır):** `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-qemu-semantic-collector.service:15`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-qemu-semantic-collector:8`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-qemu-semantic-collector:10`, `board/suderra/common/rootfs-overlay/usr/sbin/suderra-qemu-semantic-collector:115`
+- **Kök neden:** The script sets WORK_DIR=/run/suderra-qemu-semantic and does 'mkdir -p ... || true', but the unit runs with ProtectSystem=strict, which mounts everything except /dev, /proc and /sys read-only, and has neither RuntimeDirectory= nor ReadWritePaths=. The mkdir fails silently and the next redirect ': > failed-units.txt' cannot create the file, so the collector (enabled only on QEMU images by post-build.sh) produces no failed-units, network or listener evidence, observed on every e2e boot. The QMP acceptance contract test checks the unit text, not that the collector can run.
+- **Mimari düzeltme yönü:** Tier 1: declare RuntimeDirectory=suderra-qemu-semantic (and point WORK_DIR at it) so the sandbox and the path cannot disagree; Tier 3: run the collector in the QEMU e2e and fail the lane when its evidence file is absent.
+
+<a id="EI-086"></a>
+
+### EI-086 — The QEMU dev image sets BR2_PACKAGE_SYSTEMD_RESOLVED=n while /etc/resolv.conf points at ../run/resolv.conf, which nothing writes, so the image cannot resolve names
+
+- **Önem:** Düşük · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** configs/suderra_qemu_x86_64_defconfig (resolver)
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-qemu-dev-no-dns)
+- **Kanıt (dosya:satır):** `configs/suderra_qemu_x86_64_defconfig:57`
+- **Kök neden:** With systemd-resolved disabled, networkd's UseDNS=true has no consumer and the Buildroot skeleton's resolv.conf symlink targets a file no service creates (the built QEMU target shows etc/resolv.conf -> ../run/resolv.conf). The production defconfigs resolve with BR2_PACKAGE_SYSTEMD_RESOLVED=y, so the QEMU lane tests a different DNS stack than production and any hostname-based endpoint or NTP pool fails there.
+- **Mimari düzeltme yönü:** Tier 1: drop the =n override so the QEMU image uses the same resolver as production (resolved is already part of the production images), and add an image-fact check that /etc/resolv.conf resolves to a file some enabled unit creates.
+
+<a id="EI-087"></a>
+
+### EI-087 — OS config and doc hygiene: kernel-hardening.md and ota.md name removed or old symbols, dead BR2 symbols in the QEMU defconfig, an unneeded CONFIG_TCG_VTPM_PROXY in the x86 kernel, and a build-order versus Kconfig inversion for suderra-ota
+
+- **Önem:** Düşük · **Faz:** P2 · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** docs/security/kernel-hardening.md, docs/operations/ota.md, QEMU defconfig, x86 kernel config, suderra-ota package
+- **Köken:** yan bulgu (P0 sırasında kaydedildi, I-os-kernel-doc-build-hygiene)
+- **Kanıt (dosya:satır):** `docs/security/kernel-hardening.md:56`, `docs/security/kernel-hardening.md:62`, `docs/security/kernel-hardening.md:63`, `docs/security/kernel-hardening.md:68`, `docs/operations/ota.md:64`, `configs/suderra_qemu_x86_64_defconfig:30`, `configs/suderra_qemu_x86_64_defconfig:31`, `board/suderra/x86_64/linux-x86_64.config:188`, `package/suderra-ota/suderra-ota.mk:11`, `package/suderra-rauc-config/Config.in:5`
+- **Kök neden:** The kernel-hardening table lists CONFIG_PAGE_TABLE_ISOLATION, CONFIG_RETPOLINE, CONFIG_X86_INTEL_MPX and CONFIG_HARDENED_USERCOPY_FALLBACK, which are renamed or removed in kernel 6.12 (OS3 resolved the kernel configs but not the doc), and ota.md still shows compatible=suderra-os-x86_64 instead of the per-board value. BR2_TOOLCHAIN_BUILDROOT_LOCALE and _USE_SSP do not survive Kconfig (SSP still resolves to strong). linux-x86_64.config enables CONFIG_TCG_VTPM_PROXY, a host-side vTPM proxy an appliance does not need. suderra-ota.mk builds suderra-ota after suderra-rauc-config while Kconfig makes suderra-rauc-config depend on suderra-ota; every defconfig has both so nothing breaks. Buildroot per-package directories also keep stale copies of reverse dependencies after a feature change (the systemd -SECCOMP incident), which affects local incremental builds only.
+- **Mimari düzeltme yönü:** Generate the hardening table from the resolved kernel configs (Tier 2) so it cannot name a dead symbol; correct ota.md from boards.json; delete the dead defconfig lines and CONFIG_TCG_VTPM_PROXY; align the .mk dependency with Kconfig; document that release images are built from a clean tree only.
