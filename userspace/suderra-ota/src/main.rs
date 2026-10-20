@@ -6,6 +6,12 @@
 //! It validates a signed OS update manifest, checks anti-rollback policy,
 //! delegates bundle installation to RAUC, records typed JSON evidence, and
 //! requests reboot only after the inactive slot install succeeds.
+//!
+//! Production mode and the device's OTA target are facts of the signed
+//! image (`/etc/os-release` `VARIANT` and `IMAGE_ROLE` on the verity
+//! rootfs), never of the environment (ADR-048 DEC-19): anything but
+//! `VARIANT=dev`, or an unreadable os-release, is production, and on
+//! production images every `SUDERRA_OTA_*` override is ignored.
 
 #![forbid(unsafe_code)]
 
@@ -59,11 +65,12 @@ struct InstallArgs {
     manifest: PathBuf,
     /// RAUC bundle referenced by the manifest.
     bundle: PathBuf,
-    /// Ed25519 public key used to verify the manifest signature.
-    #[arg(long, env = "SUDERRA_OTA_MANIFEST_PUBKEY")]
+    /// Ed25519 public key used to verify the manifest signature (dev
+    /// images only; production verifies against the image's pinned key).
+    #[arg(long)]
     manifest_pubkey: Option<PathBuf>,
     /// Do not request reboot after a successful inactive-slot install.
-    #[arg(long, env = "SUDERRA_OTA_NO_REBOOT", default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     no_reboot: bool,
 }
 
@@ -80,7 +87,7 @@ struct RollbackArgs {
     #[arg(long)]
     reason: String,
     /// Do not request reboot after marking the slot bad.
-    #[arg(long, env = "SUDERRA_OTA_NO_REBOOT", default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     no_reboot: bool,
 }
 
@@ -168,8 +175,10 @@ async fn run(command: Commands) -> Result<()> {
 
 fn init_logging(verbose: bool) {
     let default = if verbose { "debug" } else { "info" };
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default));
+    let filter = image()
+        .dev_override("RUST_LOG")
+        .and_then(|spec| tracing_subscriber::EnvFilter::try_new(spec).ok())
+        .unwrap_or_else(|| tracing_subscriber::EnvFilter::new(default));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .json()
@@ -328,6 +337,31 @@ fn load_manifest(path: &Path) -> Result<SignedManifest> {
     Ok(manifest)
 }
 
+/// The image's pinned OS update manifest key.
+const MANIFEST_PUBKEY: &str = "/etc/suderra/os-update-manifest.ed25519.pub";
+
+/// The manifest key to verify with: on production images only the pinned
+/// image key, on dev images a `--manifest-pubkey` or override path first.
+fn manifest_key_path(image: &Image, flag: Option<&Path>) -> Result<PathBuf> {
+    if image.variant == Variant::Production {
+        if let Some(path) = flag {
+            bail!(
+                "--manifest-pubkey {} is refused on production images: the manifest key is the image pin {MANIFEST_PUBKEY}",
+                path.display()
+            );
+        }
+        return Ok(PathBuf::from(MANIFEST_PUBKEY));
+    }
+    Ok(flag
+        .map(PathBuf::from)
+        .or_else(|| {
+            image
+                .dev_override("SUDERRA_OTA_MANIFEST_PUBKEY")
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(|| PathBuf::from(MANIFEST_PUBKEY)))
+}
+
 fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>) -> Result<()> {
     let signature = manifest
         .signature
@@ -342,14 +376,7 @@ fn verify_manifest_signature(manifest: &SignedManifest, key_path: Option<&Path>)
     if signature.key_id.trim().is_empty() {
         bail!("manifest signature key_id must be non-empty");
     }
-    let key_path = key_path
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("SUDERRA_OTA_MANIFEST_PUBKEY")
-                .ok()
-                .map(PathBuf::from)
-        })
-        .unwrap_or_else(|| PathBuf::from("/etc/suderra/os-update-manifest.ed25519.pub"));
+    let key_path = manifest_key_path(image(), key_path)?;
     let public_key = read_public_key(&key_path)?;
     let public_key_sha256 = hex::encode(Sha256::digest(public_key.as_bytes()));
     if signature.public_key_sha256 != public_key_sha256 {
@@ -398,7 +425,7 @@ fn decode_fixed_hex<const N: usize>(value: &str, field: &str) -> Result<[u8; N]>
 }
 
 fn verify_manifest_policy(manifest: &SignedManifest, state: &OtaState) -> Result<()> {
-    let device_target = device_target();
+    let device_target = device_target()?;
     if manifest.target != device_target {
         bail!(
             "manifest target {} does not match device target {}",
@@ -406,18 +433,12 @@ fn verify_manifest_policy(manifest: &SignedManifest, state: &OtaState) -> Result
             device_target
         );
     }
-    // Anahtar epoch tabanı: env ile YÜKSELTİLEBİLİR ama prod'da 1'in altına
-    // İNDİRİLEMEZ (saldırgan SUDERRA_OTA_MIN_KEY_EPOCH=0 ile revoke edilmiş
-    // eski anahtarı geçemesin).
-    let minimum_epoch = std::env::var("SUDERRA_OTA_MIN_KEY_EPOCH")
-        .ok()
+    // Anahtar epoch tabanı 1'dir; yalnız dev imajında override edilebilir
+    // (DEC-19: prod'da env yok sayılır).
+    let minimum_epoch = image()
+        .dev_override("SUDERRA_OTA_MIN_KEY_EPOCH")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(1);
-    let minimum_epoch = if is_production() {
-        minimum_epoch.max(1)
-    } else {
-        minimum_epoch
-    };
     if manifest.key_epoch < minimum_epoch {
         bail!(
             "manifest key_epoch {} is below required epoch {}",
@@ -519,7 +540,7 @@ fn run_rauc_output(args: &[&str]) -> Result<String> {
 }
 
 fn request_reboot(reason: &str) -> Result<()> {
-    if std::env::var("SUDERRA_OTA_NO_REBOOT").ok().as_deref() == Some("1") {
+    if image().dev_override("SUDERRA_OTA_NO_REBOOT").as_deref() == Some("1") {
         return Ok(());
     }
     let reboot = dev_override("SUDERRA_OTA_REBOOT").unwrap_or_else(|| "/sbin/reboot".to_string());
@@ -564,7 +585,7 @@ fn load_state() -> Result<OtaState> {
             .unwrap_or_else(|| fallback_floor.clone());
         OtaState {
             schema_version: STATE_SCHEMA.to_string(),
-            target: device_target(),
+            target: device_target()?,
             current_version,
             rollback_floor: fallback_floor,
             pending_version: None,
@@ -637,39 +658,127 @@ fn read_rollback_floor() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Prod binary'de güvenlik-kritik davranış env ile DEĞİŞTİRİLEMEZ. Bu bayrak
-/// açıkken tüm test/dev override'ları yok sayılır (fail-closed). Non-prod (dev,
-/// lab, CI-smoke) binary'lerde override'lar test kolaylığı için etkindir.
-fn is_production() -> bool {
-    std::env::var("SUDERRA_OTA_PRODUCTION").ok().as_deref() == Some("1")
+/// Image variant (`/etc/os-release` `VARIANT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Variant {
+    /// `VARIANT=dev`.
+    Dev,
+    /// Everything else, and an unreadable os-release (fail-safe).
+    Production,
 }
 
-/// Test/dev-only env override okuyucu. Prod'da `None` döner; böylece expiry,
-/// slot ispatı, rauc/reboot binary'si, rollback floor gibi güvenlik davranışları
-/// prod'da environment ile geçilemez.
-fn dev_override(key: &str) -> Option<String> {
-    if is_production() {
-        None
-    } else {
-        std::env::var(key).ok()
+/// The facts of the signed image this binary runs on (DEC-19).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Image {
+    variant: Variant,
+    /// `IMAGE_ROLE`: the defconfig the image was built from.
+    image_role: Option<String>,
+}
+
+/// The image's os-release, on the verity rootfs.
+const OS_RELEASE: &str = "/etc/os-release";
+
+/// os-release(5) `KEY=value` lines; a value may sit in one pair of quotes.
+fn os_release_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|line| {
+        let (k, v) = line.trim().split_once('=')?;
+        if k != key {
+            return None;
+        }
+        let v = v.trim();
+        let unquoted = v
+            .strip_prefix('"')
+            .and_then(|r| r.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')))
+            .unwrap_or(v);
+        Some(unquoted)
+    })
+}
+
+impl Image {
+    fn from_os_release(text: Option<&str>) -> Self {
+        let value = |key| text.and_then(|t| os_release_value(t, key));
+        Self {
+            variant: match value("VARIANT") {
+                Some("dev") => Variant::Dev,
+                _ => Variant::Production,
+            },
+            image_role: value("IMAGE_ROLE").map(str::to_owned),
+        }
+    }
+
+    fn load() -> Self {
+        Self::from_os_release(fs::read_to_string(OS_RELEASE).ok().as_deref())
+    }
+
+    /// A test/dev override: the environment value on dev images, `None` on
+    /// production images, so expiry, slot proof, the rauc/reboot binaries,
+    /// the rollback floor and the target cannot be steered by env there.
+    fn dev_override(&self, key: &str) -> Option<String> {
+        match self.variant {
+            Variant::Dev => std::env::var(key).ok(),
+            Variant::Production => None,
+        }
     }
 }
 
-/// Prod'da anti-rollback floor'un okunacağı GÜVENİLİR kaynak yolu. Bu yol
-/// yazılabilir state dizininin (`/data/...`) DIŞINDA olmalı ve platform (TPM NV
-/// aynası veya bootloader monotonic counter) tarafından doldurulmalıdır. Değer
-/// buradan okunur; yazılabilir `/data` üzerindeki floor dosyası prod'da yalnız
-/// bir ayna/cache'tir, güven çıpası DEĞİLDİR.
-fn trusted_floor_path() -> Option<PathBuf> {
-    std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")
-        .ok()
-        .map(PathBuf::from)
+/// The image this process runs on, read once.
+fn image() -> &'static Image {
+    static IMAGE: std::sync::OnceLock<Image> = std::sync::OnceLock::new();
+    IMAGE.get_or_init(Image::load)
 }
 
-/// Güvenilir kaynaktan floor değerini okur ve SemVer olarak doğrular. Kaynak yolu
-/// yoksa `None`; ayarlı ama okunamıyorsa/boşsa/geçersizse hata (prod fail-closed).
-fn trusted_rollback_floor() -> Result<Option<String>> {
-    let Some(path) = trusted_floor_path() else {
+fn dev_override(key: &str) -> Option<String> {
+    image().dev_override(key)
+}
+
+/// OTA target of each RAUC-updatable image, by `IMAGE_ROLE` (the defconfig
+/// name post-build.sh writes); the same table as post-image.sh's
+/// `ota_target` case, which `ota_targets_match_post_image` keeps in step.
+const OTA_TARGETS: [(&str, &str); 4] = [
+    ("suderra_x86_64", "x86_64"),
+    ("suderra_qemu_x86_64_prod_ab", "qemu-x86_64-prod-ab"),
+    ("suderra_aarch64_rpi4_prod_ab", "rpi4-prod-ab"),
+    ("suderra_aarch64_revpi4_prod_ab", "revpi4-prod-ab"),
+];
+
+/// The device's OTA target from the image; an image without one cannot
+/// take an OTA (no default target, EI-030).
+fn device_target_in(image: &Image) -> Result<String> {
+    if let Some(target) = image.dev_override("SUDERRA_OTA_TARGET") {
+        return Ok(target);
+    }
+    let role = image
+        .image_role
+        .as_deref()
+        .ok_or_else(|| anyhow!("{OS_RELEASE} has no IMAGE_ROLE, so the OTA target is unknown"))?;
+    OTA_TARGETS
+        .iter()
+        .find(|(r, _)| *r == role)
+        .map(|(_, target)| (*target).to_string())
+        .ok_or_else(|| anyhow!("image role {role} has no OTA target"))
+}
+
+fn device_target() -> Result<String> {
+    device_target_in(image())
+}
+
+/// Prod'da anti-rollback floor'un okunacağı GÜVENİLİR kaynak: yalnız
+/// platformun monotonik deposu (TPM NV aynası veya bootloader monotonic
+/// counter). Bu kaynak env'den gelemez (DEC-19); imajın onu beyan edeceği
+/// TPM NV floor'u P1'de gelir (DEC-21, EI-031). Dev imajında testler için
+/// env override'larıyla verilebilir.
+fn trusted_floor_source(image: &Image) -> Option<(String, PathBuf)> {
+    Some((
+        image.dev_override("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE")?,
+        PathBuf::from(image.dev_override("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH")?),
+    ))
+}
+
+/// Güvenilir kaynaktan floor değerini okur ve SemVer olarak doğrular. Kaynak
+/// yoksa `None`; ayarlı ama okunamıyorsa/boşsa/geçersizse hata (fail-closed).
+fn trusted_rollback_floor_in(image: &Image) -> Result<Option<String>> {
+    let Some((_, path)) = trusted_floor_source(image) else {
         return Ok(None);
     };
     let raw = fs::read_to_string(&path)
@@ -681,6 +790,10 @@ fn trusted_rollback_floor() -> Result<Option<String>> {
     ParsedVersion::parse(&value)
         .with_context(|| format!("trusted rollback floor {value} is not valid SemVer"))?;
     Ok(Some(value))
+}
+
+fn trusted_rollback_floor() -> Result<Option<String>> {
+    trusted_rollback_floor_in(image())
 }
 
 /// Çalışan imajın sürümünü `/etc/os-release`'ten okur (prod'da güvenilir
@@ -698,23 +811,20 @@ fn running_image_version() -> Option<String> {
     None
 }
 
-fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
-    if !is_production() {
+/// Production OTA needs a monotonic rollback floor outside the writable
+/// state directory. No production image declares one before the TPM NV
+/// floor (DEC-21, EI-031), and the environment cannot (DEC-19), so until
+/// then every production OTA command fails closed here.
+fn production_rollback_floor_requires_monotonic_state_in(image: &Image) -> Result<()> {
+    if image.variant != Variant::Production {
         return Ok(());
     }
-    match std::env::var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE").ok().as_deref() {
-        Some("tpm-nv") | Some("bootloader-monotonic") => {}
-        Some(other) => bail!(
-            "production anti-rollback requires TPM NV or bootloader monotonic state, got {other}"
-        ),
-        None => bail!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE=tpm-nv or bootloader-monotonic"),
-    }
-    // Floor'un GERÇEKTEN okunacağı kaynak yolu zorunlu olmalı ve yazılabilir
-    // state dizininin dışında yaşamalı — yoksa "TPM-destekli" iddiası teatral
-    // kalır (saldırgan /data'daki dosyayı silip floor'u düşürebilir).
-    let path = trusted_floor_path().ok_or_else(|| {
-        anyhow!("production anti-rollback requires SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH backed by the declared monotonic source")
+    let (kind, path) = trusted_floor_source(image).ok_or_else(|| {
+        anyhow!("production anti-rollback requires a monotonic floor source (TPM NV or bootloader counter) declared by the image; none is declared (ADR-048 DEC-21)")
     })?;
+    if !matches!(kind.as_str(), "tpm-nv" | "bootloader-monotonic") {
+        bail!("production anti-rollback requires TPM NV or bootloader monotonic state, got {kind}");
+    }
     let sdir = state_dir();
     if path.starts_with(&sdir) {
         bail!(
@@ -723,11 +833,14 @@ fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
             sdir.display()
         );
     }
-    // Kaynak okunabilir ve geçerli olmalı (fail-closed).
-    trusted_rollback_floor()?.ok_or_else(|| {
+    trusted_rollback_floor_in(image)?.ok_or_else(|| {
         anyhow!("production rollback floor source is configured but produced no value")
     })?;
     Ok(())
+}
+
+fn production_rollback_floor_requires_monotonic_state() -> Result<()> {
+    production_rollback_floor_requires_monotonic_state_in(image())
 }
 
 fn state_dir() -> PathBuf {
@@ -743,10 +856,6 @@ fn state_path() -> PathBuf {
 
 fn rollback_floor_path() -> PathBuf {
     state_dir().join("rollback-floor")
-}
-
-fn device_target() -> String {
-    std::env::var("SUDERRA_OTA_TARGET").unwrap_or_else(|_| "x86_64".to_string())
 }
 
 fn configured_pending_boot_slot() -> Option<String> {
@@ -821,7 +930,7 @@ fn event_json(action: &str, status: &str, details: Option<Value>, error: Option<
         "schema_version": EVENT_SCHEMA,
         "action": action,
         "status": status,
-        "target": device_target(),
+        "target": device_target().ok(),
         "generated_at": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "details": details.unwrap_or_else(|| json!({})),
         "error": error,
@@ -977,63 +1086,154 @@ mod tests {
     // Env değiştiren testleri serileştir (process-global env yarışlarını önle).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    fn dev_image() -> Image {
+        Image::from_os_release(Some("VARIANT=dev\nIMAGE_ROLE=suderra_qemu_x86_64\n"))
+    }
+
+    fn prod_image(role: &str) -> Image {
+        Image::from_os_release(Some(&format!(
+            "NAME=\"Suderra OS\"\nVARIANT=\"prod\"\nIMAGE_ROLE=\"{role}\"\n"
+        )))
+    }
+
+    #[test]
+    fn production_comes_from_the_image_and_fails_safe() {
+        assert_eq!(dev_image().variant, Variant::Dev);
+        for text in [
+            Some("VARIANT=prod\n"),
+            Some("VARIANT=lab\n"),
+            Some("VARIANT=\n"),
+            Some("ID=suderra-os\n"),
+            None,
+        ] {
+            assert_eq!(
+                Image::from_os_release(text).variant,
+                Variant::Production,
+                "{text:?}"
+            );
+        }
+    }
+
     #[test]
     fn dev_override_ignored_in_production() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
         std::env::set_var("SUDERRA_OTA_NOW", "2000-01-01T00:00:00Z");
+        std::env::set_var("SUDERRA_OTA_TARGET", "x86_64");
+        let prod = prod_image("suderra_aarch64_revpi4_prod_ab");
         assert!(
-            dev_override("SUDERRA_OTA_NOW").is_none(),
+            prod.dev_override("SUDERRA_OTA_NOW").is_none(),
             "prod'da test override yok sayılmalı"
         );
-        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        assert_eq!(device_target_in(&prod).unwrap(), "revpi4-prod-ab");
         assert_eq!(
-            dev_override("SUDERRA_OTA_NOW").as_deref(),
+            dev_image().dev_override("SUDERRA_OTA_NOW").as_deref(),
             Some("2000-01-01T00:00:00Z"),
-            "non-prod'da override etkin olmalı"
+            "dev imajında override etkin olmalı"
         );
         std::env::remove_var("SUDERRA_OTA_NOW");
+        std::env::remove_var("SUDERRA_OTA_TARGET");
+    }
+
+    #[test]
+    fn the_target_comes_from_the_image_role_with_no_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        for (role, target) in OTA_TARGETS {
+            assert_eq!(device_target_in(&prod_image(role)).unwrap(), target);
+        }
+        assert!(device_target_in(&prod_image("suderra_aarch64_revpi4")).is_err());
+        assert!(device_target_in(&Image::from_os_release(Some("VARIANT=prod\n"))).is_err());
+        assert!(device_target_in(&Image::from_os_release(None)).is_err());
+    }
+
+    #[test]
+    fn ota_targets_match_post_image() {
+        let script = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../board/suderra/common/post-image.sh"),
+        )
+        .unwrap();
+        let mut found = Vec::new();
+        for line in script.lines() {
+            let line = line.trim();
+            let Some((role, rest)) = line.split_once(") ota_target=\"") else {
+                continue;
+            };
+            let target = rest.split('"').next().unwrap();
+            found.push((role.to_string(), target.to_string()));
+        }
+        let ours: Vec<(String, String)> = OTA_TARGETS
+            .iter()
+            .map(|(r, t)| ((*r).to_string(), (*t).to_string()))
+            .collect();
+        assert_eq!(found, ours);
+    }
+
+    #[test]
+    fn production_verifies_only_against_the_image_key() {
+        let prod = prod_image("suderra_aarch64_revpi4_prod_ab");
+        assert_eq!(
+            manifest_key_path(&prod, None).unwrap(),
+            PathBuf::from(MANIFEST_PUBKEY)
+        );
+        assert!(manifest_key_path(&prod, Some(Path::new("/tmp/attacker.pub"))).is_err());
+        assert_eq!(
+            manifest_key_path(&dev_image(), Some(Path::new("/tmp/dev.pub"))).unwrap(),
+            PathBuf::from("/tmp/dev.pub")
+        );
     }
 
     #[test]
     fn trusted_floor_read_and_validated() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let dev = dev_image();
         let path = std::env::temp_dir().join(format!("suderra-ota-floor-{}", std::process::id()));
         std::fs::write(&path, "v2.3.4\n").unwrap();
+        std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "tpm-nv");
         std::env::set_var(
             "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH",
             path.to_str().unwrap(),
         );
-        assert_eq!(trusted_rollback_floor().unwrap().as_deref(), Some("v2.3.4"));
+        assert_eq!(
+            trusted_rollback_floor_in(&dev).unwrap().as_deref(),
+            Some("v2.3.4")
+        );
+        assert!(
+            trusted_rollback_floor_in(&prod_image("suderra_x86_64"))
+                .unwrap()
+                .is_none(),
+            "prod'da floor kaynağı env'den okunmaz"
+        );
 
         std::fs::write(&path, "not-a-version\n").unwrap();
         assert!(
-            trusted_rollback_floor().is_err(),
+            trusted_rollback_floor_in(&dev).is_err(),
             "geçersiz SemVer floor reddedilmeli"
         );
+        std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
         std::fs::remove_file(&path).ok();
-        assert!(trusted_rollback_floor().unwrap().is_none());
+        assert!(trusted_rollback_floor_in(&dev).unwrap().is_none());
     }
 
     #[test]
-    fn production_gate_rejects_writable_floor_source() {
+    fn production_fails_closed_without_an_image_declared_floor_source() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("SUDERRA_OTA_PRODUCTION", "1");
+        let path = std::env::temp_dir().join(format!("suderra-ota-prod-{}", std::process::id()));
+        std::fs::write(&path, "v9.9.9\n").unwrap();
         std::env::set_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE", "tpm-nv");
-        // Floor kaynağı yazılabilir state dizininin altında → reddedilmeli.
-        let inside = state_dir().join("rollback-floor");
         std::env::set_var(
             "SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH",
-            inside.to_str().unwrap(),
+            path.to_str().unwrap(),
         );
-        assert!(
-            production_rollback_floor_requires_monotonic_state().is_err(),
-            "yazılabilir state dizinindeki floor kaynağı prod'da reddedilmeli"
-        );
-        std::env::remove_var("SUDERRA_OTA_PRODUCTION");
+        let err = production_rollback_floor_requires_monotonic_state_in(&prod_image(
+            "suderra_aarch64_revpi4_prod_ab",
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("declared by the image"), "{err}");
+        assert!(production_rollback_floor_requires_monotonic_state_in(&dev_image()).is_ok());
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE");
         std::env::remove_var("SUDERRA_OTA_ROLLBACK_FLOOR_SOURCE_PATH");
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
