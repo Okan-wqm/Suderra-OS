@@ -44,6 +44,8 @@ pub(crate) fn image(root: &Path) -> (Paths, ImageFacts) {
         "CONFIG_SECCOMP_FILTER=y\nCONFIG_TCG_TPM=y\n",
     )
     .unwrap();
+    // /data mounted with its layout applied (suderra-data-unlock).
+    std::fs::create_dir_all(paths.os_state()).unwrap();
     let facts = ImageFacts::load(&paths).unwrap();
     (paths, facts)
 }

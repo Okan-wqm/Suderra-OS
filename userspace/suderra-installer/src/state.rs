@@ -65,7 +65,8 @@ fn read_decimal(path: &Path) -> Result<Option<u64>> {
         .with_context(|| format!("{} is corrupt", path.display()))
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+fn write_json<T: Serialize>(paths: &Paths, path: &Path, value: &T) -> Result<()> {
+    paths.require_os_state()?;
     ensure_dir(path.parent().context("record has no parent")?, 0o700)?;
     write_atomic(path, &serde_json::to_vec(value)?, 0o600, None)
 }
@@ -237,7 +238,7 @@ impl<'a> Records<'a> {
 
     /// Records the identity a first provisioning binds.
     pub(crate) fn write_identity(&self, record: &DeviceIdentityRecord) -> Result<()> {
-        write_json(&self.identity_path(), record)
+        write_json(self.paths, &self.identity_path(), record)
     }
 
     /// Last accepted statement of a type.
@@ -265,6 +266,7 @@ impl<'a> Records<'a> {
         digest: &str,
     ) -> Result<()> {
         write_json(
+            self.paths,
             &self.seq_path(statement),
             &AcceptedRecord {
                 seq,
@@ -300,6 +302,7 @@ impl<'a> Records<'a> {
         let current = self.floor()?;
         let next = current.max(security_version);
         if next != current {
+            self.paths.require_os_state()?;
             ensure_dir(&self.paths.edge_state(), 0o700)?;
             write_atomic(
                 &self.floor_path(),
@@ -332,7 +335,7 @@ impl<'a> Records<'a> {
                 None,
             )?;
         }
-        write_json(&path, receipt)
+        write_json(self.paths, &path, receipt)
     }
 
     /// The receipt the current one replaced, if any.
@@ -352,6 +355,7 @@ impl<'a> Records<'a> {
         envelope_json: &[u8],
     ) -> Result<()> {
         let path = self.release_statement_path(digest)?;
+        self.paths.require_os_state()?;
         ensure_dir(&self.paths.edge_state(), 0o700)?;
         ensure_dir(&self.statements_dir(), 0o700)?;
         write_atomic(&path, envelope_json, 0o600, None)

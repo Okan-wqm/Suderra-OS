@@ -164,7 +164,7 @@ pub(crate) fn apply(paths: &Paths, runner: &dyn Runner, now: &str) -> Result<Rul
         Err(e) => return Err(e),
     };
     let hash = loaded_ruleset_hash(runner)?;
-    ensure_dir(&paths.os_state(), 0o700)?;
+    paths.require_os_state()?;
     ensure_dir(&paths.firewall_state(), 0o700)?;
     write_atomic(
         &record_path(paths),
@@ -218,6 +218,7 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
         .unwrap();
         std::fs::create_dir_all(tmp.path().join("proc/net")).unwrap();
         std::fs::write(paths.proc_route(), ROUTE).unwrap();
+        std::fs::create_dir_all(paths.os_state()).unwrap();
         if let Some(state) = state {
             lifecycle::write(&paths, state, None).unwrap();
         }

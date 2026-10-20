@@ -94,6 +94,23 @@ impl Paths {
     pub(crate) fn os_state(&self) -> PathBuf {
         self.at("/data/suderra/os")
     }
+    /// Whether /data is mounted with its layout applied: suderra-data-unlock
+    /// creates /data/suderra/os from the data layout (mutable-state.json
+    /// `data_partition`), and the installer never creates it itself, so
+    /// nothing it writes lands on the rootfs under an unmounted /data.
+    pub(crate) fn os_state_available(&self) -> bool {
+        std::fs::symlink_metadata(self.os_state()).is_ok_and(|m| m.is_dir())
+    }
+    /// Fails unless [`Paths::os_state_available`].
+    pub(crate) fn require_os_state(&self) -> Result<()> {
+        if !self.os_state_available() {
+            anyhow::bail!(
+                "{} is missing: /data is not mounted or suderra-data-unlock has not applied its layout",
+                self.os_state().display()
+            );
+        }
+        Ok(())
+    }
     /// Hardware identity and recorded tenant/device.
     pub(crate) fn identity_dir(&self) -> PathBuf {
         self.at("/data/suderra/os/identity")

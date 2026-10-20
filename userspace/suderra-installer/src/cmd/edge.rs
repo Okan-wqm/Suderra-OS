@@ -336,6 +336,7 @@ fn stage_install(
     set: &ProvisioningSet,
     artifact: &Path,
 ) -> std::result::Result<InstallReceipt, Rejection> {
+    paths.require_os_state().map_err(io)?;
     check_artifact(artifact, set)?;
     place_binary(paths, set, artifact)?;
     let site_version = site::stage(
@@ -662,7 +663,7 @@ async fn fetch_delivery(
 /// directory; integrity is checked against the release statement after.
 async fn fetch_artifact(paths: &Paths, set: &ProvisioningSet) -> Result<PathBuf> {
     let work = paths.installer_work();
-    ensure_dir(&paths.os_state(), 0o700)?;
+    paths.require_os_state()?;
     ensure_dir(&work, 0o700)?;
     let path = work.join("artifact.tar.gz");
     let _ = std::fs::remove_file(&path);

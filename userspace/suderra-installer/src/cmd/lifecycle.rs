@@ -157,7 +157,7 @@ pub(crate) fn write(
     if !record_ok(&record) {
         bail!("refusing to write an impossible lifecycle record");
     }
-    ensure_dir(&paths.os_state(), 0o700)?;
+    paths.require_os_state()?;
     write_atomic(
         &paths.lifecycle_store(),
         &serde_json::to_vec(&record)?,
@@ -229,6 +229,15 @@ fn enter_provisioning(
 /// /data unlock): records the end of an expired MAINTENANCE window and the
 /// FACTORY -> PROVISIONING entry, and mirrors the state for the agent.
 pub(crate) fn init(paths: &Paths, facts: &ImageFacts, now: &str) -> Result<LifecycleState> {
+    if !paths.os_state_available() {
+        // An unmountable /data reads LOCKED in every variant, with an alarm
+        // (DEC-12); suderra-data-unlock reports its own data-unlock result.
+        return locked_alarm(
+            paths,
+            facts,
+            "/data is not available, so the lifecycle store cannot be read".into(),
+        );
+    }
     let evidence = match facts.variant {
         Variant::Dev => true,
         Variant::Production => read_root_file(&data_created(paths), 4096)?.is_some(),
@@ -546,6 +555,17 @@ mod tests {
                 corrupt
             );
         }
+    }
+
+    #[test]
+    fn an_unavailable_data_partition_reads_locked_in_every_variant() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        std::fs::remove_dir(paths.os_state()).unwrap();
+        assert_eq!(facts.variant, Variant::Dev);
+        assert_eq!(init(&paths, &facts, NOW).unwrap(), LifecycleState::Locked);
+        assert_eq!(mirrored(&paths), "LOCKED\n");
+        assert!(!paths.os_state().exists(), "nothing is created under /data");
     }
 
     #[test]

@@ -300,22 +300,35 @@ fn time_state(paths: &Paths) -> TimeState {
 }
 
 /// Writes one result and returns the document.
+///
+/// With /data available the result is numbered by the persistent counter,
+/// kept in /data/suderra/os/results and mirrored to /run/suderra/results.
+/// Without it (unmounted or its layout not applied: the data-unlock and
+/// LOCKED alarms of DEC-12) nothing can persist, so the result is numbered
+/// by a per-boot counter under /run/suderra-os and written to
+/// /run/suderra/results only, as `volatile-<seq>-<kind>.json`, a name that
+/// never collides with a persistent result.
 pub(crate) fn record(paths: &Paths, facts: &ImageFacts, report: Report) -> Result<ResultDocument> {
-    let store = paths.results_store();
-    ensure_dir(&paths.os_state(), 0o700)?;
-    ensure_dir(&store, 0o700)?;
+    let persistent = paths.os_state_available();
+    let counter_dir = if persistent {
+        paths.results_store()
+    } else {
+        ensure_dir(&paths.run_os(), 0o700)?;
+        paths.run_os().join("results")
+    };
+    ensure_dir(&counter_dir, 0o700)?;
     let lock_file = OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .mode(0o600)
         .custom_flags(crate::fsutil::libc_flags::O_NOFOLLOW)
-        .open(store.join(".lock"))
+        .open(counter_dir.join(".lock"))
         .context("cannot open the results lock")?;
     let _lock = Flock::lock(lock_file, FlockArg::LockExclusive)
         .map_err(|(_, errno)| anyhow::anyhow!("cannot lock results: {errno}"))?;
 
-    let seq_path = store.join("seq");
+    let seq_path = counter_dir.join("seq");
     let last = match read_root_file(&seq_path, 32)? {
         Some(bytes) => std::str::from_utf8(&bytes)
             .ok()
@@ -341,31 +354,42 @@ pub(crate) fn record(paths: &Paths, facts: &ImageFacts, report: Report) -> Resul
         bail!("refusing to write an invalid result: {e}");
     }
     let bytes = serde_json::to_vec(&doc)?;
-    let name = format!("{seq:016}-{}.json", doc.kind);
+    let name = if persistent {
+        format!("{seq:016}-{}.json", doc.kind)
+    } else {
+        format!("volatile-{seq:016}-{}.json", doc.kind)
+    };
     write_atomic(&seq_path, format!("{seq}\n").as_bytes(), 0o600, None)?;
-    write_atomic(&store.join(&name), &bytes, 0o600, None)?;
-    prune(&store)?;
+    if persistent {
+        write_atomic(&counter_dir.join(&name), &bytes, 0o600, None)?;
+        prune(&counter_dir)?;
+    }
 
     let run = paths.run_results();
     ensure_dir(&paths.run_suderra(), 0o750)?;
     ensure_dir(&run, 0o750)?;
     if let Some(gid) = paths.agent_group() {
+        std::os::unix::fs::chown(paths.run_suderra(), None, Some(gid.as_raw()))
+            .context("cannot chgrp /run/suderra")?;
         std::os::unix::fs::chown(&run, None, Some(gid.as_raw()))
             .context("cannot chgrp /run/suderra/results")?;
     }
     write_atomic(&run.join(&name), &bytes, 0o640, paths.agent_group())?;
+    prune(&run)?;
     Ok(doc)
 }
 
-fn prune(store: &std::path::Path) -> Result<()> {
-    let mut names: Vec<String> = std::fs::read_dir(store)?
+/// Keeps the newest [`RETAINED`] result files of `dir` (names sort by seq;
+/// volatile results sort after persistent ones and go last).
+fn prune(dir: &std::path::Path) -> Result<()> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|n| n.ends_with(".json") && n.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        .filter(|n| n.ends_with(".json") && !n.starts_with('.'))
         .collect();
     names.sort();
     let excess = names.len().saturating_sub(RETAINED);
     for name in names.into_iter().take(excess) {
-        std::fs::remove_file(store.join(name))?;
+        std::fs::remove_file(dir.join(name))?;
     }
     Ok(())
 }
@@ -406,6 +430,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ResultDocument::parse(&kept).unwrap(), first);
+    }
+
+    #[test]
+    fn without_data_a_result_is_volatile_and_written_only_to_run() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        std::fs::remove_dir(paths.os_state()).unwrap();
+        let doc = record(
+            &paths,
+            &facts,
+            Report::not_ok(
+                ResultKind::DataUnlock,
+                Outcome::Alarm,
+                Reason::DataUnmountable,
+            ),
+        )
+        .unwrap();
+        assert_eq!(doc.seq, 1);
+        assert!(!paths.os_state().exists(), "nothing is created under /data");
+        let mirrored = std::fs::read(
+            paths
+                .run_results()
+                .join("volatile-0000000000000001-data-unlock.json"),
+        )
+        .unwrap();
+        assert_eq!(ResultDocument::parse(&mirrored).unwrap(), doc);
     }
 
     #[test]
