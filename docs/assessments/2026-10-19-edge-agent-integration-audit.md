@@ -23,7 +23,7 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 | Phase | CRITICAL | HIGH | MEDIUM | LOW | Toplam |
 |---|---|---|---|---|---|
 | P0 | 9 | 7 | 6 | 2 | 24 |
-| P1 | 5 | 16 | 8 | 1 | 30 |
+| P1 | 5 | 16 | 9 | 1 | 31 |
 | P2 | 0 | 0 | 11 | 10 | 21 |
 
 ## Dizin
@@ -105,6 +105,7 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 | [EI-073](#EI-073) | LOW | P2 | system.conf.arm registers the slot hook as a system post-install handler, where RAUC_SLOT_CLASS is absent, making it a silent no-op |
 | [EI-074](#EI-074) | LOW | P2 | sysctl hardening omits modules_disabled, ldisc_autoload, unprivileged_userfaultfd, bpf_jit_harden and io_uring_disabled |
 | [EI-075](#EI-075) | LOW | P2 | post-build strips setuid but not setgid bits, contrary to its whitelist comment |
+| [EI-076](#EI-076) | MEDIUM | P1 | The USB self-installer takes its payload key, verifier, rollback floor, key epoch, target board and confirmation from SUDERRA_INSTALLER_* environment variables |
 
 ## Bulgular
 
@@ -1407,3 +1408,20 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 - **Kök neden:** Ad-hoc hardening step with no explicit allow-list or verification.
 - **Mimari düzeltme yönü:** Replace with an allow-list (an empty set is expected): strip u+s and g+s from everything not listed, and fail the build if any setuid/setgid file remains outside the list.
 - **Doğrulama:** Image contract test: find target -perm /6000 -type f must be empty or equal to the allow-list.
+
+<a id="EI-076"></a>
+
+### EI-076 — The USB self-installer takes its payload key, verifier, rollback floor, key epoch, target board and confirmation from SUDERRA_INSTALLER_* environment variables
+
+- **Önem:** Orta · **Faz:** P1 · **Son tarih:** 2026-11-30 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** package/suderra-os-installer suderra-os-install
+- **Köken:** bağımsız inceleme (OS track review, 2026-10-20)
+- **Kanıt (dosya:satır):** `package/suderra-os-installer/suderra-os-install:4-22`, `package/suderra-os-installer/suderra-os-installer.mk:25-26`, `package/suderra-os-installer/suderra-os-install.service:11`, `tests/installer/suderra-os-install-test.sh:40-43`
+- **Kanıt (ayrıntı):**
+  - suderra-os-install:9-10 `PUBKEY="${SUDERRA_INSTALLER_PUBKEY:-…}"`, `VERIFY_BIN="${SUDERRA_INSTALLER_VERIFY_BIN:-…}"`: the payload index key and the verifier binary come from the environment
+  - suderra-os-install:12-13,15,19-21: `ALLOW_USB_TARGET`, `USB_TARGET_BY_ID`, `ASSUME_YES`, `TARGET_BOARD`, `MIN_KEY_EPOCH`, `MIN_ROLLBACK_FLOOR` likewise
+  - suderra-os-installer.mk:25-26 installs the script on every image that selects BR2_PACKAGE_SUDERRA_OS_INSTALLER, every production image included (enabled only on the USB installer image)
+  - tests/installer/suderra-os-install-test.sh drives every fixture (sysfs, /dev, device-tree, payload, key, verifier) through these variables
+- **Kök neden:** The script's test seam is the environment, so test-fixture paths and security decisions share one override mechanism that a runtime unit drop-in can also reach (ADR-048 DEC-19).
+- **Mimari düzeltme yönü:** Fix every security-relevant value (payload key, verifier, epoch, floor, USB-target permission, confirmation, board) as an image fact on the verity root; give tests a fixture root that production code cannot select (move the selection and verification logic into suderra-installer, where `Paths::under` exists only under `cfg(test)`), and remove the script from production images that never run it.
+- **Doğrulama:** tests/security/no-security-env-in-prod-test.sh lists this script as tracked (EI-076); removing it from that list must pass once fixed. Installer test runs against a fixture root without any SUDERRA_INSTALLER_* variable.
