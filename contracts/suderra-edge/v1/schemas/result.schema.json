@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:result",
   "title": "suderra.result.v1 install and update result",
-  "description": "Typed result that root workers write to /data/suderra/os/results/ and expose under /run/suderra/results/ (directory root:suderra 0750, files 0640); the agent publishes it on its result topic and the cloud stores it per device (ADR-048 DEC-27). Unsigned: an observation, never authority. reason uses the rejection codes of statements.json when a statement was refused.",
+  "description": "Typed result that root workers write to /data/suderra/os/results/ and expose under /run/suderra/results/ (directory root:suderra 0750, files 0640); the agent publishes it on its result topic and the cloud stores it per device (ADR-048 DEC-27). Unsigned: an observation, never authority. reason is enumerated per kind: the rejection codes of the statements that kind verifies (statements.json unsigned_documents reasons_by_kind) plus its operational codes.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -57,7 +57,7 @@
       "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
     },
     "os_version": {
-      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver"
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
     },
     "subject": {
       "type": "object",
@@ -114,6 +114,353 @@
         }
       },
       "required": ["reason"]
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "provisioning"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "actor-key-not-anchored",
+              "agent-abi-unsupported",
+              "anchor-invalid",
+              "anchor-not-os-pinned",
+              "archive-invalid",
+              "artifact-digest-mismatch",
+              "binary-digest-mismatch",
+              "board-mismatch",
+              "clock-unsynced",
+              "device-binding-mismatch",
+              "device-id-mismatch",
+              "envelope-invalid",
+              "expired",
+              "fetch-failed",
+              "io-error",
+              "kernel-config-missing",
+              "key-epoch-below-ratchet",
+              "key-epoch-mismatch",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "nonce-mismatch",
+              "not-yet-valid",
+              "os-version-too-old",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "rbac-manifest-digest-mismatch",
+              "release-digest-mismatch",
+              "release-mismatch",
+              "release-profile-mismatch",
+              "rollback-below-floor",
+              "schema-invalid",
+              "sequence-replay",
+              "signature-invalid",
+              "site-config-digest-mismatch",
+              "site-file-digest-mismatch",
+              "tenant-mismatch",
+              "tenant-scope-mismatch",
+              "trust-anchors-digest-mismatch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "edge-install"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "agent-abi-unsupported",
+              "archive-invalid",
+              "artifact-digest-mismatch",
+              "binary-digest-mismatch",
+              "board-mismatch",
+              "clock-unsynced",
+              "envelope-invalid",
+              "fetch-failed",
+              "io-error",
+              "kernel-config-missing",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "os-version-too-old",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "release-profile-mismatch",
+              "schema-invalid",
+              "signature-invalid"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "edge-update"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "agent-abi-unsupported",
+              "archive-invalid",
+              "artifact-digest-mismatch",
+              "binary-digest-mismatch",
+              "board-mismatch",
+              "clock-unsynced",
+              "envelope-invalid",
+              "fetch-failed",
+              "io-error",
+              "kernel-config-missing",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "os-version-too-old",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "release-profile-mismatch",
+              "schema-invalid",
+              "signature-invalid"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "edge-rollback"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": ["health-window-failed", "io-error"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "verify-current"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "actor-key-not-anchored",
+              "agent-abi-unsupported",
+              "anchor-invalid",
+              "anchor-not-os-pinned",
+              "binary-digest-mismatch",
+              "board-mismatch",
+              "current-link-mismatch",
+              "device-binding-mismatch",
+              "device-id-mismatch",
+              "envelope-invalid",
+              "installed-digest-mismatch",
+              "kernel-config-missing",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "os-version-too-old",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "rbac-manifest-digest-mismatch",
+              "release-not-installed",
+              "release-profile-mismatch",
+              "schema-invalid",
+              "signature-invalid",
+              "site-file-digest-mismatch",
+              "tenant-mismatch",
+              "tenant-scope-mismatch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "site-config"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "actor-key-not-anchored",
+              "anchor-invalid",
+              "anchor-not-os-pinned",
+              "clock-unsynced",
+              "device-binding-mismatch",
+              "device-id-mismatch",
+              "envelope-invalid",
+              "expired",
+              "io-error",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "not-yet-valid",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "rbac-manifest-digest-mismatch",
+              "schema-invalid",
+              "sequence-replay",
+              "signature-invalid",
+              "site-file-digest-mismatch",
+              "tenant-mismatch",
+              "tenant-scope-mismatch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "lockdown"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": ["firewall-load-failed", "io-error", "receipt-missing"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "lifecycle"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "device-binding-mismatch",
+              "device-id-mismatch",
+              "envelope-invalid",
+              "expired",
+              "io-error",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "manifest-digest-mismatch",
+              "not-yet-valid",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "schema-invalid",
+              "sequence-replay",
+              "signature-invalid",
+              "state-corrupt",
+              "tenant-mismatch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "health-gate"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "abi-incompatible",
+              "agent-degraded",
+              "agent-not-active",
+              "bsp-probe-failed",
+              "clock-below-floor",
+              "data-mapper-missing",
+              "firewall-hash-mismatch",
+              "lifecycle-inconsistent",
+              "tpm-unavailable",
+              "verity-inactive"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "data-unlock"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": ["data-unmountable", "io-error", "tpm-unseal-failed"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "time-state"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": ["clock-below-floor", "clock-unsynced"]
+          }
+        }
+      }
     }
   ]
 }

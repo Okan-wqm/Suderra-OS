@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:fixture-index",
   "title": "fixtures/index.json golden fixture index",
-  "description": "Every golden fixture with the verdict each conforming verifier must reach. Paths are relative to fixtures/. A rejected statement carries exactly one defect, so its reason is the only check that fails. Every fixture is TEST-ONLY.",
+  "description": "Every golden fixture with the verdict each conforming verifier must reach. Paths are relative to fixtures/. statement_type is the call site the envelope is presented at. A rejected statement carries exactly one defect, so its reason is the only check that fails even when every check is evaluated. Every fixture is TEST-ONLY.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,6 +11,7 @@
     "evaluation_time",
     "device_contexts",
     "statements",
+    "deliveries",
     "documents",
     "units",
     "pae_vectors",
@@ -42,9 +43,11 @@
           "tenant_id",
           "device_id",
           "security_version_floor",
-          "sequences",
+          "accepted",
           "ratchet",
-          "installed_manifest"
+          "installed_manifest",
+          "os_release",
+          "kernel_config"
         ],
         "properties": {
           "description": {
@@ -83,13 +86,24 @@
             "type": "integer",
             "minimum": 0
           },
-          "sequences": {
+          "accepted": {
+            "description": "Per statement type, the last accepted sequence value and that statement's digest (statements.json sequences and reverification).",
             "type": "object",
             "propertyNames": {
               "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$"
             },
             "additionalProperties": {
-              "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["statement_digest"],
+              "properties": {
+                "seq": {
+                  "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+                },
+                "statement_digest": {
+                  "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+                }
+              }
             }
           },
           "ratchet": {
@@ -107,6 +121,28 @@
                 "$ref": "#/$defs/path"
               }
             ]
+          },
+          "os_release": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["VERSION_ID", "SUDERRA_AGENT_ABI"],
+            "properties": {
+              "VERSION_ID": {
+                "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+              },
+              "SUDERRA_AGENT_ABI": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$"
+              }
+            }
+          },
+          "kernel_config": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^CONFIG_[A-Z0-9_]+=[ym]$"
+            }
           }
         }
       }
@@ -117,7 +153,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["path", "statement_type", "expect", "device_context", "inputs", "description"],
+        "required": [
+          "path",
+          "statement_type",
+          "expect",
+          "device_context",
+          "verifier",
+          "mode",
+          "inputs",
+          "description"
+        ],
         "properties": {
           "path": {
             "$ref": "#/$defs/path"
@@ -144,6 +189,12 @@
               }
             ]
           },
+          "verifier": {
+            "enum": ["os-root", "agent"]
+          },
+          "mode": {
+            "enum": ["accept", "reverify"]
+          },
           "inputs": {
             "type": "object",
             "additionalProperties": false,
@@ -151,17 +202,81 @@
               "release_statement": {
                 "$ref": "#/$defs/path"
               },
-              "config_payload": {
-                "$ref": "#/$defs/path"
-              },
               "trust_anchors": {
                 "$ref": "#/$defs/path"
+              },
+              "site_config": {
+                "$ref": "#/$defs/path"
+              },
+              "rbac_manifest": {
+                "$ref": "#/$defs/path"
+              },
+              "site_files": {
+                "type": "object",
+                "propertyNames": {
+                  "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/site_path"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/path"
+                }
               },
               "request_nonce": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{32,128}$"
               }
             }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "expect": {
+                "const": "accept"
+              },
+              "reason": false
+            }
+          },
+          {
+            "properties": {
+              "expect": {
+                "const": "reject"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": ["reason"]
+          }
+        ]
+      }
+    },
+    "deliveries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "device_context", "request", "expect", "description"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "device_context": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "request": {
+            "$ref": "#/$defs/path"
+          },
+          "expect": {
+            "enum": ["accept", "reject"]
+          },
+          "reason": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
           },
           "description": {
             "type": "string",
@@ -202,7 +317,7 @@
             "$ref": "#/$defs/path"
           },
           "document_type": {
-            "const": "suderra.result.v1"
+            "enum": ["suderra.result.v1", "suderra.edge-provisioning-request.v1"]
           },
           "expect": {
             "enum": ["accept", "reject"]
@@ -275,13 +390,13 @@
             "enum": ["accept", "reject"]
           },
           "violations": {
-            "description": "Every rule hit the one defect produces, as <category>:<Section>.<Key> with category exact, required, present, forbidden, unknown or dropin. A key named by a key-level forbidden rule is reported as forbidden, not unknown.",
+            "description": "Every rule hit the one defect produces, as <category>:<Section>.<Key> with category exact, required, present, forbidden, unknown, dropin or reset. A key named by a key-level forbidden rule is reported as forbidden, not unknown.",
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "pattern": "^(exact|required|present|forbidden|unknown|dropin):(Unit|Service|Install)\\.[A-Z][A-Za-z]+$"
+              "pattern": "^(exact|required|present|forbidden|unknown|dropin|reset):(Unit|Service|Install)\\.[A-Z][A-Za-z]+$"
             }
           },
           "description": {

@@ -11,6 +11,8 @@ StartLimitBurst=5
 Type=notify
 NotifyAccess=main
 ExecStart=/opt/suderra/edge/current/suderra-agent
+ExecReload=+/usr/bin/suderra-installer edge verify-current
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=300s
@@ -36,7 +38,7 @@ PrivateTmp=true
 ReadOnlyPaths=/var/lib/suderra-site
 ReadWritePaths=/var/lib/suderra/state /var/lib/suderra/secrets /var/lib/suderra/queue
 ReadWritePaths=/var/lib/suderra/scripts /var/lib/suderra/policy-cache /var/lib/suderra/update-requests
-ReadWritePaths=/var/log/suderra
+ReadWritePaths=/var/log/suderra /run/suderra/agent-health
 
 ProtectKernelTunables=true
 ProtectKernelModules=true

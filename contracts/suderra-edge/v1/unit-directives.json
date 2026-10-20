@@ -1,5 +1,5 @@
 {
-  "description": "Security-relevant directive allowlist of suderra-agent.service (ADR-048 DEC-1.8, DEC-1.9, DEC-4.5, DEC-4.11, DEC-6, DEC-7.4, DEC-11.2, DEC-19, DEC-21). Units are parsed into (section, key, values) and compared as sets, never as text: comments, line order and whitespace do not matter. A key outside exact, required, present, allowed and the profile keys is a violation (reported as forbidden when a key-level forbidden rule names it). exact: the value set must equal the list (an empty list means no value; with present it means an explicit empty assignment). required: the value set must contain the list. present: the key must appear. forbidden: a matching key, or key and value_pattern, is a violation. The Suderra OS overlay unit plus its board drop-in, the generic-Linux reference unit and the cloud-generated fleet unit are all checked against this file.",
+  "description": "Security-relevant directive allowlist of suderra-agent.service (ADR-048 DEC-1.5, DEC-1.8, DEC-1.9, DEC-4.5, DEC-4.10, DEC-4.11, DEC-6, DEC-7.4, DEC-11.2, DEC-19, DEC-21). Units are parsed into (section, key, values) by the parsing rules below and compared as sets, never as text: comments, whitespace and the order of different keys do not matter, while the order of the values of an ordered key does. A key outside exact, required, present, allowed and the profile keys is a violation (reported as forbidden when a key-level forbidden rule names it). exact: the values must equal the list (as a sequence for ordered keys; an empty list means no value, and with present an explicit empty assignment). required: the values must contain the list. present: the key must appear. forbidden: a matching key, or key and value_pattern, is a violation. reset: see parsing.reset_rule. Violations are reported as <category>:<Section>.<Key> with category exact, required, present, forbidden, unknown, dropin or reset. The Suderra OS overlay unit plus its board drop-in, the generic-Linux reference unit and the cloud-generated fleet unit are all checked against this file.",
   "unit": "suderra-agent.service",
   "parsing": {
     "list_keys": [
@@ -12,7 +12,10 @@
       "CapabilityBoundingSet",
       "AmbientCapabilities"
     ],
-    "rule": "Each occurrence of a key contributes values. For list_keys the value is split on ASCII whitespace into separate values; for every other key the whole trimmed value is one value. A board drop-in contributes its values to the same keys of the base unit."
+    "ordered_keys": ["ExecStartPre", "ExecReload", "SystemCallFilter"],
+    "empty_value_keys": ["CapabilityBoundingSet"],
+    "rule": "Each non-empty assignment of a key adds values. For list_keys the value is split on ASCII whitespace into separate values; for every other key the whole trimmed value is one value. ordered_keys keep the order of their values, because systemd runs ExecStartPre= and ExecReload= commands in order and lets the first SystemCallFilter= line decide between allow-list and deny-list mode. A board drop-in is parsed the same way and applies after the base unit.",
+    "reset_rule": "An empty assignment (KEY= with nothing after the equals sign) resets every value accumulated for KEY so far and adds none, as systemd does for list and non-list settings alike (an empty SystemCallFilter= drops the seccomp filter, an empty RestrictAddressFamilies= allows every family, an empty ProtectSystem= restores the default). The keys in empty_value_keys are the exception: their empty assignment is itself the value (CapabilityBoundingSet= is the empty bounding set). Resetting a key named in exact, required, present or a profile's exact block is a violation reported as reset:<Section>.<Key>, even when values are assigned again afterwards; so is any empty assignment in a board drop-in. Resetting an allowed key only clears it."
   },
   "exact": {
     "Service": {
@@ -98,6 +101,18 @@
     },
     {
       "section": "Unit",
+      "key": "After",
+      "value_pattern": "^network-online\\.target$",
+      "reason": "The network never gates agent start or READY: safe state and local control come before any network (DEC-6.2)."
+    },
+    {
+      "section": "Unit",
+      "key": "Wants",
+      "value_pattern": "^network-online\\.target$",
+      "reason": "Wants= would pull in network-online.target and, with the ordering it implies, delay start until the network is up or wait-online times out (DEC-6.2)."
+    },
+    {
+      "section": "Unit",
       "key": "Requisite",
       "reason": "Same as Requires= (DEC-6.2)."
     },
@@ -160,19 +175,19 @@
       "section": "Service",
       "key": "ExecStartPost",
       "value_pattern": "^[+!]",
-      "reason": "The only privileged hook is ExecStartPre=+ verify-current (DEC-1.5)."
+      "reason": "The only privileged hooks are the ExecStartPre=+ and ExecReload=+ edge verify-current calls (hooks, DEC-1.5, DEC-4.10)."
     },
     {
       "section": "Service",
       "key": "ExecStop",
       "value_pattern": "^[+!]",
-      "reason": "The only privileged hook is ExecStartPre=+ verify-current (DEC-1.5)."
+      "reason": "The only privileged hooks are the ExecStartPre=+ and ExecReload=+ edge verify-current calls (hooks, DEC-1.5, DEC-4.10)."
     },
     {
       "section": "Service",
       "key": "ExecStopPost",
       "value_pattern": "^[+!]",
-      "reason": "The only privileged hook is ExecStartPre=+ verify-current (DEC-1.5)."
+      "reason": "The only privileged hooks are the ExecStartPre=+ and ExecReload=+ edge verify-current calls (hooks, DEC-1.5, DEC-4.10)."
     },
     {
       "section": "Service",
@@ -196,8 +211,13 @@
         "Service": {
           "ExecStart": ["/opt/suderra/edge/current/suderra-agent"],
           "ExecStartPre": ["+/usr/bin/suderra-installer edge verify-current"],
+          "ExecReload": [
+            "+/usr/bin/suderra-installer edge verify-current",
+            "/bin/kill -HUP $MAINPID"
+          ],
           "ReadOnlyPaths": ["/var/lib/suderra-site"],
           "ReadWritePaths": [
+            "/run/suderra/agent-health",
             "/var/lib/suderra/policy-cache",
             "/var/lib/suderra/queue",
             "/var/lib/suderra/scripts",
@@ -218,11 +238,6 @@
           "revpi-connect4": {
             "DeviceAllow": ["/dev/piControl0 rw", "/dev/ttyAMA5 rw"],
             "SupplementaryGroups": ["dialout", "suderra-io"]
-          },
-          "industrial-x86_64": {
-            "DeviceAllow": ["char-ttyACM rw", "char-ttyS rw", "char-ttyUSB rw"],
-            "SupplementaryGroups": ["dialout"],
-            "RestrictAddressFamilies": ["AF_CAN"]
           },
           "rpi4-cm4": {
             "DeviceAllow": [
@@ -248,6 +263,7 @@
       "exact": {
         "Service": {
           "ExecStart": ["/usr/local/bin/suderra-agent"],
+          "ExecReload": ["/bin/kill -HUP $MAINPID"],
           "ReadOnlyPaths": ["/etc/suderra"],
           "ReadWritePaths": ["/var/lib/suderra", "/var/log/suderra"],
           "DeviceAllow": [
@@ -267,10 +283,29 @@
   "profile_specific_keys": [
     "ExecStart",
     "ExecStartPre",
+    "ExecReload",
     "ReadOnlyPaths",
     "ReadWritePaths",
     "DeviceAllow",
     "RestrictAddressFamilies",
     "SupplementaryGroups"
-  ]
+  ],
+  "hooks": {
+    "verify_current": {
+      "command": "/usr/bin/suderra-installer edge verify-current",
+      "runs_as": "root, through the + prefix of ExecStartPre= and ExecReload= in the suderra-os profile",
+      "verifies": [
+        "current is the rename(2)-installed link to the release the install receipt records (DEC-1.4, DEC-1.5)",
+        "the suderra-agent binary has the sha256 of the receipt and of the release statement's binary_digest (DEC-1.5)",
+        "the installed release statement, trust-anchors bundle, site config and RBAC manifest re-verify (statements.json reverification)",
+        "every file under /var/lib/suderra-site has the digest and size the install receipt records, and no other file is there (DEC-4.10)"
+      ],
+      "on_failure": "The start or the reload is refused and a verify-current result with outcome rejected is written (result.schema.json, DEC-27).",
+      "phase": "P0"
+    },
+    "reload": {
+      "sequence": ["+/usr/bin/suderra-installer edge verify-current", "/bin/kill -HUP $MAINPID"],
+      "rule": "systemd runs ExecReload= commands in order and stops at the first failure, so the agent receives SIGHUP only after root has verified the site files it will reload (DEC-4.10, DEC-4.12)."
+    }
+  }
 }

@@ -1,0 +1,10 @@
+{
+  "payloadType": "application/vnd.suderra.device-lifecycle.v1+json",
+  "payload": "eyJfdHlwZSI6ICJzdWRlcnJhLmRldmljZS1saWZlY3ljbGUudjEiLCJhY3Rpb24iOiJlbnRlci1tYWludGVuYW5jZSIsImRldmljZV9iaW5kaW5nIjp7ImRpZ2VzdCI6eyJzaGEyNTYiOiI3ZGMxMjI1MjAxY2U4M2M0OGY1MDJkMDQyMWFkN2JmZTU5YWFmOWMwMDg4ZmVjYWIwYzVhNmJiODBkMzYwYWY0In0sIm1ldGhvZCI6InRwbS1lay1zaGEyNTYifSwiZGV2aWNlX2lkIjoiN2U1NzAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMGQxIiwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMjBUMTU6MDA6MDBaIiwibm90X2JlZm9yZSI6IjIwMjYtMTAtMjBUMTE6MDA6MDBaIiwicHVycG9zZSI6InJlcHJvdmlzaW9uIiwidGVuYW50X2lkIjoiN2U1NzAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwidXBkYXRlX3NlcSI6M30=",
+  "signatures": [
+    {
+      "keyid": "aceb2263f3d33a06ea83b2354a81a8e8122c6b46d6242a21821dd3f381d637f8",
+      "sig": "tX4UGP8CSnah9QPFPALvM30FjTeLc29XV7bhhMdtI80mmIl+74hqzK/sdn1xYfH8vG7jxiddH5FMpIe01bq4Bw=="
+    }
+  ]
+}

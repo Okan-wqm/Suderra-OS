@@ -4,11 +4,18 @@
   "title": "boards.json board vocabulary",
   "type": "object",
   "additionalProperties": false,
-  "required": ["description", "boards", "excluded_os_images", "unmapped_device_models"],
+  "required": [
+    "description",
+    "identity_cross_check_rule",
+    "boards",
+    "pending_board_families",
+    "excluded_os_images",
+    "usb_payload_board_families",
+    "unmapped_device_models"
+  ],
   "properties": {
-    "description": {
-      "type": "string"
-    },
+    "description": { "type": "string" },
+    "identity_cross_check_rule": { "type": "string" },
     "boards": {
       "type": "array",
       "minItems": 1,
@@ -26,6 +33,7 @@
           "device_binding_method",
           "identity_cross_check",
           "cloud_device_models",
+          "cloud_provisioning",
           "os_images"
         ],
         "properties": {
@@ -33,64 +41,90 @@
             "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
           },
           "role": {
-            "enum": ["production-primary", "production-secondary", "production-tertiary", "ci"]
+            "description": "DEC-8.1: RevPi Connect 4 primary, RPi4/CM4 secondary, QEMU x86_64 for CI and dev.",
+            "enum": ["primary", "secondary", "ci"]
           },
-          "arch": {
-            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch"
-          },
-          "rust_target": {
-            "enum": ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
-          },
+          "arch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch" },
+          "rust_target": { "$ref": "#/$defs/rust_target" },
           "agent_profile": {
             "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/agent_profile"
           },
-          "cargo_features": {
-            "type": "array",
-            "minItems": 1,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z0-9][a-z0-9-]*$"
-            }
-          },
+          "cargo_features": { "$ref": "#/$defs/cargo_features" },
           "rauc_compatible": {
+            "description": "suderra-os-<board_profile>: one compatible per board, so no board's bundle installs on another (DEC-8.3).",
             "type": "string",
             "pattern": "^suderra-os-[a-z0-9_-]+$"
           },
-          "device_binding_method": {
-            "enum": ["tpm-ek-sha256", "bcm2711-serial-otp-sha256", "dmi-product-uuid-sha256"]
-          },
+          "device_binding_method": { "$ref": "#/$defs/device_binding_method" },
           "identity_cross_check": {
             "type": "object",
             "additionalProperties": false,
             "required": ["source", "values"],
             "properties": {
-              "source": {
-                "enum": ["device-tree-compatible", "dmi-allowlist"]
-              },
+              "source": { "$ref": "#/$defs/identity_source" },
               "values": {
                 "type": "array",
+                "minItems": 1,
                 "uniqueItems": true,
-                "items": {
-                  "type": "string"
-                }
+                "items": { "type": "string", "minLength": 1 }
               }
             }
           },
-          "cloud_device_models": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z0-9_]+$"
-            }
-          },
+          "cloud_device_models": { "$ref": "#/$defs/device_models" },
+          "cloud_provisioning": { "$ref": "#/$defs/cloud_provisioning" },
           "os_images": {
             "type": "array",
             "minItems": 1,
-            "items": {
-              "$ref": "#/$defs/os_image"
-            }
+            "items": { "$ref": "#/$defs/os_image" }
+          }
+        }
+      }
+    },
+    "pending_board_families": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "family",
+          "board_profile_template",
+          "board_profile_pattern",
+          "rauc_compatible_template",
+          "arch",
+          "rust_target",
+          "agent_profile",
+          "cargo_features",
+          "device_binding_method",
+          "identity_cross_check_source",
+          "cloud_device_models",
+          "cloud_provisioning",
+          "status",
+          "os_images"
+        ],
+        "properties": {
+          "family": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "board_profile_template": { "type": "string", "pattern": "<model>$" },
+          "board_profile_pattern": { "type": "string", "pattern": "^\\^.*\\$$" },
+          "rauc_compatible_template": { "type": "string", "pattern": "^suderra-os-.*<model>$" },
+          "arch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch" },
+          "rust_target": { "$ref": "#/$defs/rust_target" },
+          "agent_profile": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/agent_profile"
+          },
+          "cargo_features": { "$ref": "#/$defs/cargo_features" },
+          "device_binding_method": { "$ref": "#/$defs/device_binding_method" },
+          "identity_cross_check_source": { "$ref": "#/$defs/identity_source" },
+          "cloud_device_models": { "$ref": "#/$defs/device_models" },
+          "cloud_provisioning": {
+            "allOf": [
+              { "$ref": "#/$defs/cloud_provisioning" },
+              { "properties": { "allowed": { "const": false } } }
+            ]
+          },
+          "status": { "type": "string", "minLength": 10 },
+          "os_images": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/os_image" }
           }
         }
       }
@@ -102,15 +136,36 @@
         "additionalProperties": false,
         "required": ["defconfig", "build_target", "reason"],
         "properties": {
-          "defconfig": {
-            "$ref": "#/$defs/defconfig"
-          },
-          "build_target": {
-            "$ref": "#/$defs/build_target"
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 10
+          "defconfig": { "$ref": "#/$defs/defconfig" },
+          "build_target": { "$ref": "#/$defs/build_target" },
+          "reason": { "type": "string", "minLength": 10 }
+        }
+      }
+    },
+    "usb_payload_board_families": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "families"],
+      "properties": {
+        "description": { "type": "string" },
+        "families": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "boards"],
+            "properties": {
+              "kind": { "enum": ["payload", "installer-index"] },
+              "boards": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+                }
+              }
+            }
           }
         }
       }
@@ -122,38 +177,64 @@
         "additionalProperties": false,
         "required": ["device_model", "reason"],
         "properties": {
-          "device_model": {
-            "type": "string",
-            "pattern": "^[a-z0-9_]+$"
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 10
-          }
+          "device_model": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "reason": { "type": "string", "minLength": 10 }
         }
       }
     }
   },
   "$defs": {
-    "defconfig": {
-      "type": "string",
-      "pattern": "^suderra_[a-z0-9_]+_defconfig$"
+    "defconfig": { "type": "string", "pattern": "^suderra_[a-z0-9_]+_defconfig$" },
+    "build_target": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "rust_target": { "enum": ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"] },
+    "device_binding_method": {
+      "enum": ["tpm-ek-sha256", "bcm2711-serial-otp-sha256", "dmi-product-uuid-sha256"]
     },
-    "build_target": {
-      "type": "string",
-      "pattern": "^[a-z0-9_-]+$"
+    "identity_source": { "enum": ["device-tree-compatible", "dmi-allowlist"] },
+    "cargo_features": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/cargo_feature" }
+    },
+    "device_models": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+    },
+    "cloud_provisioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "blocked_by", "reason"],
+      "properties": {
+        "allowed": { "type": "boolean" },
+        "blocked_by": {
+          "description": "Field gates (SG-n), tracked findings, or ci-only. Empty exactly when allowed.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(SG-[0-9]+|[A-Z]+-(CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+|EI-[0-9]{3}|ci-only)$"
+          }
+        },
+        "reason": { "type": "string", "minLength": 10 }
+      },
+      "oneOf": [
+        {
+          "properties": { "allowed": { "const": true }, "blocked_by": { "maxItems": 0 } }
+        },
+        {
+          "properties": { "allowed": { "const": false }, "blocked_by": { "minItems": 1 } }
+        }
+      ]
     },
     "os_image": {
       "type": "object",
       "additionalProperties": false,
       "required": ["defconfig", "build_target"],
       "properties": {
-        "defconfig": {
-          "$ref": "#/$defs/defconfig"
-        },
-        "build_target": {
-          "$ref": "#/$defs/build_target"
-        }
+        "defconfig": { "$ref": "#/$defs/defconfig" },
+        "build_target": { "$ref": "#/$defs/build_target" }
       }
     }
   }

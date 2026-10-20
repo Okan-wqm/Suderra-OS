@@ -1,13 +1,14 @@
 {
-  "description": "The one board vocabulary (ADR-048 DEC-8.4). board_profile is the value of /etc/suderra/board in the signed OS image, the provisioning manifest board, the release statement board_profile and the release artifact name (artifact-naming.json); every other vocabulary (Suderra OS build targets, cloud DeviceModel, RAUC compatible, cargo features, Rust target) is mapped onto it here and nowhere else.",
+  "description": "The one board vocabulary (ADR-048 DEC-8.4). board_profile is the value of /etc/suderra/board in the signed OS image, the provisioning manifest board, the release statement board_profile and the release artifact name (artifact-naming.json); every other vocabulary (Suderra OS build targets, USB payload families, cloud DeviceModel, RAUC compatible, cargo features, Rust target) is mapped onto it here and nowhere else. cloud_provisioning is the cloud's provisioning gate: the manifest service issues a manifest only for a board whose gate is open, and never for a board_profile that matches a pending family's pattern (SG-3).",
+  "identity_cross_check_rule": "The image declares these values in /etc/suderra/board. At boot the live device-tree compatible (ARM) or DMI vendor/product (x86) must equal one of them; otherwise the agent runs in degraded mode and an alarm result is written (DEC-8.2). The list is never empty: a board without a cross-check value is not a board.",
   "boards": [
     {
       "board_profile": "revpi-connect4",
-      "role": "production-primary",
+      "role": "primary",
       "arch": "aarch64",
       "rust_target": "aarch64-unknown-linux-gnu",
       "agent_profile": "suderra-os",
-      "cargo_features": ["revpi-io", "scada-display", "suderra-os", "tpm"],
+      "cargo_features": ["revpi-io", "scada-display", "suderra-os"],
       "rauc_compatible": "suderra-os-revpi-connect4",
       "device_binding_method": "tpm-ek-sha256",
       "identity_cross_check": {
@@ -15,6 +16,11 @@
         "values": ["kunbus,revpi-connect4"]
       },
       "cloud_device_models": ["revolution_pi_connect_4"],
+      "cloud_provisioning": {
+        "allowed": true,
+        "blocked_by": [],
+        "reason": "Provisioning is open; until SG-1 opens at P2 exit the cloud signs only monitoring-only site configs for it."
+      },
       "os_images": [
         {
           "defconfig": "suderra_aarch64_revpi4_defconfig",
@@ -27,29 +33,8 @@
       ]
     },
     {
-      "board_profile": "industrial-x86_64",
-      "role": "production-secondary",
-      "arch": "x86_64",
-      "rust_target": "x86_64-unknown-linux-gnu",
-      "agent_profile": "suderra-os",
-      "cargo_features": ["scada-display", "suderra-os", "tpm"],
-      "rauc_compatible": "suderra-os-industrial-x86_64",
-      "device_binding_method": "tpm-ek-sha256",
-      "identity_cross_check": {
-        "source": "dmi-allowlist",
-        "values": []
-      },
-      "cloud_device_models": ["industrial_pc"],
-      "os_images": [
-        {
-          "defconfig": "suderra_x86_64_defconfig",
-          "build_target": "x86_64"
-        }
-      ]
-    },
-    {
       "board_profile": "rpi4-cm4",
-      "role": "production-tertiary",
+      "role": "secondary",
       "arch": "aarch64",
       "rust_target": "aarch64-unknown-linux-gnu",
       "agent_profile": "suderra-os",
@@ -61,6 +46,11 @@
         "values": ["raspberrypi,4-compute-module", "raspberrypi,4-model-b"]
       },
       "cloud_device_models": ["raspberry_pi_4"],
+      "cloud_provisioning": {
+        "allowed": false,
+        "blocked_by": ["EDGE-MEDIUM-120"],
+        "reason": "How the TPM-less RPi4/CM4 is used in production is an open operator decision (ADR-048 Soru 3, DEC-8.11); the cloud issues no manifest for it until that decision amends this gate."
+      },
       "os_images": [
         {
           "defconfig": "suderra_aarch64_rpi4_defconfig",
@@ -78,7 +68,7 @@
       "arch": "x86_64",
       "rust_target": "x86_64-unknown-linux-gnu",
       "agent_profile": "suderra-os",
-      "cargo_features": ["scada-display", "suderra-os", "tpm"],
+      "cargo_features": ["scada-display", "suderra-os"],
       "rauc_compatible": "suderra-os-qemu-x86_64",
       "device_binding_method": "tpm-ek-sha256",
       "identity_cross_check": {
@@ -86,6 +76,11 @@
         "values": ["QEMU"]
       },
       "cloud_device_models": [],
+      "cloud_provisioning": {
+        "allowed": false,
+        "blocked_by": ["ci-only"],
+        "reason": "CI and dev target: only the fake cloud of the QEMU e2e test (Suderra-OS tests/qemu/fake_cloud.py) provisions it, and no DeviceModel maps to it."
+      },
       "os_images": [
         {
           "defconfig": "suderra_qemu_x86_64_defconfig",
@@ -94,6 +89,33 @@
         {
           "defconfig": "suderra_qemu_x86_64_prod_ab_defconfig",
           "build_target": "qemu-x86_64-prod-ab"
+        }
+      ]
+    }
+  ],
+  "pending_board_families": [
+    {
+      "family": "x86-ipc",
+      "board_profile_template": "x86-ipc-<model>",
+      "board_profile_pattern": "^x86-ipc-[a-z0-9]+(-[a-z0-9]+)*$",
+      "rauc_compatible_template": "suderra-os-x86-ipc-<model>",
+      "arch": "x86_64",
+      "rust_target": "x86_64-unknown-linux-gnu",
+      "agent_profile": "suderra-os",
+      "cargo_features": ["scada-display", "suderra-os"],
+      "device_binding_method": "tpm-ek-sha256",
+      "identity_cross_check_source": "dmi-allowlist",
+      "cloud_device_models": ["industrial_pc"],
+      "cloud_provisioning": {
+        "allowed": false,
+        "blocked_by": ["SG-3"],
+        "reason": "No x86 unit is installed in the field before P1 exit (SG-3): the cloud issues no manifest for any board_profile matching board_profile_pattern."
+      },
+      "status": "No industrial x86 model is selected or qualified (DEC-8.1, DEC-8.9). Each qualified model becomes its own boards entry x86-ipc-<model> with its own RAUC compatible suderra-os-x86-ipc-<model> and DMI allowlist in a later contract version, so one model's image never installs on another (DEC-8.3). The model-independent x86 image below is the kernel and Secure Boot qualification base and declares no board_profile.",
+      "os_images": [
+        {
+          "defconfig": "suderra_x86_64_defconfig",
+          "build_target": "x86_64"
         }
       ]
     }
@@ -110,6 +132,14 @@
       "reason": "USB self-installer that flashes the rpi4 and revpi4 payload images; it runs no agent."
     }
   ],
+  "usb_payload_board_families": {
+    "description": "The board_family and compatible_models vocabulary of the Suderra-OS USB installer payload index (board/suderra/common/post-image.sh, scripts/ci/package-usb-installer-payload.py, suderra.usb-payload-index.v1). It predates boards.json; this is its only mapping onto board_profile.",
+    "families": {
+      "revpi4": { "kind": "payload", "boards": ["revpi-connect4"] },
+      "rpi4-cm4": { "kind": "payload", "boards": ["rpi4-cm4"] },
+      "pi-cm4-revpi": { "kind": "installer-index", "boards": ["revpi-connect4", "rpi4-cm4"] }
+    }
+  },
   "unmapped_device_models": [
     {
       "device_model": "revolution_pi_compact",

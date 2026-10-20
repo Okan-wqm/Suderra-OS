@@ -14,9 +14,9 @@
       "note": "Six two-byte UTF-8 characters: LEN counts 12 bytes, not 6 characters."
     },
     {
-      "payload_type": "application/vnd.suderra.edge-provisioning.v2+json",
+      "payload_type": "application/vnd.suderra.edge-provisioning.v1+json",
       "payload": "",
-      "pae_hex": "445353457631203439206170706c69636174696f6e2f766e642e737564657272612e656467652d70726f766973696f6e696e672e76322b6a736f6e203020",
+      "pae_hex": "445353457631203439206170706c69636174696f6e2f766e642e737564657272612e656467652d70726f766973696f6e696e672e76312b6a736f6e203020",
       "note": "Empty body: LEN is 0."
     }
   ]

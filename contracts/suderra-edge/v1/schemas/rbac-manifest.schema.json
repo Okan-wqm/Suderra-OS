@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:rbac-manifest",
+  "title": "suderra.rbac-manifest.v1 RBAC manifest",
+  "description": "Signed by the rbac-manifest key, anchored in the trust-anchors bundle, tenant-bound (ADR-048 DEC-3.3, DEC-9.4, DEC-9.9, DEC-22). It maps the command actor to its key and the key to permissions. Contract 1.x knows exactly one actor, the platform actor, with the single role platform-authenticated (DEC-9.4 P0-P2; operator keys and TPI co-signing arrive with a later contract version, EDGE-MEDIUM-121); the actor's key must be a command-purpose anchor of the bundle. The permission vocabulary is the edge agent's Permission enum (sens-api-gateway/src/authz/permission.rs) in its serde form, minus every variant requires_two_person_integrity() names: those are refused fail-closed until P2, so no 1.x manifest can grant one. Root verifies it against the bundle's rbac-manifest anchor and writes it as rbac-manifest.dsse; the agent re-verifies it at load and keeps policy_version in its version gate (DEC-9.9).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "policy_version",
+    "not_before",
+    "expires_at",
+    "actors",
+    "roles"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.rbac-manifest.v1"
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "policy_version": {
+      "description": "Monotonic per tenant; an equal value is accepted only for the identical installed manifest (statements.json sequences, DEC-9.9).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "not_before": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "actors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actor_id", "kind", "keyid", "public_key", "roles"],
+        "properties": {
+          "actor_id": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+          },
+          "kind": {
+            "const": "platform"
+          },
+          "keyid": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/keyid"
+          },
+          "public_key": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/ed25519_public_key"
+          },
+          "roles": {
+            "const": ["platform-authenticated"]
+          }
+        }
+      }
+    },
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "permissions", "not_before", "expires_at"],
+        "properties": {
+          "name": {
+            "const": "platform-authenticated"
+          },
+          "permissions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/permission"
+            }
+          },
+          "not_before": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+          },
+          "expires_at": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "u8": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "u16": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "tag_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+    },
+    "actuator_class": {
+      "oneOf": [
+        {
+          "enum": [
+            "Filtration",
+            "Lighting",
+            "Feeding",
+            "Recirculation",
+            "WasteRemoval",
+            "Degassing",
+            "EmergencyContainment",
+            "Inventory"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Aeration"],
+          "properties": {
+            "Aeration": {
+              "enum": ["Normal", "LifeSupport"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Chemistry"],
+          "properties": {
+            "Chemistry": {
+              "enum": ["Nutrient", "PhAdjust", "LifeSupportDose"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["Thermal"],
+          "properties": {
+            "Thermal": {
+              "enum": ["Heating", "Cooling"]
+            }
+          }
+        }
+      ]
+    },
+    "permission": {
+      "oneOf": [
+        {
+          "description": "Parameterless permissions without two-person integrity.",
+          "enum": [
+            "ReadTag",
+            "ReadAuditLog",
+            "FailoverControl",
+            "ManagePolicy",
+            "ManageIoConfig",
+            "ManageCertPinning",
+            "ManageLicense",
+            "ManageUserTokenManifest",
+            "WatchSubscribe",
+            "DebugStep"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["WriteTag"],
+          "properties": {
+            "WriteTag": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tag_id"],
+              "properties": {
+                "tag_id": {
+                  "$ref": "#/$defs/tag_id"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ModbusWrite"],
+          "properties": {
+            "ModbusWrite": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["device_id", "register_range"],
+              "properties": {
+                "device_id": {
+                  "$ref": "#/$defs/u8"
+                },
+                "register_range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["start", "end"],
+                  "properties": {
+                    "start": {
+                      "$ref": "#/$defs/u16"
+                    },
+                    "end": {
+                      "$ref": "#/$defs/u16"
+                    }
+                  },
+                  "description": "Inclusive range; start must not exceed end. JSON Schema cannot compare the two members, so a verifier treats start > end as schema-invalid, as the agent's ModbusRegisterRange does."
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["GpioWrite"],
+          "properties": {
+            "GpioWrite": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pin"],
+              "properties": {
+                "pin": {
+                  "$ref": "#/$defs/u8"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["PwmWrite"],
+          "properties": {
+            "PwmWrite": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["channel"],
+              "properties": {
+                "channel": {
+                  "$ref": "#/$defs/u8"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["SpiWrite"],
+          "properties": {
+            "SpiWrite": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["device_id"],
+              "properties": {
+                "device_id": {
+                  "$ref": "#/$defs/u8"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["AffectActuator"],
+          "properties": {
+            "AffectActuator": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["class"],
+              "properties": {
+                "class": {
+                  "$ref": "#/$defs/actuator_class"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["EmergencyActuator"],
+          "properties": {
+            "EmergencyActuator": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["class"],
+              "properties": {
+                "class": {
+                  "$ref": "#/$defs/actuator_class"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

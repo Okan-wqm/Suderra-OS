@@ -4,7 +4,7 @@
   "time_state": "synced-nts",
   "board_profile": "revpi-connect4",
   "os_version": "1.0.0",
-  "seq": 5,
+  "seq": 9,
   "kind": "lockdown",
   "outcome": "ok",
   "authority": "cloud"

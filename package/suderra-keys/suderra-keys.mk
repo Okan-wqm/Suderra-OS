@@ -29,6 +29,10 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 		echo "Geliştirme anahtarları için: ./scripts/gen-dev-keys.sh"; \
 		exit 1; \
 	fi
+	# The vendored edge contract's TEST-ONLY keys are derivable by anyone, so no
+	# image of any variant may pin one (ADR-048 DEC-3.9, DEC-25.1): refuse the
+	# whole trust-root directory before installing anything from it.
+	@python3 -B $(BR2_EXTERNAL_SUDERRA_PATH)/scripts/ci/check-no-contract-test-keys.py --tree "$(SUDERRA_TRUST_ROOTS_DIR)"
 	@for required in \
 		rauc-signing.crt \
 		verity-signing.crt \

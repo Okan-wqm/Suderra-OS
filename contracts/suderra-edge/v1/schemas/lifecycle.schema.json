@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:lifecycle",
+  "title": "lifecycle.json device lifecycle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "store", "states", "transitions", "cloud_device_lifecycle"],
+  "properties": {
+    "description": { "type": "string" },
+    "store": { "const": "/data/suderra/os/lifecycle" },
+    "states": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state"
+      },
+      "additionalProperties": { "type": "string", "minLength": 10 }
+    },
+    "transitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "evidence", "phase"],
+        "properties": {
+          "from": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state" },
+          "to": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state" },
+          "evidence": { "type": "string", "minLength": 10 },
+          "statement_type": {
+            "type": "string",
+            "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$"
+          },
+          "phase": { "enum": ["P0", "P1", "P2", "P3"] }
+        }
+      }
+    },
+    "cloud_device_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os_to_cloud", "cloud_only"],
+      "properties": {
+        "os_to_cloud": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state"
+          },
+          "additionalProperties": { "type": "string", "pattern": "^[a-z_]+$" }
+        },
+        "cloud_only": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state", "reason"],
+            "properties": {
+              "state": { "type": "string", "pattern": "^[a-z_]+$" },
+              "reason": { "type": "string", "minLength": 10 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

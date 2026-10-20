@@ -31,7 +31,31 @@
       "message_hex": "616e79206d65737361676520617420616c6c",
       "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
       "verify_strict": false,
-      "note": "A and R are the identity point and S is 0, so [S]B = R + [k]A holds for every message. OpenSSL and ed25519-dalek verify() accept it; verify_strict rejects small-order A and R."
+      "note": "A and R are the identity point and S is 0, so [S]B = R + [k]A holds for every message; verify_strict rejects small-order A and R."
+    },
+    {
+      "id": "small-order-r",
+      "public_key_hex": "82d1b3b946e7fb0864159c235810b7d7dafb80f7ab7701d746809a922353792b",
+      "message_hex": "737564657272612d656467652d636f6e7472616374207369676e617475726520766563746f72",
+      "signature_hex": "0100000000000000000000000000000000000000000000000000000000000000660391f19bd42a292ebc32106053b9c4b9c0cdf546754f3a5190730f04c44d01",
+      "verify_strict": false,
+      "note": "Valid A, R the identity, S = k*a mod L: the cofactorless equation holds, so a verifier without the small-order R check accepts it; verify_strict rejects it."
+    },
+    {
+      "id": "non-canonical-r",
+      "public_key_hex": "82d1b3b946e7fb0864159c235810b7d7dafb80f7ab7701d746809a922353792b",
+      "message_hex": "737564657272612d656467652d636f6e7472616374207369676e617475726520766563746f72",
+      "signature_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fab5e7f5c7cbb41be2742cf1e8654dbd18c1dfadc96ad4ca1f1a32a3f4cdee90b",
+      "verify_strict": false,
+      "note": "R encodes y = p + 1, a non-canonical encoding of the identity; the equation holds for the decoded point, verify_strict rejects the encoding."
+    },
+    {
+      "id": "non-canonical-a",
+      "public_key_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "message_hex": "737564657272612d656467652d636f6e7472616374207369676e617475726520766563746f72",
+      "signature_hex": "f0d29d254fb1e0ed4a60c538156babf50f11a9b16b5c1b4aaea8cebb8302540eadc0dfc9819c990b5d56619cf5f31628ce2f071aee27669e21e718e8a7598c0e",
+      "verify_strict": false,
+      "note": "A encodes y = p + 1 (the identity, non-canonically) and S = r for R = [r]B, so [S]B = R + [k]A holds for every message; verify_strict rejects A."
     }
   ]
 }

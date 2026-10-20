@@ -1,0 +1,7 @@
+# TEST-ONLY site config of the Suderra edge contract fixtures (version 2).
+# config.yaml is the agent's configuration document; the contract binds it by digest.
+device:
+  board_profile: revpi-connect4
+modbus:
+  - name: pond-1-sensors
+    allow_writes: false

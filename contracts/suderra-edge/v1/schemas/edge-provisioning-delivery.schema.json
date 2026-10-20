@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-provisioning-delivery",
+  "title": "suderra.edge-provisioning-delivery.v1 provisioning delivery",
+  "description": "Everything root needs to provision a device except the release artifact, in one document: the body of a successful GET /install/{device_code}/suderra-os and the delivery.json file of a USB provisioning bundle (delivery.json, ADR-048 DEC-5.5, DEC-5.6, DEC-5.10). Envelopes are embedded as JSON objects; statement digests are over their decoded payloads, so the embedding does not change them. Root verifies the manifest with the other members as its delivered statements and files (statements.json) and installs them as delivery.json installation says.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "manifest",
+    "release_statement",
+    "trust_anchors",
+    "site_config",
+    "rbac_manifest",
+    "site_files"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.edge-provisioning-delivery.v1"
+    },
+    "manifest": {
+      "description": "suderra.edge-provisioning.v1 envelope.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:dsse-envelope"
+    },
+    "release_statement": {
+      "description": "suderra.edge-release.v1 envelope the manifest names.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:dsse-envelope"
+    },
+    "trust_anchors": {
+      "description": "suderra.trust-anchors.v1 envelope the manifest names.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:dsse-envelope"
+    },
+    "site_config": {
+      "description": "suderra.site-config.v1 envelope the manifest names.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:dsse-envelope"
+    },
+    "rbac_manifest": {
+      "description": "suderra.rbac-manifest.v1 envelope the site config names.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:dsse-envelope"
+    },
+    "site_files": {
+      "description": "Base64 bytes of every site file the site config names, keyed by its fixed path.",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/site_path"
+      },
+      "required": ["config.yaml"],
+      "additionalProperties": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/base64"
+      },
+      "properties": {
+        "config.yaml": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/base64"
+        }
+      }
+    }
+  }
+}

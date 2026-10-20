@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:site-config",
+  "title": "suderra.site-config.v1 site config",
+  "description": "Signed by the config-integrity key, anchored in the trust-anchors bundle, device-bound and tenant-bound (ADR-048 DEC-3.3, DEC-4.10, DEC-4.12, DEC-22). It names every site file root installs under /var/lib/suderra-site by digest and size, and the RBAC manifest by statement digest and policy_version. In P0 it arrives only inside a provisioning delivery (delivery.json); from P1 the root update worker also accepts it on the request channel (kind=site-config). Root verifies it against the bundle's config-integrity anchor and writes it as site-config.dsse; the agent re-verifies it and compares every site file's digest before loading config.yaml (DEC-4.10). config.yaml is the agent's configuration document, bound here by digest; the per-event output behaviour table joins this statement with DEC-13 P1 (EDGE-HIGH-065) and the per-output policy with DEC-13 P2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_binding",
+    "update_seq",
+    "not_before",
+    "expires_at",
+    "files",
+    "rbac_manifest"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.site-config.v1"
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "update_seq": {
+      "description": "Monotonic per device; an equal value is accepted only for the identical installed statement (statements.json sequences, DEC-4.10).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "not_before": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "files": {
+      "description": "Every site file, keyed by its fixed path; config.yaml is always present. Root installs exactly these files and nothing else.",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/site_path"
+      },
+      "required": ["config.yaml"],
+      "additionalProperties": {
+        "$ref": "#/$defs/file"
+      },
+      "properties": {
+        "config.yaml": {
+          "$ref": "#/$defs/file"
+        }
+      }
+    },
+    "rbac_manifest": {
+      "description": "The suderra.rbac-manifest.v1 statement delivered with this site config (rbac-manifest.dsse), by statement digest and policy_version.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "policy_version"],
+      "properties": {
+        "digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "policy_version": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "size_bytes"],
+      "properties": {
+        "digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        }
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@
   "time_state": "unsynced",
   "board_profile": "revpi-connect4",
   "os_version": "1.0.0",
-  "seq": 4,
+  "seq": 5,
   "kind": "data-unlock",
   "outcome": "alarm",
   "reason": "data-unmountable",

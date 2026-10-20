@@ -8,8 +8,13 @@
 # files and hash to the pinned digest, and its VERSION must equal the pin; a
 # hand edit of the vendored tree, or a re-vendor without a new pin, fails here.
 # boards.json is the one board vocabulary, so it must also classify every
-# ci/build-matrix.yml target exactly once, as a board image or an excluded
-# image: a new defconfig without a board-map row fails here, not on a device.
+# ci/build-matrix.yml target exactly once, as a board image, a pending board
+# family's image or an excluded image (a new defconfig without a board-map row
+# fails here, not on a device), and map every board_family and
+# compatible_models value of the USB installer payload index
+# (board/suderra/common/post-image.sh, scripts/ci/package-usb-installer-payload.py).
+# The pin's source commit is checked against the source repository by
+# contracts-vendor-source-test.sh.
 #
 # Re-vendor from aquaculture_platform with
 #   scripts/edge/vendor-contracts-to-suderra-os.sh <path-to-Suderra-OS>
@@ -77,6 +82,7 @@ pinned_versions="$(grep -cE '^v[0-9]+_version=' "${PIN}")"
 python3 -B - "${ROOT}" <<'PY'
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -87,12 +93,25 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 targets = sorted(f"{row['name']} {row['target']}" for row in module.load_matrix()["defconfigs"])
 
+usb_sources = [
+    root / "board/suderra/common/post-image.sh",
+    root / "scripts/ci/package-usb-installer-payload.py",
+]
+usb_values = set()
+for source in usb_sources:
+    text = source.read_text()
+    usb_values.update(re.findall(r'"board_family":\s*"([a-z0-9-]+)"', text))
+    usb_values.update(re.findall(r'\bboard_family="([a-z0-9-]+)"', text))
+    for models in re.findall(r'"compatible_models":\s*\[([^\]]*)\]', text):
+        usb_values.update(re.findall(r'"([a-z0-9-]+)"', models))
+if not usb_values:
+    raise SystemExit("ERROR: found no USB payload board_family values to map")
+
 for boards_path in sorted((root / "contracts/suderra-edge").glob("v*/boards.json")):
     boards = json.loads(boards_path.read_text())
+    rows = boards["boards"] + boards.get("pending_board_families", [])
     classified = [
-        f"{image['defconfig']} {image['build_target']}"
-        for board in boards["boards"]
-        for image in board["os_images"]
+        f"{image['defconfig']} {image['build_target']}" for row in rows for image in row["os_images"]
     ] + [f"{image['defconfig']} {image['build_target']}" for image in boards["excluded_os_images"]]
     duplicates = sorted({item for item in classified if classified.count(item) > 1})
     if duplicates:
@@ -104,6 +123,13 @@ for boards_path in sorted((root / "contracts/suderra-edge").glob("v*/boards.json
             f"ERROR: {boards_path.relative_to(root)} disagrees with ci/build-matrix.yml; "
             f"unclassified targets: {missing}; classified but not in the matrix: {stale}"
         )
+    families = set(boards["usb_payload_board_families"]["families"])
+    if usb_values != families:
+        raise SystemExit(
+            f"ERROR: {boards_path.relative_to(root)} usb_payload_board_families disagrees with the USB "
+            f"payload index; unmapped: {sorted(usb_values - families)}; "
+            f"mapped but unused: {sorted(families - usb_values)}"
+        )
 PY
 
-echo "contracts-vendor-digest: ${versions} vendored contract version(s) match the pin and ci/build-matrix.yml"
+echo "contracts-vendor-digest: ${versions} vendored contract version(s) match the pin, ci/build-matrix.yml and the USB payload vocabulary"

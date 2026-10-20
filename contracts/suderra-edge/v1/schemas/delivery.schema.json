@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:delivery",
+  "title": "delivery.json provisioning delivery binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "request_type", "delivery_type", "network", "usb", "installation"],
+  "properties": {
+    "description": { "type": "string" },
+    "request_type": { "const": "suderra.edge-provisioning-request.v1" },
+    "delivery_type": { "const": "suderra.edge-provisioning-delivery.v1" },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "request", "response", "refusal"],
+      "properties": {
+        "phase": { "const": "P0" },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "path", "headers", "query_schema"],
+          "properties": {
+            "method": { "const": "GET" },
+            "path": { "const": "/install/{device_code}/suderra-os" },
+            "headers": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["X-Provisioning-Token"],
+              "properties": { "X-Provisioning-Token": { "type": "string" } }
+            },
+            "query_schema": { "const": "schemas/edge-provisioning-request.schema.json" }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "content_type", "schema"],
+          "properties": {
+            "status": { "const": 200 },
+            "content_type": {
+              "const": "application/vnd.suderra.edge-provisioning-delivery.v1+json"
+            },
+            "schema": { "const": "schemas/edge-provisioning-delivery.schema.json" }
+          }
+        },
+        "refusal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "body", "rate_limited_status", "rule"],
+          "properties": {
+            "status": { "const": 404 },
+            "body": { "const": "{\"error\":\"unavailable\"}" },
+            "rate_limited_status": { "const": 429 },
+            "rule": { "type": "string" }
+          }
+        }
+      }
+    },
+    "usb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "directory", "files", "nonce", "ingress"],
+      "properties": {
+        "phase": { "const": "P1" },
+        "directory": { "const": "suderra-provisioning/{device_code}/" },
+        "files": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["delivery.json", "{artifact}"],
+          "properties": {
+            "delivery.json": { "type": "string" },
+            "{artifact}": { "type": "string" }
+          }
+        },
+        "nonce": { "type": "string" },
+        "ingress": { "type": "string" }
+      }
+    },
+    "installation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest",
+        "release_statement",
+        "trust_anchors",
+        "site_config",
+        "rbac_manifest",
+        "site_files",
+        "switch"
+      ],
+      "properties": {
+        "manifest": { "type": "string" },
+        "release_statement": { "type": "string" },
+        "trust_anchors": { "type": "string" },
+        "site_config": { "type": "string" },
+        "rbac_manifest": { "type": "string" },
+        "site_files": { "type": "string" },
+        "switch": { "type": "string" }
+      }
+    }
+  }
+}

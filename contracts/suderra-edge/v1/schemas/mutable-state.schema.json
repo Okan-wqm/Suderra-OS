@@ -79,10 +79,13 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["path", "backing", "writer", "agent_access", "contents", "decisions"],
+        "required": ["path", "node", "backing", "writer", "agent_access", "contents", "decisions"],
         "properties": {
           "path": {
             "$ref": "#/$defs/abs_path"
+          },
+          "node": {
+            "enum": ["directory", "file"]
           },
           "backing": {
             "type": "object",
@@ -196,6 +199,22 @@
               "mode": true
             },
             "required": ["owner", "group", "mode"]
+          }
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "node": {
+                  "const": "file"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "file_mode": false
+              }
+            }
           }
         ]
       }

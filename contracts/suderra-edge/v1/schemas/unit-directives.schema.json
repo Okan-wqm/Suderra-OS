@@ -14,38 +14,72 @@
     "allowed",
     "forbidden",
     "profiles",
-    "profile_specific_keys"
+    "profile_specific_keys",
+    "hooks"
   ],
   "properties": {
-    "description": { "type": "string" },
-    "unit": { "const": "suderra-agent.service" },
+    "description": {
+      "type": "string"
+    },
+    "unit": {
+      "const": "suderra-agent.service"
+    },
     "parsing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["list_keys", "rule"],
+      "required": ["list_keys", "ordered_keys", "empty_value_keys", "rule", "reset_rule"],
       "properties": {
-        "list_keys": { "$ref": "#/$defs/key_list" },
-        "rule": { "type": "string" }
+        "list_keys": {
+          "$ref": "#/$defs/key_list"
+        },
+        "ordered_keys": {
+          "$ref": "#/$defs/key_list"
+        },
+        "empty_value_keys": {
+          "$ref": "#/$defs/key_list"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "reset_rule": {
+          "type": "string"
+        }
       }
     },
-    "exact": { "$ref": "#/$defs/section_values" },
-    "required": { "$ref": "#/$defs/section_values" },
+    "exact": {
+      "$ref": "#/$defs/section_values"
+    },
+    "required": {
+      "$ref": "#/$defs/section_values"
+    },
     "present": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "Unit": { "$ref": "#/$defs/key_list" },
-        "Service": { "$ref": "#/$defs/key_list" },
-        "Install": { "$ref": "#/$defs/key_list" }
+        "Unit": {
+          "$ref": "#/$defs/key_list"
+        },
+        "Service": {
+          "$ref": "#/$defs/key_list"
+        },
+        "Install": {
+          "$ref": "#/$defs/key_list"
+        }
       }
     },
     "allowed": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "Unit": { "$ref": "#/$defs/key_list" },
-        "Service": { "$ref": "#/$defs/key_list" },
-        "Install": { "$ref": "#/$defs/key_list" }
+        "Unit": {
+          "$ref": "#/$defs/key_list"
+        },
+        "Service": {
+          "$ref": "#/$defs/key_list"
+        },
+        "Install": {
+          "$ref": "#/$defs/key_list"
+        }
       }
     },
     "forbidden": {
@@ -55,16 +89,28 @@
         "additionalProperties": false,
         "required": ["section", "key", "reason"],
         "properties": {
-          "section": { "$ref": "#/$defs/section" },
-          "key": { "$ref": "#/$defs/key" },
-          "value_pattern": { "type": "string", "minLength": 1 },
+          "section": {
+            "$ref": "#/$defs/section"
+          },
+          "key": {
+            "$ref": "#/$defs/key"
+          },
+          "value_pattern": {
+            "type": "string",
+            "minLength": 1
+          },
           "profiles": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": { "$ref": "#/$defs/profile" }
+            "items": {
+              "$ref": "#/$defs/profile"
+            }
           },
-          "reason": { "type": "string", "minLength": 10 }
+          "reason": {
+            "type": "string",
+            "minLength": 10
+          }
         }
       }
     },
@@ -78,22 +124,35 @@
           "additionalProperties": false,
           "required": ["unit_path", "repository", "exact", "board_dropins"],
           "properties": {
-            "unit_path": { "type": "string" },
-            "repository": { "const": "Suderra-OS" },
-            "exact": { "$ref": "#/$defs/section_values" },
+            "unit_path": {
+              "type": "string"
+            },
+            "repository": {
+              "const": "Suderra-OS"
+            },
+            "exact": {
+              "$ref": "#/$defs/section_values"
+            },
             "board_dropins": {
               "type": "object",
               "additionalProperties": false,
               "required": ["path", "rule", "boards"],
               "properties": {
-                "path": { "type": "string", "pattern": "\\{board_profile\\}" },
-                "rule": { "type": "string" },
+                "path": {
+                  "type": "string",
+                  "pattern": "\\{board_profile\\}"
+                },
+                "rule": {
+                  "type": "string"
+                },
                 "boards": {
                   "type": "object",
                   "propertyNames": {
                     "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
                   },
-                  "additionalProperties": { "$ref": "#/$defs/key_values" }
+                  "additionalProperties": {
+                    "$ref": "#/$defs/key_values"
+                  }
                 }
               }
             }
@@ -104,36 +163,118 @@
           "additionalProperties": false,
           "required": ["unit_path", "repository", "exact"],
           "properties": {
-            "unit_path": { "type": "string" },
-            "repository": { "const": "aquaculture_platform" },
-            "exact": { "$ref": "#/$defs/section_values" }
+            "unit_path": {
+              "type": "string"
+            },
+            "repository": {
+              "const": "aquaculture_platform"
+            },
+            "exact": {
+              "$ref": "#/$defs/section_values"
+            }
           }
         }
       }
     },
-    "profile_specific_keys": { "$ref": "#/$defs/key_list" }
+    "profile_specific_keys": {
+      "$ref": "#/$defs/key_list"
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verify_current", "reload"],
+      "properties": {
+        "verify_current": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command", "runs_as", "verifies", "on_failure", "phase"],
+          "properties": {
+            "command": {
+              "const": "/usr/bin/suderra-installer edge verify-current"
+            },
+            "runs_as": {
+              "type": "string"
+            },
+            "verifies": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "on_failure": {
+              "type": "string"
+            },
+            "phase": {
+              "enum": ["P0", "P1", "P2", "P3"]
+            }
+          }
+        },
+        "reload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sequence", "rule"],
+          "properties": {
+            "sequence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "rule": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
   },
   "$defs": {
-    "section": { "enum": ["Unit", "Service", "Install"] },
-    "profile": { "enum": ["suderra-os", "generic"] },
-    "key": { "type": "string", "pattern": "^[A-Z][A-Za-z]+$" },
-    "key_list": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/key" } },
+    "section": {
+      "enum": ["Unit", "Service", "Install"]
+    },
+    "profile": {
+      "enum": ["suderra-os", "generic"]
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z]+$"
+    },
+    "key_list": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/key"
+      }
+    },
     "key_values": {
       "type": "object",
-      "propertyNames": { "$ref": "#/$defs/key" },
+      "propertyNames": {
+        "$ref": "#/$defs/key"
+      },
       "additionalProperties": {
         "type": "array",
         "uniqueItems": true,
-        "items": { "type": "string", "minLength": 1 }
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "section_values": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "Unit": { "$ref": "#/$defs/key_values" },
-        "Service": { "$ref": "#/$defs/key_values" },
-        "Install": { "$ref": "#/$defs/key_values" }
+        "Unit": {
+          "$ref": "#/$defs/key_values"
+        },
+        "Service": {
+          "$ref": "#/$defs/key_values"
+        },
+        "Install": {
+          "$ref": "#/$defs/key_values"
+        }
       }
     }
   }

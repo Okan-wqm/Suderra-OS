@@ -1,0 +1,6 @@
+TEST-ONLY public key of the Suderra edge contract fixtures: fleet-root epoch 1.
+Anyone can derive its private key (keyring.json derivation). No image, keyid
+allowlist or signer may contain it (ADR-048 DEC-3.9, DEC-25.1).
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEACcASDYFgiGAWFMGiI01vr83ptXz7emti9BH36owB1U8=
+-----END PUBLIC KEY-----

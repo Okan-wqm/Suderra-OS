@@ -46,3 +46,22 @@ path = "configs/*_defconfig"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Suderra OS Contributors"
 SPDX-License-Identifier = "GPL-2.0-or-later"
+
+# Vendored Suderra edge contract (ADR-048 DEC-25): an exact copy of
+# Okan-wqm/aquaculture_platform contracts/suderra-edge, pinned by digest. Its
+# copyright and licence are those of the source repository (LICENSE there,
+# reproduced as LICENSES/LicenseRef-AquaculturePlatform-Proprietary.txt), not
+# the defaults above; a different grant for the vendored copy is the
+# copyright holder's decision and changes this block, never the vendored files.
+[[annotations]]
+path = "contracts/suderra-edge/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 Aquaculture Platform"
+SPDX-License-Identifier = "LicenseRef-AquaculturePlatform-Proprietary"
+
+# The vendoring pin is Suderra OS's own functional record.
+[[annotations]]
+path = "contracts/suderra-edge.digest"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Suderra OS Contributors"
+SPDX-License-Identifier = "CC0-1.0"

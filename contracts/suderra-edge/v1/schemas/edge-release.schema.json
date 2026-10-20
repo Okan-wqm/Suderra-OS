@@ -21,9 +21,15 @@
     "provenance"
   ],
   "properties": {
-    "_type": { "const": "suderra.edge-release.v1" },
-    "name": { "const": "suderra-agent" },
-    "version": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver" },
+    "_type": {
+      "const": "suderra.edge-release.v1"
+    },
+    "name": {
+      "const": "suderra-agent"
+    },
+    "version": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver"
+    },
     "security_version": {
       "description": "Monotonic integer compared against the device rollback floor; semver strings are never compared (DEC-2.5).",
       "type": "integer",
@@ -33,7 +39,9 @@
     "board_profile": {
       "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
     },
-    "arch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch" },
+    "arch": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch"
+    },
     "agent_profile": {
       "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/agent_profile"
     },
@@ -42,7 +50,9 @@
       "type": "array",
       "uniqueItems": true,
       "minItems": 1,
-      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+      "items": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/cargo_feature"
+      }
     },
     "artifact": {
       "type": "object",
@@ -54,28 +64,44 @@
           "type": "string",
           "pattern": "^suderra-agent-os-[0-9A-Za-z.-]+-[a-z0-9_-]+-(aarch64|x86_64)\\.tar\\.gz$"
         },
-        "format": { "const": "tar.gz" },
-        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 268435456 },
-        "digest": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest" },
-        "binary_name": { "const": "suderra-agent" },
+        "format": {
+          "const": "tar.gz"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456
+        },
+        "digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "binary_name": {
+          "const": "suderra-agent"
+        },
         "binary_digest": {
           "description": "Digest of the single suderra-agent member; verify-current re-checks it before every start (DEC-1.5).",
           "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
         }
       }
     },
-    "min_os_version": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver" },
+    "min_os_version": {
+      "description": "Oldest OS VERSION_ID this release runs on (statements.json compatibility, DEC-23).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+    },
     "agent_abi": {
-      "description": "Compared against the SUDERRA_AGENT_ABI range the OS publishes in /etc/os-release (DEC-23).",
+      "description": "Must lie inside the SUDERRA_AGENT_ABI range the OS publishes in /etc/os-release (statements.json compatibility, DEC-23).",
       "type": "integer",
       "minimum": 1,
       "maximum": 65535
     },
     "required_kernel_config": {
-      "description": "Kernel config symbols the agent needs on this board (DEC-23).",
+      "description": "Kernel config symbols the agent needs on this board; each must have a =y or =m line in the OS's /etc/suderra/kernel-config (statements.json compatibility, DEC-23).",
       "type": "array",
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^CONFIG_[A-Z0-9_]+$" }
+      "items": {
+        "type": "string",
+        "pattern": "^CONFIG_[A-Z0-9_]+$"
+      }
     },
     "provenance": {
       "description": "Digest of the release provenance document; the device does not trust provenance, the cloud admits it before any manifest names the release (DEC-3.8, DEC-20).",
@@ -83,8 +109,12 @@
       "additionalProperties": false,
       "required": ["predicate_type", "digest"],
       "properties": {
-        "predicate_type": { "const": "https://slsa.dev/provenance/v1" },
-        "digest": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest" }
+        "predicate_type": {
+          "const": "https://slsa.dev/provenance/v1"
+        },
+        "digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        }
       }
     }
   }

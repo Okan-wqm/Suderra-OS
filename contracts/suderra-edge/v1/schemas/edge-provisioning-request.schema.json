@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-provisioning-request",
+  "title": "suderra.edge-provisioning-request.v1 query parameters",
+  "description": "Query parameters of GET /install/{device_code}/suderra-os, as a JSON object of strings (delivery.json network.request, ADR-048 DEC-5.5). The root provision worker builds them from the device's own records; the provisioning token travels only in the X-Provisioning-Token header. The cloud binds the binding and the nonce into the manifest and uses board_profile, os_version and agent_abi to choose a release the device can run; the device still enforces every check itself (DEC-8.2, DEC-23).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "binding_method",
+    "binding_sha256",
+    "nonce",
+    "board_profile",
+    "os_version",
+    "agent_abi"
+  ],
+  "properties": {
+    "binding_method": {
+      "enum": ["tpm-ek-sha256", "bcm2711-serial-otp-sha256", "dmi-product-uuid-sha256"]
+    },
+    "binding_sha256": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sha256_hex" },
+    "nonce": {
+      "description": "Fresh per request from the root worker's CSPRNG, 128 to 512 bits in lowercase hex; the manifest must echo it.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32,128}$"
+    },
+    "board_profile": {
+      "description": "board_profile from /etc/suderra/board of the signed image.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+    },
+    "os_version": {
+      "description": "VERSION_ID from /etc/os-release.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+    },
+    "agent_abi": {
+      "description": "SUDERRA_AGENT_ABI from /etc/os-release, MIN-MAX.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$"
+    }
+  }
+}

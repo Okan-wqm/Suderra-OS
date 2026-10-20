@@ -1,0 +1,46 @@
+{
+  "description": "How a provisioning manifest travels with the statements and files it names (ADR-048 DEC-3.1, DEC-3.7, DEC-4.12, DEC-5.5, DEC-5.6, DEC-5.10). The network path and the USB bundle carry the same delivery document, so the cloud producer and the OS consumer test against the same golden deliveries (fixtures/edge-provisioning-delivery/).",
+  "request_type": "suderra.edge-provisioning-request.v1",
+  "delivery_type": "suderra.edge-provisioning-delivery.v1",
+  "network": {
+    "phase": "P0",
+    "request": {
+      "method": "GET",
+      "path": "/install/{device_code}/suderra-os",
+      "headers": {
+        "X-Provisioning-Token": "The single-use provisioning token the technician typed on stdin; the root worker copies it into a root-only file and sends it with curl -H @file, so it never appears in argv, a URL or a log (DEC-5.5)."
+      },
+      "query_schema": "schemas/edge-provisioning-request.schema.json"
+    },
+    "response": {
+      "status": 200,
+      "content_type": "application/vnd.suderra.edge-provisioning-delivery.v1+json",
+      "schema": "schemas/edge-provisioning-delivery.schema.json"
+    },
+    "refusal": {
+      "status": 404,
+      "body": "{\"error\":\"unavailable\"}",
+      "rate_limited_status": 429,
+      "rule": "Every refusal (unknown or expired device code, missing, wrong or spent token, binding reserved for another device, no release the device can run) gets the same status and body, so the public endpoint is no enumeration oracle; the cause is shown only in the authenticated panel (DEC-22)."
+    }
+  },
+  "usb": {
+    "phase": "P1",
+    "directory": "suderra-provisioning/{device_code}/",
+    "files": {
+      "delivery.json": "The delivery document, byte for byte what the network response body would be.",
+      "{artifact}": "The release artifact, named by artifact-naming.json suderra_os_channel.artifact for the delivered release statement; its digest comes from that statement."
+    },
+    "nonce": "The device shows a fresh request nonce on its console with the OTP and the SSH host-key fingerprint (DEC-5.3); the technician enters it when the cloud pre-generates the bundle (DEC-5.10). The manifest echoes it exactly as on the network path, so the same verifier and the same nonce-mismatch check apply.",
+    "ingress": "The USB storage rules of DEC-18 apply; root copies the directory before it verifies anything."
+  },
+  "installation": {
+    "manifest": "/run/suderra-os/ only (tmpfs, root:root 0700); deleted when the install ends and never logged (DEC-5.6).",
+    "release_statement": "Kept under /data/suderra/os/edge/ beside the install receipt (DEC-1.3); verify-current re-verifies it before every start (unit-directives.json hooks).",
+    "trust_anchors": "/data/suderra/site/trust-anchors.dsse",
+    "site_config": "/data/suderra/site/site-config.dsse",
+    "rbac_manifest": "/data/suderra/site/rbac-manifest.dsse",
+    "site_files": "/data/suderra/site/<path> for each path of the site config's files, nothing else.",
+    "switch": "Root writes the complete site directory under a temporary name and activates it with rename(2), then records every statement digest and site file digest in the install receipt (DEC-4.10, DEC-4.12)."
+  }
+}

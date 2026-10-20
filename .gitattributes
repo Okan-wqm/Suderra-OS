@@ -1,0 +1,6 @@
+# The vendored Suderra edge contract (ADR-048 DEC-25) is pinned byte for byte:
+# each version's SHA256SUMS lists every file's digest and contracts/suderra-edge.digest
+# pins SHA256SUMS. End-of-line conversion on checkout (core.autocrlf, eol) would
+# change bytes and break the pin, so git must never treat these files as text.
+contracts/suderra-edge/** -text
+contracts/suderra-edge.digest -text

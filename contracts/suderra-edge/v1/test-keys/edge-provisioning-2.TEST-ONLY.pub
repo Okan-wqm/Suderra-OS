@@ -1,0 +1,6 @@
+TEST-ONLY public key of the Suderra edge contract fixtures: edge-provisioning epoch 2.
+Anyone can derive its private key (keyring.json derivation). No image, keyid
+allowlist or signer may contain it (ADR-048 DEC-3.9, DEC-25.1).
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAe0rihD7vYureGfaJUZMt4jBFU2zNfEv+OrB3gznsrLg=
+-----END PUBLIC KEY-----

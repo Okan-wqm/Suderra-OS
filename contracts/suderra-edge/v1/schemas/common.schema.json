@@ -23,7 +23,9 @@
       "additionalProperties": false,
       "required": ["sha256"],
       "properties": {
-        "sha256": { "$ref": "#/$defs/sha256_hex" }
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        }
       }
     },
     "semver": {
@@ -32,14 +34,20 @@
       "maxLength": 64,
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
     },
+    "os_version": {
+      "description": "OS version as published in /etc/os-release VERSION_ID: MAJOR.MINOR.PATCH, compared as an integer tuple (statements.json compatibility).",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
     "https_url": {
       "type": "string",
       "maxLength": 2048,
       "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*)?$"
     },
     "board_profile": {
-      "description": "Board vocabulary; must equal the board_profile set of boards.json.",
-      "enum": ["revpi-connect4", "industrial-x86_64", "rpi4-cm4", "qemu-x86_64"]
+      "description": "Board vocabulary; must equal the board_profile set of boards.json. x86 boards join as x86-ipc-<model> once a model is qualified (boards.json pending_board_families).",
+      "enum": ["revpi-connect4", "rpi4-cm4", "qemu-x86_64"]
     },
     "arch": {
       "enum": ["aarch64", "x86_64"]
@@ -47,9 +55,27 @@
     "agent_profile": {
       "enum": ["suderra-os"]
     },
+    "cargo_feature": {
+      "description": "Agent cargo features a Suderra OS release may carry in contract 1.x. tpm is absent on purpose: the agent gets no TPM device before the P2 TPM keystore (DEC-8 board matrix, DEC-21), so a release built with it would link tss2 and probe a TPM the unit never grants.",
+      "enum": ["gpio", "revpi-io", "scada-display", "suderra-os"]
+    },
     "device_code": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{1,50}$"
+    },
+    "site_path": {
+      "description": "Site file path relative to /var/lib/suderra-site (= /data/suderra/site); fixed names, so no path component comes from a statement (DEC-1.10, DEC-4.2).",
+      "enum": ["config.yaml", "site-policy.json", "hardware-inventory.yaml", "revpi/config.rsc"]
+    },
+    "base64": {
+      "description": "Canonical RFC 4648 standard base64 with padding (unused trailing bits zero).",
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$"
+    },
+    "ed25519_public_key": {
+      "description": "Canonical standard base64 of a raw 32-byte Ed25519 public key; its keyid is the SHA-256 of the 32 bytes.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$"
     },
     "device_binding": {
       "description": "Hash of the OS-owned hardware identity (DEC-3.6): SHA-256 of the TPM EK public key, or SHA-256(BCM2711 serial || customer OTP value) on TPM-less RPi4/CM4, or SHA-256 of the DMI product_uuid on TPM-less x86 dev images only.",
@@ -60,7 +86,9 @@
         "method": {
           "enum": ["tpm-ek-sha256", "bcm2711-serial-otp-sha256", "dmi-product-uuid-sha256"]
         },
-        "digest": { "$ref": "#/$defs/digest" }
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
       }
     },
     "sequence": {

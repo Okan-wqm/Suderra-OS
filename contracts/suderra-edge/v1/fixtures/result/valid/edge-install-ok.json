@@ -12,7 +12,7 @@
     "security_version": 6,
     "statement_type": "suderra.edge-release.v1",
     "statement_digest": {
-      "sha256": "9b8320235840c001f91cbf145fbf9ad44fd75b3d4fe8700213b5215510fae932"
+      "sha256": "15ca1eac68469825c6466971aa43790f8948dd699a5853ffc50079a7ec4081e6"
     }
   }
 }

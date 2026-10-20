@@ -1,0 +1,77 @@
+{
+  "description": "Device lifecycle state machine (ADR-048 DEC-5.14, DEC-12, DEC-17) and its mapping onto the cloud's DeviceLifecycleState (apps/sensor-service/src/edge-device/entities/edge-device.entity.ts). Root alone writes the state (/data/suderra/os/lifecycle) and mirrors it read-only to /run/suderra/lifecycle; result documents carry it as subject.lifecycle_from and lifecycle_to, and the cloud records each transition under the mapped state.",
+  "store": "/data/suderra/os/lifecycle",
+  "states": {
+    "FACTORY": "Fresh /data created on this boot; no provisioning yet.",
+    "PROVISIONING": "The provisioning surface is open (OTP, provision SSH) until a manifest is installed and its activation receipt accepted.",
+    "ACTIVE": "Provisioned and activated; the provisioning surface is closed.",
+    "MAINTENANCE": "Time-boxed reprovisioning window opened by a signed device-lifecycle statement; break-glass joins in P3.",
+    "DECOMMISSIONED": "Terminal: retired with a signed device-lifecycle statement and physical presence (P3).",
+    "RMA": "Terminal on the device: returned for repair with a signed device-lifecycle statement and physical presence (P3).",
+    "LOCKED": "Not a stored state: the fail-safe reading of an unknown, missing, corrupt or unmountable store. The provisioning surface stays closed and an alarm result is written."
+  },
+  "transitions": [
+    {
+      "from": "FACTORY",
+      "to": "PROVISIONING",
+      "evidence": "Production: /run/suderra-os/data-created written by suderra-data-unlock on this boot (and from P3 an unset TPM NV provisioned bit). Dev images (VARIANT=dev from the image, not the environment): no lifecycle store on first boot.",
+      "phase": "P0"
+    },
+    {
+      "from": "PROVISIONING",
+      "to": "ACTIVE",
+      "evidence": "A root-accepted suderra.edge-activation-receipt.v1 for the installed manifest.",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "phase": "P0"
+    },
+    {
+      "from": "ACTIVE",
+      "to": "MAINTENANCE",
+      "evidence": "A root-accepted suderra.device-lifecycle.v1 with action enter-maintenance and purpose reprovision (break-glass from P3).",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "phase": "P0"
+    },
+    {
+      "from": "MAINTENANCE",
+      "to": "ACTIVE",
+      "evidence": "A root-accepted activation receipt for the reinstalled manifest, or the maintenance statement's expires_at passing, which keeps the current install and config.",
+      "statement_type": "suderra.edge-activation-receipt.v1",
+      "phase": "P0"
+    },
+    {
+      "from": "ACTIVE",
+      "to": "DECOMMISSIONED",
+      "evidence": "A root-accepted suderra.device-lifecycle.v1 with action decommission, and physical presence.",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "phase": "P3"
+    },
+    {
+      "from": "ACTIVE",
+      "to": "RMA",
+      "evidence": "A root-accepted suderra.device-lifecycle.v1 with action rma, and physical presence.",
+      "statement_type": "suderra.device-lifecycle.v1",
+      "phase": "P3"
+    }
+  ],
+  "cloud_device_lifecycle": {
+    "os_to_cloud": {
+      "FACTORY": "registered",
+      "PROVISIONING": "provisioning",
+      "ACTIVE": "active",
+      "MAINTENANCE": "maintenance",
+      "DECOMMISSIONED": "decommissioned",
+      "RMA": "revoked",
+      "LOCKED": "error"
+    },
+    "cloud_only": [
+      {
+        "state": "pending_approval",
+        "reason": "The cloud's approval step before it issues a manifest; the device stays in PROVISIONING meanwhile."
+      },
+      {
+        "state": "offline",
+        "reason": "Connectivity derived from heartbeats, not a lifecycle state; the device keeps its lifecycle while offline."
+      }
+    ]
+  }
+}

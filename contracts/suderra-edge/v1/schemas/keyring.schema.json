@@ -2,29 +2,86 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:keyring",
   "title": "test-keys/keyring.json TEST-ONLY key index",
-  "description": "Index of the TEST-ONLY public keys under test-keys/. Every key is derivable by anyone from its seed_label (tools/generate.py), so no production keyid allowlist may contain any keyid listed here (ADR-048 DEC-3.9).",
+  "description": "Index of the TEST-ONLY keys of the contract fixtures. Every key is derivable by anyone from its seed_label (tools/generate.py), so no image of any variant, no keyid allowlist and no signer may contain any key listed here (ADR-048 DEC-3.9, DEC-25.1).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["test_only", "description", "derivation", "keys", "mqtt_ca"],
+  "required": ["test_only", "description", "derivation", "keys", "unanchored_keys", "mqtt_ca"],
   "properties": {
-    "test_only": { "const": true },
-    "description": { "type": "string" },
-    "derivation": { "type": "string" },
+    "test_only": {
+      "const": true
+    },
+    "description": {
+      "type": "string"
+    },
+    "derivation": {
+      "type": "string"
+    },
     "keys": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["purpose", "epoch", "keyid", "public_key", "path", "os_pinned", "seed_label"],
+        "required": [
+          "purpose",
+          "epoch",
+          "keyid",
+          "public_key",
+          "path",
+          "fixture_anchor",
+          "seed_label"
+        ],
         "properties": {
-          "purpose": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
-          "epoch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch" },
-          "keyid": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/keyid" },
-          "public_key": { "type": "string", "pattern": "^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$" },
-          "path": { "type": "string", "pattern": "^test-keys/[a-z0-9-]+/[0-9]+\\.pub$" },
-          "os_pinned": { "type": "boolean" },
-          "seed_label": { "type": "string", "pattern": "^suderra-edge-contract:v1:TEST-ONLY:" }
+          "purpose": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "epoch": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch"
+          },
+          "keyid": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/keyid"
+          },
+          "public_key": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/ed25519_public_key"
+          },
+          "path": {
+            "description": "A flat name that cannot be mistaken for the OS pin layout /etc/suderra/keys/<purpose>/<epoch>.pub.",
+            "type": "string",
+            "pattern": "^test-keys/[a-z0-9-]+-[0-9]+\\.TEST-ONLY\\.pub$"
+          },
+          "fixture_anchor": {
+            "description": "Where the fixtures' simulated device anchors the key; no real image pins it.",
+            "enum": ["os-image", "trust-anchors-bundle"]
+          },
+          "seed_label": {
+            "type": "string",
+            "pattern": "^suderra-edge-contract:v1:TEST-ONLY:"
+          }
+        }
+      }
+    },
+    "unanchored_keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "keyid", "public_key", "seed_label"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 10
+          },
+          "keyid": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/keyid"
+          },
+          "public_key": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/ed25519_public_key"
+          },
+          "seed_label": {
+            "type": "string",
+            "pattern": "^suderra-edge-contract:v1:TEST-ONLY:"
+          }
         }
       }
     },
@@ -36,12 +93,20 @@
         "additionalProperties": false,
         "required": ["epoch", "certificate", "certificate_sha256", "seed_label"],
         "properties": {
-          "epoch": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch" },
-          "certificate": { "type": "string", "pattern": "^-----BEGIN CERTIFICATE-----\\n" },
+          "epoch": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/epoch"
+          },
+          "certificate": {
+            "type": "string",
+            "pattern": "^-----BEGIN CERTIFICATE-----\\n"
+          },
           "certificate_sha256": {
             "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sha256_hex"
           },
-          "seed_label": { "type": "string", "pattern": "^suderra-edge-contract:v1:TEST-ONLY:" }
+          "seed_label": {
+            "type": "string",
+            "pattern": "^suderra-edge-contract:v1:TEST-ONLY:"
+          }
         }
       }
     }

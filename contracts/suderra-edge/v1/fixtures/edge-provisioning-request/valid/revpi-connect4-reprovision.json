@@ -1,0 +1,8 @@
+{
+  "binding_method": "tpm-ek-sha256",
+  "binding_sha256": "7dc1225201ce83c48f502d0421ad7bfe59aaf9c0088fecab0c5a6bb80d360af4",
+  "nonce": "2770a088c0c5172f954d8c31af967622",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "agent_abi": "1-1"
+}

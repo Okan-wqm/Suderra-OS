@@ -1,0 +1,72 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2024-2026 Aquaculture Platform. All Rights Reserved.
+
+NOTICE: THIS IS PROPRIETARY SOFTWARE. ALL RIGHTS RESERVED.
+
+This software and associated documentation files (the "Software") are the
+exclusive property of Aquaculture Platform and its licensors.
+
+RESTRICTIONS:
+
+1. NO USE: You may NOT use, execute, or run this Software for any purpose
+   whatsoever without explicit written permission from the copyright holder.
+
+2. NO COPYING: You may NOT copy, reproduce, or duplicate any part of this
+   Software in any form or by any means.
+
+3. NO MODIFICATION: You may NOT modify, adapt, translate, reverse engineer,
+   decompile, disassemble, or create derivative works based on this Software.
+
+4. NO DISTRIBUTION: You may NOT distribute, publish, transfer, sublicense,
+   lease, lend, rent, or otherwise make available this Software to any
+   third party.
+
+5. NO COMMERCIAL USE: You may NOT use this Software for any commercial
+   purposes, including but not limited to selling, licensing, or offering
+   services based on this Software.
+
+6. NO ACCESS: Unauthorized access to this repository or Software is strictly
+   prohibited. If you have obtained access to this Software without
+   authorization, you must immediately delete all copies and notify the
+   copyright holder.
+
+CONFIDENTIALITY:
+
+This Software contains trade secrets and confidential information. Any
+unauthorized disclosure, use, or copying of the Software or any information
+contained therein is strictly prohibited.
+
+ENFORCEMENT:
+
+Violation of any of the above restrictions may result in civil and/or
+criminal penalties. The copyright holder reserves the right to pursue all
+available legal remedies against any person or entity that violates this
+license.
+
+NO WARRANTY:
+
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. THE COPYRIGHT HOLDER DISCLAIMS ALL WARRANTIES, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, AND NONINFRINGEMENT.
+
+LIMITATION OF LIABILITY:
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR
+IN CONNECTION WITH THIS SOFTWARE.
+
+GOVERNING LAW:
+
+This license shall be governed by and construed in accordance with the laws
+of the Republic of Turkey, without regard to its conflict of law provisions.
+
+CONTACT:
+
+For licensing inquiries, please contact the copyright holder.
+
+---
+
+By accessing this repository, you acknowledge that you have read, understood,
+and agree to be bound by the terms of this license.

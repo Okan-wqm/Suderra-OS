@@ -8,10 +8,17 @@
     "description",
     "dsse",
     "verification_order",
+    "evaluation",
+    "identity",
+    "sequences",
+    "reverification",
+    "verifiers",
+    "compatibility",
     "rejection_reasons",
     "purposes",
     "os_key_pin_layout",
     "statements",
+    "superseded_formats",
     "unsigned_documents"
   ],
   "properties": {
@@ -27,6 +34,7 @@
         "signature_algorithm",
         "signatures",
         "keyid",
+        "key_resolution",
         "json",
         "statement_digest",
         "time_window"
@@ -39,6 +47,7 @@
         "signature_algorithm": { "type": "string" },
         "signatures": { "type": "string" },
         "keyid": { "type": "string" },
+        "key_resolution": { "type": "string" },
         "json": { "type": "string" },
         "statement_digest": { "type": "string" },
         "time_window": { "type": "string" }
@@ -49,6 +58,97 @@
       "uniqueItems": true,
       "minItems": 1,
       "items": { "$ref": "#/$defs/reason" }
+    },
+    "evaluation": { "type": "string" },
+    "identity": { "type": "string" },
+    "sequences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "equal_seq_policies"],
+      "properties": {
+        "description": { "type": "string" },
+        "equal_seq_policies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reject", "identical-only"],
+          "properties": {
+            "reject": { "type": "string" },
+            "identical-only": { "type": "string" }
+          }
+        }
+      }
+    },
+    "reverification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "applies_to", "skipped_checks", "added_checks"],
+      "properties": {
+        "description": { "type": "string" },
+        "applies_to": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/statement_type" }
+        },
+        "skipped_checks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reason" }
+        },
+        "added_checks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reason" }
+        }
+      }
+    },
+    "verifiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os-root", "agent"],
+      "properties": {
+        "os-root": { "type": "string" },
+        "agent": { "type": "string" }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "os_release", "kernel_config", "rules"],
+      "properties": {
+        "description": { "type": "string" },
+        "os_release": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "keys"],
+          "properties": {
+            "path": { "const": "/etc/os-release" },
+            "keys": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["VERSION_ID", "SUDERRA_AGENT_ABI"],
+              "properties": {
+                "VERSION_ID": { "$ref": "#/$defs/os_release_key" },
+                "SUDERRA_AGENT_ABI": { "$ref": "#/$defs/os_release_key" }
+              }
+            }
+          }
+        },
+        "kernel_config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "syntax", "line_pattern"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^/" },
+            "syntax": { "type": "string" },
+            "line_pattern": { "type": "string" }
+          }
+        },
+        "rules": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/reason" },
+          "additionalProperties": { "type": "string" }
+        }
+      }
     },
     "rejection_reasons": {
       "type": "object",
@@ -88,6 +188,7 @@
           "device_bound",
           "tenant_bound",
           "sequence",
+          "nested",
           "checks"
         ],
         "properties": {
@@ -98,19 +199,53 @@
           "schema": { "type": "string", "pattern": "^schemas/[a-z0-9-]+\\.schema\\.json$" },
           "signing_purpose": { "$ref": "#/$defs/purpose" },
           "verified_by": {
-            "type": "array",
-            "minItems": 1,
-            "uniqueItems": true,
-            "items": { "enum": ["os-root", "agent", "cloud"] }
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["os-root"],
+            "properties": {
+              "os-root": { "$ref": "#/$defs/verifier_scope" },
+              "agent": { "$ref": "#/$defs/verifier_scope" }
+            }
           },
           "device_bound": { "type": "boolean" },
           "tenant_bound": { "type": "boolean" },
-          "sequence": { "enum": [null, "update_seq", "bundle_seq"] },
+          "sequence": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["field", "equal_seq"],
+                "properties": {
+                  "field": { "enum": ["update_seq", "bundle_seq", "policy_version"] },
+                  "equal_seq": { "enum": ["reject", "identical-only"] }
+                }
+              }
+            ]
+          },
+          "nested": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/statement_type" }
+          },
           "checks": {
             "type": "array",
             "uniqueItems": true,
             "items": { "$ref": "#/$defs/reason" }
-          }
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "superseded_formats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "type": "string" }
         }
       }
     },
@@ -120,12 +255,46 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["schema", "written_by", "locations", "trust"],
+        "required": [
+          "schema",
+          "written_by",
+          "locations",
+          "trust",
+          "reasons_by_kind",
+          "operational_reasons"
+        ],
         "properties": {
           "schema": { "type": "string", "pattern": "^schemas/[a-z0-9-]+\\.schema\\.json$" },
           "written_by": { "enum": ["os-root"] },
           "locations": { "type": "array", "minItems": 1, "items": { "type": "string" } },
-          "trust": { "type": "string" }
+          "trust": { "type": "string" },
+          "reasons_by_kind": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/reason" },
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["statements", "reverification", "operational"],
+              "properties": {
+                "statements": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/statement_type" }
+                },
+                "reverification": { "type": "boolean" },
+                "operational": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/reason" }
+                }
+              }
+            }
+          },
+          "operational_reasons": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/reason" },
+            "additionalProperties": { "type": "string", "minLength": 10 }
+          }
         }
       }
     }
@@ -133,6 +302,27 @@
   "$defs": {
     "reason": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
     "purpose": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
-    "statement_type": { "type": "string", "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$" }
+    "statement_type": { "type": "string", "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$" },
+    "verifier_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["omits"],
+      "properties": {
+        "omits": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reason" }
+        }
+      }
+    },
+    "os_release_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntax", "pattern"],
+      "properties": {
+        "syntax": { "type": "string" },
+        "pattern": { "type": "string" }
+      }
+    }
   }
 }
