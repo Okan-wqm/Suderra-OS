@@ -1,0 +1,284 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Suderra OS - QEMU edge e2e probe (ADR-048 P0 exit test).
+#
+# SECURITY: a root-side observation and sandbox-run channel for the QEMU
+# edge e2e tests (tests/qemu/edge-provisioning-e2e.py,
+# edge-readonly-sandbox-test.py, nft-ruleset-smoke-test.py). It exists only
+# on the dev QEMU image (suderra_qemu_x86_64_defconfig): post-build.sh deletes
+# it, its unit and its udev rule from every other image, and
+# tests/image-contracts/edge-e2e-probe-contract-test.sh keeps it that way.
+# It starts only when the hypervisor attaches the virtio-serial port
+# org.suderra.e2e.0 (udev SYSTEMD_WANTS), so a device without that port
+# never runs it. It runs a fixed list of named probes; nothing it reads from
+# the port is ever executed, evaluated or used as a path.
+#
+# Protocol on /dev/virtio-ports/org.suderra.e2e.0, one request per line:
+#     <id> <probe>                      id: 1-32 lowercase hex digits
+# answered with
+#     SUDERRA_E2E <id> BEGIN
+#     <key> <base64 of the value, one line>      (zero or more)
+#     SUDERRA_E2E <id> END <exit status>
+set -eu
+
+PORT=/dev/virtio-ports/org.suderra.e2e.0
+WORK=/run/suderra-e2e
+BOOT_MARKER="${WORK}/boot.marker"
+CANARY="${WORK}/etc"
+INSTALLER=/usr/bin/suderra-installer
+AGENT_UNIT=suderra-agent.service
+WORKER_UNIT=suderra-provision-worker.service
+AGENT_BIN=/opt/suderra/edge/current/suderra-agent
+SANDBOX_UNIT=suderra-e2e-agent-sandbox
+INSTALL_UNIT=suderra-e2e-installer-sandbox
+UNITS="suderra-agent.service dropbear.service suderra-provision-mode.service nftables.service suderra-activation.service suderra-provision-worker.service suderra-identity.service suderra-lifecycle.service suderra-data.service"
+
+# One key and its value, base64 on one line.
+emit() {
+    printf '%s %s\n' "$1" "$(printf '%s' "$2" | base64 | tr -d '\n')"
+}
+
+# One key and the output and exit status of a command.
+emit_cmd() {
+    key="$1"
+    shift
+    set +e
+    out="$("$@" 2>&1)"
+    rc=$?
+    set -e
+    emit "${key}" "${out}"
+    emit "${key}.rc" "${rc}"
+}
+
+# The [Service] settings of a unit as systemd loaded it (the unit file and
+# its drop-ins, `systemctl cat`) that make up its sandbox: everything except
+# how the service is started, stopped, restarted, supervised and logged.
+sandbox_properties() {
+    systemctl cat "$1" | awk '
+        /^\[/ { service = ($0 == "[Service]"); next }
+        !service || /^[ \t]*($|#|;)/ { next }
+        {
+            key = $0; sub(/=.*/, "", key)
+            if (key ~ /^(Exec[A-Za-z]*|Type|Restart|RestartSec|RemainAfterExit|NotifyAccess|WatchdogSec|TimeoutSec|TimeoutStartSec|TimeoutStopSec|RuntimeMaxSec|StartLimit[A-Za-z]*|StandardInput|StandardOutput|StandardError|SyslogIdentifier|SyslogLevelPrefix)$/) next
+            print
+        }'
+}
+
+# A canary /etc: a copy of the image's /etc in which the sandboxed user owns
+# and may write everything, bound over /etc for one run. A write attempt that
+# the real read-only /etc would have refused succeeds here and shows up as a
+# difference to the image's /etc.
+make_canary() {
+    owner="$1"
+    rm -rf "${CANARY:?}"
+    cp -a /etc "${CANARY}"
+    chown -R "${owner}" "${CANARY}"
+    chmod -R u+w "${CANARY}"
+}
+
+canary_diff() {
+    diff -r /etc "${CANARY}" 2>&1 || true
+}
+
+# Files under the writable file systems (the dev image's root and /data)
+# newer than $1 and owned by uid $2.
+written_since() {
+    for fs in / /data; do
+        find "${fs}" -xdev -newer "$1" -user "$2" \( -type f -o -type d -o -type l \) 2>/dev/null || true
+    done
+}
+
+probe_facts() {
+    emit_cmd lifecycle "${INSTALLER}" lifecycle status
+    emit provisioning_open "$([ -e /run/suderra-os/provisioning-open ] && echo yes || echo no)"
+    emit provisioning_closed "$([ -e /run/suderra-os/provisioning-closed ] && echo yes || echo no)"
+    emit uptime "$(cut -d' ' -f1 /proc/uptime)"
+    for unit in ${UNITS}; do
+        emit "unit.${unit}" "$(systemctl show "${unit}" \
+            -p ActiveState -p SubState -p Result -p NRestarts -p MainPID \
+            -p ExecMainStatus -p WatchdogUSec -p ExecMainStartTimestampMonotonic 2>&1 || true)"
+    done
+    emit_cmd nft_ruleset nft list ruleset
+    emit nft_ruleset_sha256 "$(nft list ruleset 2>/dev/null | sha256sum | cut -d' ' -f1)"
+    emit_cmd policy_verify "${INSTALLER}" policy verify
+    emit default_route_iface "$(awk 'NR > 1 && $2 == "00000000" && $8 == "00000000" { print $1; exit }' /proc/net/route)"
+    emit_cmd listeners netstat -ltnu
+    emit receipt "$(cat /data/suderra/os/edge/receipt.json 2>/dev/null || true)"
+    emit activated "$(cat /data/suderra/os/edge/activated.json 2>/dev/null || true)"
+    emit identity "$(cat /run/suderra/identity.json 2>/dev/null || true)"
+    emit binding "$(cat /data/suderra/os/identity/device-binding.json 2>/dev/null || true)"
+    emit agent_receipt "$(cat /data/suderra/agent/state/activation-receipt.dsse 2>/dev/null || true)"
+    emit results "$(for f in /data/suderra/os/results/*.json; do
+        [ -f "${f}" ] && printf '%s\n' "$(cat "${f}")"; done | tail -n 40)"
+    emit etc_changed "$(find /etc -xdev -newer "${BOOT_MARKER}" 2>/dev/null || true)"
+}
+
+probe_journal() {
+    emit_cmd journal journalctl -b --no-pager -o short-monotonic -n 600 "$@"
+}
+
+# The firewall's rulesets in a fresh network namespace of a transient unit
+# (PrivateNetwork=yes): each compiles in this kernel, and the expected loaded
+# ruleset of each mode, listed the way `suderra-installer policy apply`
+# hashes it (`nft list ruleset`).
+probe_nft_smoke() {
+    iface="$(awk 'NR > 1 && $2 == "00000000" && $8 == "00000000" { print $1; exit }' /proc/net/route)"
+    [ -n "${iface}" ] || iface=eth0
+    # shellcheck disable=SC2317 # called below
+    run_netns() {
+        systemd-run --quiet --wait --pipe --collect -p PrivateNetwork=yes \
+            -p ProtectSystem=strict -p ReadWritePaths=/run/suderra-e2e /bin/sh -c "$1"
+    }
+    emit_cmd check.base run_netns 'nft -c -f /etc/nftables.base.conf'
+    emit_cmd check.appliance run_netns 'nft -c -f /etc/nftables.conf'
+    printf 'define provision_iface = "%s"\ninclude "/etc/nftables.provisioning.conf"\n' "${iface}" \
+        > "${WORK}/provisioning.nft"
+    emit_cmd check.provisioning run_netns "nft -c -f ${WORK}/provisioning.nft"
+    emit_cmd expected.appliance run_netns \
+        'nft -f /etc/nftables.base.conf && nft -f /etc/nftables.conf && nft list ruleset'
+    emit_cmd expected.provisioning run_netns \
+        "nft -f /etc/nftables.base.conf && nft -f ${WORK}/provisioning.nft && nft list ruleset"
+    emit provisioning_iface "${iface}"
+}
+
+# The installed release binary under the agent unit's own sandbox, from its
+# unit file, as a transient notify service with a canary /etc (K1, K11).
+probe_sandbox_agent() {
+    [ -x "${AGENT_BIN}" ] || { emit error "no installed agent at ${AGENT_BIN}"; return 1; }
+    props="$(sandbox_properties "${AGENT_UNIT}")"
+    emit properties "${props}"
+    agent_uid="$(id -u suderra)"
+    make_canary suderra:suderra
+    systemctl stop "${AGENT_UNIT}" || true
+    systemctl reset-failed "${SANDBOX_UNIT}.service" 2>/dev/null || true
+    marker="${WORK}/sandbox-agent.marker"
+    : > "${marker}"
+    sleep 1
+    set -- --unit="${SANDBOX_UNIT}" --service-type=notify -p NotifyAccess=main \
+        -p TimeoutStartSec=600 -p WatchdogSec=60
+    old_ifs="${IFS}"
+    IFS='
+'
+    for p in ${props}; do
+        set -- "$@" -p "${p}"
+    done
+    IFS="${old_ifs}"
+    set -- "$@" -p "BindPaths=${CANARY}:/etc" "${AGENT_BIN}"
+    set +e
+    start_out="$(systemd-run "$@" 2>&1)"
+    start_rc=$?
+    set -e
+    emit start "${start_out}"
+    emit start.rc "${start_rc}"
+    # Keep it running for two watchdog periods' worth of its loop.
+    sleep 45
+    emit state "$(systemctl show "${SANDBOX_UNIT}.service" -p ActiveState -p SubState \
+        -p Result -p NRestarts -p StatusText 2>&1 || true)"
+    systemctl stop "${SANDBOX_UNIT}.service" 2>/dev/null || true
+    emit_cmd journal journalctl --no-pager -o cat -u "${SANDBOX_UNIT}.service"
+    emit etc_diff "$(canary_diff)"
+    emit written "$(written_since "${marker}" "${agent_uid}")"
+    emit allowed "$(for d in /var/lib/suderra /var/log/suderra /run/suderra/agent-health; do
+        realpath "${d}" 2>/dev/null || true; done)"
+    systemctl reset-failed "${SANDBOX_UNIT}.service" 2>/dev/null || true
+    rm -rf "${CANARY:?}"
+    systemctl start --no-block "${AGENT_UNIT}" || true
+}
+
+# `suderra-installer edge request` under the provisioning worker unit's
+# sandbox, from its unit file (K3, K9), with a canary /etc.
+probe_sandbox_request() {
+    props="$(sandbox_properties "${WORKER_UNIT}")"
+    emit properties "${props}"
+    make_canary root:root
+    set -- --unit="${INSTALL_UNIT}" --quiet --wait --pipe --collect
+    old_ifs="${IFS}"
+    IFS='
+'
+    for p in ${props}; do
+        set -- "$@" -p "${p}"
+    done
+    IFS="${old_ifs}"
+    set -- "$@" -p "BindPaths=${CANARY}:/etc" "${INSTALLER}" edge request
+    emit_cmd request systemd-run "$@"
+    emit etc_diff "$(canary_diff)"
+    rm -rf "${CANARY:?}"
+}
+
+# Fetches the delivery and artifact the fake cloud prepared for the nonce of
+# `sandbox-request`, then installs them offline under the worker sandbox.
+probe_sandbox_install() {
+    endpoint="$(cat /etc/suderra/cloud-endpoint)"
+    rm -f "${WORK}/delivery.json" "${WORK}/artifact.tar.gz"
+    emit_cmd fetch.delivery curl --fail --silent --show-error --cacert /etc/suderra/cloud-ca.pem \
+        -o "${WORK}/delivery.json" "${endpoint}/e2e/sandbox/delivery.json"
+    emit_cmd fetch.artifact curl --fail --silent --show-error --cacert /etc/suderra/cloud-ca.pem \
+        -o "${WORK}/artifact.tar.gz" "${endpoint}/e2e/sandbox/artifact.tar.gz"
+    props="$(sandbox_properties "${WORKER_UNIT}")"
+    emit properties "${props}"
+    make_canary root:root
+    set -- --unit="${INSTALL_UNIT}" --quiet --wait --pipe --collect
+    old_ifs="${IFS}"
+    IFS='
+'
+    for p in ${props}; do
+        set -- "$@" -p "${p}"
+    done
+    IFS="${old_ifs}"
+    set -- "$@" -p "BindPaths=${CANARY}:/etc" -p "ReadOnlyPaths=${WORK}" \
+        "${INSTALLER}" edge install --delivery "${WORK}/delivery.json" --artifact "${WORK}/artifact.tar.gz"
+    emit_cmd install systemd-run "$@"
+    emit etc_diff "$(canary_diff)"
+    rm -rf "${CANARY:?}"
+    emit_cmd verify_current "${INSTALLER}" edge verify-current
+}
+
+run_probe() {
+    case "$1" in
+        facts) probe_facts ;;
+        journal-agent) probe_journal -u "${AGENT_UNIT}" ;;
+        journal-worker) probe_journal -u "${WORKER_UNIT}" ;;
+        journal-activation) probe_journal -u suderra-activation.service ;;
+        journal-all) probe_journal ;;
+        nft-smoke) probe_nft_smoke ;;
+        sandbox-agent) probe_sandbox_agent ;;
+        sandbox-request) probe_sandbox_request ;;
+        sandbox-install) probe_sandbox_install ;;
+        *) emit error "unknown probe"; return 2 ;;
+    esac
+}
+
+serve() {
+    mkdir -p "${WORK}"
+    chmod 0700 "${WORK}"
+    [ -e "${BOOT_MARKER}" ] || : > "${BOOT_MARKER}"
+    while [ -e "${PORT}" ]; do
+        # A virtio-serial port has one guest opener: read and answer on one
+        # descriptor. With the host end disconnected a read ends at once, so
+        # reopen after a pause instead of spinning.
+        exec 3<>"${PORT}"
+        while IFS= read -r line <&3; do
+            id="${line%% *}"
+            name="${line#* }"
+            case "${id}" in
+                ""|*[!0-9a-f]*) continue ;;
+            esac
+            [ "${#id}" -le 32 ] || continue
+            printf 'SUDERRA_E2E %s BEGIN\n' "${id}" >&3
+            set +e
+            (run_probe "${name}") >&3 2>/dev/null
+            rc=$?
+            set -e
+            printf 'SUDERRA_E2E %s END %s\n' "${id}" "${rc}" >&3
+        done
+        exec 3>&-
+        sleep 1
+    done
+}
+
+case "${1:-}" in
+    serve) serve ;;
+    *) echo "Usage: suderra-e2e-probe serve" >&2; exit 2 ;;
+esac

@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# QEMU edge e2e probe (ADR-048 P0 exit test), dev QEMU image only: post-build
+# deletes it from every other image. udev starts it when the hypervisor
+# attaches the virtio-serial port org.suderra.e2e.0
+# (usr/lib/udev/rules.d/90-suderra-e2e-probe.rules); it is never enabled.
+# Early, without default dependencies, so its boot marker predates the
+# units whose writes the tests look for.
+
+[Unit]
+Description=Suderra OS QEMU edge e2e probe (dev QEMU image only)
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+ConditionPathExists=/dev/virtio-ports/org.suderra.e2e.0
+After=systemd-tmpfiles-setup-dev.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/suderra-e2e-probe serve
+Restart=on-failure
+RestartSec=2s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=suderra-e2e-probe

@@ -1,0 +1,4 @@
+# QEMU edge e2e probe (ADR-048 P0 exit test), dev QEMU image only: post-build
+# deletes this rule from every other image. The probe runs only when the
+# hypervisor attaches the virtio-serial port org.suderra.e2e.0.
+SUBSYSTEM=="virtio-ports", ATTR{name}=="org.suderra.e2e.0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="suderra-e2e-probe.service"

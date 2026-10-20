@@ -474,6 +474,19 @@ fi
     echo "disable suderra-firstboot.service"
 } >> "${PRESET}"
 
+# 8a. QEMU edge e2e probe (ADR-048 P0 exit test). A root-side observation and
+# sandbox-run channel for tests/qemu/edge-*.py over the virtio-serial port
+# org.suderra.e2e.0: it exists only on the dev QEMU image and is deleted from
+# every other image, including the QEMU prod_ab image and every hardware board
+# (tests/image-contracts/edge-e2e-probe-contract-test.sh).
+if [ "${DEFCONFIG_NAME}" = suderra_qemu_x86_64 ] && config_enabled BR2_PACKAGE_SUDERRA_VARIANT_DEV; then
+    chmod 0755 "${TARGET_DIR}/usr/sbin/suderra-e2e-probe"
+else
+    rm -f "${TARGET_DIR}/usr/sbin/suderra-e2e-probe" \
+          "${TARGET_DIR}/etc/systemd/system/suderra-e2e-probe.service" \
+          "${TARGET_DIR}/usr/lib/udev/rules.d/90-suderra-e2e-probe.rules"
+fi
+
 # 8b. Production-runtime GUEST senaryo sürücüsü.
 # Bu sürücü mutasyon KABUL EDER (payload'dan RAUC bundle / downgrade manifest
 # uygular) — saldırı yüzeyi. Yalnız qemu-x86_64-prod-ab runtime-evidence
