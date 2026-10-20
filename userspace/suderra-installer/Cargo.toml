@@ -3,7 +3,7 @@
 
 [package]
 name = "suderra-installer"
-description = "Suderra OS package installer — Edge Agent + plugin download/verify/install (Ubuntu apt-like UX)"
+description = "Suderra OS root installer — edge agent delivery, signed site config, device lifecycle (ADR-048)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,13 @@ publish = false
 [[bin]]
 name = "suderra-installer"
 path = "src/main.rs"
+
+[features]
+# The apt-like package path (install/upgrade/rollback/list/status/remove,
+# cosign keyless, GitHub mirrors) is dev-only and compiled out of every image
+# build, which uses the default feature set (ADR-048 DEC-2.2 path 5, DEC-19).
+default = []
+package-commands = []
 
 [dependencies]
 suderra-config = { workspace = true }
@@ -51,6 +58,13 @@ chrono = { workspace = true }
 # Filesystem
 tempfile = { workspace = true }
 nix = { workspace = true }
+
+# Release artifacts (tar.gz, read entry by entry; never unpacked by path)
+flate2 = { workspace = true }
+tar = { workspace = true }
+
+# Provisioning request nonce, temporary names
+getrandom = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

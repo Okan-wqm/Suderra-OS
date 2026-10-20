@@ -5,20 +5,19 @@
 
 use clap::{Parser, Subcommand};
 
-/// Suderra OS paket yükleyici.
+/// Suderra OS root installer.
 #[derive(Parser, Debug)]
 #[command(
     name = "suderra-installer",
     version,
     about,
-    long_about = "Suderra OS paket yükleyici — Ubuntu apt benzeri bir arayüzle\n\
-                  Edge Agent ve plugin'lerin indirilmesi, doğrulanması ve\n\
-                  kurulması.\n\n\
-                  Tüm paketler imzalıdır (cosign keyless via Sigstore).\n\
-                  Her kurulum /var/log/suderra/installer.log'a yazılır."
+    long_about = "Suderra OS root installer (ADR-048): the single delivery channel of the\n\
+                  edge agent, its signed site configuration and the device lifecycle.\n\n\
+                  Every input is a signed statement of the Suderra edge contract,\n\
+                  verified against keys pinned in the verity rootfs."
 )]
 pub struct Cli {
-    /// Detaylı log (DEBUG level)
+    /// Detailed log (DEBUG level)
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
@@ -26,29 +25,184 @@ pub struct Cli {
     pub command: Commands,
 }
 
-/// Kullanılabilir komutlar
+/// Commands.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Paket kur (latest veya belirli sürüm)
-    Install(InstallArgs),
-    /// Paketi en son sürüme yükselt
-    Upgrade(UpgradeArgs),
-    /// Paketi önceki sürüme döndür
-    Rollback(RollbackArgs),
-    /// Paketleri listele (kurulu veya available)
-    List(ListArgs),
-    /// Paket durumu
-    Status(StatusArgs),
-    /// Paketi kaldır
-    Remove(RemoveArgs),
+    /// Edge agent delivery: request, provision, install, verify-current.
+    Edge(EdgeArgs),
+    /// Root-owned device lifecycle.
+    Lifecycle(LifecycleArgs),
+    /// OS and agent health predicate of the health gate.
+    Health(HealthArgs),
+    /// Firewall mode selection.
+    Policy(PolicyArgs),
+    /// Typed result documents for root helper scripts.
+    Result(ResultArgs),
     /// Verify and sign universal USB installer payload indexes.
     UsbPayload(UsbPayloadArgs),
-    /// Verify signed Edge provisioning manifests and artifacts.
-    EdgeManifest(EdgeManifestArgs),
-    /// Validate a release package manifest against the Rust schema.
+    /// Paket kur (latest veya belirli sürüm) — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
+    Install(InstallArgs),
+    /// Paketi en son sürüme yükselt — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
+    Upgrade(UpgradeArgs),
+    /// Paketi önceki sürüme döndür — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
+    Rollback(RollbackArgs),
+    /// Paketleri listele — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
+    List(ListArgs),
+    /// Paket durumu — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
+    Status(StatusArgs),
+    /// Paketi kaldır — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
+    Remove(RemoveArgs),
+    /// Validate a release package manifest — dev-only package path.
+    #[cfg(any(test, feature = "package-commands"))]
     ValidateManifest(ValidateManifestArgs),
 }
 
+/// `edge <command>`
+#[derive(clap::Args, Debug)]
+pub struct EdgeArgs {
+    /// Edge operation.
+    #[command(subcommand)]
+    pub command: EdgeCommand,
+}
+
+/// Edge agent delivery operations (ADR-048 DEC-1, DEC-5).
+#[derive(Subcommand, Debug)]
+pub enum EdgeCommand {
+    /// Write a provisioning request document (binding, fresh nonce, board,
+    /// OS version, agent ABI) and print its nonce.
+    Request(EdgeRequestArgs),
+    /// Fetch, verify and install this device's provisioning delivery.
+    Provision(EdgeProvisionArgs),
+    /// Verify and install a delivery and artifact already on disk.
+    Install(EdgeInstallArgs),
+    /// Re-verify the installed release before an agent start.
+    VerifyCurrent,
+}
+
+/// `edge request`
+#[derive(clap::Args, Debug)]
+pub struct EdgeRequestArgs {
+    /// Where to write the request document (root-only).
+    #[arg(long, value_name = "FILE")]
+    pub out: std::path::PathBuf,
+}
+
+/// `edge provision`
+#[derive(clap::Args, Debug)]
+pub struct EdgeProvisionArgs {
+    /// Device code of GET /install/{device_code}/suderra-os.
+    #[arg(long)]
+    pub device_code: String,
+    /// Root-only file holding the provisioning token (sent only in the
+    /// X-Provisioning-Token header).
+    #[arg(long, value_name = "FILE")]
+    pub token_file: std::path::PathBuf,
+}
+
+/// `edge install`
+#[derive(clap::Args, Debug)]
+pub struct EdgeInstallArgs {
+    /// Delivery document (suderra.edge-provisioning-delivery.v1).
+    #[arg(long, value_name = "FILE")]
+    pub delivery: std::path::PathBuf,
+    /// Release artifact the delivery's release statement names.
+    #[arg(long, value_name = "FILE")]
+    pub artifact: std::path::PathBuf,
+    /// The request document `edge request` wrote for this delivery.
+    #[arg(long, value_name = "FILE")]
+    pub request: std::path::PathBuf,
+}
+
+/// `lifecycle <command>`
+#[derive(clap::Args, Debug)]
+pub struct LifecycleArgs {
+    /// Lifecycle operation.
+    #[command(subcommand)]
+    pub command: LifecycleCommand,
+}
+
+/// Lifecycle operations (ADR-048 DEC-12).
+#[derive(Subcommand, Debug)]
+pub enum LifecycleCommand {
+    /// Print the lifecycle state (LOCKED when unknown).
+    Status,
+    /// Boot-time evaluation and mirror to /run/suderra/lifecycle.
+    Init,
+    /// Verify the agent's activation receipt and record ACTIVE.
+    Activate,
+    /// Verify the agent's device-lifecycle request and transition.
+    Request,
+}
+
+/// `health check`
+#[derive(clap::Args, Debug)]
+pub struct HealthArgs {
+    /// Health operation.
+    #[command(subcommand)]
+    pub command: HealthCommand,
+}
+
+/// Health operations (ADR-048 DEC-6.8).
+#[derive(Subcommand, Debug)]
+pub enum HealthCommand {
+    /// Evaluate the OS and agent predicate and write a health-gate result.
+    Check,
+}
+
+/// `policy apply`
+#[derive(clap::Args, Debug)]
+pub struct PolicyArgs {
+    /// Policy operation.
+    #[command(subcommand)]
+    pub command: PolicyCommand,
+}
+
+/// Firewall policy operations (ADR-048 DEC-11).
+#[derive(Subcommand, Debug)]
+pub enum PolicyCommand {
+    /// Load the ruleset the lifecycle selects.
+    Apply,
+}
+
+/// `result write`
+#[derive(clap::Args, Debug)]
+pub struct ResultArgs {
+    /// Result operation.
+    #[command(subcommand)]
+    pub command: ResultCommand,
+}
+
+/// Result operations (ADR-048 DEC-27).
+#[derive(Subcommand, Debug)]
+pub enum ResultCommand {
+    /// Write one typed result (lockdown, data-unlock, time-state helpers).
+    Write(ResultWriteArgs),
+}
+
+/// `result write`
+#[derive(clap::Args, Debug)]
+pub struct ResultWriteArgs {
+    /// Result kind (result.schema.json `kind`).
+    #[arg(long)]
+    pub kind: String,
+    /// Outcome: ok, rejected, failed or alarm.
+    #[arg(long)]
+    pub outcome: String,
+    /// Reason code; required unless the outcome is ok.
+    #[arg(long)]
+    pub reason: Option<String>,
+    /// Operator detail (at most 512 characters).
+    #[arg(long)]
+    pub detail: Option<String>,
+}
+
+#[cfg(any(test, feature = "package-commands"))]
 /// `validate-manifest`
 #[derive(clap::Args, Debug)]
 pub struct ValidateManifestArgs {
@@ -122,91 +276,7 @@ pub struct UsbPayloadSignArgs {
     pub signature: std::path::PathBuf,
 }
 
-/// `edge-manifest <command>`
-#[derive(clap::Args, Debug)]
-pub struct EdgeManifestArgs {
-    /// Edge provisioning manifest operation.
-    #[command(subcommand)]
-    pub command: EdgeManifestCommand,
-}
-
-/// Edge provisioning manifest operations.
-#[derive(Subcommand, Debug)]
-pub enum EdgeManifestCommand {
-    /// Verify a signed manifest and write a shell-safe download/install plan.
-    Plan(EdgeManifestPlanArgs),
-    /// Verify a downloaded artifact against the signed manifest.
-    VerifyArtifact(EdgeManifestVerifyArtifactArgs),
-}
-
-/// `edge-manifest plan`
-#[derive(clap::Args, Debug)]
-pub struct EdgeManifestPlanArgs {
-    /// Signed edge provisioning manifest JSON.
-    #[arg(long, value_name = "FILE")]
-    pub manifest: std::path::PathBuf,
-
-    /// Ed25519 public key, either raw hex or PEM SubjectPublicKeyInfo.
-    #[arg(long, value_name = "FILE")]
-    pub public_key: std::path::PathBuf,
-
-    /// Expected board family, for example rpi4-cm4 or revpi4.
-    #[arg(long)]
-    pub board: Option<String>,
-
-    /// Expected artifact architecture, for example aarch64.
-    #[arg(long)]
-    pub arch: Option<String>,
-
-    /// Minimum accepted signing key epoch for this provisioning manifest.
-    #[arg(long, default_value_t = 1)]
-    pub min_key_epoch: u32,
-
-    /// Minimum rollback floor this provisioning manifest must preserve.
-    #[arg(long, default_value = "v0.1.0-alpha")]
-    pub min_rollback_floor: String,
-
-    /// Write validated manifest fields as a shell-safe environment file.
-    #[arg(long, value_name = "FILE")]
-    pub write_plan: Option<std::path::PathBuf>,
-
-    /// Write manifest config payload to this path after digest verification.
-    #[arg(long, value_name = "FILE")]
-    pub config_output: Option<std::path::PathBuf>,
-}
-
-/// `edge-manifest verify-artifact`
-#[derive(clap::Args, Debug)]
-pub struct EdgeManifestVerifyArtifactArgs {
-    /// Signed edge provisioning manifest JSON.
-    #[arg(long, value_name = "FILE")]
-    pub manifest: std::path::PathBuf,
-
-    /// Ed25519 public key, either raw hex or PEM SubjectPublicKeyInfo.
-    #[arg(long, value_name = "FILE")]
-    pub public_key: std::path::PathBuf,
-
-    /// Downloaded artifact file to verify.
-    #[arg(long, value_name = "FILE")]
-    pub artifact: std::path::PathBuf,
-
-    /// Expected board family, for example rpi4-cm4 or revpi4.
-    #[arg(long)]
-    pub board: Option<String>,
-
-    /// Expected artifact architecture, for example aarch64.
-    #[arg(long)]
-    pub arch: Option<String>,
-
-    /// Minimum accepted signing key epoch for this provisioning manifest.
-    #[arg(long, default_value_t = 1)]
-    pub min_key_epoch: u32,
-
-    /// Minimum rollback floor this provisioning manifest must preserve.
-    #[arg(long, default_value = "v0.1.0-alpha")]
-    pub min_rollback_floor: String,
-}
-
+#[cfg(any(test, feature = "package-commands"))]
 /// `install <package>`
 #[derive(clap::Args, Debug)]
 pub struct InstallArgs {
@@ -246,6 +316,7 @@ pub struct InstallArgs {
     pub start_service: bool,
 }
 
+#[cfg(any(test, feature = "package-commands"))]
 /// `upgrade <package>`
 #[derive(clap::Args, Debug)]
 pub struct UpgradeArgs {
@@ -261,6 +332,7 @@ pub struct UpgradeArgs {
     pub verify_signature: bool,
 }
 
+#[cfg(any(test, feature = "package-commands"))]
 /// `rollback <package>`
 #[derive(clap::Args, Debug)]
 pub struct RollbackArgs {
@@ -276,6 +348,7 @@ pub struct RollbackArgs {
     pub yes: bool,
 }
 
+#[cfg(any(test, feature = "package-commands"))]
 /// `list <package>` veya `list`
 #[derive(clap::Args, Debug)]
 pub struct ListArgs {
@@ -295,6 +368,7 @@ pub struct ListArgs {
     pub json: bool,
 }
 
+#[cfg(any(test, feature = "package-commands"))]
 /// `status [<package>]`
 #[derive(clap::Args, Debug)]
 pub struct StatusArgs {
@@ -306,6 +380,7 @@ pub struct StatusArgs {
     pub json: bool,
 }
 
+#[cfg(any(test, feature = "package-commands"))]
 /// `remove <package>`
 #[derive(clap::Args, Debug)]
 pub struct RemoveArgs {
@@ -321,4 +396,5 @@ pub struct RemoveArgs {
     pub yes: bool,
 }
 
+#[cfg(any(test, feature = "package-commands"))]
 use crate::sources;

@@ -60,6 +60,13 @@ rustls-pemfile = "2.2"
 # HTTP client (rustls backend)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 
+# Archive (suderra-installer edge: tar.gz release artifacts, ADR-048 DEC-1.10)
+flate2 = "1.1"
+tar = { version = "0.4", default-features = false }
+
+# CSPRNG (provisioning request nonce, ADR-048 DEC-5.5)
+getrandom = "0.2"
+
 # Crypto
 sha2 = "0.10"
 hmac = "0.12"
