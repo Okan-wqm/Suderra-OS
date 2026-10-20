@@ -47,6 +47,8 @@ pub(crate) fn image(root: &Path) -> (Paths, ImageFacts) {
     .unwrap();
     // /data mounted with its layout applied (suderra-data-unlock).
     std::fs::create_dir_all(paths.os_state()).unwrap();
+    // /run (tmpfs; /run/suderra-update.lock).
+    std::fs::create_dir_all(root.join("run")).unwrap();
     let facts = ImageFacts::load(&paths).unwrap();
     (paths, facts)
 }

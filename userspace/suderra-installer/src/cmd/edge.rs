@@ -55,7 +55,11 @@ use std::path::{Path, PathBuf};
 const MAX_DELIVERY: u64 = 16 * 1024 * 1024;
 /// Largest decompressed agent binary root writes.
 const MAX_BINARY: u64 = 512 * 1024 * 1024;
-/// Largest provisioning token.
+/// Longest provisioning token, in characters. The forced command
+/// (suderra-provision `MAX_TOKEN`) accepts at most this many and writes the
+/// token plus one newline, which the worker (`claim token`) and
+/// [`read_token`] therefore accept as MAX_TOKEN + 1 bytes; the provisioning
+/// contract test keeps the three in step.
 const MAX_TOKEN: u64 = 4096;
 
 /// A failure with its typed result reason.
@@ -551,6 +555,12 @@ fn report(
 
 /// Holds `/run/suderra-update.lock` (shared with OS updates, DEC-2.3).
 fn update_lock(paths: &Paths) -> Result<nix::fcntl::Flock<File>> {
+    try_update_lock(paths)?.context("another update operation holds the update lock")
+}
+
+/// Takes `/run/suderra-update.lock` without waiting; `None` while another
+/// operation holds it.
+fn try_update_lock(paths: &Paths) -> Result<Option<nix::fcntl::Flock<File>>> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -559,8 +569,11 @@ fn update_lock(paths: &Paths) -> Result<nix::fcntl::Flock<File>> {
         .custom_flags(libc_flags::O_NOFOLLOW | libc_flags::O_CLOEXEC)
         .open(paths.update_lock())
         .context("cannot open the update lock")?;
-    nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock)
-        .map_err(|(_, e)| anyhow::anyhow!("another update operation holds the update lock: {e}"))
+    match nix::fcntl::Flock::lock(file, nix::fcntl::FlockArg::LockExclusiveNonblock) {
+        Ok(lock) => Ok(Some(lock)),
+        Err((_, nix::errno::Errno::EWOULDBLOCK)) => Ok(None),
+        Err((_, e)) => Err(anyhow::anyhow!("cannot take the update lock: {e}")),
+    }
 }
 
 /// Installs a delivery and artifact already on disk.
@@ -714,6 +727,21 @@ async fn fetch_artifact(paths: &Paths, set: &ProvisioningSet) -> Result<PathBuf>
     Ok(path)
 }
 
+/// Reads the token file the worker hands over: 1..=MAX_TOKEN visible ASCII
+/// characters and at most one trailing newline.
+fn read_token(path: &Path) -> Result<String> {
+    let bytes = read_root_file(path, MAX_TOKEN + 1)?.context("token file is missing")?;
+    let text = String::from_utf8(bytes).context("token is not UTF-8")?;
+    let token = text.strip_suffix('\n').unwrap_or(&text);
+    if token.is_empty() || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        bail!("token is empty or not visible ASCII");
+    }
+    if token.len() as u64 > MAX_TOKEN {
+        bail!("token is longer than {MAX_TOKEN} characters");
+    }
+    Ok(token.to_owned())
+}
+
 /// Network provisioning: request, fetch, verify, download, install.
 pub(crate) async fn provision(
     paths: &Paths,
@@ -726,12 +754,7 @@ pub(crate) async fn provision(
         bail!("device code {device_code:?} is not a contract device_code");
     }
     provisionable(paths, &now_timestamp())?;
-    let token_bytes = read_root_file(token_file, MAX_TOKEN)?.context("token file is missing")?;
-    let token = String::from_utf8(token_bytes).context("token is not UTF-8")?;
-    let token = token.strip_suffix('\n').unwrap_or(&token).to_owned();
-    if token.is_empty() || !token.bytes().all(|b| b.is_ascii_graphic()) {
-        bail!("token is empty or not visible ASCII");
-    }
+    let token = read_token(token_file)?;
     let request = build_request(paths, facts)?;
     let bytes = match fetch_delivery(paths, device_code, &token, &request).await {
         Ok(bytes) => bytes,
@@ -819,6 +842,13 @@ pub(crate) struct Current {
 /// Re-verifies the installed release, binary and site set (DEC-1.5,
 /// DEC-4.10) against the committed receipt; every failure is a typed
 /// verify-current result.
+///
+/// It runs before every agent start and reload, possibly while an install
+/// holds `/run/suderra-update.lock`. Only with that lock held does it
+/// complete an interrupted switch (which switches and prunes); while an
+/// install holds it, verification is read-only and judges the committed
+/// state as it is, so the two never switch or prune at once (a mid-install
+/// state fails closed until the install's own switch finishes).
 pub(crate) fn verify_current(
     paths: &Paths,
     facts: &ImageFacts,
@@ -830,7 +860,11 @@ pub(crate) fn verify_current(
         .receipt()
         .map_err(io)?
         .ok_or_else(|| Rejection::rejected(Reason::ReleaseNotInstalled, "no install receipt"))?;
-    let completed_switch = complete_interrupted_switch(paths, &receipt).map_err(io)?;
+    let lock = try_update_lock(paths).map_err(io)?;
+    let completed_switch = match &lock {
+        Some(_) => complete_interrupted_switch(paths, &receipt).map_err(io)?,
+        None => false,
+    };
     let link = std::fs::read_link(paths.edge_root().join("current"))
         .map_err(|_| Rejection::rejected(Reason::ReleaseNotInstalled, "current is missing"))?;
     if link != Path::new("releases").join(&receipt.version) {
@@ -1566,6 +1600,51 @@ mod tests {
             std::fs::read_to_string(dev.paths.site_root().join("config.yaml")).unwrap(),
             "site: test\nseq: 1\n"
         );
+    }
+
+    #[test]
+    fn the_token_limit_is_one_limit_with_its_newline() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("token");
+        let longest = "T".repeat(4096);
+        std::fs::write(&file, format!("{longest}\n")).unwrap();
+        assert_eq!(read_token(&file).unwrap(), longest);
+        std::fs::write(&file, &longest).unwrap();
+        assert_eq!(read_token(&file).unwrap(), longest);
+        for bad in [
+            format!("{longest}T\n"),
+            format!("{longest}TT"),
+            format!("{longest}T"),
+            "\n".to_owned(),
+            "tok en\n".to_owned(),
+            "token\n\n".to_owned(),
+        ] {
+            std::fs::write(&file, &bad).unwrap();
+            assert!(read_token(&file).is_err(), "{} bytes", bad.len());
+        }
+    }
+
+    #[test]
+    fn verify_current_never_completes_a_switch_while_an_install_holds_the_lock() {
+        let dev = device(LifecycleState::Provisioning);
+        dev.install(&Spec::default()).unwrap();
+        let newer = reprovisioning(&dev);
+        let receipt = commit_only(&dev, &newer);
+        let held = update_lock(&dev.paths).unwrap();
+        // The install is between its receipt and its switch: verification is
+        // read-only and fails closed instead of racing it.
+        assert_eq!(
+            verify_current(&dev.paths, &dev.facts, &dev.pins, NOW)
+                .unwrap_err()
+                .reason,
+            Reason::CurrentLinkMismatch
+        );
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
+        assert!(dev.paths.edge_root().join("releases/1.7.0").exists());
+        drop(held);
+        let current = verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        assert!(current.completed_switch);
+        assert_eq!(current.receipt, receipt);
     }
 
     #[test]

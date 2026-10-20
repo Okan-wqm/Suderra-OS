@@ -17,6 +17,9 @@ SPOOL=/var/spool/suderra-provision
 INBOX="${SPOOL}/inbox"
 RESULT="${SPOOL}/result"
 TIMEOUT=2700
+# Longest token in characters; it is written with one newline, so the worker
+# and the installer accept MAX_TOKEN + 1 bytes (one limit, checked by the
+# provisioning contract test).
 MAX_TOKEN=4096
 
 usage() {

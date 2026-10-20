@@ -131,6 +131,16 @@ grep -q '"${INSTALLER}" edge provision --device-code "${device_code}"' "${SBIN}/
     fail "the worker must delegate to suderra-installer edge provision"
 grep -q -- '--token-file "${WORK}/token"' "${SBIN}/suderra-provision-worker" ||
     fail "the worker must hand the token over as a root-only file, never on argv"
+# One token limit: the forced command accepts MAX_TOKEN characters and writes
+# them plus a newline; the worker and the installer accept MAX_TOKEN + 1 bytes.
+token_max="$(sed -n 's/^MAX_TOKEN=\([0-9]*\)$/\1/p' "${SBIN}/suderra-provision")"
+[ -n "${token_max}" ] || fail "suderra-provision must declare MAX_TOKEN"
+grep -qx "if ! claim token $((token_max + 1)); then" "${SBIN}/suderra-provision-worker" ||
+    fail "the worker must claim exactly MAX_TOKEN + 1 bytes (the token and its newline)"
+grep -qx "const MAX_TOKEN: u64 = ${token_max};" "${ROOT}/userspace/suderra-installer/src/cmd/edge.rs" ||
+    fail "the installer's MAX_TOKEN must equal suderra-provision's"
+grep -q 'read_root_file(path, MAX_TOKEN + 1)' "${ROOT}/userspace/suderra-installer/src/cmd/edge.rs" ||
+    fail "the installer must read the token file as MAX_TOKEN + 1 bytes"
 for symbol in 'Provision(EdgeProvisionArgs)' 'pub device_code: String' 'pub token_file: std::path::PathBuf' \
     'VerifyCurrent' 'Init,' 'Activate,' 'Request,' 'Factory,' 'Apply,' 'Check,'; do
     grep -qF "${symbol}" "${CLI}" || fail "suderra-installer CLI lacks ${symbol} that the overlay calls"
