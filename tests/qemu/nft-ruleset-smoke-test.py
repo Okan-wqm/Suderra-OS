@@ -21,7 +21,6 @@ guest's own kernel and nft:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import re
 import sys
 import traceback
@@ -46,7 +45,7 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
         c.require("first boot is in the provisioning window",
                   facts.get("lifecycle") == "PROVISIONING" and facts.get("provisioning_open") == "yes",
                   facts.get("lifecycle", ""))
-        smoke = vm.probe.run("nft-smoke")
+        smoke = vm.run_probe("nft-smoke")
         for name in ("base", "appliance", "provisioning"):
             c.check(f"{name} ruleset compiles in the guest kernel", smoke.get(f"check.{name}.rc") == "0",
                     smoke.get(f"check.{name}", "")[-400:])
@@ -55,7 +54,7 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
                 bool(iface) and smoke.get("provisioning_iface") == iface, iface)
         provisioning = smoke.get("expected.provisioning", "")
         c.check("the loaded ruleset is the rendered provisioning ruleset",
-                facts.get("nft_ruleset_sha256") == hashlib.sha256(provisioning.encode()).hexdigest())
+                facts.get("nft_ruleset_sha256") == smoke.get("expected.provisioning.sha256"))
         inbound = chain(provisioning, "input")
         ssh_rules = [line.strip() for line in inbound.splitlines() if "dport 22" in line]
         c.check("SSH is admitted only on the default-route interface",
@@ -69,7 +68,7 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
         for hook in ("input", "forward", "output"):
             c.check(f"appliance {hook} chain drops by default", "policy drop;" in chain(appliance, hook))
         c.check("the appliance ruleset admits no inbound SSH", "dport 22" not in chain(appliance, "input"))
-        again = vm.probe.run("nft-smoke")
+        again = vm.run_probe("nft-smoke")
         c.check("the appliance ruleset's loaded form is deterministic",
                 again.get("expected.appliance") == appliance)
         c.check("policy verify matches the recorded provisioning ruleset", facts.get("policy_verify.rc") == "0",

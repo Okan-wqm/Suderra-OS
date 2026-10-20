@@ -82,7 +82,7 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
 
         # K3, K9: the root installer under the provisioning worker's sandbox.
         worker = repo_sandbox("suderra-provision-worker.service", [])
-        request = vm.probe.run("sandbox-request", timeout=600, resend=False)
+        request = vm.run_probe("sandbox-request", timeout=600, resend=False)
         c.check("installer sandbox is the shipped worker unit's",
                 request.get("properties", "").splitlines() == worker,
                 f"{request.get('properties', '').splitlines()} != {worker}")
@@ -94,7 +94,7 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
                 request.get("etc_diff", "")[:400])
         binding = json.loads(facts.get("binding") or "{}")
         cloud.prepare_sandbox_delivery(nonce[0], binding)
-        install = vm.probe.run("sandbox-install", timeout=1800, resend=False)
+        install = vm.run_probe("sandbox-install", timeout=1800, resend=False)
         c.check("the delivery and artifact reach the device",
                 install.get("fetch.delivery.rc") == "0" and install.get("fetch.artifact.rc") == "0",
                 install.get("fetch.delivery", "") + install.get("fetch.artifact", ""))
@@ -107,7 +107,7 @@ def run(args: argparse.Namespace, c: eq.Checks) -> None:
 
         # K1, K11: the release binary under the agent unit's sandbox.
         agent_props = repo_sandbox("suderra-agent.service", ["10-board-qemu-x86_64.conf"])
-        sandbox = vm.probe.run("sandbox-agent", timeout=1800, resend=False)
+        sandbox = vm.run_probe("sandbox-agent", timeout=1800, resend=False)
         c.check("agent sandbox is the shipped agent unit's (with the board drop-in)",
                 sandbox.get("properties", "").splitlines() == agent_props,
                 f"{sandbox.get('properties', '').splitlines()} != {agent_props}")

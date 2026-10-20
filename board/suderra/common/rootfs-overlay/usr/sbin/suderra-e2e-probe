@@ -139,6 +139,14 @@ probe_nft_smoke() {
         'nft -f /etc/nftables.base.conf && nft -f /etc/nftables.conf && nft list ruleset'
     emit_cmd expected.provisioning run_netns \
         "nft -f /etc/nftables.base.conf && nft -f ${WORK}/provisioning.nft && nft list ruleset"
+    # Hashed in the guest from the raw listing, the way `policy apply` hashes
+    # the loaded ruleset (a command substitution drops the trailing newline).
+    emit expected.appliance.sha256 "$(run_netns \
+        'nft -f /etc/nftables.base.conf && nft -f /etc/nftables.conf && nft list ruleset | sha256sum' |
+        cut -d' ' -f1)"
+    emit expected.provisioning.sha256 "$(run_netns \
+        "nft -f /etc/nftables.base.conf && nft -f ${WORK}/provisioning.nft && nft list ruleset | sha256sum" |
+        cut -d' ' -f1)"
     emit provisioning_iface "${iface}"
 }
 

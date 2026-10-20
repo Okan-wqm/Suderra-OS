@@ -33,7 +33,6 @@ binding, expired manifest, modified artifact, unsigned receipt.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import time
@@ -105,7 +104,7 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
             any(r.get("kind") == "lifecycle" and (r.get("subject") or {}).get("lifecycle_from") == "FACTORY"
                 for r in eq.results(facts)) or "FACTORY" not in facts.get("results", ""),
             "lifecycle result")
-    journal = vm.probe.run("journal-all").get("journal", "")
+    journal = vm.run_probe("journal-all").get("journal", "")
     c.check("1 the boot has no ordering cycle", "ordering cycle" not in journal,
             "\n".join(line for line in journal.splitlines() if "cycle" in line)[:600])
     chain_failures = [line for line in journal.splitlines()
@@ -115,12 +114,11 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
             "\n".join(chain_failures[:6]))
     c.check("1 the USB self-installer is not on a device image",
             "USB self-installer" not in journal and "suderra-os-install" not in journal)
-    smoke = vm.probe.run("nft-smoke")
+    smoke = vm.run_probe("nft-smoke")
     iface = facts.get("default_route_iface", "")
     c.check("1 default route interface present", bool(iface))
     c.check("1 loaded ruleset is the provisioning ruleset scoped to the default-route interface",
-            facts.get("nft_ruleset_sha256") == hashlib.sha256(
-                smoke.get("expected.provisioning", "").encode()).hexdigest()
+            facts.get("nft_ruleset_sha256") == smoke.get("expected.provisioning.sha256")
             and smoke.get("provisioning_iface") == iface,
             f"iface={iface} smoke_iface={smoke.get('provisioning_iface')}")
     ruleset = facts.get("nft_ruleset", "")
@@ -240,8 +238,8 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
     c.check("7 dropbear stopped", eq.unit_props(facts, "dropbear.service").get("ActiveState") != "active")
     c.check("7 nothing listens on :22", ":22 " not in facts.get("listeners", ""), facts.get("listeners", ""))
     c.check("7 SSH is closed from the network", not eq.ssh_banner(args.ssh_port).startswith(b"SSH-"))
-    smoke = vm.probe.run("nft-smoke")
-    expected = hashlib.sha256(smoke.get("expected.appliance", "").encode()).hexdigest()
+    smoke = vm.run_probe("nft-smoke")
+    expected = smoke.get("expected.appliance.sha256")
     c.check("7 loaded ruleset hash equals the appliance ruleset's",
             facts.get("nft_ruleset_sha256") == expected and smoke.get("expected.appliance.rc") == "0",
             f"{facts.get('nft_ruleset_sha256')} != {expected}")

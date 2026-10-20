@@ -227,7 +227,13 @@ class Vm:
             raise HarnessError(f"QEMU exited with {self.qemu.returncode}; see {self.serial_log}")
 
     def facts(self, timeout: float = 300) -> dict[str, str]:
-        return self.probe.run("facts", timeout)
+        return self.run_probe("facts", timeout)
+
+    def run_probe(self, name: str, timeout: float = 300, resend: bool = True) -> dict[str, str]:
+        """A probe whose last answer is also kept in the work directory."""
+        result = self.probe.run(name, timeout, resend)
+        (self.work / f"probe-{name}.json").write_text(json.dumps(result, indent=1))
+        return result
 
     def stop(self) -> None:
         self.probe.close()

@@ -7,8 +7,10 @@ It stands in for the platform's provisioning API, release hosting, MQTT
 broker and statement signer, so the dev QEMU image can run the whole
 Suderra OS provisioning chain offline:
 
-* HTTPS on 127.0.0.1:8443 (the guest reaches it as https://10.0.2.2:8443, the
-  image's /etc/suderra/cloud-endpoint), with a leaf certificate issued by the
+* HTTPS on 127.0.0.1:443 (the guest reaches it as https://10.0.2.2, the QEMU
+  image's /etc/suderra/cloud-endpoint, through the standard HTTPS port the
+  device firewall lets out; binding 443 needs root or
+  net.ipv4.ip_unprivileged_port_start <= 443), with a leaf certificate issued by the
   keys directory's edge/cloud-ca (the image's /etc/suderra/cloud-ca.pem):
     GET  /install/{device_code}/suderra-os   the provisioning delivery
          (contracts delivery.json `network`: the token only in the
@@ -76,7 +78,7 @@ CONTRACT = ROOT / "contracts" / "suderra-edge" / "v1"
 BOARD = "qemu-x86_64"
 GUEST_HOST = "10.0.2.2"
 BIND_HOST = "127.0.0.1"
-HTTPS_PORT = 8443
+HTTPS_PORT = 443
 MQTT_PORT = 8883
 EPOCH = 1
 DELIVERY_CONTENT_TYPE = "application/vnd.suderra.edge-provisioning-delivery.v1+json"
@@ -435,7 +437,9 @@ class FakeCloud:
         self.work.mkdir(parents=True, exist_ok=True)
         self.https_port = https_port
         self.mqtt_port = mqtt_port
-        self.endpoint = f"https://{GUEST_HOST}:{https_port}"
+        # The URL the guest reaches the API at; 10.0.2.2 is the host's
+        # loopback under QEMU user networking.
+        self.endpoint = f"https://{GUEST_HOST}" + ("" if https_port == 443 else f":{https_port}")
         self.device = Device(device_code=device_code, device_id=str(uuid.uuid4()),
                              tenant_id=self.keys.tenant, token=secrets.token_hex(32))
         self.platform_actor = str(uuid.uuid4())
