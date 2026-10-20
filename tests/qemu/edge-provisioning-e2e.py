@@ -45,6 +45,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import edge_qemu as eq
 from fake_cloud import FakeCloud
 
+# Unit descriptions of the provisioning chain, as systemd logs a failure.
+CHAIN_UNIT_NAMES = (
+    "Suderra mutable data partition", "Suderra OS device identity",
+    "Suderra OS device lifecycle evaluation", "Suderra OS provisioning mode",
+    "Suderra OS nftables firewall", "Watch Suderra OS provisioning requests",
+    "Suderra OS provisioning worker", "Watch the agent's activation receipt",
+    "Verify the activation receipt", "Suderra edge agent", "Path Units",
+)
+
 NEGATIVE_DELIVERIES = (
     ("wrong-binding", "device-binding-mismatch"),
     ("expired", "expired"),
@@ -96,6 +105,16 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
             any(r.get("kind") == "lifecycle" and (r.get("subject") or {}).get("lifecycle_from") == "FACTORY"
                 for r in eq.results(facts)) or "FACTORY" not in facts.get("results", ""),
             "lifecycle result")
+    journal = vm.probe.run("journal-all").get("journal", "")
+    c.check("1 the boot has no ordering cycle", "ordering cycle" not in journal,
+            "\n".join(line for line in journal.splitlines() if "cycle" in line)[:600])
+    chain_failures = [line for line in journal.splitlines()
+                      if ("Failed to start" in line or "Dependency failed" in line)
+                      and any(u in line for u in CHAIN_UNIT_NAMES)]
+    c.check("1 no unit of the provisioning chain failed at boot", not chain_failures,
+            "\n".join(chain_failures[:6]))
+    c.check("1 the USB self-installer is not on a device image",
+            "USB self-installer" not in journal and "suderra-os-install" not in journal)
     smoke = vm.probe.run("nft-smoke")
     iface = facts.get("default_route_iface", "")
     c.check("1 default route interface present", bool(iface))

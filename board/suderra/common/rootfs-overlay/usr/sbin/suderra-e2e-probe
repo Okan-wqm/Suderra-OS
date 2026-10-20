@@ -109,7 +109,6 @@ probe_facts() {
     emit activated "$(cat /data/suderra/os/edge/activated.json 2>/dev/null || true)"
     emit identity "$(cat /run/suderra/identity.json 2>/dev/null || true)"
     emit binding "$(cat /data/suderra/os/identity/device-binding.json 2>/dev/null || true)"
-    emit agent_receipt "$(cat /data/suderra/agent/state/activation-receipt.dsse 2>/dev/null || true)"
     emit results "$(for f in /data/suderra/os/results/*.json; do
         [ -f "${f}" ] && printf '%s\n' "$(cat "${f}")"; done | tail -n 40)"
     emit etc_changed "$(find /etc -xdev -newer "${BOOT_MARKER}" 2>/dev/null || true)"
