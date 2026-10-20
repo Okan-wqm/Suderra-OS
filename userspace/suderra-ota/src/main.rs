@@ -272,7 +272,40 @@ fn rollback(args: RollbackArgs) -> Result<()> {
     Ok(())
 }
 
+/// The OTA pending in the state file at `path`, if any. It is read without
+/// the production anti-rollback guard of [`load_state`] because confirming a
+/// booted slot no OTA is pending for changes neither a version nor a floor.
+fn pending_version_in(path: &Path) -> Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let state: OtaState = serde_json::from_str(
+        &fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?,
+    )
+    .with_context(|| format!("invalid OTA state JSON: {}", path.display()))?;
+    if state.schema_version != STATE_SCHEMA {
+        bail!("OTA state schema_version must be {STATE_SCHEMA}");
+    }
+    Ok(state.pending_version)
+}
+
+/// The single mark-good path runs after the health gate on every boot
+/// (suderra-rauc-mark-good, ADR-048 DEC-6.8). On a normal boot no OTA is
+/// pending: mark-good then only confirms the booted slot to RAUC, which is
+/// idempotent, instead of failing and rolling a healthy slot back (EI-012).
+/// With an OTA pending it completes that OTA: version, slot and floor checks,
+/// then the floor rises.
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
+    if args.version.is_none() && pending_version_in(&state_path())?.is_none() {
+        run_rauc(&["status", "mark-good"]).context("rauc mark-good failed")?;
+        print_json(&event_json(
+            "mark-good",
+            "passed",
+            Some(json!({ "pending_version": null, "boot_slot": active_boot_slot() })),
+            None,
+        ))?;
+        return Ok(());
+    }
     let mut state = load_state()?;
     let requested_version = args.version;
     let version = requested_version
@@ -1094,6 +1127,46 @@ mod tests {
         Image::from_os_release(Some(&format!(
             "NAME=\"Suderra OS\"\nVARIANT=\"prod\"\nIMAGE_ROLE=\"{role}\"\n"
         )))
+    }
+
+    #[test]
+    fn mark_good_completes_only_a_recorded_pending_ota() {
+        let tmp = std::env::temp_dir().join(format!("suderra-ota-pending-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("state.json");
+        assert_eq!(
+            pending_version_in(&path).unwrap(),
+            None,
+            "no state: a normal boot"
+        );
+        let mut state = OtaState {
+            schema_version: STATE_SCHEMA.to_string(),
+            target: "x86_64".into(),
+            current_version: "1.0.0".into(),
+            rollback_floor: "1.0.0".into(),
+            pending_version: None,
+            pending_boot_slot: None,
+            reboot_required: false,
+            last_event: None,
+            last_error: None,
+        };
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(pending_version_in(&path).unwrap(), None, "nothing pending");
+        state.pending_version = Some("1.1.0".into());
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(pending_version_in(&path).unwrap().as_deref(), Some("1.1.0"));
+        state.schema_version = "suderra.ota-state.v0".into();
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        assert!(
+            pending_version_in(&path).is_err(),
+            "a foreign state is not read as nothing pending"
+        );
+        fs::write(&path, b"{").unwrap();
+        assert!(
+            pending_version_in(&path).is_err(),
+            "corrupt state is an error"
+        );
+        fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

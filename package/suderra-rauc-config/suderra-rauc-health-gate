@@ -1,4 +1,16 @@
 #!/bin/sh
+# RAUC health gate (ADR-048 DEC-6.8): the RAUC half of the split health gate.
+#
+# It checks the RAUC slot state and then calls the OS and agent predicate,
+# `suderra-installer health check`, which exists on every image and does not
+# depend on RAUC. The predicate always checks the OS (declared verity, LUKS
+# /data, the loaded firewall's hash, a consistent lifecycle, the agent ABI)
+# and counts the agent only once root has verified its activation receipt
+# (lifecycle ACTIVE), waiting a bounded time for activating -> active and
+# for a non-degraded agent. A factory-fresh device therefore never rolls
+# back an OS update over an agent it does not have yet, while an OS that
+# breaks an activated agent does. suderra-rauc-mark-good is the only caller
+# and the only mark-good path.
 set -eu
 
 fail() {
@@ -8,10 +20,11 @@ fail() {
 
 [ -x /usr/bin/rauc ] || fail "rauc binary missing"
 [ -x /usr/sbin/suderra-rauc-boot-state ] || fail "suderra-rauc-boot-state missing"
+[ -x /usr/bin/suderra-installer ] || fail "suderra-installer missing: the OS and agent health predicate cannot run"
 mountpoint -q /data || fail "/data is not mounted"
 mountpoint -q /boot || fail "/boot is not mounted"
+[ -d /data/rauc ] || fail "/data/rauc is missing (data layout)"
 
-mkdir -p /data/rauc
 /usr/sbin/suderra-rauc-boot-state >/data/rauc/health-preflight.json
 
 active_slot="$(sed -n 's/.*"active_slot": "\([^"]*\)".*/\1/p' /data/rauc/health-preflight.json | head -n 1)"
@@ -22,10 +35,9 @@ esac
 
 /usr/bin/rauc status --output-format=json >/data/rauc/rauc-status.json
 
-if command -v systemctl >/dev/null 2>&1 &&
-   systemctl list-unit-files suderra-agent.service >/dev/null 2>&1; then
-    systemctl is-active --quiet suderra-agent.service ||
-        fail "suderra-agent.service is not active"
-fi
+# OS always, agent only after the root-verified activation receipt; the
+# predicate writes its own health-gate result with every failed check.
+/usr/bin/suderra-installer health check ||
+    fail "the OS and agent health predicate failed (see the health-gate result)"
 
 printf '%s\n' "passed" >/data/rauc/health-gate.passed

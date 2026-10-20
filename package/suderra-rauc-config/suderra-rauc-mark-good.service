@@ -1,7 +1,12 @@
+# The single mark-good path (ADR-048 DEC-6.8): suderra-rauc-mark-good runs the
+# RAUC health gate, whose OS and agent predicate is
+# `suderra-installer health check`. The predicate records a health-gate result
+# under /data/suderra/os and /run/suderra, and waits a bounded time for an
+# activated agent to become active.
 [Unit]
 Description=Mark current Suderra OS RAUC slot good
 Documentation=https://rauc.readthedocs.io/
-After=multi-user.target boot.mount suderra-data.service rauc.service
+After=multi-user.target boot.mount suderra-data.service rauc.service nftables.service suderra-lifecycle.service suderra-agent.service
 Requires=boot.mount suderra-data.service
 RequiresMountsFor=/data /boot
 ConditionPathExists=/etc/rauc/system.conf
@@ -17,7 +22,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/data /boot
+ReadWritePaths=/data /boot /run/suderra /run/suderra-os
 
 [Install]
 WantedBy=multi-user.target
