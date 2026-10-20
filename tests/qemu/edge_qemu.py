@@ -68,10 +68,20 @@ def find_ovmf() -> tuple[Path, Path]:
     raise HarnessError("OVMF firmware not found; set OVMF_CODE and OVMF_VARS")
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def free_port_pair() -> int:
+    """A free loopback port P whose neighbour P + 1 is free too: the swtpm
+    TCTI talks to the TPM on P and to its control channel on P + 1."""
+    for _ in range(50):
+        with socket.socket() as first:
+            first.bind(("127.0.0.1", 0))
+            port = first.getsockname()[1]
+            try:
+                with socket.socket() as second:
+                    second.bind(("127.0.0.1", port + 1))
+            except OSError:
+                continue
+            return port
+    raise HarnessError("no free loopback port pair for the host swtpm")
 
 
 def tpm_ek_sha256(state: Path, work: Path) -> str:
@@ -80,7 +90,8 @@ def tpm_ek_sha256(state: Path, work: Path) -> str:
     state the guest will boot with: the hardware binding suderra-identity
     must record (tpm-ek-sha256, boards.json), computed independently of the
     device."""
-    port, ctrl = free_port(), free_port()
+    port = free_port_pair()
+    ctrl = port + 1
     swtpm = subprocess.Popen(
         ["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={state}",
          "--server", f"type=tcp,port={port},bindaddr=127.0.0.1",
@@ -98,9 +109,11 @@ def tpm_ek_sha256(state: Path, work: Path) -> str:
                     raise HarnessError("the host swtpm for the EK read did not start")
                 time.sleep(0.2)
         der = work / "ek.der"
-        subprocess.run(["tpm2_createek", "-T", f"swtpm:host=127.0.0.1,port={port}", "-G", "rsa",
-                        "-c", str(work / "ek.ctx"), "-u", str(der), "-f", "der"],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        read = subprocess.run(["tpm2_createek", "-T", f"swtpm:host=127.0.0.1,port={port}", "-G", "rsa",
+                               "-c", str(work / "ek.ctx"), "-u", str(der), "-f", "der"],
+                              check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if read.returncode != 0:
+            raise HarnessError(f"tpm2_createek on the host swtpm failed: {read.stderr.strip()[-400:]}")
         return hashlib.sha256(der.read_bytes()).hexdigest()
     finally:
         swtpm.terminate()
