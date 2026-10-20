@@ -1190,6 +1190,7 @@ jobs:
           path: agent-src
           sparse-checkout: |
             sens-api-gateway
+            crates
             scripts/edge
             contracts/suderra-edge
 
