@@ -260,6 +260,23 @@ class Vm:
         self.stop()
 
 
+TIMESPAN_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def timespan_seconds(text: str) -> float:
+    """A systemd time span as `systemctl show` prints it ("1min 30s", "500ms",
+    "infinity", "0") in seconds."""
+    text = text.strip()
+    if text in ("", "0", "infinity"):
+        return 0.0 if text != "infinity" else float("inf")
+    total = 0.0
+    for number, unit in re.findall(r"([0-9.]+)\s*([a-z]+)", text):
+        if unit not in TIMESPAN_UNITS:
+            raise HarnessError(f"unknown time span unit in {text!r}")
+        total += float(number) * TIMESPAN_UNITS[unit]
+    return total
+
+
 def unit_props(facts: dict[str, str], unit: str) -> dict[str, str]:
     text = facts.get(f"unit.{unit}", "")
     return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)

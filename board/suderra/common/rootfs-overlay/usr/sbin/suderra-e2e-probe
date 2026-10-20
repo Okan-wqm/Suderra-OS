@@ -111,7 +111,11 @@ probe_facts() {
     emit binding "$(cat /data/suderra/os/identity/device-binding.json 2>/dev/null || true)"
     emit results "$(for f in /data/suderra/os/results/*.json; do
         [ -f "${f}" ] && printf '%s\n' "$(cat "${f}")"; done | tail -n 40)"
-    emit etc_changed "$(find /etc -xdev -newer "${BOOT_MARKER}" 2>/dev/null || true)"
+    # Files under /etc changed since the probe started; a mount point (the
+    # one-time-password shadow, the /data-backed /etc/dropbear) shows its
+    # bound source's time and is no write to /etc.
+    emit etc_changed "$(find /etc -xdev -newer "${BOOT_MARKER}" 2>/dev/null |
+        awk 'NR == FNR { mounted[$5] = 1; next } !($0 in mounted)' /proc/self/mountinfo - || true)"
 }
 
 probe_journal() {

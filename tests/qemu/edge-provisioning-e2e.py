@@ -182,12 +182,10 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
     verify = [r for r in eq.results(facts) if r.get("kind") == "verify-current"]
     c.check("4 verify-current passed before the agent started",
             bool(verify) and verify[-1].get("outcome") == "ok", json.dumps(verify[-1:])[:300])
-    watchdog_s = int(agent.get("WatchdogUSec", "0") or 0) / 1e6
-    if watchdog_s == 0 and agent.get("WatchdogUSec", "").endswith("min"):
-        watchdog_s = float(agent["WatchdogUSec"][:-3]) * 60
+    watchdog_s = eq.timespan_seconds(agent.get("WatchdogUSec", ""))
     c.check("5 the agent unit arms the watchdog", watchdog_s > 0, agent.get("WatchdogUSec", ""))
     pid = agent.get("MainPID")
-    hold = max(3 * (watchdog_s or 60), 180) + 30
+    hold = 3 * watchdog_s + 30
     eq.log(f"holding {hold:.0f}s (3 x WatchdogSec) to watch NRestarts")
     deadline = time.monotonic() + hold
     stable = True
