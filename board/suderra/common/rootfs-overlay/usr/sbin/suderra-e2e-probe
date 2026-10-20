@@ -243,6 +243,9 @@ probe_sandbox_install() {
     emit_cmd install systemd-run "$@"
     emit etc_diff "$(canary_diff)"
     rm -rf "${CANARY:?}"
+    # What suderra-provision-worker does after a successful install: publish
+    # the identity the install recorded to the agent.
+    emit_cmd identity_mirror /usr/sbin/suderra-identity mirror
     emit_cmd verify_current "${INSTALLER}" edge verify-current
 }
 
