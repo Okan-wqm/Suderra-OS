@@ -50,11 +50,33 @@ for dc in suderra_x86_64_defconfig suderra_aarch64_rpi4_prod_ab_defconfig \
     done
 done
 
-# 4. DEV defconfig'ler cryptsetup/TPM İÇERMEMELİ (dev = düz ext4, tasarım gereği).
+# 4. DEV donanım defconfig'leri cryptsetup İÇERMEMELİ (dev /data = düz ext4,
+# tasarım gereği). TPM2 araçları LUKS değildir: boards.json bir kartı
+# tpm-ek-sha256 ile bağlıyorsa suderra-identity EK'yi tpm2_createek ile okur
+# (ADR-048 DEC-3.6), bu yüzden o kartın HER imajı (dev dahil) tpm2-tss ve
+# tpm2-tools taşır; aksi halde dev imajı hiç provision edilemez.
 for dc in suderra_aarch64_rpi4_defconfig suderra_aarch64_revpi4_defconfig; do
     f="${ROOT}/configs/${dc}"
-    if grep -qE '^BR2_PACKAGE_CRYPTSETUP=y|^BR2_PACKAGE_TPM2_TSS=y' "${f}"; then
-        echo "ERROR: dev ${dc} cryptsetup/tpm2 içermemeli (dev /data düz ext4)" >&2; exit 1; fi
+    if grep -qE '^BR2_PACKAGE_CRYPTSETUP=y' "${f}"; then
+        echo "ERROR: dev ${dc} cryptsetup içermemeli (dev /data düz ext4)" >&2; exit 1; fi
 done
+python3 -I - "${ROOT}" <<'PY'
+import json, re, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+boards = json.loads((root / "contracts/suderra-edge/v1/boards.json").read_text(encoding="utf-8"))
+problems = []
+for board in boards["boards"]:
+    if board["device_binding_method"] != "tpm-ek-sha256":
+        continue
+    for image in board["os_images"]:
+        text = (root / "configs" / image["defconfig"]).read_text(encoding="utf-8")
+        have = set(re.findall(r"^(BR2_[A-Za-z0-9_]+)=y(?:\s|$)", text, re.M))
+        for pkg in ("BR2_PACKAGE_TPM2_TSS", "BR2_PACKAGE_TPM2_TOOLS"):
+            if pkg not in have:
+                problems.append(f"{image['defconfig']} ({board['board_profile']}, tpm-ek-sha256) must select {pkg}")
+if problems:
+    sys.exit("ERROR: " + "; ".join(problems))
+PY
 
 echo "/data LUKS provisioning contract passed"

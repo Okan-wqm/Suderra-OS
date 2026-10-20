@@ -99,6 +99,11 @@ BR2_PACKAGE_CHRONY=y
 BR2_PACKAGE_SUDERRA_OS_INSTALLER=y
 BR2_PACKAGE_SUDERRA_OS_INSTALLER_CLOUD_ENDPOINT="https://app.suderra.com"
 BR2_PACKAGE_SUDERRA_KEYS=y
+# Device binding (ADR-048 DEC-3.6, boards.json revpi-connect4
+# device_binding_method tpm-ek-sha256): suderra-identity reads the EK of the
+# SLB9670 with tpm2_createek. No cryptsetup: dev /data stays plain ext4.
+BR2_PACKAGE_TPM2_TSS=y
+BR2_PACKAGE_TPM2_TOOLS=y
 
 
 BR2_TARGET_GENERIC_HOSTNAME="suderra-revpi4"
