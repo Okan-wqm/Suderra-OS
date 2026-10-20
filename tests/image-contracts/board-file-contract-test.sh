@@ -55,10 +55,12 @@ for defconfig_path in "${ROOT}"/configs/*_defconfig; do
         source "${SECTION}"
     ) >"${WORK}/log" 2>&1 || { cat "${WORK}/log" >&2; fail "${defconfig}: image-facts section failed"; }
 
-    python3 -I - "${ROOT}/contracts/suderra-edge/v1/boards.json" "${defconfig}" "${target}" "${variant}" "${defconfig_path}" <<'PY'
+    python3 -I - "${ROOT}/contracts/suderra-edge/v1/boards.json" "${defconfig}" "${target}" "${variant}" "${defconfig_path}" \
+        "${ROOT}/board/suderra/common/rootfs-overlay/etc" <<'PY'
 import json, re, sys
 from pathlib import Path
-boards_path, defconfig, target, variant, defconfig_path = sys.argv[1:]
+boards_path, defconfig, target, variant, defconfig_path, overlay_etc = sys.argv[1:]
+overlay_etc = Path(overlay_etc)
 boards = json.load(open(boards_path, encoding="utf-8"))
 board_file = Path(target) / "etc/suderra/board"
 features_file = Path(target) / "etc/suderra/features"
@@ -125,9 +127,19 @@ if not endpoint_file.is_file():
 endpoint = endpoint_file.read_text(encoding="utf-8")
 if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&()*+,;=:@/-]*[^/])?\n", endpoint):
     sys.exit(f"{defconfig}: cloud endpoint {endpoint!r} is not one https base URL line")
-fake_cloud = endpoint.startswith("https://10.0.2.2:")
+host_port = re.match(r"https://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?", endpoint)
+fake_cloud = host_port.group(1) == "10.0.2.2"
 if (b["role"] == "ci") != fake_cloud:
     sys.exit(f"{defconfig}: only ci-role boards (the QEMU targets) point at the QEMU fake cloud, got {endpoint.strip()}")
+# The device reaches the endpoint (root's manifest fetch in the provisioning
+# window, the agent's activation after it) only through a port both rulesets
+# let out: an endpoint on another port is unreachable on every device.
+port = host_port.group(2) or "443"
+for ruleset in ("nftables.provisioning.conf", "nftables.conf"):
+    rules = (overlay_etc / ruleset).read_text(encoding="utf-8")
+    output = rules[rules.index("chain output"):]
+    if not re.search(rf"^\s*tcp dport {port} accept$", output, re.M):
+        sys.exit(f"{defconfig}: cloud endpoint port {port} is not let out by {ruleset}")
 PY
     checked=$((checked + 1))
 done
