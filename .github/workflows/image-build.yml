@@ -17,6 +17,11 @@ on:
       - "patches/**"
       - "scripts/**"
       - "userspace/**"
+      # The edge-e2e job (ADR-048 P0 exit test): the vendored edge contract,
+      # the QEMU tests and fake cloud, and the agent ref it builds.
+      - "contracts/**"
+      - "tests/qemu/**"
+      - "ci/edge-e2e-agent.ref"
 
 permissions:
   actions: read
@@ -323,6 +328,21 @@ jobs:
           name: ${{ matrix.defconfig }}-image
           path: ${{ env.SUDERRA_HOST_OUTPUT_DIR }}/${{ matrix.defconfig }}/images/
           retention-days: 30
+          if-no-files-found: error
+
+      # The edge e2e job signs the agent release, the provisioning manifest and
+      # the activation receipt with the edge keys this image pins. They are the
+      # ephemeral CI profile's keys of this run (scripts/ci/prepare-ci-keyring.sh,
+      # 14-day validity), which only the CI-built dev and QEMU images trust and
+      # which sign nothing else; they move to that job as a one-day artifact
+      # because no other job can produce keys this image accepts.
+      - name: Upload the edge e2e signing keys (dev QEMU image, CI profile)
+        if: success() && matrix.defconfig == 'suderra_qemu_x86_64_defconfig'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.defconfig }}-edge-e2e-keys
+          path: ${{ env.SUDERRA_HOST_KEYS_DIR }}/edge/
+          retention-days: 1
           if-no-files-found: error
 
       - name: Attest image and build evidence
@@ -1139,6 +1159,123 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+  edge-e2e:
+    # ADR-048 P0 exit criterion: the dev QEMU image this workflow built boots
+    # with OVMF and swtpm against the local fake cloud and runs the whole edge
+    # provisioning chain, its negative cases, the read-only sandbox test and
+    # the nftables smoke test (tests/qemu/edge-*.py, nft-ruleset-smoke-test.py).
+    name: Edge provisioning e2e (QEMU, fake cloud)
+    needs: [matrix, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      DEFCONFIG: suderra_qemu_x86_64_defconfig
+      E2E_WORK: ${{ github.workspace }}/edge-e2e
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Agent source ref
+        id: agent
+        run: |
+          set -euo pipefail
+          ref="$(grep -Ev '^(#|$)' ci/edge-e2e-agent.ref)"
+          [[ "${ref}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::ci/edge-e2e-agent.ref is not a commit"; exit 1; }
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the edge agent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: Okan-wqm/aquaculture_platform
+          ref: ${{ steps.agent.outputs.ref }}
+          path: agent-src
+          sparse-checkout: |
+            sens-api-gateway
+            scripts/edge
+            contracts/suderra-edge
+
+      - name: Install QEMU, OVMF, swtpm, mosquitto and the SSH client
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf swtpm swtpm-tools mosquitto mosquitto-clients \
+            openssh-client python3-cryptography tpm2-tools libtss2-tcti-swtpm0
+          sudo systemctl stop mosquitto.service 2>/dev/null || true
+          # The fake cloud serves the QEMU image's endpoint, https://10.0.2.2
+          # (the host's 127.0.0.1 under QEMU user networking), on 443: the
+          # port the device firewall lets out.
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=443
+          if [ -e /dev/kvm ]; then
+            sudo chmod 0666 /dev/kvm
+          else
+            echo "::warning::/dev/kvm yok — QEMU TCG modunda yavaş çalışacak"
+          fi
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@dd44c20b1206a46e25fba8503d5d7c9a33bd355a
+        with:
+          toolchain: 1.88.0
+
+      - name: Build the agent release binary (qemu-x86_64 board profile)
+        working-directory: agent-src/sens-api-gateway
+        run: |
+          set -euo pipefail
+          features="$(python3 "${GITHUB_WORKSPACE}/tests/qemu/fake_cloud.py" features --agent-repo "${GITHUB_WORKSPACE}/agent-src")"
+          echo "cargo features: ${features}"
+          cargo build --release --locked --features "${features}"
+
+      - name: Download the dev QEMU image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.DEFCONFIG }}-image
+          path: output/${{ env.DEFCONFIG }}/images/
+
+      - name: Download the image's edge signing keys
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.DEFCONFIG }}-edge-e2e-keys
+          path: ${{ env.E2E_WORK }}/keys/edge/
+
+      - name: Package and sign the agent release with the image's keys
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "${E2E_WORK}/keys"
+          python3 tests/qemu/fake_cloud.py selftest --agent-repo agent-src
+          python3 tests/qemu/fake_cloud.py release --agent-repo agent-src \
+            --binary agent-src/sens-api-gateway/target/release/suderra-agent \
+            --keys-dir "${E2E_WORK}/keys" --out-dir "${E2E_WORK}/release"
+
+      - name: Edge provisioning e2e (7 steps, 4 negative cases)
+        run: |
+          python3 tests/qemu/edge-provisioning-e2e.py --keys-dir "${E2E_WORK}/keys" \
+            --release-dir "${E2E_WORK}/release" --work-dir "${E2E_WORK}/provisioning" \
+            --image "output/${DEFCONFIG}/images/disk.img"
+
+      - name: Read-only sandbox test
+        if: success() || failure()
+        run: |
+          python3 tests/qemu/edge-readonly-sandbox-test.py --keys-dir "${E2E_WORK}/keys" \
+            --release-dir "${E2E_WORK}/release" --work-dir "${E2E_WORK}/sandbox" \
+            --image "output/${DEFCONFIG}/images/disk.img"
+
+      - name: nftables ruleset smoke test
+        if: success() || failure()
+        run: |
+          python3 tests/qemu/nft-ruleset-smoke-test.py --work-dir "${E2E_WORK}/nft" \
+            --image "output/${DEFCONFIG}/images/disk.img"
+
+      - name: Upload edge e2e logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: edge-e2e-logs
+          path: |
+            ${{ env.E2E_WORK }}/**/*.log
+            ${{ env.E2E_WORK }}/**/*.json
+            !${{ env.E2E_WORK }}/keys/**
+          retention-days: 30
+          if-no-files-found: ignore
+
   image-build-contract:
     name: Image build contract
     needs: [matrix, build, build-payload-base, build-payload, build-installer, qemu-smoke-test]
@@ -1206,7 +1343,7 @@ jobs:
     # post-merge regression (e.g. a defconfig that breaks the build) is surfaced
     # immediately via a tracking issue rather than sitting silently red.
     name: Alert on main/nightly build failure
-    needs: [matrix, build, build-payload-base, build-payload, build-installer, qemu-smoke-test, image-build-contract]
+    needs: [matrix, build, build-payload-base, build-payload, build-installer, qemu-smoke-test, edge-e2e, image-build-contract]
     if: failure() && (github.event_name == 'schedule' || github.event_name == 'push')
     runs-on: ubuntu-24.04
     timeout-minutes: 5

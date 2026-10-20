@@ -1,0 +1,5 @@
+# Okan-wqm/aquaculture_platform commit whose edge agent (sens-api-gateway)
+# the edge-e2e job of .github/workflows/image-build.yml builds, packages
+# and runs against this repository's dev QEMU image (ADR-048 P0 exit
+# criterion). Raise it deliberately, to an agent commit the e2e passed with.
+a74ad379904f4acfafe16d9795050e391c2d515d
