@@ -1027,8 +1027,8 @@ mod tests {
     use super::*;
     use crate::results::ResultDocument;
     use crate::test_support::{
-        build_delivery, image, maintenance, receipt, tarball, write_binding, Keys, Spec,
-        BINDING_HEX,
+        build_delivery, image, lifecycle_statement, maintenance, receipt, tarball, write_binding,
+        Keys, Spec, BINDING_HEX,
     };
     use std::os::unix::fs::MetadataExt;
 
@@ -1792,5 +1792,118 @@ mod tests {
             .filter(|n| n.starts_with('.'))
             .collect();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// An ACTIVE device on the default delivery; returns its manifest.
+    fn activated(dev: &Device) -> serde_json::Value {
+        let built = build_delivery(&dev.keys, &Spec::default());
+        dev.install(&Spec::default()).unwrap();
+        dev.agent_file(
+            "activation-receipt.dsse",
+            &receipt(&dev.keys, &built.manifest),
+        );
+        assert_eq!(
+            lifecycle::activate(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap(),
+            LifecycleState::Active
+        );
+        built.manifest
+    }
+
+    #[test]
+    fn the_receipt_on_disk_never_closes_a_reprovisioning_window() {
+        let dev = device(LifecycleState::Provisioning);
+        let manifest = activated(&dev);
+        dev.agent_file("lifecycle-request.dsse", &maintenance(&dev.keys, 1));
+        assert_eq!(
+            lifecycle::request(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap(),
+            LifecycleState::Maintenance
+        );
+
+        // A reboot runs suderra-activation.service with the old receipt still
+        // in the agent's state; the agent may also rewrite it.
+        for _ in 0..2 {
+            assert!(lifecycle::activate(&dev.paths, &dev.facts, &dev.pins, NOW).is_err());
+            assert_eq!(
+                lifecycle::effective(&dev.paths, NOW),
+                LifecycleState::Maintenance
+            );
+            assert_eq!(
+                dev.last_result().reason.as_deref(),
+                Some("manifest-digest-mismatch")
+            );
+            dev.agent_file("activation-receipt.dsse", &receipt(&dev.keys, &manifest));
+        }
+
+        // A receipt for the reinstalled manifest leaves MAINTENANCE.
+        let newer = Spec {
+            update_seq: 2,
+            site_seq: 2,
+            version: "1.7.0",
+            security_version: 7,
+            ..Spec::default()
+        };
+        let reinstalled = build_delivery(&dev.keys, &newer);
+        dev.install(&newer).unwrap();
+        dev.agent_file(
+            "activation-receipt.dsse",
+            &receipt(&dev.keys, &reinstalled.manifest),
+        );
+        assert_eq!(
+            lifecycle::activate(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap(),
+            LifecycleState::Active
+        );
+        assert_eq!(Records::new(&dev.paths).floor().unwrap(), 7);
+    }
+
+    #[test]
+    fn only_enter_maintenance_for_reprovision_is_accepted_in_p0() {
+        let dev = device(LifecycleState::Provisioning);
+        activated(&dev);
+        for (action, purpose) in [
+            ("enter-maintenance", Some("break-glass")),
+            ("decommission", None),
+            ("rma", None),
+        ] {
+            dev.agent_file(
+                "lifecycle-request.dsse",
+                &lifecycle_statement(&dev.keys, action, purpose, 1),
+            );
+            assert!(
+                lifecycle::request(&dev.paths, &dev.facts, &dev.pins, NOW).is_err(),
+                "{action} {purpose:?}"
+            );
+            assert_eq!(
+                lifecycle::effective(&dev.paths, NOW),
+                LifecycleState::Active,
+                "{action} {purpose:?}"
+            );
+            assert_eq!(
+                Records::new(&dev.paths)
+                    .accepted(StatementType::DeviceLifecycle)
+                    .unwrap(),
+                None,
+                "{action} {purpose:?} must not spend a sequence"
+            );
+        }
+        // Schema-invalid shapes are refused by verification.
+        for (action, purpose) in [
+            ("enter-maintenance", None),
+            ("decommission", Some("reprovision")),
+        ] {
+            dev.agent_file(
+                "lifecycle-request.dsse",
+                &lifecycle_statement(&dev.keys, action, purpose, 1),
+            );
+            assert!(lifecycle::request(&dev.paths, &dev.facts, &dev.pins, NOW).is_err());
+            assert_eq!(
+                lifecycle::effective(&dev.paths, NOW),
+                LifecycleState::Active
+            );
+        }
+        dev.agent_file("lifecycle-request.dsse", &maintenance(&dev.keys, 1));
+        assert_eq!(
+            lifecycle::request(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap(),
+            LifecycleState::Maintenance
+        );
     }
 }

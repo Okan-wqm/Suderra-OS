@@ -385,23 +385,32 @@ pub(crate) fn receipt(keys: &Keys, manifest: &Value) -> Vec<u8> {
 
 /// enter-maintenance/reprovision lifecycle statement.
 pub(crate) fn maintenance(keys: &Keys, update_seq: u64) -> Vec<u8> {
-    sign(
-        "device-lifecycle",
-        &json!({
-            "_type": "suderra.device-lifecycle.v1",
-            "tenant_id": TENANT,
-            "device_id": DEVICE,
-            "device_binding": binding(),
-            "action": "enter-maintenance",
-            "purpose": "reprovision",
-            "update_seq": update_seq,
-            "not_before": "2020-01-01T00:00:00Z",
-            "expires_at": "2099-01-01T00:00:00Z",
-        }),
-        &keys.lifecycle,
-    )
-    .to_string()
-    .into_bytes()
+    lifecycle_statement(keys, "enter-maintenance", Some("reprovision"), update_seq)
+}
+
+/// A schema-valid device-lifecycle statement for `action` and `purpose`.
+pub(crate) fn lifecycle_statement(
+    keys: &Keys,
+    action: &str,
+    purpose: Option<&str>,
+    update_seq: u64,
+) -> Vec<u8> {
+    let mut statement = json!({
+        "_type": "suderra.device-lifecycle.v1",
+        "tenant_id": TENANT,
+        "device_id": DEVICE,
+        "device_binding": binding(),
+        "action": action,
+        "update_seq": update_seq,
+        "not_before": "2020-01-01T00:00:00Z",
+        "expires_at": "2099-01-01T00:00:00Z",
+    });
+    if let Some(purpose) = purpose {
+        statement["purpose"] = json!(purpose);
+    }
+    sign("device-lifecycle", &statement, &keys.lifecycle)
+        .to_string()
+        .into_bytes()
 }
 
 /// A scripted [`Runner`].

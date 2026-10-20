@@ -340,13 +340,46 @@ pub(crate) fn activate(
             bail!("activation receipt rejected: {reason}");
         }
     };
-    // The floor rises only once the installed release has proven itself:
-    // the receipt is the cloud's proof of the agent's first authenticated
-    // MQTT session (DEC-2.5, DEC-5.7).
     let installed = records
         .receipt()?
         .context("no install receipt: nothing was installed to activate")?;
+    // A receipt activates its manifest once: in MAINTENANCE only a receipt
+    // for the manifest reinstalled since then is accepted, so the receipt
+    // still on disk (any reboot, any rewrite by the agent) never closes the
+    // reprovisioning window before anything is reinstalled.
+    if from == LifecycleState::Maintenance {
+        let reinstalled = records
+            .activated()?
+            .map(|a| a.manifest_digest != installed.manifest_digest);
+        if reinstalled != Some(true) {
+            let (reason, detail) = match reinstalled {
+                Some(_) => (
+                    Reason::ManifestDigestMismatch,
+                    "the installed manifest was already activated; MAINTENANCE needs a receipt for the reinstalled manifest",
+                ),
+                None => (
+                    Reason::StateCorrupt,
+                    "MAINTENANCE has no record of the manifest it was entered from",
+                ),
+            };
+            record(
+                paths,
+                facts,
+                Report::not_ok(ResultKind::Lifecycle, Outcome::Rejected, reason)
+                    .with_subject(Subject::statement(
+                        StatementType::EdgeActivationReceipt,
+                        &receipt.digest,
+                    ))
+                    .with_detail(detail),
+            )?;
+            bail!("activation receipt rejected: {detail}");
+        }
+    }
+    // The floor rises only once the installed release has proven itself:
+    // the receipt is the cloud's proof of the agent's first authenticated
+    // MQTT session (DEC-2.5, DEC-5.7).
     records.raise_floor(installed.security_version)?;
+    records.write_activated(&installed.manifest_digest)?;
     write(paths, LifecycleState::Active, None)?;
     let mut report = transition_report(from, LifecycleState::Active);
     if let Some(subject) = report.subject.as_mut() {
@@ -414,11 +447,17 @@ pub(crate) fn request(
         // Decommission, RMA and break-glass need physical presence (P3).
         bail!("only enter-maintenance for reprovision is implemented in P0");
     }
+    // The manifest the device ran ACTIVE on: only a receipt for another,
+    // reinstalled manifest leaves MAINTENANCE early.
+    let installed = records
+        .receipt()?
+        .context("ACTIVE without an install receipt")?;
     records.write_accepted(
         StatementType::DeviceLifecycle,
         Some(s.update_seq),
         &statement.digest,
     )?;
+    records.write_activated(&installed.manifest_digest)?;
     write(
         paths,
         LifecycleState::Maintenance,

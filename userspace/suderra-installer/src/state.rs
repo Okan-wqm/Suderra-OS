@@ -11,6 +11,7 @@
 //! | accepted statement | `seq/<kind>` | installer, lifecycle |
 //! | min-epoch ratchet | `ratchet/<purpose>` | key-epoch-advance (DEC-15) |
 //! | rollback floor | `edge/floor` | lifecycle activate |
+//! | activated manifest | `edge/activated.json` | lifecycle activate, request |
 //! | install receipt | `edge/receipt.json` (+ `receipt.previous.json`) | installer |
 //! | release statements | `edge/statements/<statement digest>.dsse.json` | installer |
 //!
@@ -81,6 +82,18 @@ pub(crate) struct DeviceIdentityRecord {
     pub device_id: String,
     /// Device code.
     pub device_code: String,
+}
+
+/// The provisioning manifest the device runs ACTIVE on: written when root
+/// accepts an activation receipt and again when it enters MAINTENANCE, so a
+/// receipt for that manifest never activates it a second time
+/// (statements.json reverification; lifecycle.json MAINTENANCE -> ACTIVE
+/// needs a receipt for the reinstalled manifest).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivatedRecord {
+    /// Statement digest of the activated provisioning manifest.
+    pub manifest_digest: Digest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +216,32 @@ impl<'a> Records<'a> {
 
     fn floor_path(&self) -> std::path::PathBuf {
         self.paths.edge_state().join("floor")
+    }
+
+    fn activated_path(&self) -> std::path::PathBuf {
+        self.paths.edge_state().join("activated.json")
+    }
+
+    /// The manifest the device last ran ACTIVE on.
+    pub(crate) fn activated(&self) -> Result<Option<ActivatedRecord>> {
+        let record: Option<ActivatedRecord> = read_json(&self.activated_path())?;
+        if let Some(r) = &record {
+            if !is_sha256_hex(&r.manifest_digest.sha256) {
+                bail!("{} is corrupt", self.activated_path().display());
+            }
+        }
+        Ok(record)
+    }
+
+    /// Records the manifest the device runs ACTIVE on.
+    pub(crate) fn write_activated(&self, manifest_digest: &Digest) -> Result<()> {
+        write_json(
+            self.paths,
+            &self.activated_path(),
+            &ActivatedRecord {
+                manifest_digest: manifest_digest.clone(),
+            },
+        )
     }
 
     /// The hardware binding record (DEC-3.6); it must exist and use the
