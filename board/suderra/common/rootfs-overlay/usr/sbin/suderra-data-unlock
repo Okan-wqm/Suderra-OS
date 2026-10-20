@@ -21,6 +21,7 @@ DATA_DEVICE=/dev/disk/by-partlabel/data
 DATA_MAPPER=suderra-data
 DATA_OPTIONS=nosuid,nodev,noexec
 INSTALLER=/usr/bin/suderra-installer
+DEVICE_WAIT_SECONDS=90
 
 variant="prod"
 if grep -qx 'VARIANT="\{0,1\}dev"\{0,1\}' /etc/os-release; then
@@ -81,9 +82,16 @@ mount_data() {
         alarm data-unmountable "cannot mount ${device} on /data"
 }
 
+# The data partition's udev link appears only once udev has probed the disk,
+# which can be after this early unit starts: wait for udev to have
+# initialised it before deciding it is missing.
+wait_for_device() {
+    udevadm wait --timeout="${DEVICE_WAIT_SECONDS}" "$1" 2>/dev/null || [ -e "$1" ]
+}
+
 mount_dev_data() {
     # Dev images mount a plain ext4 partition by label (EI-044: PARTUUID in P1).
-    [ -e /dev/disk/by-label/SUDERRA-DATA ] ||
+    wait_for_device /dev/disk/by-label/SUDERRA-DATA ||
         alarm data-unmountable "SUDERRA-DATA partition missing"
     mount_data /dev/disk/by-label/SUDERRA-DATA
     apply_layout_and_bind
@@ -142,7 +150,8 @@ unlock_prod_luks_data() {
 
     command -v cryptsetup >/dev/null 2>&1 ||
         alarm data-unmountable "cryptsetup missing; production /data cannot unlock"
-    [ -e "${DATA_DEVICE}" ] || alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
+    wait_for_device "${DATA_DEVICE}" ||
+        alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
     if ! cryptsetup isLuks "${DATA_DEVICE}"; then
         provision_luks_data "${DATA_DEVICE}"
         fresh=1
