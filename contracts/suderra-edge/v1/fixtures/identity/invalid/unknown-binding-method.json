@@ -1,0 +1,9 @@
+{
+  "board_profile": "revpi-connect4",
+  "device_binding": {
+    "method": "machine-id-sha256",
+    "digest": {
+      "sha256": "e979981d2f7e6d724e79405c32270e4a35dd4465354411476dd7540c96a1a0ab"
+    }
+  }
+}

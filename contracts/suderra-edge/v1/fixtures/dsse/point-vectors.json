@@ -1,0 +1,420 @@
+{
+  "test_only": true,
+  "description": "Point-decoding vectors for the 'y < p' rule of statements.json dsse.signature_algorithm: every 32-byte encoding with y below 19 that decodes to a curve point, in its canonical form and in the non-canonical form y + p, with either sign bit. A verifier must reject a public key or commitment whose encoding is not canonical; for the points of full order no signature can exist, so these vectors, unlike dsse/signature-vectors.json, test the rule itself.",
+  "vectors": [
+    {
+      "id": "y0-canonical-sign0",
+      "encoding_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "y": 0,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": true,
+      "note": "y = 0, sign bit 0: a canonical encoding of a small-order point"
+    },
+    {
+      "id": "y0-non-canonical-sign0",
+      "encoding_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 0,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": true,
+      "note": "y = 0 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a small-order point"
+    },
+    {
+      "id": "y0-canonical-sign1",
+      "encoding_hex": "0000000000000000000000000000000000000000000000000000000000000080",
+      "y": 0,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": true,
+      "note": "y = 0, sign bit 1: a canonical encoding of a small-order point"
+    },
+    {
+      "id": "y0-non-canonical-sign1",
+      "encoding_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 0,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": true,
+      "note": "y = 0 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a small-order point"
+    },
+    {
+      "id": "y1-canonical-sign0",
+      "encoding_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "y": 1,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": true,
+      "note": "y = 1, sign bit 0: a canonical encoding of a small-order point"
+    },
+    {
+      "id": "y1-non-canonical-sign0",
+      "encoding_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 1,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": true,
+      "note": "y = 1 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a small-order point"
+    },
+    {
+      "id": "y3-canonical-sign0",
+      "encoding_hex": "0300000000000000000000000000000000000000000000000000000000000000",
+      "y": 3,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 3, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y3-non-canonical-sign0",
+      "encoding_hex": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 3,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 3 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y3-canonical-sign1",
+      "encoding_hex": "0300000000000000000000000000000000000000000000000000000000000080",
+      "y": 3,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 3, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y3-non-canonical-sign1",
+      "encoding_hex": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 3,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 3 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y4-canonical-sign0",
+      "encoding_hex": "0400000000000000000000000000000000000000000000000000000000000000",
+      "y": 4,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 4, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y4-non-canonical-sign0",
+      "encoding_hex": "f1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 4,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 4 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y4-canonical-sign1",
+      "encoding_hex": "0400000000000000000000000000000000000000000000000000000000000080",
+      "y": 4,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 4, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y4-non-canonical-sign1",
+      "encoding_hex": "f1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 4,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 4 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y5-canonical-sign0",
+      "encoding_hex": "0500000000000000000000000000000000000000000000000000000000000000",
+      "y": 5,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 5, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y5-non-canonical-sign0",
+      "encoding_hex": "f2ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 5,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 5 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y5-canonical-sign1",
+      "encoding_hex": "0500000000000000000000000000000000000000000000000000000000000080",
+      "y": 5,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 5, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y5-non-canonical-sign1",
+      "encoding_hex": "f2ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 5,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 5 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y6-canonical-sign0",
+      "encoding_hex": "0600000000000000000000000000000000000000000000000000000000000000",
+      "y": 6,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 6, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y6-non-canonical-sign0",
+      "encoding_hex": "f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 6,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 6 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y6-canonical-sign1",
+      "encoding_hex": "0600000000000000000000000000000000000000000000000000000000000080",
+      "y": 6,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 6, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y6-non-canonical-sign1",
+      "encoding_hex": "f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 6,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 6 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y9-canonical-sign0",
+      "encoding_hex": "0900000000000000000000000000000000000000000000000000000000000000",
+      "y": 9,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 9, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y9-non-canonical-sign0",
+      "encoding_hex": "f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 9,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 9 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y9-canonical-sign1",
+      "encoding_hex": "0900000000000000000000000000000000000000000000000000000000000080",
+      "y": 9,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 9, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y9-non-canonical-sign1",
+      "encoding_hex": "f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 9,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 9 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y10-canonical-sign0",
+      "encoding_hex": "0a00000000000000000000000000000000000000000000000000000000000000",
+      "y": 10,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 10, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y10-non-canonical-sign0",
+      "encoding_hex": "f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 10,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 10 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y10-canonical-sign1",
+      "encoding_hex": "0a00000000000000000000000000000000000000000000000000000000000080",
+      "y": 10,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 10, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y10-non-canonical-sign1",
+      "encoding_hex": "f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 10,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 10 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y14-canonical-sign0",
+      "encoding_hex": "0e00000000000000000000000000000000000000000000000000000000000000",
+      "y": 14,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 14, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y14-non-canonical-sign0",
+      "encoding_hex": "fbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 14,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 14 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y14-canonical-sign1",
+      "encoding_hex": "0e00000000000000000000000000000000000000000000000000000000000080",
+      "y": 14,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 14, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y14-non-canonical-sign1",
+      "encoding_hex": "fbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 14,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 14 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y15-canonical-sign0",
+      "encoding_hex": "0f00000000000000000000000000000000000000000000000000000000000000",
+      "y": 15,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 15, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y15-non-canonical-sign0",
+      "encoding_hex": "fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 15,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 15 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y15-canonical-sign1",
+      "encoding_hex": "0f00000000000000000000000000000000000000000000000000000000000080",
+      "y": 15,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 15, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y15-non-canonical-sign1",
+      "encoding_hex": "fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 15,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 15 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y16-canonical-sign0",
+      "encoding_hex": "1000000000000000000000000000000000000000000000000000000000000000",
+      "y": 16,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 16, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y16-non-canonical-sign0",
+      "encoding_hex": "fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 16,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 16 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y16-canonical-sign1",
+      "encoding_hex": "1000000000000000000000000000000000000000000000000000000000000080",
+      "y": 16,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 16, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y16-non-canonical-sign1",
+      "encoding_hex": "fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 16,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 16 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y18-canonical-sign0",
+      "encoding_hex": "1200000000000000000000000000000000000000000000000000000000000000",
+      "y": 18,
+      "sign_bit": 0,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 18, sign bit 0: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y18-non-canonical-sign0",
+      "encoding_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "y": 18,
+      "sign_bit": 0,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 18 + p, sign bit 0: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    },
+    {
+      "id": "y18-canonical-sign1",
+      "encoding_hex": "1200000000000000000000000000000000000000000000000000000000000080",
+      "y": 18,
+      "sign_bit": 1,
+      "canonical": true,
+      "small_order": false,
+      "note": "y = 18, sign bit 1: a canonical encoding of a valid point of full order"
+    },
+    {
+      "id": "y18-non-canonical-sign1",
+      "encoding_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "y": 18,
+      "sign_bit": 1,
+      "canonical": false,
+      "small_order": false,
+      "note": "y = 18 + p, sign bit 1: a non-canonical encoding (y >= p) of the same point of a valid point of full order"
+    }
+  ]
+}

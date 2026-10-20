@@ -32,7 +32,45 @@
       "{artifact}": "The release artifact, named by artifact-naming.json suderra_os_channel.artifact for the delivered release statement; its digest comes from that statement."
     },
     "nonce": "The device shows a fresh request nonce on its console with the OTP and the SSH host-key fingerprint (DEC-5.3); the technician enters it when the cloud pre-generates the bundle (DEC-5.10). The manifest echoes it exactly as on the network path, so the same verifier and the same nonce-mismatch check apply.",
-    "ingress": "The USB storage rules of DEC-18 apply; root copies the directory before it verifies anything."
+    "ingress": {
+      "rule": "The USB storage rules of DEC-18 apply: root copies the directory before it verifies anything (copy-then-verify, EI-061), and nothing is read from the medium after the copy.",
+      "states": ["PROVISIONING", "MAINTENANCE"],
+      "states_rule": "USB storage is blocked by usbguard in ACTIVE; the ingress unit is started only while the root-owned lifecycle is PROVISIONING or MAINTENANCE (DEC-12, DEC-18.2).",
+      "mount": {
+        "namespace": "The private mount namespace of suderra-usb-ingress@.service; the medium is never visible to any other unit.",
+        "options": ["ro", "nosuid", "nodev", "noexec"]
+      },
+      "layout": {
+        "top_directory": "suderra-provisioning",
+        "rule": "Only the top directory is read; whatever else the medium holds is ignored. Directly below it are device directories and nothing else, each named by a device code (common.schema.json device_code). A device directory holds delivery.json and, for the release the delivery names, that release's artifact: no other file, no directory, no symlink, no device node, no FIFO, and at most max_files_per_directory files. A medium whose top directory breaks the layout or a limit is refused as a whole, with the result reason usb-layout-invalid, and nothing is copied from it; fixtures/delivery-usb/layout-vectors.json pins the rule.",
+        "artifact_name_pattern": "^suderra-agent-os-(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?-[a-z0-9]+(-[a-z0-9]+)*-(aarch64|x86_64)\\.tar\\.gz$"
+      },
+      "limits": {
+        "max_directories": 16,
+        "max_files_per_directory": 2,
+        "max_delivery_bytes": 16777216,
+        "max_artifact_bytes": 536870912
+      },
+      "procedure": [
+        "Mount the medium read-only in the private namespace and list suderra-provisioning/ without following symlinks; refuse a listing of more than max_directories entries.",
+        "For each directory, open every entry with openat(O_NOFOLLOW | O_NONBLOCK) and refuse anything that is not a regular file, any file the layout does not name, and any size beyond the limits (fstat on the open descriptor).",
+        "Copy delivery.json and the artifact into root's own directory, then unmount; everything after this step reads only the copies.",
+        "Verify the copied delivery.json exactly as a network delivery (statements.json); a directory that is not this device's (device-binding-mismatch, nonce-mismatch) is skipped silently, and the ingress concludes with the result of the one directory that verifies, or with the first rejection when none does."
+      ],
+      "result": "Written to /run/suderra/results and /data/suderra/os/results as for the network path, and shown on the console and the status LEDs: the medium is read-only and never receives a result."
+    },
+    "update_bundle": {
+      "phase": "P3",
+      "directory": "suderra-updates/{device_code}/{statement_digest}/",
+      "files": {
+        "statement.dsse": "The spool entry: the DSSE envelope of the carried statement, byte for byte what the update channel would hold (channels.json update_channel.spool.entry).",
+        "release.dsse.json": "edge-update only: the release statement envelope, in place of release_statement.url.",
+        "artifact": "edge-update only: the release artifact, in place of artifact_url.",
+        "bundle.raucb": "os-update only: the RAUC bundle, in place of bundle.url.",
+        "site-bundle.json": "site-config only: the suderra.site-bundle.v1 document, in place of site_bundle_url."
+      },
+      "rule": "The same states, mount, limits, copy-then-verify and verifier as the provisioning bundle, then the same worker as the update channel with every fetch replaced by the companion file of the same role, held to the same signed digests and sizes (DEC-2.11). Air-gapped agent updates before P3 are a re-provisioning in MAINTENANCE with a provisioning bundle (DEC-2.11)."
+    }
   },
   "installation": {
     "manifest": "/run/suderra-os/ only (tmpfs, root:root 0700); deleted when the install ends and never logged (DEC-5.6).",

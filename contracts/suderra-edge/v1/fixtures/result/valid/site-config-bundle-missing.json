@@ -1,0 +1,15 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 14,
+  "kind": "site-config",
+  "outcome": "rejected",
+  "reason": "site-bundle-missing",
+  "subject": {
+    "statement_type": "suderra.site-config.v1",
+    "update_seq": 3
+  }
+}

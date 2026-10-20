@@ -1,0 +1,13 @@
+{
+  "commandId": "7e570000-0000-4000-8000-0000000000e1",
+  "deviceId": "7e570000-0000-4000-8000-0000000000d1",
+  "success": false,
+  "result": {
+    "handed_to_root": false,
+    "reasons": [
+      "Statement-Too-Large"
+    ]
+  },
+  "timestamp": "2026-10-20T12:00:00.250Z",
+  "error": "4 update requests (262144 bytes) are pending for root; the agent keeps at most 4 (262144 bytes)"
+}

@@ -101,6 +101,7 @@ string_enum!(
         ReleaseProfileMismatch => "release-profile-mismatch",
         OsVersionTooOld => "os-version-too-old",
         AgentAbiUnsupported => "agent-abi-unsupported",
+        CompatibleMismatch => "compatible-mismatch",
         KernelConfigMissing => "kernel-config-missing",
         SiteConfigDigestMismatch => "site-config-digest-mismatch",
         TrustAnchorsDigestMismatch => "trust-anchors-digest-mismatch",
@@ -135,6 +136,16 @@ string_enum!(
         AbiIncompatible => "abi-incompatible",
         DataUnmountable => "data-unmountable",
         TpmUnsealFailed => "tpm-unseal-failed",
+        MaintenanceBlocked => "maintenance-blocked",
+        ApprovalMissing => "approval-missing",
+        RaucInstallFailed => "rauc-install-failed",
+        SiteBundleMissing => "site-bundle-missing",
+        ConfigRscLoadFailed => "config-rsc-load-failed",
+        RequestTooLarge => "request-too-large",
+        RequestNotRegularFile => "request-not-regular-file",
+        RequestUnsupported => "request-unsupported",
+        UsbLayoutInvalid => "usb-layout-invalid",
+        ProvisioningModeActive => "provisioning-mode-active",
     }
 );
 
@@ -227,6 +238,9 @@ string_enum!(
         DeviceLifecycle => "suderra.device-lifecycle.v1",
         SiteConfig => "suderra.site-config.v1",
         RbacManifest => "suderra.rbac-manifest.v1",
+        EdgeUpdate => "suderra.edge-update.v1",
+        OsUpdate => "suderra.os-update.v1",
+        SiteNetpolicy => "suderra.site-netpolicy.v1",
     }
 );
 
@@ -438,6 +452,77 @@ impl StatementType {
                 #[cfg(test)]
                 reverified: true,
             },
+            T::EdgeUpdate => StatementSpec {
+                signing_purpose: Purpose::EdgeProvisioning,
+                device_bound: true,
+                tenant_bound: true,
+                sequence: Some(SequenceRule {
+                    field: "update_seq",
+                    equal: EqualSeq::Reject,
+                }),
+                #[cfg(test)]
+                nested: &[T::EdgeRelease],
+                checks: &[
+                    R::NotYetValid,
+                    R::Expired,
+                    R::DeviceBindingMismatch,
+                    R::DeviceIdMismatch,
+                    R::TenantMismatch,
+                    R::BoardMismatch,
+                    R::RollbackBelowFloor,
+                    R::SequenceReplay,
+                    R::ReleaseDigestMismatch,
+                    R::ReleaseMismatch,
+                ],
+                #[cfg(test)]
+                reverified: false,
+            },
+            T::OsUpdate => StatementSpec {
+                signing_purpose: Purpose::EdgeProvisioning,
+                device_bound: true,
+                tenant_bound: true,
+                sequence: Some(SequenceRule {
+                    field: "update_seq",
+                    equal: EqualSeq::Reject,
+                }),
+                #[cfg(test)]
+                nested: &[],
+                checks: &[
+                    R::NotYetValid,
+                    R::Expired,
+                    R::DeviceBindingMismatch,
+                    R::DeviceIdMismatch,
+                    R::TenantMismatch,
+                    R::CompatibleMismatch,
+                    R::OsVersionTooOld,
+                    R::RollbackBelowFloor,
+                    R::AgentAbiUnsupported,
+                    R::SequenceReplay,
+                ],
+                #[cfg(test)]
+                reverified: false,
+            },
+            T::SiteNetpolicy => StatementSpec {
+                signing_purpose: Purpose::ConfigIntegrity,
+                device_bound: true,
+                tenant_bound: true,
+                sequence: Some(SequenceRule {
+                    field: "update_seq",
+                    equal: EqualSeq::IdenticalOnly,
+                }),
+                #[cfg(test)]
+                nested: &[],
+                checks: &[
+                    R::NotYetValid,
+                    R::Expired,
+                    R::DeviceBindingMismatch,
+                    R::DeviceIdMismatch,
+                    R::TenantMismatch,
+                    R::SequenceReplay,
+                ],
+                #[cfg(test)]
+                reverified: true,
+            },
         }
     }
 }
@@ -491,6 +576,7 @@ string_enum!(
     /// `site_path`).
     SitePath {
         ConfigYaml => "config.yaml",
+        IoConfigYaml => "io-config.yaml",
         SitePolicyJson => "site-policy.json",
         HardwareInventoryYaml => "hardware-inventory.yaml",
         RevpiConfigRsc => "revpi/config.rsc",
@@ -639,6 +725,10 @@ string_enum!(
         HealthGate => "health-gate",
         DataUnlock => "data-unlock",
         TimeState => "time-state",
+        OsUpdate => "os-update",
+        UpdateRequest => "update-request",
+        SiteNetpolicy => "site-netpolicy",
+        TrustAnchors => "trust-anchors",
     }
 );
 
@@ -685,17 +775,61 @@ impl ResultKind {
                     T::RbacManifest,
                 ],
                 false,
-                DOWNLOAD,
+                &[
+                    R::ClockUnsynced,
+                    R::FetchFailed,
+                    R::ArtifactDigestMismatch,
+                    R::BinaryDigestMismatch,
+                    R::ArchiveInvalid,
+                    R::UsbLayoutInvalid,
+                    R::IoError,
+                ],
             ),
-            ResultKind::EdgeInstall | ResultKind::EdgeUpdate => {
-                (&[T::EdgeRelease], false, DOWNLOAD)
-            }
+            ResultKind::EdgeInstall => (&[T::EdgeRelease], false, DOWNLOAD),
+            ResultKind::EdgeUpdate => (
+                &[T::EdgeUpdate, T::EdgeRelease],
+                false,
+                &[
+                    R::ClockUnsynced,
+                    R::FetchFailed,
+                    R::ArtifactDigestMismatch,
+                    R::BinaryDigestMismatch,
+                    R::ArchiveInvalid,
+                    R::MaintenanceBlocked,
+                    R::ApprovalMissing,
+                    R::IoError,
+                ],
+            ),
+            ResultKind::OsUpdate => (
+                &[T::OsUpdate],
+                false,
+                &[
+                    R::ClockUnsynced,
+                    R::FetchFailed,
+                    R::ArtifactDigestMismatch,
+                    R::RaucInstallFailed,
+                    R::MaintenanceBlocked,
+                    R::ApprovalMissing,
+                    R::IoError,
+                ],
+            ),
+            ResultKind::UpdateRequest => (
+                &[],
+                false,
+                &[
+                    R::RequestTooLarge,
+                    R::RequestNotRegularFile,
+                    R::RequestUnsupported,
+                    R::IoError,
+                ],
+            ),
             ResultKind::EdgeRollback => (&[], false, &[R::HealthWindowFailed, R::IoError]),
             ResultKind::VerifyCurrent => (
                 &[
                     T::EdgeRelease,
                     T::TrustAnchors,
                     T::SiteConfig,
+                    T::SiteNetpolicy,
                     T::RbacManifest,
                 ],
                 true,
@@ -708,12 +842,32 @@ impl ResultKind {
             ResultKind::SiteConfig => (
                 &[T::SiteConfig, T::RbacManifest, T::TrustAnchors],
                 false,
-                &[R::ClockUnsynced, R::IoError],
+                &[
+                    R::ClockUnsynced,
+                    R::FetchFailed,
+                    R::SiteBundleMissing,
+                    R::MaintenanceBlocked,
+                    R::ApprovalMissing,
+                    R::ConfigRscLoadFailed,
+                    R::IoError,
+                ],
             ),
+            ResultKind::SiteNetpolicy => (
+                &[T::SiteNetpolicy],
+                false,
+                &[R::ClockUnsynced, R::FirewallLoadFailed, R::IoError],
+            ),
+            ResultKind::TrustAnchors => (&[T::TrustAnchors], false, &[R::IoError]),
             ResultKind::Lockdown => (
                 &[],
                 false,
-                &[R::ReceiptMissing, R::FirewallLoadFailed, R::IoError],
+                &[
+                    R::ReceiptMissing,
+                    R::LifecycleInconsistent,
+                    R::ProvisioningModeActive,
+                    R::FirewallLoadFailed,
+                    R::IoError,
+                ],
             ),
             ResultKind::Lifecycle => (
                 &[T::DeviceLifecycle, T::EdgeActivationReceipt],

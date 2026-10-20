@@ -1,6 +1,38 @@
 {
   "description": "The one board vocabulary (ADR-048 DEC-8.4). board_profile is the value of /etc/suderra/board in the signed OS image, the provisioning manifest board, the release statement board_profile and the release artifact name (artifact-naming.json); every other vocabulary (Suderra OS build targets, USB payload families, cloud DeviceModel, RAUC compatible, cargo features, Rust target) is mapped onto it here and nowhere else. cloud_provisioning is the cloud's provisioning gate: the manifest service issues a manifest only for a board whose gate is open, and never for a board_profile that matches a pending family's pattern (SG-3).",
   "identity_cross_check_rule": "The image declares these values in /etc/suderra/board. At boot the live device-tree compatible (ARM) or DMI vendor/product (x86) must equal one of them; otherwise the agent runs in degraded mode and an alarm result is written (DEC-8.2). The list is never empty: a board without a cross-check value is not a board.",
+  "feature_rule": "cargo_features is the exact feature set of the build: a release is built with --no-default-features and --features set to this list, and the signed release statement names the same list (release-profile-mismatch). The build must need no feature beyond it: a feature every Suderra OS build requires is implied by the suderra-os feature in the crate's Cargo.toml, as a feature dependency, and is never added by the release pipeline on top of this list. The agent crate currently does not compile without its health feature (EDGE-HIGH-128), so suderra-os must imply health and the release plan's crate_required_features must go; until then the signed statement misstates the build, which sens-api-gateway/release/edge-release.toml records as a tracked defect with an owner and a deadline.",
+  "os_runtime": {
+    "description": "The runtime every Suderra OS image provides to the agent binary (ADR-048 DEC-8.5, INFRA-MEDIUM-253): the C library and the shared libraries a release binary may link. The release pipeline checks a built binary against this table (ELF NEEDED, the program interpreter and the highest GLIBC symbol version), so a dependency that needs anything else fails the release before a device does. The values describe the Buildroot 2025.05.3 toolchain of every image (glibc 2.41, BR2_TOOLCHAIN_BUILDROOT_GLIBC on all boards) and the gcc runtime; a Suderra-OS image-contract test must compare the built rootfs with this table, so the table cannot drift from the images.",
+    "libc": "glibc",
+    "glibc_version": "2.41",
+    "shared_libraries": {
+      "x86_64": {
+        "interpreter": "/lib64/ld-linux-x86-64.so.2",
+        "needed": [
+          "ld-linux-x86-64.so.2",
+          "libc.so.6",
+          "libdl.so.2",
+          "libgcc_s.so.1",
+          "libm.so.6",
+          "libpthread.so.0",
+          "librt.so.1"
+        ]
+      },
+      "aarch64": {
+        "interpreter": "/lib/ld-linux-aarch64.so.1",
+        "needed": [
+          "ld-linux-aarch64.so.1",
+          "libc.so.6",
+          "libdl.so.2",
+          "libgcc_s.so.1",
+          "libm.so.6",
+          "libpthread.so.0",
+          "librt.so.1"
+        ]
+      }
+    }
+  },
   "boards": [
     {
       "board_profile": "revpi-connect4",

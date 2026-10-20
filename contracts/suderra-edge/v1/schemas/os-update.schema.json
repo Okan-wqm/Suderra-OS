@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:os-update",
+  "title": "suderra.os-update.v1 device-bound OS update (RAUC bundle) authorization",
+  "description": "Signed by the edge-provisioning key, pinned in the OS image (ADR-048 DEC-2.9, DEC-3.3, DEC-22, DEC-23). It authorizes one device to install one RAUC bundle into its inactive slot: the bundle is named by digest and size and fetched by root from bundle.url; root verifies this statement, hands the bundle to suderra-ota, and RAUC verifies the bundle's own signature (the RAUC bundle key, ADR-0004) on top. The agent only carries the statement to the update channel (channels.json update_channel). compatible must be the RAUC compatible of the running OS image (boards.json rauc_compatible), so a bundle for another board never installs (DEC-8.3). min_current_version is the oldest OS version the update may start from and rollback_floor the OS version below which the device refuses to go back; root raises its OS rollback floor to rollback_floor only after the health window of the new slot passes (DEC-2.5). supported_agent_abi is the agent ABI range of the new OS: the preflight refuses a bundle whose range excludes the installed agent's agent_abi before anything is written (DEC-23). The acceptance window is the maintenance window (DEC-13.4); RAUC's reboot is scheduled and approved, never spontaneous.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_binding",
+    "version",
+    "compatible",
+    "min_current_version",
+    "rollback_floor",
+    "supported_agent_abi",
+    "update_seq",
+    "not_before",
+    "expires_at",
+    "bundle",
+    "local_approval",
+    "max_outage_seconds"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.os-update.v1"
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "version": {
+      "description": "OS version the bundle installs, as it will read in /etc/os-release VERSION_ID. rollback_floor <= version (checked by the verifier, reported as schema-invalid): a floor above the installed version would forbid the very slot the update installs.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+    },
+    "compatible": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/rauc_compatible"
+    },
+    "min_current_version": {
+      "description": "The running OS must be at least this version (compared as an integer tuple); below it the update is refused with os-version-too-old.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+    },
+    "rollback_floor": {
+      "description": "OS version the device's rollback floor becomes once the new slot is healthy. A device whose floor is already above version refuses the update with rollback-below-floor.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+    },
+    "supported_agent_abi": {
+      "description": "Agent ABI range the new OS supports, the value its /etc/os-release will publish as SUDERRA_AGENT_ABI.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/agent_abi_range"
+    },
+    "update_seq": {
+      "description": "Monotonic per device and payload kind: root keeps the last accepted value in /data/suderra/os/seq/os-update (DEC-2.4).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "not_before": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "bundle": {
+      "description": "The RAUC bundle: where root fetches it, its SHA-256 over the whole file and its size. Root compares size and digest of what it fetched with these (artifact-digest-mismatch) and installs from that verified copy, never from a path it re-reads.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "digest", "size_bytes"],
+      "properties": {
+        "url": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+        },
+        "digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483648
+        }
+      }
+    },
+    "local_approval": {
+      "description": "True when root schedules the reboot only after a local operator approval (DEC-13.4); an active alarm or a forced value blocks the update in both cases (maintenance-blocked).",
+      "type": "boolean"
+    },
+    "max_outage_seconds": {
+      "description": "Outage budget of the update's reboot, from the shutdown safe-state to the first control tick of the new slot (DEC-2.7, DEC-13.4).",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    }
+  }
+}

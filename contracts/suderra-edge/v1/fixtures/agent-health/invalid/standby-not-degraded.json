@@ -1,0 +1,19 @@
+{
+  "schema": "suderra.agent-health.v1",
+  "agent_version": "2.0.0-rc.4",
+  "pid": 412,
+  "phase": "standby",
+  "degraded": false,
+  "control": "enabled",
+  "reasons": [
+    {
+      "code": "config-unverified",
+      "detail": "config.yaml differs from site-config.dsse"
+    }
+  ],
+  "safe_state": null,
+  "loops": null,
+  "update_blockers": [],
+  "status": "standby: waiting for a verified configuration",
+  "updated_at": "2026-10-20T11:59:58.123456789+00:00"
+}

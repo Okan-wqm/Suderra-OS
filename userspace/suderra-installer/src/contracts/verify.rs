@@ -18,6 +18,8 @@ use super::statements::{
     parse_payload, ActivationReceipt, Anchor, DeviceBinding, DeviceLifecycle, EdgeProvisioning,
     EdgeRelease, RbacManifest, SiteConfig, Statement, TrustAnchors,
 };
+#[cfg(test)]
+use super::statements::{EdgeUpdate, OsUpdate, SiteNetpolicy};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Tenant and device a device is bound to (statements.json `identity`).
@@ -691,6 +693,181 @@ pub(crate) fn verify_provisioning(
         _ => None,
     };
     ProvisioningVerdict { reasons, accepted }
+}
+
+// ------------------------------------------------------ update statements
+//
+// Verified by the root update worker (ADR-048 DEC-2, DEC-11.7, DEC-23), which
+// is not wired yet: until it is, these are compiled for tests, where they are
+// the contract's executable specification.
+
+/// Outcome of an edge-update verification: the update and the release it names.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct EdgeUpdateVerdict {
+    /// Every failing reason of the update and its release statement.
+    pub reasons: BTreeSet<Reason>,
+    /// Both statements when every reason passed.
+    pub accepted: Option<(Verified<EdgeUpdate>, Verified<EdgeRelease>)>,
+}
+
+/// Verifies a suderra.edge-update.v1 statement and the release statement it
+/// names, which root fetched from the update's `release_statement.url`.
+#[cfg(test)]
+pub(crate) fn verify_edge_update(
+    env: &Envelope,
+    release: &Envelope,
+    scope: &Scope<'_>,
+) -> EdgeUpdateVerdict {
+    let keys = KeyView {
+        os: scope.os_keys,
+        bundle: None,
+    };
+    let v = match open::<EdgeUpdate>(env, keys, scope) {
+        Ok(v) => v,
+        Err(reason) => {
+            return EdgeUpdateVerdict {
+                reasons: BTreeSet::from([reason]),
+                accepted: None,
+            }
+        }
+    };
+    let mut reasons = BTreeSet::new();
+    generic_checks(&v, scope, None, &mut reasons);
+    let u = &v.statement;
+    if let Some(device) = scope.device {
+        if u.board != device.board || u.arch != device.arch {
+            reasons.insert(Reason::BoardMismatch);
+        }
+        if u.security_version < device.security_version_floor {
+            reasons.insert(Reason::RollbackBelowFloor);
+        }
+    }
+    // A release statement is tenant-independent: no identity binds it.
+    let verified = verify_release(release, scope, None);
+    reasons.extend(verified.reasons.iter().copied());
+    if u.release_statement.digest.sha256 != release.statement_digest() {
+        reasons.insert(Reason::ReleaseDigestMismatch);
+    }
+    if let Some(r) = verified.verified.as_ref().map(|r| &r.statement) {
+        if u.version != r.version
+            || u.board != r.board_profile
+            || u.arch != r.arch
+            || u.security_version != r.security_version
+            || u.agent_profile != r.agent_profile
+        {
+            reasons.insert(Reason::ReleaseMismatch);
+        }
+    }
+    let accepted = match (reasons.is_empty(), verified.verified) {
+        (true, Some(release)) => Some((v, release)),
+        _ => None,
+    };
+    EdgeUpdateVerdict { reasons, accepted }
+}
+
+/// What root knows about the OS an OS update is checked against
+/// (statements.json suderra.os-update.v1 notes).
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OsFacts {
+    /// The running VERSION_ID.
+    pub running_version: (u64, u64, u64),
+    /// The OS rollback floor.
+    pub rollback_floor: (u64, u64, u64),
+    /// The RAUC compatible of the running image.
+    pub compatible: String,
+    /// `agent_abi` of the installed release; `None` when no agent is installed.
+    pub installed_agent_abi: Option<u64>,
+}
+
+/// Verifies a suderra.os-update.v1 statement against the running OS.
+#[cfg(test)]
+pub(crate) fn verify_os_update(
+    env: &Envelope,
+    scope: &Scope<'_>,
+    facts: &OsFacts,
+) -> Verdict<OsUpdate> {
+    let keys = KeyView {
+        os: scope.os_keys,
+        bundle: None,
+    };
+    let v = match open::<OsUpdate>(env, keys, scope) {
+        Ok(v) => v,
+        Err(reason) => return Verdict::halted(reason),
+    };
+    let mut reasons = BTreeSet::new();
+    generic_checks(&v, scope, None, &mut reasons);
+    let u = &v.statement;
+    if u.compatible != facts.compatible {
+        reasons.insert(Reason::CompatibleMismatch);
+    }
+    // `open` validated the schema: every version and the ABI range parse.
+    let version = super::encoding::parse_version_core;
+    if version(&u.min_current_version).is_none_or(|min| facts.running_version < min) {
+        reasons.insert(Reason::OsVersionTooOld);
+    }
+    if version(&u.version).is_none_or(|version| version < facts.rollback_floor) {
+        reasons.insert(Reason::RollbackBelowFloor);
+    }
+    if let Some(abi) = facts.installed_agent_abi {
+        let in_range = super::encoding::parse_abi_range(&u.supported_agent_abi)
+            .is_some_and(|(min, max)| (min..=max).contains(&abi));
+        if !in_range {
+            reasons.insert(Reason::AgentAbiUnsupported);
+        }
+    }
+    Verdict {
+        reasons,
+        verified: Some(v),
+    }
+}
+
+/// Verifies a suderra.site-netpolicy.v1 statement against a verified bundle's
+/// anchors.
+#[cfg(test)]
+pub(crate) fn verify_site_netpolicy(
+    env: &Envelope,
+    scope: &Scope<'_>,
+    bundle: &KeyStore,
+) -> Verdict<SiteNetpolicy> {
+    let keys = KeyView {
+        os: scope.os_keys,
+        bundle: Some(bundle),
+    };
+    let v = match open::<SiteNetpolicy>(env, keys, scope) {
+        Ok(v) => v,
+        Err(reason) => return Verdict::halted(reason),
+    };
+    let mut reasons = BTreeSet::new();
+    generic_checks(&v, scope, None, &mut reasons);
+    Verdict {
+        reasons,
+        verified: Some(v),
+    }
+}
+
+/// Verifies a site policy whose anchors come from `ta`, verified first
+/// (standalone form of statements.json key resolution).
+#[cfg(test)]
+pub(crate) fn verify_site_netpolicy_with_bundle(
+    env: &Envelope,
+    ta: &Envelope,
+    scope: &Scope<'_>,
+) -> Verdict<SiteNetpolicy> {
+    if env.payload_type != StatementType::SiteNetpolicy.payload_type() {
+        return Verdict::halted(Reason::PayloadTypeMismatch);
+    }
+    let mut reasons = BTreeSet::new();
+    let Some(keys) = bundle_first(ta, scope, None, &mut reasons) else {
+        return Verdict {
+            reasons,
+            verified: None,
+        };
+    };
+    let mut verdict = verify_site_netpolicy(env, scope, &keys);
+    verdict.reasons.extend(reasons);
+    verdict
 }
 
 // ------------------------------------------------------- receipt, lifecycle

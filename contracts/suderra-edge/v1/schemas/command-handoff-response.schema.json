@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:command-handoff-response",
+  "title": "Agent response to a hand-off command (activation_receipt, lifecycle_request, request_update)",
+  "description": "What the agent publishes on tenants/{tenant_id}/devices/{device_id}/responses after it processed a hand-off command (channels.json handoff). It is the agent's CommandResponse (sens-api-gateway/src/mqtt.rs, camelCase) with the result shape of root_handoff.rs: handed_to_root true names the statement by its digest, so whichever cloud replica receives the response settles exactly the statement it delivered; handed_to_root false names the reasons the statement was not handed over (statement rejection codes of statements.json, or the agent's own: statement-missing, statement-too-large, trust-anchors-unavailable, update-requests-backlog, io-error), and nothing was written. A hand-over response says only that the file now waits for root; whether root accepted the statement is told by the result documents (channels.json result_telemetry).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["commandId", "deviceId", "success", "result", "timestamp"],
+  "properties": {
+    "commandId": {
+      "description": "The command envelope's jti, echoed.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "deviceId": {
+      "description": "The agent's own device identifier as it names its topics (the device UUID on Suderra OS).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handed_to_root"],
+      "properties": {
+        "handed_to_root": {
+          "type": "boolean"
+        },
+        "statement_digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/slug"
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "description": "RFC 3339 instant of the response in UTC.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?(Z|\\+00:00)$"
+    },
+    "error": {
+      "type": "string",
+      "maxLength": 1024
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "success": { "const": true },
+        "result": {
+          "properties": { "handed_to_root": { "const": true }, "statement_digest": true, "reasons": false },
+          "required": ["statement_digest"]
+        },
+        "error": false
+      }
+    },
+    {
+      "properties": {
+        "success": { "const": false },
+        "result": {
+          "properties": { "handed_to_root": { "const": false }, "statement_digest": false, "reasons": true },
+          "required": ["reasons"]
+        },
+        "error": true
+      },
+      "required": ["error"]
+    }
+  ]
+}

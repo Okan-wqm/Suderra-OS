@@ -1,0 +1,746 @@
+{
+  "test_only": true,
+  "description": "Vectors of the USB provisioning medium's layout (delivery.json usb.ingress.layout and limits): the listing of the medium as the ingress reads it without following links, and whether the layout is acceptable before any file is copied. path is relative to the medium's root and type is file, dir, symlink, fifo or device.",
+  "limits": {
+    "max_directories": 16,
+    "max_files_per_directory": 2,
+    "max_delivery_bytes": 16777216,
+    "max_artifact_bytes": 536870912
+  },
+  "layout": {
+    "top_directory": "suderra-provisioning",
+    "artifact_name_pattern": "^suderra-agent-os-(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?-[a-z0-9]+(-[a-z0-9]+)*-(aarch64|x86_64)\\.tar\\.gz$"
+  },
+  "vectors": [
+    {
+      "id": "device-bundle",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 7340084
+        }
+      ],
+      "expect": "accept",
+      "note": "One device directory: delivery.json and the artifact."
+    },
+    {
+      "id": "outside-files-ignored",
+      "entries": [
+        {
+          "path": "README.txt",
+          "type": "file",
+          "size_bytes": 120
+        },
+        {
+          "path": "System Volume Information",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "other-bundle",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "other-bundle/payload.bin",
+          "type": "file",
+          "size_bytes": 1000000000
+        },
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 7340084
+        }
+      ],
+      "expect": "accept",
+      "note": "Anything outside the top directory is never read, whatever it is."
+    },
+    {
+      "id": "two-devices",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 7340084
+        },
+        {
+          "path": "suderra-provisioning/RPI-000000A2",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-000000A2/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        }
+      ],
+      "expect": "accept",
+      "note": "A medium prepared for two devices: the ingress considers both and processes the one that verifies."
+    },
+    {
+      "id": "sixteen-directories",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000000",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000000/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000001",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000001/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000002",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000002/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000003",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000003/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000004",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000004/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000005",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000005/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000006",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000006/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000007",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000007/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000008",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000008/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000009",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000009/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000A",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000A/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000B",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000B/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000C",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000C/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000D",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000D/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000E",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000E/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000F",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000F/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        }
+      ],
+      "expect": "accept",
+      "note": "Exactly max_directories device directories."
+    },
+    {
+      "id": "seventeen-directories",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000000",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000000/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000001",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000001/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000002",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000002/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000003",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000003/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000004",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000004/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000005",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000005/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000006",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000006/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000007",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000007/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000008",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000008/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000009",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000009/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000A",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000A/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000B",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000B/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000C",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000C/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000D",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000D/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000E",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000E/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000F",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-0000000F/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000010",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-00000010/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "One directory beyond max_directories: the listing is refused before any file is opened."
+    },
+    {
+      "id": "three-files",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 7340084
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/extra.bin",
+          "type": "file",
+          "size_bytes": 10
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "More files than max_files_per_directory."
+    },
+    {
+      "id": "unnamed-file",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/notes.txt",
+          "type": "file",
+          "size_bytes": 10
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "A file that is neither delivery.json nor named like the artifact."
+    },
+    {
+      "id": "symlink-delivery",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "symlink",
+          "size_bytes": 0
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "delivery.json is a symlink: opened with O_NOFOLLOW and refused."
+    },
+    {
+      "id": "fifo-artifact",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "fifo",
+          "size_bytes": 0
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "The artifact is a FIFO."
+    },
+    {
+      "id": "delivery-at-limit",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 16777216
+        }
+      ],
+      "expect": "accept",
+      "note": "delivery.json of exactly max_delivery_bytes."
+    },
+    {
+      "id": "delivery-over-limit",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 16777217
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "delivery.json one byte over max_delivery_bytes."
+    },
+    {
+      "id": "artifact-at-limit",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 536870912
+        }
+      ],
+      "expect": "accept",
+      "note": "An artifact of exactly max_artifact_bytes."
+    },
+    {
+      "id": "artifact-over-limit",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 536870913
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "An artifact one byte over max_artifact_bytes."
+    },
+    {
+      "id": "file-below-top",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "A file directly under the top directory: only device directories belong there."
+    },
+    {
+      "id": "nested-directory",
+      "entries": [
+        {
+          "path": "suderra-provisioning",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 7340084
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/nested",
+          "type": "dir",
+          "size_bytes": 0
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "A directory inside a device directory."
+    },
+    {
+      "id": "bad-directory-name",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI 7E57",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI 7E57/delivery.json",
+          "type": "file",
+          "size_bytes": 48213
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "A directory name that is no device code (a space)."
+    },
+    {
+      "id": "no-delivery",
+      "entries": [
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE",
+          "type": "dir",
+          "size_bytes": 0
+        },
+        {
+          "path": "suderra-provisioning/RPI-7E57C0DE/suderra-agent-os-1.6.0-revpi-connect4-aarch64.tar.gz",
+          "type": "file",
+          "size_bytes": 7340032
+        }
+      ],
+      "expect": "reject",
+      "reason": "usb-layout-invalid",
+      "note": "A device directory without delivery.json."
+    }
+  ]
+}

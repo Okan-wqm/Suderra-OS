@@ -1,0 +1,37 @@
+{
+  "schema": "suderra.agent-health.v1",
+  "agent_version": "2.0.0-rc.4",
+  "pid": 412,
+  "phase": "running",
+  "degraded": false,
+  "control": "enabled",
+  "reasons": [],
+  "safe_state": {
+    "registered": 4,
+    "applied": 4,
+    "failed": 0
+  },
+  "loops": {
+    "live": true,
+    "loops": [
+      {
+        "loop": "io_poll",
+        "fresh": true,
+        "exited": false,
+        "never_ticked": false
+      },
+      {
+        "loop": "script_engine",
+        "fresh": true,
+        "exited": false,
+        "never_ticked": false
+      }
+    ]
+  },
+  "update_blockers": [
+    "active-alarm",
+    "forced-output"
+  ],
+  "status": "running: 4/4 outputs driven safe at boot, control enabled",
+  "updated_at": "2026-10-20T11:59:58.123456789+00:00"
+}

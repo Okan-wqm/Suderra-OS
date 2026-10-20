@@ -1,0 +1,12 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 19,
+  "kind": "update-request",
+  "outcome": "rejected",
+  "reason": "request-unsupported",
+  "detail": "payloadType application/vnd.suderra.edge-release.v1+json is not carried"
+}

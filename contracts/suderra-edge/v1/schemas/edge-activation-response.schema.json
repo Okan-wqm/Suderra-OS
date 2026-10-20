@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-activation-response",
+  "title": "POST /api/devices/activate success response for a Suderra OS agent",
+  "description": "The cloud's DeviceActivationResponse for a device on the Suderra OS channel (snake_case, as the P0 endpoint answers; channels.json activation, ADR-048 DEC-5.7, DEC-10.1). The credentials are the per-device MQTT username and password the agent keeps in $DATA/state (0600) and never logs. The broker named here is informational: a Suderra OS agent takes its broker host and port only from the signed site config and refuses an activation response that names another, and the only transport is TLS on 8883, so mqtt_port and mqtt_tls_enabled are constants. config is ignored by the agent (the site config is the only configuration source on Suderra OS, DEC-4.6) and the cloud sends none.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "mqtt_broker",
+    "mqtt_port",
+    "mqtt_username",
+    "mqtt_password",
+    "tenant_id",
+    "device_code",
+    "mqtt_tls_enabled"
+  ],
+  "properties": {
+    "success": {
+      "const": true
+    },
+    "mqtt_broker": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[A-Za-z0-9.-]+$"
+    },
+    "mqtt_port": {
+      "const": 8883
+    },
+    "mqtt_username": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "mqtt_password": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 256
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_code": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_code"
+    },
+    "mqtt_tls_enabled": {
+      "const": true
+    }
+  }
+}

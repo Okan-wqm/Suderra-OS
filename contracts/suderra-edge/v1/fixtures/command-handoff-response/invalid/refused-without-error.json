@@ -1,0 +1,12 @@
+{
+  "commandId": "7e570000-0000-4000-8000-0000000000e1",
+  "deviceId": "7e570000-0000-4000-8000-0000000000d1",
+  "success": false,
+  "result": {
+    "handed_to_root": false,
+    "reasons": [
+      "update-requests-backlog"
+    ]
+  },
+  "timestamp": "2026-10-20T12:00:00.250Z"
+}

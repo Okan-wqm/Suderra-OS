@@ -1,0 +1,39 @@
+{
+  "schema": "suderra.agent-health.v1",
+  "agent_version": "2.0.0-rc.4",
+  "pid": 412,
+  "phase": "running",
+  "degraded": true,
+  "control": "disabled",
+  "reasons": [
+    {
+      "code": "disk-full",
+      "detail": "no space left"
+    }
+  ],
+  "safe_state": {
+    "registered": 4,
+    "applied": 3,
+    "failed": 1
+  },
+  "loops": {
+    "live": true,
+    "loops": [
+      {
+        "loop": "io_poll",
+        "fresh": true,
+        "exited": false,
+        "never_ticked": false
+      },
+      {
+        "loop": "script_engine",
+        "fresh": true,
+        "exited": false,
+        "never_ticked": false
+      }
+    ]
+  },
+  "update_blockers": [],
+  "status": "degraded: control disabled, outputs held in their safe state",
+  "updated_at": "2026-10-20T11:59:58.123456789+00:00"
+}

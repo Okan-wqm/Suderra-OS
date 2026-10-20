@@ -11,11 +11,12 @@ use super::dsse::{pae, verify_strict, Envelope};
 use super::encoding::{decode_base64_array, sha256_hex};
 use super::keys::{KeyEntry, KeyStore};
 use super::registry::{Arch, BoardProfile, Purpose, Reason, SitePath, StatementType};
-use super::statements::DeviceBinding;
+use super::statements::{DeviceBinding, NetRole, Proto};
 use super::verify::{
-    verify_lifecycle, verify_provisioning, verify_rbac_with_bundle, verify_receipt, verify_release,
-    verify_site_config_with_bundle, verify_trust_anchors, Accepted, Delivered, DeviceRecord,
-    Identity, Mode, OsCompat, Scope, SiteFiles,
+    verify_edge_update, verify_lifecycle, verify_os_update, verify_provisioning,
+    verify_rbac_with_bundle, verify_receipt, verify_release, verify_site_config_with_bundle,
+    verify_site_netpolicy_with_bundle, verify_trust_anchors, Accepted, Delivered, DeviceRecord,
+    Identity, Mode, OsCompat, OsFacts, Scope, SiteFiles,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -123,14 +124,56 @@ fn device(index: &Value, name: &str) -> DeviceRecord {
     }
 }
 
+/// The site bundle input (update channel): it stands in for the RBAC manifest
+/// and the site files the site config names.
+fn site_bundle(inputs: &Value) -> Option<Value> {
+    inputs["site_bundle"]
+        .as_str()
+        .map(|rel| serde_json::from_slice(&fixture(rel)).unwrap())
+}
+
 fn envelope(inputs: &Value, name: &str) -> Envelope {
+    if let (Some(bundle), "rbac_manifest") = (site_bundle(inputs), name) {
+        return Envelope::parse(bundle["rbac_manifest"].to_string().as_bytes())
+            .unwrap_or_else(|r| panic!("site bundle rbac_manifest: {r}"));
+    }
     let rel = inputs[name]
         .as_str()
         .unwrap_or_else(|| panic!("fixture needs input {name}"));
     Envelope::parse(&fixture(rel)).unwrap_or_else(|r| panic!("input {rel}: {r}"))
 }
 
+/// The OS facts of a device context, for the OS update checks.
+fn os_facts(index: &Value, name: &str) -> OsFacts {
+    let ctx = &index["device_contexts"][name];
+    OsFacts {
+        running_version: super::encoding::parse_version_core(
+            ctx["os_release"]["VERSION_ID"].as_str().unwrap(),
+        )
+        .unwrap(),
+        rollback_floor: super::encoding::parse_version_core(
+            ctx["os_rollback_floor"].as_str().unwrap(),
+        )
+        .unwrap(),
+        compatible: ctx["os_compatible"].as_str().unwrap().to_owned(),
+        installed_agent_abi: ctx["installed_agent_abi"].as_u64(),
+    }
+}
+
 fn site_files(inputs: &Value) -> SiteFiles {
+    if let Some(bundle) = site_bundle(inputs) {
+        return bundle["site_files"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(path, bytes)| {
+                (
+                    SitePath::parse(path).unwrap(),
+                    super::encoding::decode_canonical_base64(bytes.as_str().unwrap()).unwrap(),
+                )
+            })
+            .collect();
+    }
     inputs["site_files"]
         .as_object()
         .map(|files| {
@@ -147,23 +190,37 @@ fn site_files(inputs: &Value) -> SiteFiles {
         .unwrap_or_default()
 }
 
-/// Reasons the OS root verifier reports for one statement fixture.
-fn run_statement(index: &Value, keys: &KeyStore, entry: &Value) -> BTreeSet<Reason> {
-    let now = index["evaluation_time"].as_str().unwrap();
-    let record = entry["device_context"]
+/// The device record of a statement fixture's device context, if it names one.
+fn device_of(index: &Value, entry: &Value) -> Option<DeviceRecord> {
+    entry["device_context"]
         .as_str()
-        .map(|name| device(index, name));
+        .map(|name| device(index, name))
+}
+
+/// The verification scope of a statement fixture entry.
+fn scope_of<'a>(
+    index: &'a Value,
+    keys: &'a KeyStore,
+    record: Option<&'a DeviceRecord>,
+    entry: &Value,
+) -> Scope<'a> {
     let mode = match entry["mode"].as_str().unwrap() {
         "accept" => Mode::Accept,
         "reverify" => Mode::Reverify,
         other => panic!("mode {other}"),
     };
-    let scope = Scope {
+    Scope {
         os_keys: keys,
-        device: record.as_ref(),
-        now,
+        device: record,
+        now: index["evaluation_time"].as_str().unwrap(),
         mode,
-    };
+    }
+}
+
+/// Reasons the OS root verifier reports for one statement fixture.
+fn run_statement(index: &Value, keys: &KeyStore, entry: &Value) -> BTreeSet<Reason> {
+    let record = device_of(index, entry);
+    let scope = scope_of(index, keys, record.as_ref(), entry);
     let env = match Envelope::parse(&fixture(entry["path"].as_str().unwrap())) {
         Ok(env) => env,
         Err(reason) => return BTreeSet::from([reason]),
@@ -211,6 +268,17 @@ fn run_statement(index: &Value, keys: &KeyStore, entry: &Value) -> BTreeSet<Reas
         }
         StatementType::EdgeActivationReceipt => verify_receipt(&env, &scope).reasons,
         StatementType::DeviceLifecycle => verify_lifecycle(&env, &scope).reasons,
+        StatementType::EdgeUpdate => {
+            verify_edge_update(&env, &envelope(inputs, "release_statement"), &scope).reasons
+        }
+        StatementType::OsUpdate => {
+            let context = entry["device_context"].as_str().unwrap();
+            verify_os_update(&env, &scope, &os_facts(index, context)).reasons
+        }
+        StatementType::SiteNetpolicy => {
+            verify_site_netpolicy_with_bundle(&env, &envelope(inputs, "trust_anchors"), &scope)
+                .reasons
+        }
     }
 }
 
@@ -255,6 +323,95 @@ fn every_os_root_statement_fixture_reaches_its_verdict() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// The typed update and policy statements hold exactly the values their signed
+/// payloads carry: a field the verifier never reads must still deserialize to
+/// what the contract's fixture says, or the typed mirror silently drifts.
+#[test]
+fn typed_update_and_policy_statements_read_back_their_payloads() {
+    let index = index();
+    let keys = os_pins();
+    let mut read_back = 0;
+    for entry in index["statements"].as_array().unwrap() {
+        if entry["verifier"] != "os-root" || entry["expect"] != "accept" {
+            continue;
+        }
+        let record = device_of(&index, entry);
+        let scope = scope_of(&index, &keys, record.as_ref(), entry);
+        let env = Envelope::parse(&fixture(entry["path"].as_str().unwrap())).unwrap();
+        let raw: Value = serde_json::from_slice(&env.payload).unwrap();
+        let inputs = &entry["inputs"];
+        match StatementType::parse(entry["statement_type"].as_str().unwrap()).unwrap() {
+            StatementType::EdgeUpdate => {
+                let release = envelope(inputs, "release_statement");
+                let (update, _release) = verify_edge_update(&env, &release, &scope)
+                    .accepted
+                    .expect("an accepted edge-update carries both statements");
+                assert_eq!(
+                    Value::Bool(update.statement.local_approval),
+                    raw["local_approval"],
+                    "{}",
+                    entry["path"]
+                );
+            }
+            StatementType::OsUpdate => {
+                let context = entry["device_context"].as_str().unwrap();
+                let verified = verify_os_update(&env, &scope, &os_facts(&index, context))
+                    .verified
+                    .expect("an accepted os-update is typed");
+                assert_eq!(
+                    Value::Bool(verified.statement.local_approval),
+                    raw["local_approval"],
+                    "{}",
+                    entry["path"]
+                );
+            }
+            StatementType::SiteNetpolicy => {
+                let verified = verify_site_netpolicy_with_bundle(
+                    &env,
+                    &envelope(inputs, "trust_anchors"),
+                    &scope,
+                )
+                .verified
+                .expect("an accepted site-netpolicy is typed");
+                let policy = verified.statement;
+                let roles: Vec<&str> = policy
+                    .interfaces
+                    .iter()
+                    .map(|i| match i.role {
+                        NetRole::Wan => "wan",
+                        NetRole::Ot => "ot",
+                    })
+                    .collect();
+                let want_roles: Vec<&str> = raw["interfaces"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|i| i["role"].as_str().unwrap())
+                    .collect();
+                assert_eq!(roles, want_roles, "{}", entry["path"]);
+                let protos: Vec<&str> = policy
+                    .ot_rules
+                    .iter()
+                    .map(|r| match r.proto {
+                        Proto::Tcp => "tcp",
+                        Proto::Udp => "udp",
+                    })
+                    .collect();
+                let want_protos: Vec<&str> = raw["ot_rules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| r["proto"].as_str().unwrap())
+                    .collect();
+                assert_eq!(protos, want_protos, "{}", entry["path"]);
+            }
+            _ => continue,
+        }
+        read_back += 1;
+    }
+    assert!(read_back >= 3, "only {read_back} typed fixtures read back");
 }
 
 #[test]

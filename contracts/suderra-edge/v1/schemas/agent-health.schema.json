@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:agent-health",
+  "title": "suderra.agent-health.v1 agent health view",
+  "description": "The agent's own account of its liveness and degraded mode (ADR-048 DEC-6.3, DEC-6.4, DEC-6.8), written atomically (temporary name in the same directory, then rename) by the agent and read by root's health check and the RAUC health gate, which count an absent, unreadable or oversized (more than 64 KiB) document as degraded. Suderra OS: /run/suderra/agent-health/health.json on the tmpfs (mutable-state.json). Generic profile: <data>/state/health.json (mutable-state.json generic_profile), because the generic unit has no runtime directory; it is rewritten only when its content changes. This is the wire format of the P0 writer (sens-api-gateway/src/degraded.rs), kept member for member and extended by update_blockers: its type member is `schema`, not `_type`. Degraded mode is not an exit: the process is up, control is disabled, outputs are held in their safe state, an alarm is raised and READY is sent (DEC-6.3). `standby` is the one phase that precedes the first output being touched: the agent waits, with EXTEND_TIMEOUT_USEC and no READY, for a configuration it can verify (config-unverified), and the reason clears once one verifies, because nothing acted on the unverified one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "agent_version",
+    "pid",
+    "phase",
+    "degraded",
+    "control",
+    "reasons",
+    "safe_state",
+    "loops",
+    "update_blockers",
+    "status",
+    "updated_at"
+  ],
+  "properties": {
+    "schema": {
+      "const": "suderra.agent-health.v1"
+    },
+    "agent_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "phase": {
+      "description": "standby: waiting for a verified configuration, no output touched. starting: hardware init and the boot safe-state, before READY. running: READY sent, outputs safe, local loop running. stopping: shutdown safe-state and flush.",
+      "enum": ["standby", "starting", "running", "stopping"]
+    },
+    "degraded": {
+      "description": "True while control is disabled; the only member root's health check reads.",
+      "type": "boolean"
+    },
+    "control": {
+      "enum": ["enabled", "disabled"]
+    },
+    "reasons": {
+      "description": "Why the agent is degraded or in standby, one entry per reason.",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "detail"],
+        "properties": {
+          "code": {
+            "enum": [
+              "gpio-backend-unavailable",
+              "i2c-backend-unavailable",
+              "spi-backend-unavailable",
+              "pwm-backend-unavailable",
+              "safe-state-incomplete",
+              "io-budget-exceeded",
+              "config-unverified",
+              "boot-dependency-failed"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        }
+      }
+    },
+    "safe_state": {
+      "description": "Outcome of the boot safe-state; null before it ran.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["registered", "applied", "failed"],
+          "properties": {
+            "registered": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+            "applied": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+            "failed": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+          }
+        }
+      ]
+    },
+    "loops": {
+      "description": "Control-loop liveness behind the watchdog heartbeat (DEC-6.4); null before the loops register.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["live", "loops"],
+          "properties": {
+            "live": {
+              "description": "At least one loop is registered and every registered loop is fresh.",
+              "type": "boolean"
+            },
+            "loops": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["loop", "fresh", "exited", "never_ticked"],
+                "properties": {
+                  "loop": { "enum": ["io_poll", "script_engine"] },
+                  "fresh": { "type": "boolean" },
+                  "exited": { "type": "boolean" },
+                  "never_ticked": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "update_blockers": {
+      "description": "What stops root from starting an edge-update, an os-update or a site-config now (ADR-048 DEC-13.4, channels.json update_channel.maintenance): active-alarm while any alarm is active, forced-output while any output holds a forced value. Empty when nothing blocks; root treats an absent member, like an absent or unreadable document, as blocked.",
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 2,
+      "items": {
+        "enum": ["active-alarm", "forced-output"]
+      }
+    },
+    "status": {
+      "description": "The STATUS= line sent to systemd.",
+      "type": "string",
+      "maxLength": 512
+    },
+    "updated_at": {
+      "description": "RFC 3339 instant of the write in UTC, with optional fractional seconds and either the Z or the +00:00 form (chrono to_rfc3339). Not the contract timestamp form, because the document is an observation, not a statement.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?(Z|\\+00:00)$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "phase": { "const": "standby" } },
+        "required": ["phase"]
+      },
+      "then": {
+        "properties": { "degraded": { "const": true } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "degraded": { "const": true } },
+        "required": ["degraded"]
+      },
+      "then": {
+        "properties": { "control": { "const": "disabled" } }
+      },
+      "else": {
+        "properties": { "control": { "const": "enabled" } }
+      }
+    }
+  ]
+}

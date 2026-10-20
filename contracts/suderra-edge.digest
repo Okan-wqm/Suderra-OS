@@ -3,6 +3,6 @@
 # Okan-wqm/aquaculture_platform and run scripts/edge/vendor-contracts-to-suderra-os.sh there.
 source_repo=Okan-wqm/aquaculture_platform
 source_path=contracts/suderra-edge
-source_commit=59352d8b22d86807234c0e96dda5f688f6a81c91
-v1_version=1.0.0
-v1_sha256sums_sha256=2f1300ff74273d88c42b95cac98e6b260c9ca0aaa3348b7ac9813ea59a58bd3c
+source_commit=2ed82fb0428178add5f1641892f7e8d92e67dd07
+v1_version=1.1.0
+v1_sha256sums_sha256=8953cb8eb58080db704320c3b3a74dc9c180f4ea1011b1ee67c4923544d7590e

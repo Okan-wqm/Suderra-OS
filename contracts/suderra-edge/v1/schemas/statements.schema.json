@@ -18,6 +18,7 @@
     "purposes",
     "os_key_pin_layout",
     "statements",
+    "planned_successors",
     "superseded_formats",
     "unsigned_documents"
   ],
@@ -234,6 +235,22 @@
             "items": { "$ref": "#/$defs/reason" }
           },
           "notes": { "type": "string" }
+        }
+      }
+    },
+    "planned_successors": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/statement_type" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["successor", "phase", "adds", "ratchet", "v1_rule"],
+        "properties": {
+          "successor": { "$ref": "#/$defs/statement_type" },
+          "phase": { "enum": ["P2", "P3"] },
+          "adds": { "type": "string" },
+          "ratchet": { "type": "string" },
+          "v1_rule": { "type": "string" }
         }
       }
     },

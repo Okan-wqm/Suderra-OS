@@ -1,0 +1,20 @@
+{
+  "deviceId": "7e570000-0000-4000-8000-0000000000d1",
+  "token": "TEST-ONLY-provisioning-token",
+  "fingerprint": {
+    "macAddresses": [
+      "a9586643f908ea5f83b98281095da6946e2c90a9edc30a49e07f0454deeba17c"
+    ],
+    "hostname": "revpi-7e57c0de"
+  },
+  "agentVersion": "2.0.0-rc.4",
+  "deviceBinding": {
+    "method": "tpm-ek-sha256",
+    "digest": {
+      "sha256": "7dc1225201ce83c48f502d0421ad7bfe59aaf9c0088fecab0c5a6bb80d360af4"
+    }
+  },
+  "installedManifest": {
+    "sha256": "a9f7b78380a2734794c6acc4883c1359e68233565d9609c8acb4eec34d6673f4"
+  }
+}

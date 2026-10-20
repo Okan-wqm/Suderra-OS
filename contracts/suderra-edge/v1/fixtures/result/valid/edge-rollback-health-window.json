@@ -1,0 +1,16 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 9,
+  "kind": "edge-rollback",
+  "outcome": "failed",
+  "reason": "health-window-failed",
+  "subject": {
+    "version": "1.7.0",
+    "security_version": 7
+  },
+  "detail": "control loop heartbeat did not advance; release 1.6.0 and its site config restored"
+}

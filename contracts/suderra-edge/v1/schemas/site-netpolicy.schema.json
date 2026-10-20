@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:site-netpolicy",
+  "title": "suderra.site-netpolicy.v1 signed per-site network policy",
+  "description": "Signed by the config-integrity key, anchored in the trust-anchors bundle, device-bound and tenant-bound (ADR-048 DEC-11.6, DEC-11.7, DEC-3.3, DEC-22). It is the site's OT allowlist and its interface role mapping: which interface is the WAN/IT side and which the OT/PLC side (matched by MAC or PCI path, so the roles survive interface renames), which destinations the agent may reach on the OT side, and which site NTP servers the clock may use (DEC-7.1). Root renders it with a typed renderer (no string concatenation): every CIDR, port and protocol is validated, `nft -f` loads it atomically, a failed load falls back to the last-known-good ruleset and raises an alarm, and the policy can never remove the WAN broker/API rule. A change is a new statement on the update channel (channels.json update_channel, kind site-netpolicy) under its own update_seq, so a policy change never needs a re-provisioning. A dst with a prefix shorter than /16 (0.0.0.0/0 included) carries wide: true and a /16 or longer one never does: the schema states it. Constraints JSON Schema cannot state are checked by every verifier and reported as schema-invalid: the host bits of every dst are zero, every port range has from <= to, rule ids are unique, source ids and hosts are unique, and an interface match value appears once. The cloud's policy compiler additionally bounds rule and port counts (at most 64 rules, 16 ranges per rule); a statement beyond those bounds does not match this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_binding",
+    "update_seq",
+    "not_before",
+    "expires_at",
+    "interfaces",
+    "ot_rules",
+    "time_sources"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.site-netpolicy.v1"
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "update_seq": {
+      "description": "Monotonic per device and payload kind (/data/suderra/os/seq/site-netpolicy). An equal value is accepted only for the identical installed statement, so an unchanged policy is re-verified at every boot (statements.json sequences).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "not_before": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "interfaces": {
+      "description": "Interface role mapping. An empty list keeps the board profile's default roles (boards.json); an entry overrides the role of the interface it matches.",
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role"],
+        "properties": {
+          "role": {
+            "enum": ["wan", "ot"]
+          },
+          "mac": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/mac"
+          },
+          "pci_path": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/pci_path"
+          }
+        },
+        "oneOf": [
+          { "properties": { "mac": true }, "required": ["mac"] },
+          { "properties": { "pci_path": true }, "required": ["pci_path"] }
+        ]
+      }
+    },
+    "ot_rules": {
+      "description": "Egress allow rules of the agent's user toward the OT role interface; an empty list allows none. The default for everything else is deny (DEC-11.1).",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "proto", "dst", "ports"],
+        "properties": {
+          "id": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/slug"
+          },
+          "proto": {
+            "enum": ["tcp", "udp"]
+          },
+          "dst": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/cidr4"
+          },
+          "ports": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["from", "to"],
+              "properties": {
+                "from": {
+                  "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/port"
+                },
+                "to": {
+                  "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/port"
+                }
+              }
+            }
+          },
+          "wide": {
+            "description": "Explicit flag that a dst shorter than /16 is intended. Without it 0.0.0.0/0 and every other prefix shorter than /16 is refused, and on a /16 or longer prefix the flag is refused (DEC-11.7).",
+            "const": true
+          }
+        },
+        "if": {
+          "properties": { "dst": { "pattern": "/([0-9]|1[0-5])$" } },
+          "required": ["dst"]
+        },
+        "then": {
+          "properties": { "wide": true },
+          "required": ["wide"]
+        },
+        "else": {
+          "properties": { "wide": false }
+        }
+      }
+    },
+    "time_sources": {
+      "description": "Site NTP servers chrony may use besides the image's pinned NTS servers (DEC-7.1): root renders chrony's source list and the udp/123 and tcp/4460 egress of the chrony user from it. A source with nts true is reached through NTS-KE and the clock it disciplines is reported synced-nts. A source with nts false is plain NTP and is accepted only with unauthenticated true, the explicit mark DEC-7.1 requires; the clock it disciplines is reported synced-unauthenticated (time-state.schema.json). An empty list leaves the image's pinned NTS servers the only sources.",
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "host", "nts"],
+        "properties": {
+          "id": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/slug"
+          },
+          "host": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/host"
+          },
+          "nts": {
+            "type": "boolean"
+          },
+          "unauthenticated": {
+            "const": true
+          }
+        },
+        "oneOf": [
+          {
+            "properties": { "nts": { "const": true }, "unauthenticated": false }
+          },
+          {
+            "properties": { "nts": { "const": false }, "unauthenticated": { "const": true } },
+            "required": ["unauthenticated"]
+          }
+        ]
+      }
+    }
+  }
+}

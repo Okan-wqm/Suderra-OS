@@ -1,0 +1,6 @@
+# TEST-ONLY I/O map of the Suderra edge contract fixtures (site config version 3).
+# io-config.yaml is the I/O map document; the contract binds it by digest.
+tags:
+  - name: pond-1-oxygen
+    io_type: analog_input
+    unit: mg/L

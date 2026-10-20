@@ -1,0 +1,19 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 7,
+  "kind": "edge-update",
+  "outcome": "rejected",
+  "reason": "maintenance-blocked",
+  "subject": {
+    "statement_type": "suderra.edge-update.v1",
+    "statement_digest": {
+      "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+    },
+    "update_seq": 4
+  },
+  "detail": "update_blockers of the agent health view: active-alarm"
+}

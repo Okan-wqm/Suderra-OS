@@ -64,8 +64,14 @@
       "pattern": "^[A-Za-z0-9_-]{1,50}$"
     },
     "site_path": {
-      "description": "Site file path relative to /var/lib/suderra-site (= /data/suderra/site); fixed names, so no path component comes from a statement (DEC-1.10, DEC-4.2).",
-      "enum": ["config.yaml", "site-policy.json", "hardware-inventory.yaml", "revpi/config.rsc"]
+      "description": "Site file path relative to /var/lib/suderra-site (= /data/suderra/site); fixed names, so no path component comes from a statement (DEC-1.10, DEC-4.2). io-config.yaml is the I/O map (tags, channels, alarm thresholds) in the format the agent persists for update_io_config on the generic channel (mutable-state.json ownership_notes).",
+      "enum": [
+        "config.yaml",
+        "io-config.yaml",
+        "site-policy.json",
+        "hardware-inventory.yaml",
+        "revpi/config.rsc"
+      ]
     },
     "base64": {
       "description": "Canonical RFC 4648 standard base64 with padding (unused trailing bits zero).",
@@ -105,6 +111,51 @@
     "keyid": {
       "description": "Lowercase hex SHA-256 of the raw 32-byte Ed25519 public key.",
       "$ref": "#/$defs/sha256_hex"
+    },
+    "rauc_compatible": {
+      "description": "RAUC compatible string of an OS image: suderra-os-<board_profile> (boards.json rauc_compatible).",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^suderra-os-[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "agent_abi_range": {
+      "description": "Inclusive agent ABI range MIN-MAX with decimal integers and MIN <= MAX, the syntax of SUDERRA_AGENT_ABI in /etc/os-release (statements.json compatibility). A range with MIN > MAX contains no ABI, so every installed agent lies outside it.",
+      "type": "string",
+      "maxLength": 21,
+      "pattern": "^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$"
+    },
+    "slug": {
+      "description": "Lowercase identifier: [a-z0-9] groups separated by single hyphens.",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "cidr4": {
+      "description": "IPv4 network in CIDR notation, dotted decimal without leading zeros. The host bits must be zero (10.0.0.0/24, never 10.0.0.5/24): checked by the verifier and reported as schema-invalid, because JSON Schema cannot state it. IPv6 is disabled on Suderra OS (sysctl), so no IPv6 form exists.",
+      "type": "string",
+      "maxLength": 18,
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$"
+    },
+    "mac": {
+      "description": "Lowercase colon-separated MAC address of a network interface.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$"
+    },
+    "pci_path": {
+      "description": "Lowercase PCI address of a network interface as DDDD:BB:SS.F (sysfs form), stable across interface renames (DEC-11.6).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-7]$"
+    },
+    "host": {
+      "description": "Lowercase fully qualified DNS name (RFC 1123 labels, at least one dot) or dotted-decimal IPv4 address, as a network peer is named in a signed site policy.",
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^(([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
     },
     "lifecycle_state": {
       "description": "Root-owned lifecycle states (DEC-12); LOCKED is the fail-safe reading of an unknown, missing, corrupt or unmountable state.",

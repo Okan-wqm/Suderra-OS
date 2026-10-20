@@ -1,0 +1,347 @@
+{
+  "test_only": true,
+  "description": "Vectors of the update-request spool (channels.json update_channel.spool). directory_entries: what root's worker does with one directory entry (consume, ignore or refuse with a result reason); content_entries: what it does with a regular entry holding the named fixture; backlog: whether the agent writes a request into a directory that holds the pending entries.",
+  "limits": {
+    "max_entry_bytes": 65536,
+    "max_pending_entries": 4,
+    "max_pending_bytes": 262144
+  },
+  "name_pattern": "^[0-9a-f]{64}\\.dsse$",
+  "temporary_name_pattern": "^\\.[0-9a-f]{64}\\.dsse\\.tmp-[0-9]+$",
+  "directory_entries": [
+    {
+      "id": "regular-file",
+      "name": "b2959455238b35a9efd5ab75ac32fb157b7f968a1d16ed7c82f3d4c32dc3a8e4.dsse",
+      "type": "file",
+      "size_bytes": 4096,
+      "expect": "consume",
+      "note": "An ordinary entry."
+    },
+    {
+      "id": "regular-file-at-limit",
+      "name": "71739120430e56c4bc944388efc1495c03c773480cc59327f4a9c45dd6611825.dsse",
+      "type": "file",
+      "size_bytes": 65536,
+      "expect": "consume",
+      "note": "Exactly max_entry_bytes: allowed."
+    },
+    {
+      "id": "one-byte-over-limit",
+      "name": "d9e8d7b48cff985249d1535485ecef3245825534e5e230a638d41686a514c24b.dsse",
+      "type": "file",
+      "size_bytes": 65537,
+      "expect": "refuse",
+      "reason": "request-too-large",
+      "note": "One byte beyond max_entry_bytes, by fstat on the open descriptor: not read."
+    },
+    {
+      "id": "symlink",
+      "name": "37d2f5d1b07c911164a1016781c3a7af4bb93f1459fd8981f38f38b126285443.dsse",
+      "type": "symlink",
+      "size_bytes": 0,
+      "expect": "refuse",
+      "reason": "request-not-regular-file",
+      "note": "A symlink with a valid name: openat(O_NOFOLLOW) refuses it and nothing it points at is read."
+    },
+    {
+      "id": "fifo",
+      "name": "b720e721958f7c8fa578305c281fb6e1aa4f2893380630c6be34e4df2d0f67eb.dsse",
+      "type": "fifo",
+      "size_bytes": 0,
+      "expect": "refuse",
+      "reason": "request-not-regular-file",
+      "note": "A FIFO would block a reader: opened with O_NONBLOCK and refused after fstat."
+    },
+    {
+      "id": "directory",
+      "name": "f9d008c594c7abcb2bb4dec465ba877a299ba20c0c92d42e24577c867b2d51c6.dsse",
+      "type": "dir",
+      "size_bytes": 0,
+      "expect": "refuse",
+      "reason": "request-not-regular-file",
+      "note": "A directory with a valid name."
+    },
+    {
+      "id": "device-node",
+      "name": "8fe97dc9e21fe9040667364ea555dee84b35a377e964f4171bfc6e321ed9af5a.dsse",
+      "type": "device",
+      "size_bytes": 0,
+      "expect": "refuse",
+      "reason": "request-not-regular-file",
+      "note": "A device node with a valid name."
+    },
+    {
+      "id": "agent-temporary-file",
+      "name": ".b03d19113141eec97b0e38c5dccbba60d433a40f0687aef22f159c44a9a84b92.dsse.tmp-4242",
+      "type": "file",
+      "size_bytes": 100,
+      "expect": "ignore",
+      "note": "A dot-file the agent's atomic writer left behind: root never reads one, and the agent removes it before it counts the directory."
+    },
+    {
+      "id": "uppercase-hex-name",
+      "name": "A963762763C12EE8E85E8F1E9D0E496B11D4BBDC0587D3DC25FF1EF6ED7FF62E.dsse",
+      "type": "file",
+      "size_bytes": 100,
+      "expect": "ignore",
+      "note": "A name that is not name_pattern (hex must be lowercase) is ignored, not refused."
+    },
+    {
+      "id": "wrong-suffix",
+      "name": "1997dfafdee64dafce485d94699b74cf88f5ce331ba54fe9ef51d1e6a3719a41.json",
+      "type": "file",
+      "size_bytes": 100,
+      "expect": "ignore",
+      "note": "Another suffix."
+    },
+    {
+      "id": "short-name",
+      "name": "5622359d0eb4c396fae556ba0184d08e57cafc957374d499531ceb70376a08f.dsse",
+      "type": "file",
+      "size_bytes": 100,
+      "expect": "ignore",
+      "note": "63 hex digits instead of 64."
+    },
+    {
+      "id": "foreign-name",
+      "name": "notes.txt",
+      "type": "file",
+      "size_bytes": 100,
+      "expect": "ignore",
+      "note": "A file that belongs to nobody the channel knows."
+    }
+  ],
+  "content_entries": [
+    {
+      "id": "edge-update",
+      "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+      "fixture": "edge-update/valid/revpi-connect4-1.7.0-seq-4.dsse.json",
+      "expect": "consume",
+      "note": "An edge-update statement: carried."
+    },
+    {
+      "id": "os-update",
+      "name": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39.dsse",
+      "fixture": "os-update/valid/revpi-connect4-1.1.0-seq-3.dsse.json",
+      "expect": "consume",
+      "note": "An os-update statement: carried."
+    },
+    {
+      "id": "site-config",
+      "name": "7006986e1c1f7a00de0054a68c2a4af594cb84070de7ca5d3d964189e0e818c2.dsse",
+      "fixture": "site-config/valid/revpi-connect4-seq-3-io-config.dsse.json",
+      "expect": "consume",
+      "note": "A site-config statement: carried."
+    },
+    {
+      "id": "site-netpolicy",
+      "name": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c.dsse",
+      "fixture": "site-netpolicy/valid/policy-seq-2.dsse.json",
+      "expect": "consume",
+      "note": "A site-netpolicy statement: carried."
+    },
+    {
+      "id": "trust-anchors",
+      "name": "3f68824b377222465f4cda46e9eaa3236351dd51375abb5ff276b80abdff854e.dsse",
+      "fixture": "trust-anchors/valid/bundle-seq-2.dsse.json",
+      "expect": "consume",
+      "note": "A trust-anchors statement: carried."
+    },
+    {
+      "id": "release-statement",
+      "name": "f4d9bbd68a3343593cc5388a8dc9cda3d833a3fe708dece30eed9f5f57f1b51a.dsse",
+      "fixture": "edge-release/valid/revpi-connect4-aarch64-1.7.0.dsse.json",
+      "expect": "refuse",
+      "reason": "request-unsupported",
+      "note": "A release statement alone: not device-bound, installs nothing; contract 1.0 carried it for want of an update statement."
+    },
+    {
+      "id": "provisioning-manifest",
+      "name": "b47761a1aed92a9c58bc504866d25ddaf6719789e0b8d11011abaefe1c35bb12.dsse",
+      "fixture": "edge-provisioning/valid/revpi-connect4-reprovision.dsse.json",
+      "expect": "refuse",
+      "reason": "request-unsupported",
+      "note": "A provisioning manifest travels in a delivery, never on the update channel."
+    },
+    {
+      "id": "activation-receipt",
+      "name": "ea749dea039e19c54ee65803b78d419014e44ad48f5628bfe3d2600236fa4482.dsse",
+      "fixture": "edge-activation-receipt/valid/revpi-connect4.dsse.json",
+      "expect": "refuse",
+      "reason": "request-unsupported",
+      "note": "An activation receipt has its own hand-over command and file."
+    },
+    {
+      "id": "device-lifecycle",
+      "name": "1cb93b894dcdd82638683d084076ca0c4cb116ba445fa15de7ce5629dd69946d.dsse",
+      "fixture": "device-lifecycle/valid/enter-maintenance-reprovision.dsse.json",
+      "expect": "refuse",
+      "reason": "request-unsupported",
+      "note": "A lifecycle statement has its own hand-over command and file."
+    },
+    {
+      "id": "rbac-manifest",
+      "name": "78ce58ed5e99cec40d4e37095840dfc3b82cf5e5e955e72bc70f5a0033583277.dsse",
+      "fixture": "rbac-manifest/valid/platform-actor-policy-1.dsse.json",
+      "expect": "refuse",
+      "reason": "request-unsupported",
+      "note": "An RBAC manifest travels inside a site bundle, never alone."
+    }
+  ],
+  "backlog": [
+    {
+      "id": "empty-directory",
+      "pending": [],
+      "request": {
+        "name": "e98b5c780aa51f16926cee748827c82cbc0f8dbef74bafcd3183425fbd068181.dsse",
+        "size_bytes": 4096
+      },
+      "expect": "write",
+      "note": "Nothing pending."
+    },
+    {
+      "id": "three-pending",
+      "pending": [
+        {
+          "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "c73528735a3b8fd8a1cd68ca760e2c476e9a0a9bda90c9244a4fcaa5dd0a0b3a.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "17bb5d7ef7358b682a68439547f9162de6ad5d7cdd69327fe796d6576ee3b4b1.dsse",
+          "size_bytes": 4096
+        }
+      ],
+      "request": {
+        "name": "e98b5c780aa51f16926cee748827c82cbc0f8dbef74bafcd3183425fbd068181.dsse",
+        "size_bytes": 4096
+      },
+      "expect": "write",
+      "note": "One below max_pending_entries."
+    },
+    {
+      "id": "four-pending",
+      "pending": [
+        {
+          "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "c73528735a3b8fd8a1cd68ca760e2c476e9a0a9bda90c9244a4fcaa5dd0a0b3a.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "17bb5d7ef7358b682a68439547f9162de6ad5d7cdd69327fe796d6576ee3b4b1.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "a67e133324a0a6babd9a3ca288ea32c7b6b7c3286b9638612102537ac4110ae5.dsse",
+          "size_bytes": 4096
+        }
+      ],
+      "request": {
+        "name": "e98b5c780aa51f16926cee748827c82cbc0f8dbef74bafcd3183425fbd068181.dsse",
+        "size_bytes": 4096
+      },
+      "expect": "refuse",
+      "reason": "update-requests-backlog",
+      "note": "max_pending_entries reached: nothing is written until root consumed one."
+    },
+    {
+      "id": "four-pending-same-name",
+      "pending": [
+        {
+          "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "c73528735a3b8fd8a1cd68ca760e2c476e9a0a9bda90c9244a4fcaa5dd0a0b3a.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "17bb5d7ef7358b682a68439547f9162de6ad5d7cdd69327fe796d6576ee3b4b1.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "a67e133324a0a6babd9a3ca288ea32c7b6b7c3286b9638612102537ac4110ae5.dsse",
+          "size_bytes": 4096
+        }
+      ],
+      "request": {
+        "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+        "size_bytes": 4096
+      },
+      "expect": "write",
+      "note": "A request for a statement already in the directory replaces it and is never counted twice."
+    },
+    {
+      "id": "bytes-over-limit",
+      "pending": [
+        {
+          "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+          "size_bytes": 200000
+        }
+      ],
+      "request": {
+        "name": "e98b5c780aa51f16926cee748827c82cbc0f8dbef74bafcd3183425fbd068181.dsse",
+        "size_bytes": 65536
+      },
+      "expect": "refuse",
+      "reason": "update-requests-backlog",
+      "note": "One pending entry of 200000 bytes and a request of max_entry_bytes: 265536 bytes exceed max_pending_bytes (262144), although only one entry is pending."
+    },
+    {
+      "id": "bytes-at-limit",
+      "pending": [
+        {
+          "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+          "size_bytes": 65536
+        },
+        {
+          "name": "c73528735a3b8fd8a1cd68ca760e2c476e9a0a9bda90c9244a4fcaa5dd0a0b3a.dsse",
+          "size_bytes": 65536
+        },
+        {
+          "name": "17bb5d7ef7358b682a68439547f9162de6ad5d7cdd69327fe796d6576ee3b4b1.dsse",
+          "size_bytes": 65536
+        }
+      ],
+      "request": {
+        "name": "e98b5c780aa51f16926cee748827c82cbc0f8dbef74bafcd3183425fbd068181.dsse",
+        "size_bytes": 65536
+      },
+      "expect": "write",
+      "note": "Three full entries and a fourth of max_entry_bytes: exactly max_pending_bytes, allowed."
+    },
+    {
+      "id": "stale-temporary-not-counted",
+      "pending": [
+        {
+          "name": "f10e9dec5fa76c89ba2f78cae5a3e028a375630b2165a330de5ff4c7591a067d.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "c73528735a3b8fd8a1cd68ca760e2c476e9a0a9bda90c9244a4fcaa5dd0a0b3a.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": "17bb5d7ef7358b682a68439547f9162de6ad5d7cdd69327fe796d6576ee3b4b1.dsse",
+          "size_bytes": 4096
+        },
+        {
+          "name": ".b03d19113141eec97b0e38c5dccbba60d433a40f0687aef22f159c44a9a84b92.dsse.tmp-4242",
+          "size_bytes": 4096
+        }
+      ],
+      "request": {
+        "name": "e98b5c780aa51f16926cee748827c82cbc0f8dbef74bafcd3183425fbd068181.dsse",
+        "size_bytes": 4096
+      },
+      "expect": "write",
+      "note": "A dot-file of another process is removed first and does not count against the bound."
+    }
+  ]
+}

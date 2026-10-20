@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-update",
+  "title": "suderra.edge-update.v1 device-bound agent update request",
+  "description": "Signed by the edge-provisioning key, pinned in the OS image (ADR-048 DEC-2.4, DEC-2.9, DEC-3.3, DEC-22). It authorizes one device to replace its agent release: it binds a device (device_binding, device_id, tenant_id) to one release statement by statement digest and to the artifact's download location, under a monotonic update_seq. The agent only carries it to the update channel (channels.json update_channel); root verifies it itself and installs through the one installer. The acceptance window is the maintenance window: root accepts the statement only while not_before <= now < expires_at, so an update never applies outside the window the cloud chose (DEC-13.4). Unlike the provisioning manifest it carries no nonce, no site config and no trust-anchors bundle: it changes the agent binary and nothing else, and it carries no token or credential. The release statement is fetched by root from release_statement.url and must have the named digest. This v1 has no approvals member: the two-person approval is enforced server-side in P1; the planned suderra.edge-update.v2 carries a required approvals[] that root verifies against update-approver anchors, and a payload-version ratchet then refuses v1 (statements.json planned_successors).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "_type",
+    "tenant_id",
+    "device_id",
+    "device_binding",
+    "board",
+    "arch",
+    "agent_profile",
+    "version",
+    "security_version",
+    "update_seq",
+    "not_before",
+    "expires_at",
+    "release_statement",
+    "artifact_url",
+    "local_approval",
+    "max_outage_seconds"
+  ],
+  "properties": {
+    "_type": {
+      "const": "suderra.edge-update.v1"
+    },
+    "tenant_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_id": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "device_binding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "board": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+    },
+    "arch": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/arch"
+    },
+    "agent_profile": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/agent_profile"
+    },
+    "version": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/semver"
+    },
+    "security_version": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "update_seq": {
+      "description": "Monotonic per device and payload kind: root keeps the last accepted value in /data/suderra/os/seq/edge-update and accepts only a larger one (DEC-2.4).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sequence"
+    },
+    "not_before": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "release_statement": {
+      "description": "The suderra.edge-release.v1 statement this update installs: its statement digest, and where root fetches the envelope (the statement beside the artifact, artifact-naming.json statement). Root refuses a statement whose digest differs (release-digest-mismatch), so the location carries no trust.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "url"],
+      "properties": {
+        "digest": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        },
+        "url": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+        }
+      }
+    },
+    "artifact_url": {
+      "description": "Download location of the release artifact; integrity comes from the release statement, never from this URL (as in the provisioning manifest).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+    },
+    "local_approval": {
+      "description": "True when root applies the update only after a local operator approval (DEC-13.4); false when the maintenance window alone authorizes it. An active alarm or a forced value blocks the update in both cases (maintenance-blocked).",
+      "type": "boolean"
+    },
+    "max_outage_seconds": {
+      "description": "Outage budget: the longest the agent may be down for this update (agent restart, shutdown safe-state to the first control tick). Root and the health window enforce it (DEC-2.7, DEC-13.4).",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    }
+  }
+}

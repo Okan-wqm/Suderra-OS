@@ -1,0 +1,12 @@
+{
+  "commandId": "7e570000-0000-4000-8000-0000000000e1",
+  "deviceId": "7e570000-0000-4000-8000-0000000000d1",
+  "success": true,
+  "result": {
+    "handed_to_root": true,
+    "statement_digest": {
+      "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+    }
+  },
+  "timestamp": "2026-10-20T12:00:00Z"
+}

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:site-config",
   "title": "suderra.site-config.v1 site config",
-  "description": "Signed by the config-integrity key, anchored in the trust-anchors bundle, device-bound and tenant-bound (ADR-048 DEC-3.3, DEC-4.10, DEC-4.12, DEC-22). It names every site file root installs under /var/lib/suderra-site by digest and size, and the RBAC manifest by statement digest and policy_version. In P0 it arrives only inside a provisioning delivery (delivery.json); from P1 the root update worker also accepts it on the request channel (kind=site-config). Root verifies it against the bundle's config-integrity anchor and writes it as site-config.dsse; the agent re-verifies it and compares every site file's digest before loading config.yaml (DEC-4.10). config.yaml is the agent's configuration document, bound here by digest; the per-event output behaviour table joins this statement with DEC-13 P1 (EDGE-HIGH-065) and the per-output policy with DEC-13 P2.",
+  "description": "Signed by the config-integrity key, anchored in the trust-anchors bundle, device-bound and tenant-bound (ADR-048 DEC-3.3, DEC-4.10, DEC-4.12, DEC-22). It names every site file root installs under /var/lib/suderra-site by digest and size, and the RBAC manifest by statement digest and policy_version. In P0 it arrives only inside a provisioning delivery (delivery.json); from P1 the root update worker also accepts it on the update channel (channels.json update_channel, kind=site-config), where site_bundle_url locates the files. Root verifies it against the bundle's config-integrity anchor and writes it as site-config.dsse; the agent re-verifies it and compares every site file's digest before loading config.yaml (DEC-4.10). config.yaml is the agent's configuration document, bound here by digest; the per-event output behaviour table joins this statement with DEC-13 P1 (EDGE-HIGH-065) and the per-output policy with DEC-13 P2.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -54,6 +54,10 @@
           "$ref": "#/$defs/file"
         }
       }
+    },
+    "site_bundle_url": {
+      "description": "Where root fetches the suderra.site-bundle.v1 document with the site files and the RBAC manifest this statement names, when the statement arrives on the update channel (channels.json update_channel, DEC-4.12). A provisioning delivery carries the files itself and root ignores the member there. The URL carries no trust: every byte fetched is checked against the digests of this statement.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
     },
     "rbac_manifest": {
       "description": "The suderra.rbac-manifest.v1 statement delivered with this site config (rbac-manifest.dsse), by statement digest and policy_version.",

@@ -1,0 +1,8 @@
+{
+  "_type": "suderra.time-state.v1",
+  "floor_at": "2026-10-20T00:00:00Z",
+  "updated_at": "2026-10-20T11:59:59Z",
+  "state": "synced-unauthenticated",
+  "last_sync_at": "2026-10-20T11:58:00Z",
+  "offset_ms": 40
+}

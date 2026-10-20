@@ -1,0 +1,18 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 10,
+  "kind": "os-update",
+  "outcome": "ok",
+  "subject": {
+    "version": "1.1.0",
+    "statement_type": "suderra.os-update.v1",
+    "statement_digest": {
+      "sha256": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39"
+    },
+    "update_seq": 3
+  }
+}

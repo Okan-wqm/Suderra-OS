@@ -59,7 +59,7 @@
     "usb": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["phase", "directory", "files", "nonce", "ingress"],
+      "required": ["phase", "directory", "files", "nonce", "ingress", "update_bundle"],
       "properties": {
         "phase": { "const": "P1" },
         "directory": { "const": "suderra-provisioning/{device_code}/" },
@@ -73,7 +73,104 @@
           }
         },
         "nonce": { "type": "string" },
-        "ingress": { "type": "string" }
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rule",
+            "states",
+            "states_rule",
+            "mount",
+            "layout",
+            "limits",
+            "procedure",
+            "result"
+          ],
+          "properties": {
+            "rule": { "type": "string" },
+            "states": {
+              "type": "array",
+              "uniqueItems": true,
+              "minItems": 1,
+              "items": { "enum": ["PROVISIONING", "MAINTENANCE"] }
+            },
+            "states_rule": { "type": "string" },
+            "mount": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["namespace", "options"],
+              "properties": {
+                "namespace": { "type": "string" },
+                "options": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "minItems": 4,
+                  "items": { "enum": ["ro", "nosuid", "nodev", "noexec"] }
+                }
+              }
+            },
+            "layout": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["top_directory", "rule", "artifact_name_pattern"],
+              "properties": {
+                "top_directory": { "const": "suderra-provisioning" },
+                "rule": { "type": "string" },
+                "artifact_name_pattern": { "type": "string" }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "max_directories",
+                "max_files_per_directory",
+                "max_delivery_bytes",
+                "max_artifact_bytes"
+              ],
+              "properties": {
+                "max_directories": { "type": "integer", "minimum": 1, "maximum": 256 },
+                "max_files_per_directory": { "type": "integer", "minimum": 2, "maximum": 16 },
+                "max_delivery_bytes": { "type": "integer", "minimum": 1048576, "maximum": 67108864 },
+                "max_artifact_bytes": { "type": "integer", "minimum": 1048576, "maximum": 2147483648 }
+              }
+            },
+            "procedure": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "result": { "type": "string" }
+          }
+        },
+        "update_bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["phase", "directory", "files", "rule"],
+          "properties": {
+            "phase": { "const": "P3" },
+            "directory": { "const": "suderra-updates/{device_code}/{statement_digest}/" },
+            "files": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "statement.dsse",
+                "release.dsse.json",
+                "artifact",
+                "bundle.raucb",
+                "site-bundle.json"
+              ],
+              "properties": {
+                "statement.dsse": { "type": "string" },
+                "release.dsse.json": { "type": "string" },
+                "artifact": { "type": "string" },
+                "bundle.raucb": { "type": "string" },
+                "site-bundle.json": { "type": "string" }
+              }
+            },
+            "rule": { "type": "string" }
+          }
+        }
       }
     },
     "installation": {

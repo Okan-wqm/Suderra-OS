@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:time-state",
+  "title": "suderra.time-state.v1 authenticated clock state",
+  "description": "What root knows about the clock and the agent may rely on (ADR-048 DEC-7.2, DEC-7.3, DEC-7.5): written atomically by the root time helper to /run/suderra/time-state (root:suderra, 0640) from chrony's tracking data and the persisted time floor, and read by the agent, which cannot read adjtimex under ProtectClock. The agent's clock authority is this document and nothing else: it holds freshness-dependent actuation while state is not a synced one and never lets local control, safe-state or alarms depend on time. `synced-nts` is a clock chrony disciplines against pinned NTS servers; `synced-unauthenticated` is a clock disciplined by a site NTP server the signed site policy explicitly marked as not NTS-capable; `unsynced` is everything else, including a clock that only passed the time floor. The state is a claim of the writer's last write, so a reader also bounds how old updated_at may be.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "state", "floor_at", "last_sync_at", "offset_ms", "updated_at"],
+  "properties": {
+    "_type": {
+      "const": "suderra.time-state.v1"
+    },
+    "state": {
+      "enum": ["unsynced", "synced-unauthenticated", "synced-nts"]
+    },
+    "floor_at": {
+      "description": "The time floor in force: max(build timestamp, persisted last-good time) (DEC-7.2). The clock never reads earlier than this once the floor helper ran.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    },
+    "last_sync_at": {
+      "description": "Instant of the last synchronization chrony reported (its tracking reference time); null while the clock has not synchronized since boot.",
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp" }
+      ]
+    },
+    "offset_ms": {
+      "description": "Last measured offset of the system clock from its time source in milliseconds, rounded, signed; null while unsynced.",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+      ]
+    },
+    "updated_at": {
+      "description": "The helper's clock at the write. A reader that finds it older than its own bound treats the state as unsynced.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/timestamp"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "state": { "const": "unsynced" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": { "offset_ms": { "type": "null" } }
+      },
+      "else": {
+        "properties": {
+          "offset_ms": { "type": "integer" },
+          "last_sync_at": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

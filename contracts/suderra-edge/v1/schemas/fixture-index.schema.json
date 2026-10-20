@@ -13,9 +13,13 @@
     "statements",
     "deliveries",
     "documents",
+    "runtime_documents",
     "units",
     "pae_vectors",
-    "signature_vectors"
+    "signature_vectors",
+    "point_vectors",
+    "spool_vectors",
+    "usb_layout_vectors"
   ],
   "properties": {
     "test_only": {
@@ -47,7 +51,10 @@
           "ratchet",
           "installed_manifest",
           "os_release",
-          "kernel_config"
+          "kernel_config",
+          "os_rollback_floor",
+          "os_compatible",
+          "installed_agent_abi"
         ],
         "properties": {
           "description": {
@@ -143,6 +150,21 @@
               "type": "string",
               "pattern": "^CONFIG_[A-Z0-9_]+=[ym]$"
             }
+          },
+          "os_rollback_floor": {
+            "description": "The device's OS rollback floor: an os-update whose version is below it is refused (rollback-below-floor).",
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/os_version"
+          },
+          "os_compatible": {
+            "description": "The RAUC compatible of the running OS image.",
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/rauc_compatible"
+          },
+          "installed_agent_abi": {
+            "description": "agent_abi of the installed release; null when no agent is installed.",
+            "oneOf": [
+              { "type": "null" },
+              { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+            ]
           }
         }
       }
@@ -209,6 +231,10 @@
                 "$ref": "#/$defs/path"
               },
               "rbac_manifest": {
+                "$ref": "#/$defs/path"
+              },
+              "site_bundle": {
+                "description": "A suderra.site-bundle.v1 document (a runtime_documents path) that stands in for rbac_manifest and site_files: the site files and the RBAC manifest the site config names, fetched from its site_bundle_url on the update channel.",
                 "$ref": "#/$defs/path"
               },
               "site_files": {
@@ -353,6 +379,62 @@
         ]
       }
     },
+    "runtime_documents": {
+      "description": "Unsigned documents of the runtime paths and channels (mutable-state.json run_documents, channels.json): each is validated against the schema named by its document_type (schemas/<kind>.schema.json for suderra.<kind>.v1).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "document_type", "expect", "description"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "document_type": {
+            "enum": [
+              "suderra.identity.v1",
+              "suderra.agent-health.v1",
+              "suderra.time-state.v1",
+              "suderra.site-bundle.v1",
+              "suderra.command-handoff-response.v1",
+              "suderra.edge-activation-request.v1",
+              "suderra.edge-activation-response.v1"
+            ]
+          },
+          "expect": {
+            "enum": ["accept", "reject"]
+          },
+          "reason": {
+            "enum": ["payload-json-invalid", "schema-invalid"]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "expect": {
+                "const": "accept"
+              },
+              "reason": false
+            }
+          },
+          {
+            "properties": {
+              "expect": {
+                "const": "reject"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": ["reason"]
+          }
+        ]
+      }
+    },
     "units": {
       "type": "array",
       "items": {
@@ -432,6 +514,15 @@
     },
     "signature_vectors": {
       "const": "dsse/signature-vectors.json"
+    },
+    "point_vectors": {
+      "const": "dsse/point-vectors.json"
+    },
+    "spool_vectors": {
+      "const": "update-channel/spool-vectors.json"
+    },
+    "usb_layout_vectors": {
+      "const": "delivery-usb/layout-vectors.json"
     }
   },
   "$defs": {

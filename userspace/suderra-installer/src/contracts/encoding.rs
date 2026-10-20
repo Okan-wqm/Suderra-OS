@@ -161,6 +161,81 @@ pub(crate) fn is_https_url(s: &str) -> bool {
         })
 }
 
+/// `[a-z0-9]` groups separated by single hyphens (the body of `slug` and
+/// `rauc_compatible`).
+#[cfg(test)]
+fn is_slug_body(s: &str) -> bool {
+    s.split('-')
+        .all(|w| !w.is_empty() && all_bytes(w, |b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+}
+
+/// `slug`: lowercase identifier of at most 32 characters.
+#[cfg(test)]
+pub(crate) fn is_slug(s: &str) -> bool {
+    s.len() <= 32 && is_slug_body(s)
+}
+
+/// `rauc_compatible`: `suderra-os-<board_profile>`, at most 64 characters.
+#[cfg(test)]
+pub(crate) fn is_rauc_compatible(s: &str) -> bool {
+    s.len() <= 64 && s.strip_prefix("suderra-os-").is_some_and(is_slug_body)
+}
+
+/// `mac`: six lowercase hex pairs separated by colons.
+#[cfg(test)]
+pub(crate) fn is_mac(s: &str) -> bool {
+    let pairs: Vec<&str> = s.split(':').collect();
+    pairs.len() == 6
+        && pairs
+            .iter()
+            .all(|p| p.len() == 2 && all_bytes(p, is_lower_hex))
+}
+
+/// `pci_path`: `DDDD:BB:SS.F` in lowercase hex with a function of 0 to 7.
+#[cfg(test)]
+pub(crate) fn is_pci_path(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 12
+        && b[4] == b':'
+        && b[7] == b':'
+        && b[10] == b'.'
+        && [0, 1, 2, 3, 5, 6, 8, 9].iter().all(|&i| is_lower_hex(b[i]))
+        && (b'0'..=b'7').contains(&b[11])
+}
+
+/// `cidr4`: dotted-decimal IPv4 network without leading zeros and a prefix
+/// length of 0 to 32; the address as an integer and the prefix length.
+#[cfg(test)]
+pub(crate) fn parse_cidr4(s: &str) -> Option<(u32, u8)> {
+    let (address, prefix) = s.split_once('/')?;
+    let prefix = u8::try_from(decimal(prefix)?).ok().filter(|p| *p <= 32)?;
+    let mut value = 0u32;
+    let mut octets = 0;
+    for octet in address.split('.') {
+        let octet = u8::try_from(decimal(octet)?).ok()?;
+        value = (value << 8) | u32::from(octet);
+        octets += 1;
+    }
+    (octets == 4).then_some((value, prefix))
+}
+
+/// `host`: a lowercase fully qualified DNS name or a dotted-decimal address,
+/// at most 253 characters.
+#[cfg(test)]
+pub(crate) fn is_host(s: &str) -> bool {
+    let labels: Vec<&str> = s.split('.').collect();
+    s.len() <= 253
+        && labels.len() >= 2
+        && labels.iter().all(|l| {
+            (1..=63).contains(&l.len())
+                && all_bytes(l, |b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
+                })
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+        })
+}
+
 /// `device_code`.
 pub(crate) fn is_device_code(s: &str) -> bool {
     (1..=50).contains(&s.len())

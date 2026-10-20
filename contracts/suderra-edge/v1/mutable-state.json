@@ -15,6 +15,170 @@
     "layout_applied_by": "suderra-data-unlock, after /data is mounted (DEC-4.2, DEC-4.3)"
   },
   "run_tmpfiles": "/usr/lib/tmpfiles.d/suderra.conf",
+  "run_documents": [
+    {
+      "path": "/run/suderra/identity.json",
+      "schema": "schemas/identity.schema.json",
+      "writer": "os-root",
+      "readers": ["agent"],
+      "rule": "Written at every boot by suderra-identity mirror; the agent's only source of its identity (DEC-3.6, DEC-4.9)."
+    },
+    {
+      "path": "/run/suderra/time-state",
+      "schema": "schemas/time-state.schema.json",
+      "writer": "os-root",
+      "readers": ["agent"],
+      "rule": "Written by the root time helper from chrony's tracking data and the time floor; the agent's only clock authority (DEC-7.3)."
+    },
+    {
+      "path": "/run/suderra/lifecycle",
+      "format": "One line: a lifecycle.json state name (FACTORY, PROVISIONING, ACTIVE, MAINTENANCE, DECOMMISSIONED, RMA or LOCKED) and a line feed.",
+      "writer": "os-root",
+      "readers": ["agent"],
+      "rule": "Read-only mirror of the root-owned lifecycle store; nothing the agent does changes it (DEC-12)."
+    },
+    {
+      "path": "/run/suderra/agent-health/health.json",
+      "schema": "schemas/agent-health.schema.json",
+      "writer": "agent",
+      "readers": ["os-root"],
+      "rule": "Written atomically by the agent; an absent, unreadable, oversized or non-conforming document counts as degraded and as an update blocker (DEC-6.8, DEC-13.4)."
+    },
+    {
+      "path": "/run/suderra/results/<seq>-<kind>.json",
+      "schema": "schemas/result.schema.json",
+      "writer": "os-root",
+      "readers": ["agent"],
+      "rule": "One result document per file; the agent republishes them on the results topic (channels.json result_telemetry, DEC-27)."
+    }
+  ],
+  "generic_profile": {
+    "description": "The generic-Linux channel (DEC-28) is not a Suderra OS image and has none of the tmpfs paths above, but its unit and the root-side checks that apply to it need the same documents. Its paths are relative to the agent data root ($DATA, /var/lib/suderra unless the unit sets SUDERRA_DATA_DIR) and are written only by the agent.",
+    "documents": [
+      {
+        "path": "$DATA/state/health.json",
+        "schema": "schemas/agent-health.schema.json",
+        "rule": "The generic unit has no RuntimeDirectory, so the health view lives in the agent's state directory (0600) and is rewritten only when its content changes, not on every tick, to spare the data volume."
+      }
+    ]
+  },
+  "image_files": [
+    {
+      "path": "/etc/suderra/board",
+      "format": "KEY=VALUE lines written at image build from boards.json: BOARD_PROFILE, DEVICE_BINDING_METHOD and the other image facts (DEC-8.2).",
+      "readers": ["os-root", "agent"],
+      "decisions": ["DEC-8.2"]
+    },
+    {
+      "path": "/etc/suderra/cloud-endpoint",
+      "format": "One line: the https base URL of the provisioning and activation API, with no port or port 443 (channels.json activation endpoint_rule).",
+      "readers": ["os-root", "agent"],
+      "decisions": ["DEC-5.5", "DEC-11"]
+    },
+    {
+      "path": "/etc/suderra/cloud-ca.pem",
+      "format": "PEM roots that authenticate the cloud's https endpoint for root's provisioning and update fetches and for the agent's activation; the platform's own HTTPS trust, separate from the MQTT broker roots that the trust-anchors bundle carries as mqtt-ca (DEC-10.4).",
+      "readers": ["os-root", "agent"],
+      "decisions": ["DEC-5.5", "DEC-10.4"]
+    },
+    {
+      "path": "/etc/suderra/kernel-config",
+      "format": "One CONFIG_<NAME>=y or =m line per enabled kernel symbol (statements.json compatibility).",
+      "readers": ["os-root"],
+      "decisions": ["DEC-23"]
+    },
+    {
+      "path": "/etc/suderra/keys/<purpose>/<epoch>.pub",
+      "format": "PEM SubjectPublicKeyInfo of an OS-pinned key (statements.json os_key_pin_layout).",
+      "readers": ["os-root", "agent"],
+      "decisions": ["DEC-3.4"]
+    },
+    {
+      "path": "/etc/os-release",
+      "format": "VERSION_ID and SUDERRA_AGENT_ABI as statements.json compatibility defines them.",
+      "readers": ["os-root"],
+      "decisions": ["DEC-23"]
+    }
+  ],
+  "ownership_notes": [
+    {
+      "id": "db-key",
+      "topic": "Who provisions /var/lib/suderra/secrets/db.key",
+      "decision": "The agent creates it at its first start: 256 random bits, mode 0400, written under a temporary name, file and directory fsynced, then rename(2) (DEC-4.8). Root does not provision it and no unit uses LoadCredential.",
+      "why": "Root provisioning would change this table, DEC-4.8 and unit-directives.json together (it flags LoadCredential* as an unknown directive) and would put a long-term secret in root's hands, for no gain over an agent-owned file on the LUKS data volume. A TPM-sealed key replaces the file in P2 (DEC-4.8, EDGE-MEDIUM-099).",
+      "code": "None: the agent follows this text."
+    },
+    {
+      "id": "scripts",
+      "topic": "What /var/lib/suderra/scripts is",
+      "decision": "The script engine's run-time storage, written by the agent (agent_access read-write). It is not a delivery location: contract 1.x delivers no script, program or ST bytecode by root. Programs arrive as signed program statements under the P2 program purpose (DEC-3.3, DEC-9).",
+      "why": "Root-delivered scripts would put root inside the agent's writable tree, which DEC-4.3 forbids; a delivered program is a signed statement, not a file root writes there.",
+      "code": "None."
+    },
+    {
+      "id": "rbac-manifest-format",
+      "topic": "Format of rbac-manifest.dsse",
+      "decision": "The site file is the DSSE envelope of suderra.rbac-manifest.v1 (statements.json). On Suderra OS the agent's loader parses that envelope and verifies it against the bundle's rbac-manifest and command anchors (DEC-9.4, DEC-9.9). The earlier SignedRbacManifest JSON, with an embedded signature over re-serialized bytes, is a superseded format (statements.json superseded_formats); a loader for it exists only on the generic profile's hot-reload path until DEC-28 P2.",
+      "why": "One envelope format for every signed statement, verified over the signed bytes, never over a re-serialization.",
+      "code": "Any suderra-os loader that still parses SignedRbacManifest is non-conforming and is the DEC-9.9 work."
+    },
+    {
+      "id": "config-yaml",
+      "topic": "Content of config.yaml",
+      "decision": "The agent's configuration document belongs to the agent: the contract binds it by digest and size to the signed site config and defines no schema for its members. What the contract fixes is its identity binding: its device_id must equal the site config's device_id and identity.json's, and an agent whose configuration disagrees runs in standby with config-unverified (schemas/agent-health.schema.json). The fixtures' config.yaml carry device_id and device_code and are otherwise opaque test content, not an agent configuration that any contract tool parses.",
+      "why": "Two schemas for one document would drift; the agent's own loader is the schema, and its tests build their own valid configuration.",
+      "code": "The cloud producer sets device_id from the device record (site-config-manifest.service.ts); the agent compares it with the identity."
+    },
+    {
+      "id": "io-config",
+      "topic": "Where the I/O map lives on Suderra OS",
+      "decision": "io-config.yaml in the site directory, named by the site config like every site file, in the format the agent persists for update_io_config on the generic channel ($DATA/io_config.yaml). The agent loads it from /var/lib/suderra-site/io-config.yaml and never writes it; a change arrives as a site-config update, which needs a local approval (channels.json update_channel).",
+      "why": "The I/O map decides which physical channels the agent reads and drives, so it is signed site data (DEC-4.12), and the agent has no writable copy to restore after a restart (SENSOR-HIGH-212).",
+      "code": "The agent's suderra-os loader reads the site file; the cloud producer lists it in the site config's files."
+    },
+    {
+      "id": "observability-hmac",
+      "topic": "The HMAC key of the agent's health and lifecycle endpoints",
+      "decision": "There is no delivery of it on Suderra OS: root provisions no credential and unit-directives.json has no LoadCredential, so the endpoints that need that key stay loopback-only there. Adding a delivery needs a contract change (a root-written file under /run/suderra or a credential directive) and an ADR-048 decision; none is made for P1.",
+      "why": "A secret delivery path is an attack surface and nothing in P1 needs the endpoints beyond loopback; the agent's outbound result and health telemetry go over MQTT.",
+      "code": "The agent keeps those endpoints loopback-only when it holds no key."
+    },
+    {
+      "id": "identity-installed-manifest",
+      "topic": "device.installed_manifest in /run/suderra/identity.json",
+      "decision": "schemas/identity.schema.json adds the optional member device.installed_manifest, the statement digest of the provisioning manifest root installed. Root's mirror writes it from the install receipt and the agent sends it as installedManifest in its activation request (channels.json activation.binding_rule).",
+      "why": "The activation receipt names a manifest by digest and root accepts it only for the manifest it installed (manifest-digest-mismatch). A device that fetched two manifests, and installed the first, would otherwise be activated by the cloud with a receipt for the last one it issued and never leave PROVISIONING.",
+      "code": "Suderra-OS board/suderra/common/rootfs-overlay/usr/sbin/suderra-identity (mirror must add the member) and sens-api-gateway/src/trust_anchors.rs DeviceIdentityRecord (deny_unknown_fields: must accept it) change together; the agent's activation request then sends it; the cloud's activation controller reads it."
+    },
+    {
+      "id": "agent-health-update-blockers",
+      "topic": "update_blockers in the agent health view",
+      "decision": "schemas/agent-health.schema.json requires update_blockers (active-alarm, forced-output): root's update worker refuses an edge-update, an os-update or a site-config while it is non-empty or the view is absent or non-conforming (channels.json update_channel.maintenance).",
+      "why": "DEC-13.4 rejects an update while an alarm is active or a value is forced. The agent is the only component that knows both, and root must not infer them.",
+      "code": "sens-api-gateway/src/degraded.rs document() writes the P0 members only; it must add update_blockers from the alarm and force registries before any root worker can accept an update."
+    },
+    {
+      "id": "update-request-statements",
+      "topic": "Which statements the agent's request_update command carries",
+      "decision": "channels.json handoff.commands.request_update lists suderra.edge-update.v1, suderra.os-update.v1, suderra.site-config.v1, suderra.site-netpolicy.v1 and suderra.trust-anchors.v1. suderra.edge-release.v1 alone is no longer an update request: it is not device-bound and carries nothing root could install.",
+      "why": "Contract 1.0 named the release statement because nothing device-bound existed. A request root must refuse under its own verifier is carried for nothing.",
+      "code": "sens-api-gateway/src/commands/request_update.rs UPDATE_REQUEST_STATEMENTS lists only StatementType::EdgeRelease and its tests assert that site-config and trust-anchors are refused; the list and those tests change to the five types."
+    },
+    {
+      "id": "lockdown-reasons",
+      "topic": "Reasons of a lockdown result (EI-084)",
+      "decision": "A lockdown result may carry receipt-missing, lifecycle-inconsistent, provisioning-mode-active, firewall-load-failed or io-error (statements.json reasons_by_kind). state-corrupt is the lifecycle store's reason and is not one of them.",
+      "why": "Lockdown reports four kinds of failure: a lifecycle that is not ACTIVE, provisioning mode that could not be ended, the ruleset, and a filesystem step. The earlier set lacked the first two, so those failures recorded no result.",
+      "code": "Suderra-OS board/suderra/common/rootfs-overlay/usr/sbin/suderra-lockdown passes state-corrupt for a still-running dropbear and a still-bound one-time shadow; it must pass provisioning-mode-active."
+    },
+    {
+      "id": "receipt-key",
+      "topic": "Which key the agent checks the activation receipt against",
+      "decision": "The edge-provisioning key pinned in the OS image. Every edge-provisioning anchor of a verified bundle is that pin (anchor-not-os-pinned), so the pin and the bundle's anchor are one key and the agent needs no bundle to check a receipt.",
+      "why": "The receipt fixtures carry no bundle, and the agent may hand a receipt to root before it has loaded one.",
+      "code": "None: the agent resolves the key from the OS pin."
+    }
+  ],
   "entries": [
     {
       "path": "/var/lib/suderra-os",
@@ -128,11 +292,13 @@
         "site-config.dsse",
         "trust-anchors.dsse",
         "rbac-manifest.dsse",
+        "site-netpolicy.dsse",
+        "io-config.yaml",
         "site-policy.json",
         "hardware-inventory.yaml",
         "revpi/config.rsc"
       ],
-      "decisions": ["DEC-4.2", "DEC-4.6", "DEC-4.10", "DEC-4.12"]
+      "decisions": ["DEC-4.2", "DEC-4.6", "DEC-4.10", "DEC-4.12", "DEC-11.7"]
     },
     {
       "path": "/opt/suderra/edge",
@@ -182,7 +348,8 @@
         "activation.json",
         "activation-receipt.dsse",
         "lifecycle-request.dsse",
-        "broker credentials"
+        "broker credentials",
+        "result publication cursor (channels.json result_telemetry)"
       ],
       "decisions": ["DEC-4.6", "DEC-5.8", "DEC-12"]
     },
@@ -263,9 +430,9 @@
       "writer": "agent",
       "agent_access": "read-write",
       "contents": [
-        "update requests for the root worker, written under a temporary name and renamed (DEC-2.3)"
+        "the update-request spool (channels.json update_channel.spool): one DSSE envelope per carried statement, <statement digest>.dsse, written under a dot-file temporary name and renamed, at most 4 entries and 256 KiB, each at most 64 KiB; the agent is its only writer and root only reads copies (DEC-2.3)"
       ],
-      "decisions": ["DEC-2.3"]
+      "decisions": ["DEC-2.3", "DEC-4.3"]
     },
     {
       "path": "/var/log/suderra",
@@ -297,7 +464,6 @@
       "contents": [
         "identity.json",
         "time-state",
-        "board",
         "lifecycle",
         "agent-health/ (its own entry)",
         "results/ (its own entry)"
@@ -317,7 +483,7 @@
       "writer": "agent",
       "agent_access": "read-write",
       "contents": [
-        "health.json: degraded mode and control-loop liveness, read by the root health check (DEC-6.3, DEC-6.8); created by run_tmpfiles before the unit starts (DEC-4.3)"
+        "health.json (schemas/agent-health.schema.json): degraded mode, control-loop liveness and update blockers, read by the root health check and the update worker (DEC-6.3, DEC-6.8, DEC-13.4); created by run_tmpfiles before the unit starts (DEC-4.3)"
       ],
       "decisions": ["DEC-4.3", "DEC-6.3", "DEC-6.8"]
     },
@@ -333,7 +499,9 @@
       "file_mode": "0640",
       "writer": "os-root",
       "agent_access": "read",
-      "contents": ["typed result documents (schemas/result.schema.json)"],
+      "contents": [
+        "typed result documents (schemas/result.schema.json), named <seq, 16 digits>-<kind>.json, or volatile-<seq>-<kind>.json while /data is not available (channels.json result_telemetry)"
+      ],
       "decisions": ["DEC-27"]
     },
     {

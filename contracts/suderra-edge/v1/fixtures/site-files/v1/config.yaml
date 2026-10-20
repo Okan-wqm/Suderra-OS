@@ -1,5 +1,7 @@
 # TEST-ONLY site config of the Suderra edge contract fixtures (version 1).
 # config.yaml is the agent's configuration document; the contract binds it by digest.
+device_id: 7e570000-0000-4000-8000-0000000000d1
+device_code: RPI-7E57C0DE
 device:
   board_profile: revpi-connect4
 modbus: []

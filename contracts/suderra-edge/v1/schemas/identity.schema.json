@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:identity",
+  "title": "/run/suderra/identity.json OS device identity mirror",
+  "description": "The one place the agent learns who it is on Suderra OS (ADR-048 DEC-3.6, DEC-4.9): root writes it to the tmpfs /run/suderra (root:suderra, 0640) at every boot (suderra-identity mirror) from the hardware binding it recorded once under /data/suderra/os/identity/ and, after the first provisioning install, from the tenant and device record the installer wrote there. The agent never derives an identity from /etc/machine-id, a CPU serial or a MAC address. This is the wire format of the P0 writer and reader, kept member for member and with no type member, plus one optional member neither P0 side knows yet, device.installed_manifest: a document without `device` is a device that has a hardware identity but no tenant yet (factory or provisioning), and every statement bound to a tenant or device is then checked against the manifest being installed instead (statements.json identity). installed_manifest is root's copy of the statement digest of the provisioning manifest it installed (DEC-5.8): the mirror writes it from the install receipt at every mirror, so it follows a re-provisioning, and the agent sends it with its activation request (channels.json activation) so the cloud names the manifest root really installed in the activation receipt. The P0 mirror (suderra-identity, which embeds device.json) does not write it and the P0 agent reader (deny_unknown_fields) refuses it, so both change in the same release (mutable-state.json ownership_notes identity-installed-manifest).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["board_profile", "device_binding"],
+  "properties": {
+    "board_profile": {
+      "description": "BOARD_PROFILE of /etc/suderra/board in the signed OS image.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/board_profile"
+    },
+    "device_binding": {
+      "description": "The hardware binding root recorded once; its method must be the board's device_binding_method (boards.json).",
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "device": {
+      "description": "Present once a provisioning manifest has been installed (identity root, DEC-22).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenant_id", "device_id", "device_code"],
+      "properties": {
+        "tenant_id": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+        },
+        "device_id": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+        },
+        "device_code": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_code"
+        },
+        "installed_manifest": {
+          "description": "Statement digest of the suderra.edge-provisioning.v1 manifest root installed.",
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+        }
+      }
+    }
+  }
+}

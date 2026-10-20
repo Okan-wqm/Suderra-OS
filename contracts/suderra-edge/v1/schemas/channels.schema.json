@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:channels",
+  "title": "channels.json runtime channels",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "mqtt", "activation", "handoff", "update_channel", "result_telemetry"],
+  "properties": {
+    "description": { "type": "string" },
+    "mqtt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "topic_root", "device_identifier", "topics"],
+      "properties": {
+        "transport": { "type": "string" },
+        "topic_root": { "const": "tenants/{tenant_id}/devices/{device_id}" },
+        "device_identifier": { "type": "string" },
+        "topics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commands", "responses", "results"],
+          "properties": {
+            "commands": { "$ref": "#/$defs/topic" },
+            "responses": { "$ref": "#/$defs/topic" },
+            "results": { "$ref": "#/$defs/topic" }
+          }
+        }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "endpoint",
+        "endpoint_rule",
+        "endpoint_source",
+        "token",
+        "binding_rule",
+        "self_register",
+        "commit"
+      ],
+      "properties": {
+        "description": { "type": "string" },
+        "endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "path",
+            "base_url",
+            "request_schema",
+            "response_schema",
+            "rate_limited_status"
+          ],
+          "properties": {
+            "method": { "const": "POST" },
+            "path": { "const": "/api/devices/activate" },
+            "base_url": { "type": "string" },
+            "request_schema": { "const": "schemas/edge-activation-request.schema.json" },
+            "response_schema": { "const": "schemas/edge-activation-response.schema.json" },
+            "rate_limited_status": { "const": 429 }
+          }
+        },
+        "endpoint_rule": { "type": "string" },
+        "endpoint_source": { "type": "string" },
+        "token": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_age_seconds", "rule"],
+          "properties": {
+            "max_age_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+            "rule": { "type": "string" }
+          }
+        },
+        "binding_rule": { "type": "string" },
+        "self_register": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["suderra_os", "rule"],
+          "properties": {
+            "suderra_os": { "const": "forbidden" },
+            "rule": { "type": "string" }
+          }
+        },
+        "commit": { "type": "string" }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "command_topic",
+        "response_topic",
+        "envelope",
+        "statement_param",
+        "authorization",
+        "commands",
+        "response",
+        "delivery_rule"
+      ],
+      "properties": {
+        "description": { "type": "string" },
+        "command_topic": { "type": "string" },
+        "response_topic": { "type": "string" },
+        "envelope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["family", "max_iat_future_skew_seconds", "iat_rule", "param_rule"],
+          "properties": {
+            "family": { "type": "string" },
+            "max_iat_future_skew_seconds": { "const": 60 },
+            "iat_rule": { "type": "string" },
+            "param_rule": { "type": "string" }
+          }
+        },
+        "statement_param": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "rule", "max_bytes"],
+          "properties": {
+            "name": { "const": "statement" },
+            "rule": { "type": "string" },
+            "max_bytes": { "const": 65536 }
+          }
+        },
+        "authorization": { "type": "string" },
+        "commands": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["activation_receipt", "lifecycle_request", "request_update"],
+          "properties": {
+            "activation_receipt": { "$ref": "#/$defs/handoff_command" },
+            "lifecycle_request": { "$ref": "#/$defs/handoff_command" },
+            "request_update": { "$ref": "#/$defs/handoff_command" }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema", "rule"],
+          "properties": {
+            "schema": { "const": "schemas/command-handoff-response.schema.json" },
+            "rule": { "type": "string" }
+          }
+        },
+        "delivery_rule": { "type": "string" }
+      }
+    },
+    "update_channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "spool", "carried_statements", "maintenance"],
+      "properties": {
+        "description": { "type": "string" },
+        "spool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "directory",
+            "entry",
+            "name",
+            "name_pattern",
+            "temporary_name_pattern",
+            "temporary_rule",
+            "owner",
+            "mode",
+            "max_entry_bytes",
+            "max_pending_entries",
+            "max_pending_bytes",
+            "backlog_rule",
+            "agent_is_only_writer",
+            "max_entry_age_seconds",
+            "trigger",
+            "root_reads",
+            "concluded"
+          ],
+          "properties": {
+            "directory": { "const": "/var/lib/suderra/update-requests" },
+            "entry": { "type": "string" },
+            "name": { "type": "string" },
+            "name_pattern": { "type": "string" },
+            "temporary_name_pattern": { "type": "string" },
+            "temporary_rule": { "type": "string" },
+            "owner": { "const": "suderra" },
+            "mode": { "const": "0600" },
+            "max_entry_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 },
+            "max_pending_entries": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "max_pending_bytes": { "type": "integer", "minimum": 1024, "maximum": 67108864 },
+            "backlog_rule": { "type": "string" },
+            "agent_is_only_writer": { "type": "string" },
+            "max_entry_age_seconds": { "type": "integer", "minimum": 60, "maximum": 604800 },
+            "trigger": { "type": "string" },
+            "root_reads": { "type": "string" },
+            "concluded": { "type": "string" }
+          }
+        },
+        "carried_statements": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/statement_type" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "result_kind",
+              "sequence_file",
+              "fetch",
+              "root_action",
+              "maintenance"
+            ],
+            "properties": {
+              "result_kind": { "$ref": "#/$defs/slug" },
+              "sequence_file": { "type": "string", "pattern": "^/data/suderra/os/seq/[a-z0-9-]+$" },
+              "fetch": { "type": "array", "items": { "type": "string" } },
+              "root_action": { "type": "string" },
+              "maintenance": { "type": "string" }
+            }
+          }
+        },
+        "maintenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["window", "blockers", "local_approval", "outage_budget", "after_failure"],
+          "properties": {
+            "window": { "type": "string" },
+            "blockers": { "type": "string" },
+            "local_approval": { "type": "string" },
+            "outage_budget": { "type": "string" },
+            "after_failure": { "type": "string" }
+          }
+        }
+      }
+    },
+    "result_telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "source",
+        "file_name_pattern",
+        "file_name_rule",
+        "topic",
+        "payload",
+        "qos",
+        "retain",
+        "publication_rule",
+        "acl",
+        "trust"
+      ],
+      "properties": {
+        "description": { "type": "string" },
+        "source": { "type": "string" },
+        "file_name_pattern": { "type": "string" },
+        "file_name_rule": { "type": "string" },
+        "topic": { "const": "tenants/{tenant_id}/devices/{device_id}/results" },
+        "payload": { "type": "string" },
+        "qos": { "const": 1 },
+        "retain": { "const": false },
+        "publication_rule": { "type": "string" },
+        "acl": { "type": "string" },
+        "trust": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "statement_type": { "type": "string", "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$" },
+    "topic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic", "direction", "writer", "reader"],
+      "properties": {
+        "topic": { "type": "string", "pattern": "^tenants/\\{tenant_id\\}/devices/\\{device_id\\}/[a-z]+$" },
+        "direction": { "enum": ["cloud-to-device", "device-to-cloud"] },
+        "writer": { "type": "string" },
+        "reader": { "type": "string" }
+      }
+    },
+    "handoff_command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statement_types",
+        "agent_checks",
+        "writes",
+        "root_consumer",
+        "cloud_producer"
+      ],
+      "properties": {
+        "statement_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/statement_type" }
+        },
+        "agent_checks": { "type": "string" },
+        "writes": { "type": "string" },
+        "root_consumer": { "type": "string" },
+        "cloud_producer": { "type": "string" }
+      }
+    }
+  }
+}

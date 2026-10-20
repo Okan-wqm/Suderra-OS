@@ -4,7 +4,17 @@
   "title": "mutable-state.json read-only-root mutable-state table",
   "type": "object",
   "additionalProperties": false,
-  "required": ["description", "rootfs", "data_partition", "run_tmpfiles", "entries"],
+  "required": [
+    "description",
+    "rootfs",
+    "data_partition",
+    "run_tmpfiles",
+    "run_documents",
+    "generic_profile",
+    "image_files",
+    "ownership_notes",
+    "entries"
+  ],
   "properties": {
     "description": {
       "type": "string"
@@ -72,6 +82,97 @@
     },
     "run_tmpfiles": {
       "const": "/usr/lib/tmpfiles.d/suderra.conf"
+    },
+    "run_documents": {
+      "description": "The documents at fixed run-time paths whose members and writer are part of the contract.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "writer", "readers", "rule"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^/run/suderra/[A-Za-z0-9._/<>-]+$" },
+          "schema": { "type": "string", "pattern": "^schemas/[a-z0-9-]+\\.schema\\.json$" },
+          "format": { "type": "string" },
+          "writer": { "enum": ["os-root", "agent"] },
+          "readers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["os-root", "agent"] }
+          },
+          "rule": { "type": "string" }
+        },
+        "oneOf": [
+          { "properties": { "schema": true }, "required": ["schema"] },
+          { "properties": { "format": true }, "required": ["format"] }
+        ]
+      }
+    },
+    "generic_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "documents"],
+      "properties": {
+        "description": { "type": "string" },
+        "documents": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "schema", "rule"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^\\$DATA/[A-Za-z0-9._/-]+$" },
+              "schema": { "type": "string", "pattern": "^schemas/[a-z0-9-]+\\.schema\\.json$" },
+              "rule": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "image_files": {
+      "description": "Read-only files of the verity rootfs that root and the agent read; none is written at run time.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "format", "readers", "decisions"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^/etc/[A-Za-z0-9._/<>-]+$" },
+          "format": { "type": "string" },
+          "readers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["os-root", "agent"] }
+          },
+          "decisions": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^DEC-[0-9]+(\\.[0-9]+)?$" }
+          }
+        }
+      }
+    },
+    "ownership_notes": {
+      "description": "Where an implementer's report found the ownership wording ambiguous or wrong: the resolution, why it stays or changes, and which code must follow.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "topic", "decision", "why", "code"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "topic": { "type": "string" },
+          "decision": { "type": "string" },
+          "why": { "type": "string" },
+          "code": { "type": "string" }
+        }
+      }
     },
     "entries": {
       "type": "array",

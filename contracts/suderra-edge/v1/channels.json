@@ -1,0 +1,188 @@
+{
+  "description": "The runtime channels between cloud, agent and root (ADR-048 DEC-2, DEC-4.12, DEC-5.7, DEC-5.8, DEC-5.14, DEC-9, DEC-10, DEC-23, DEC-27): the MQTT topics, the activation API, the hand-off commands with which the agent carries cloud-signed statements to root, the update channel root consumes, and the result telemetry that reports what root did. delivery.json is the provisioning delivery and its USB form; this file is everything that happens after the device is provisioned. The agent is a carrier on all of these: it checks the form of what it carries, never the meaning, and root verifies every statement itself (statements.json verified_by).",
+  "mqtt": {
+    "transport": "TLS on 8883 only; the broker is named by the signed site config, never by an activation response (DEC-10.1).",
+    "topic_root": "tenants/{tenant_id}/devices/{device_id}",
+    "device_identifier": "device_id is the device UUID of the signed manifest. The ACL also admits the MQTT client id and the device code as the device level for devices that predate the UUID names, and the HMI watch stream is named by the device code; a topic of this contract always names the UUID.",
+    "topics": {
+      "commands": {
+        "topic": "tenants/{tenant_id}/devices/{device_id}/commands",
+        "direction": "cloud-to-device",
+        "writer": "The cloud's one command publisher, which signs a platform-actor command envelope for a Suderra OS device (DEC-9.2); the broker ACL lets no other principal write a command topic (DEC-9.3).",
+        "reader": "agent"
+      },
+      "responses": {
+        "topic": "tenants/{tenant_id}/devices/{device_id}/responses",
+        "direction": "device-to-cloud",
+        "writer": "agent",
+        "reader": "The cloud's command-response consumer."
+      },
+      "results": {
+        "topic": "tenants/{tenant_id}/devices/{device_id}/results",
+        "direction": "device-to-cloud",
+        "writer": "agent",
+        "reader": "The cloud's result consumer (result_telemetry)."
+      }
+    }
+  },
+  "activation": {
+    "description": "How a provisioned device obtains its per-device MQTT credentials and has the cloud commit the activation (DEC-5.7). The cloud answers with credentials, root later accepts the activation receipt the cloud issues after the device's first authenticated CONNECT (handoff.commands.activation_receipt).",
+    "endpoint": {
+      "method": "POST",
+      "path": "/api/devices/activate",
+      "base_url": "The https base URL of /etc/suderra/cloud-endpoint in the signed OS image: the same endpoint root fetches the provisioning delivery from.",
+      "request_schema": "schemas/edge-activation-request.schema.json",
+      "response_schema": "schemas/edge-activation-response.schema.json",
+      "rate_limited_status": 429
+    },
+    "endpoint_rule": "Root's provisioning fetch and the agent's activation reach the cloud only through a port both device rulesets let out: https on tcp 443, with the endpoint URL carrying no port or port 443. An image whose cloud-endpoint names another port fails its build check (Suderra-OS tests/image-contracts/board-file-contract-test.sh), because nothing on the device can reach it.",
+    "endpoint_source": "The endpoint comes from the signed OS image (/etc/suderra/cloud-endpoint, one https base URL line, mutable-state.json image_files). Neither the provisioning manifest, an activation response nor the technician sets it, so a hostile delivery cannot redirect the device.",
+    "token": {
+      "max_age_seconds": 14400,
+      "rule": "The cloud issues a provisioning manifest for a Suderra OS device only under a provisioning token issued at most 4 hours earlier (DEC-5.12); a token older than that is refused like any other refusal. The generic channel keeps its own, longer, token lifetime. The token is single-use and bound to the device binding of the manifest reservation until the activation commits (DEC-5.7)."
+    },
+    "binding_rule": "The activation request carries the hardware binding root recorded (deviceBinding); the cloud refuses an activation whose binding differs from the one the manifest reservation was made for. installedManifest, when present, is the digest of the manifest root installed and is the digest the receipt names; when absent the receipt names the manifest the cloud issued last.",
+    "self_register": {
+      "suderra_os": "forbidden",
+      "rule": "A Suderra OS device never self-registers with a tenant token (DEC-5.12): the Suderra OS agent has no self-registration path compiled in, and the cloud's self-register endpoint creates only generic-channel device rows, which receive no Suderra OS manifest, no signed command and no hand-over statement."
+    },
+    "commit": "The activation commits when the device's own credentials first authenticate an MQTT CONNECT (DEC-5.7); only then does the cloud issue the activation receipt."
+  },
+  "handoff": {
+    "description": "Hand-off commands: the cloud's way to give root a signed statement it can only reach through the agent. The agent carries the statement from the command plane into a file root reads and does nothing else; root verifies it itself and records the outcome (DEC-5.8, DEC-5.14, DEC-2.3). Nothing the agent writes is evidence of anything: a statement it wrote without verification fails at root.",
+    "command_topic": "tenants/{tenant_id}/devices/{device_id}/commands",
+    "response_topic": "tenants/{tenant_id}/devices/{device_id}/responses",
+    "envelope": {
+      "family": "The agent's signed command envelope (sens-api-gateway src/command_envelope), signed by the platform actor's command-purpose key, which the trust-anchors bundle anchors and the RBAC manifest maps to the platform actor (DEC-9.1, DEC-9.4).",
+      "max_iat_future_skew_seconds": 60,
+      "iat_rule": "The agent accepts an envelope whose iat is at most 60 seconds ahead of its own clock (MAX_IAT_CLOCK_SKEW_SECS) and refuses one whose iat lies further ahead; this is the only skew the contract allows (DEC-7.5).",
+      "param_rule": "Command parameters are flat strings and integers: an envelope cannot sign a nested object (SENSOR-HIGH-209), which is why a statement travels as one string."
+    },
+    "statement_param": {
+      "name": "statement",
+      "rule": "A string holding the DSSE envelope JSON exactly as the cloud produced and stored it. The agent writes those bytes verbatim and re-serializes nothing, because re-serializing would silently repair an envelope root must refuse (a duplicate member) and change the bytes the cloud recorded.",
+      "max_bytes": 65536
+    },
+    "authorization": "The commands need no RBAC role. The envelope's signature must verify against an RBAC-manifest actor key (the bundle's platform command key), and an unsigned envelope is refused in Enforcing mode, which is the only mode a Suderra OS agent has. The statement itself is signed separately by its own purpose key (statements.json), so a stolen command key alone can deliver only statements that were validly signed, each of which root accepts at most once and only inside its window. A dedicated permission granted only to the platform actor would be stricter; it needs a new member of the agent's Permission enum and of the RBAC schema's permission vocabulary, and belongs to the DEC-9 hardening of P2.",
+    "commands": {
+      "activation_receipt": {
+        "statement_types": ["suderra.edge-activation-receipt.v1"],
+        "agent_checks": "Size, DSSE envelope form, payloadType, and every check of the receipt except the ones statements.json assigns to root alone (verified_by.agent), against the edge-provisioning key pinned in the OS image: every edge-provisioning anchor of the bundle is that pin (anchor-not-os-pinned), so the pin and the bundle's anchor are one key.",
+        "writes": "/var/lib/suderra/state/activation-receipt.dsse",
+        "root_consumer": "suderra-activation.path",
+        "cloud_producer": "apps/sensor-service/src/edge-device/activation-receipt.service.ts, delivered by edge-root-handoff.service.ts"
+      },
+      "lifecycle_request": {
+        "statement_types": ["suderra.device-lifecycle.v1"],
+        "agent_checks": "Size, DSSE envelope form and payloadType only: the device-lifecycle key is pinned in the OS image alone, so the agent is not a verifier of this statement.",
+        "writes": "/var/lib/suderra/state/lifecycle-request.dsse",
+        "root_consumer": "suderra-lifecycle.path",
+        "cloud_producer": "apps/sensor-service/src/edge-device/device-lifecycle-statement.service.ts, delivered by edge-root-handoff.service.ts"
+      },
+      "request_update": {
+        "statement_types": [
+          "suderra.edge-update.v1",
+          "suderra.os-update.v1",
+          "suderra.site-config.v1",
+          "suderra.site-netpolicy.v1",
+          "suderra.trust-anchors.v1"
+        ],
+        "agent_checks": "Size, DSSE envelope form and a payloadType of one of the carried statements; nothing else, and the spool bounds of update_channel.spool.",
+        "writes": "update_channel.spool.directory, one entry per statement",
+        "root_consumer": "suderra-edge-request.path",
+        "cloud_producer": "apps/sensor-service/src/edge-device/edge-update-manifest.service.ts (new in P1; edge-update, os-update), site-config-manifest.service.ts (site-config, site-netpolicy) and trust-anchor-bundle.service.ts (trust-anchors), delivered by the same hand-over service as the other two commands"
+      }
+    },
+    "response": {
+      "schema": "schemas/command-handoff-response.schema.json",
+      "rule": "Every hand-off command is answered on the response topic, accepted or refused: result.handed_to_root says whether the statement is now a file root reads, statement_digest names it, and reasons says why not. A refused command writes nothing."
+    },
+    "delivery_rule": "At-least-once, until settled. The cloud keeps each statement it owes a device and publishes it again, at most once per redelivery interval, on every heartbeat that finds it unsettled, because a non-retained publish to an offline device is lost; it settles a statement when the agent's response names its digest with handed_to_root true. The agent's handling is idempotent: the same statement is the same file. For request_update a hand-over only means the spool holds the file, so the cloud treats the request as concluded only by a result document (result_telemetry) that names the statement digest, and stops redelivering at the statement's expires_at."
+  },
+  "update_channel": {
+    "description": "What root consumes: signed statements the agent wrote into its update-request spool, or, from P3, that a USB ingress copied there (DEC-2.3, DEC-2.9, DEC-2.11, DEC-4.12). Root treats a spool entry as hostile input: it verifies the statement against the keys pinned in the OS image or, for site-config and site-netpolicy, the verified bundle, applies its own sequence and rollback floors, and installs through the one installer.",
+    "spool": {
+      "directory": "/var/lib/suderra/update-requests",
+      "entry": "One DSSE envelope of one carried statement, exactly the bytes the cloud produced: no wrapper document, no re-serialization. What root needs beyond the statement comes from signed members of the statement (fetch below), never from the entry.",
+      "name": "<statement digest>.dsse: the 64 lowercase hex of the statement digest (statements.json dsse.statement_digest), so a repeated request replaces itself.",
+      "name_pattern": "^[0-9a-f]{64}\\.dsse$",
+      "temporary_name_pattern": "^\\.[0-9a-f]{64}\\.dsse\\.tmp-[0-9]+$",
+      "temporary_rule": "The agent writes <temporary name>, fsyncs it and file and directory, then rename(2)s it to its name; the temporary name is a dot-file, so root never reads one. The agent removes a temporary file another process left behind before it counts the directory.",
+      "owner": "suderra",
+      "mode": "0600",
+      "max_entry_bytes": 65536,
+      "max_pending_entries": 4,
+      "max_pending_bytes": 262144,
+      "backlog_rule": "A request that would exceed max_pending_entries or max_pending_bytes is refused (update-requests-backlog) and nothing is written; a request for a statement already in the directory replaces it and is never counted twice.",
+      "agent_is_only_writer": "Root never writes, renames or deletes inside the spool (DEC-4.3). The agent removes an entry once /run/suderra/results holds a result whose subject.statement_digest is the entry's name, and any entry older than max_entry_age_seconds.",
+      "max_entry_age_seconds": 86400,
+      "trigger": "suderra-edge-request.path watches the directory and starts suderra-edge-request.service, which consumes one entry at a time under /run/suderra-update.lock, shared with the RAUC processes (DEC-2.3, DEC-2.9).",
+      "root_reads": "A name that is not name_pattern is ignored. Root opens an entry with openat(O_NOFOLLOW | O_NONBLOCK), refuses anything that is not a regular file (symlink, FIFO, device) or larger than max_entry_bytes by fstat on the open descriptor, copies the bytes into its own root-only directory and processes only the copy.",
+      "concluded": "Root records the digest of every entry it concluded under /data/suderra/os/requests/ and skips a concluded entry silently, so an entry that stays in the spool until the agent prunes it never produces a second result."
+    },
+    "carried_statements": {
+      "suderra.edge-update.v1": {
+        "result_kind": "edge-update",
+        "sequence_file": "/data/suderra/os/seq/edge-update",
+        "fetch": [
+          "release_statement.url: the suderra.edge-release.v1 envelope, whose statement digest must equal release_statement.digest",
+          "artifact_url: the release artifact, whose size and sha256 and whose suderra-agent member's digest come from the release statement (DEC-1.5)"
+        ],
+        "root_action": "Installs the release through the one installer (suderra-installer edge update): verify, download, check, unpack beside the current release, switch current atomically, restart the agent, run the health window; a failed window restores the previous release and the site config version it ran with together (DEC-2.6, EI-055).",
+        "maintenance": "The statement's own local_approval and max_outage_seconds, and the acceptance window."
+      },
+      "suderra.os-update.v1": {
+        "result_kind": "os-update",
+        "sequence_file": "/data/suderra/os/seq/os-update",
+        "fetch": [
+          "bundle.url: the RAUC bundle, whose size and sha256 must equal bundle.size_bytes and bundle.digest; root installs from the verified copy it holds, never by re-reading a path"
+        ],
+        "root_action": "Runs the preflight (compatible, min_current_version, rollback floor, supported_agent_abi against the installed agent), hands the verified bundle to suderra-ota, which installs it into the inactive slot through RAUC, schedules the approved reboot and leaves the new slot on trial until the health gate marks it good; the OS rollback floor rises to rollback_floor only then (DEC-2.5, DEC-2.9, DEC-23).",
+        "maintenance": "The statement's own local_approval and max_outage_seconds, and the acceptance window."
+      },
+      "suderra.site-config.v1": {
+        "result_kind": "site-config",
+        "sequence_file": "/data/suderra/os/seq/site-config",
+        "fetch": [
+          "site_bundle_url: the suderra.site-bundle.v1 document with the site files and the RBAC manifest the site config names by digest; a site-config statement on this channel without it cannot be applied (site-bundle-missing)"
+        ],
+        "root_action": "Verifies the site config, the RBAC manifest and the files against it, writes the complete new site directory under a temporary name next to the installed one and activates it with rename(2), updates the install receipt, then reloads the agent (ExecReload) when that is enough and restarts it otherwise; a changed revpi/config.rsc is loaded into piControl by root's own tool, never by the agent. A failed health window restores the previous site version (DEC-4.12, DEC-2.6). Refreshing an expiring RBAC manifest is the same path: a new site config at the next update_seq that names the renewed manifest; there is no separate RBAC channel.",
+        "maintenance": "Root requires a local approval, and reports approval-missing if the window closes without one, when the new site config changes io-config.yaml, site-policy.json or revpi/config.rsc compared with the installed one (DEC-4.12, DEC-13.4); a change of config.yaml and the RBAC manifest alone needs only the acceptance window."
+      },
+      "suderra.site-netpolicy.v1": {
+        "result_kind": "site-netpolicy",
+        "sequence_file": "/data/suderra/os/seq/site-netpolicy",
+        "fetch": [],
+        "root_action": "Renders the policy with the typed renderer, runs nft -c against the running kernel, loads it atomically, falls back to the last-known-good ruleset and raises an alarm when the load fails, and installs the statement as site-netpolicy.dsse beside the site config so it is re-verified before every start (DEC-11.7). The policy never removes the WAN broker and API rule.",
+        "maintenance": "The acceptance window; a policy that changes the OT allowlist needs no local approval, because it can only narrow or widen what the agent reaches, and nft's atomic load keeps the previous rules on failure."
+      },
+      "suderra.trust-anchors.v1": {
+        "result_kind": "trust-anchors",
+        "sequence_file": "/data/suderra/os/seq/trust-anchors",
+        "fetch": [],
+        "root_action": "Verifies the bundle against the fleet-root key pinned in the OS image, applies the bundle_seq ratchet (a smaller bundle_seq is refused, an equal one only for the identical bundle), checks that the device's tenant is in tenant_scope and that every edge-release and edge-provisioning anchor is an OS-pinned key, and installs it as trust-anchors.dsse (DEC-3.7, DEC-22).",
+        "maintenance": "The bundle carries no window of its own; root accepts it at any time and the agent re-verifies it when it next loads it."
+      }
+    },
+    "maintenance": {
+      "window": "The acceptance window of a statement, not_before <= now < expires_at, is the maintenance window the cloud chose: root accepts an edge-update, an os-update or a site-config only inside it, so the cloud delivers the statement early and root applies it when the window opens (not-yet-valid until then) or refuses it after it closed (expired).",
+      "blockers": "Root refuses to start an edge-update, an os-update or a site-config while update_blockers of the agent health view (schemas/agent-health.schema.json) is not empty: an active alarm or a forced output value (DEC-13.4). The result reason is maintenance-blocked. An absent, unreadable or non-conforming health view counts as blocked.",
+      "local_approval": "A statement with local_approval true is applied only after a local operator approval, a root-local action whose mechanism the OS owns; without one by the end of the window the result reason is approval-missing.",
+      "outage_budget": "max_outage_seconds bounds the outage of one update, from the shutdown safe-state to the first control tick; the health window of the update fails when the budget is exceeded.",
+      "after_failure": "After a rollback root takes no further update until a new statement with a larger update_seq arrives: a rollback never loops (DEC-2 risks)."
+    }
+  },
+  "result_telemetry": {
+    "description": "How the typed results root writes reach the cloud (DEC-27). Root writes suderra.result.v1 documents; the agent publishes them; the cloud stores them per device as device-reported evidence, never as authority.",
+    "source": "/run/suderra/results, written by root (mutable-state.json): one JSON document per result, schemas/result.schema.json.",
+    "file_name_pattern": "^(volatile-)?[0-9]{16}-[a-z0-9]+(-[a-z0-9]+)*\\.json$",
+    "file_name_rule": "<seq, 16 digits>-<kind>.json, with the prefix volatile- while /data is not available, so the result exists only in /run until /data is back (Suderra-OS src/results.rs).",
+    "topic": "tenants/{tenant_id}/devices/{device_id}/results",
+    "payload": "Exactly one suderra.result.v1 document per message, byte for byte the document root wrote: the agent parses it only to check that it is a result document and republishes the bytes it read.",
+    "qos": 1,
+    "retain": false,
+    "publication_rule": "The agent publishes every result of the directory in seq order once per MQTT session and again after a reconnect until the broker acknowledged it, and keeps the highest acknowledged seq in $DATA/state. The cloud deduplicates on (device_id, seq); seq is monotonic per device and assigned by root.",
+    "acl": "A device publishes only on its own results topic; the cloud's result consumer subscribes with a tenant-scoped service grant (mqtt-auth.service.ts checkTopicAccess).",
+    "trust": "Unsigned observation: results are never authority (DEC-27); the cloud records them as device-reported evidence."
+  }
+}

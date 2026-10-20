@@ -11,6 +11,11 @@ use super::encoding::{
     is_device_code, is_ed25519_public_key, is_https_url, is_kernel_symbol, is_nonce, is_os_version,
     is_pem_certificate, is_semver, is_sha256_hex, is_tag_id, is_timestamp, is_uuid,
 };
+#[cfg(test)]
+use super::encoding::{
+    is_host, is_mac, is_pci_path, is_rauc_compatible, is_slug, parse_abi_range, parse_cidr4,
+    parse_version_core,
+};
 use super::json::{check_strict_object, MAX_SAFE_INTEGER};
 use super::registry::{
     AgentProfile, Arch, BindingMethod, BoardProfile, CargoFeature, Purpose, Reason, SitePath,
@@ -714,6 +719,10 @@ pub(crate) struct SiteConfig {
     pub expires_at: String,
     /// Every site file by fixed path.
     pub files: BTreeMap<SitePath, SiteFile>,
+    /// Where root fetches the site bundle when the statement arrives on the
+    /// update channel; a provisioning delivery carries the files itself.
+    #[serde(default, deserialize_with = "present")]
+    pub site_bundle_url: Option<String>,
     /// The delivered RBAC manifest.
     pub rbac_manifest: RbacRef,
 }
@@ -739,10 +748,451 @@ impl Statement for SiteConfig {
                 "site file size_bytes out of range",
             )?;
         }
+        if let Some(url) = &self.site_bundle_url {
+            ensure(is_https_url(url), "site_bundle_url is not an https URL")?;
+        }
         self.rbac_manifest.digest.validate()?;
         sequence(
             self.rbac_manifest.policy_version,
             "policy_version out of range",
+        )
+    }
+
+    fn window(&self) -> Option<(&str, &str)> {
+        Some((&self.not_before, &self.expires_at))
+    }
+    fn binding(&self) -> Option<&DeviceBinding> {
+        Some(&self.device_binding)
+    }
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+    fn tenant_id(&self) -> Option<&str> {
+        Some(&self.tenant_id)
+    }
+    fn sequence(&self) -> Option<u64> {
+        Some(self.update_seq)
+    }
+}
+
+// ---------------------------------------------------------------- edge update
+//
+// The three statements below are what the root update worker verifies
+// (ADR-048 DEC-2, DEC-11.7, DEC-23). The worker is not wired yet, so they are
+// compiled for tests only, where they are the contract's executable
+// specification; wiring the worker removes the `cfg(test)`.
+
+/// edge-update `release_statement`.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateReleaseRef {
+    /// Statement digest of the release statement the update installs.
+    pub digest: Digest,
+    /// Where root fetches the release statement envelope.
+    pub url: String,
+}
+
+/// suderra.edge-update.v1.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EdgeUpdate {
+    #[serde(rename = "_type")]
+    type_: String,
+    /// Tenant.
+    pub tenant_id: String,
+    /// Device.
+    pub device_id: String,
+    /// Hardware binding.
+    pub device_binding: DeviceBinding,
+    /// Board profile.
+    pub board: BoardProfile,
+    /// Architecture.
+    pub arch: Arch,
+    /// Agent profile.
+    pub agent_profile: AgentProfile,
+    /// Release version.
+    pub version: String,
+    /// Release security_version.
+    pub security_version: u64,
+    /// Monotonic per device and payload kind.
+    pub update_seq: u64,
+    /// Window start.
+    pub not_before: String,
+    /// Window end.
+    pub expires_at: String,
+    /// The release statement the update installs.
+    pub release_statement: UpdateReleaseRef,
+    /// Where the release artifact is downloaded.
+    pub artifact_url: String,
+    /// Whether root applies the update only after a local approval.
+    pub local_approval: bool,
+    /// Outage budget in seconds.
+    pub max_outage_seconds: u64,
+}
+
+#[cfg(test)]
+impl Statement for EdgeUpdate {
+    const TYPE: StatementType = StatementType::EdgeUpdate;
+
+    fn validate(&self) -> Check {
+        type_member(&self.type_, Self::TYPE)?;
+        uuid(&self.tenant_id, "tenant_id is not a UUID")?;
+        uuid(&self.device_id, "device_id is not a UUID")?;
+        self.device_binding.validate()?;
+        ensure(
+            is_semver(&self.version),
+            "version is not a path-safe semver",
+        )?;
+        security_version(self.security_version)?;
+        sequence(self.update_seq, "update_seq out of range")?;
+        window(&self.not_before, &self.expires_at)?;
+        self.release_statement.digest.validate()?;
+        ensure(
+            is_https_url(&self.release_statement.url),
+            "release_statement.url is not an https URL",
+        )?;
+        ensure(
+            is_https_url(&self.artifact_url),
+            "artifact_url is not an https URL",
+        )?;
+        ensure(
+            (1..=3600).contains(&self.max_outage_seconds),
+            "max_outage_seconds out of range",
+        )
+    }
+
+    fn window(&self) -> Option<(&str, &str)> {
+        Some((&self.not_before, &self.expires_at))
+    }
+    fn binding(&self) -> Option<&DeviceBinding> {
+        Some(&self.device_binding)
+    }
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+    fn tenant_id(&self) -> Option<&str> {
+        Some(&self.tenant_id)
+    }
+    fn sequence(&self) -> Option<u64> {
+        Some(self.update_seq)
+    }
+}
+
+// ------------------------------------------------------------------ OS update
+
+/// os-update `bundle`.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OsBundle {
+    /// Where root fetches the RAUC bundle.
+    pub url: String,
+    /// SHA-256 over the whole bundle file.
+    pub digest: Digest,
+    /// Exact size of the bundle.
+    pub size_bytes: u64,
+}
+
+/// suderra.os-update.v1.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OsUpdate {
+    #[serde(rename = "_type")]
+    type_: String,
+    /// Tenant.
+    pub tenant_id: String,
+    /// Device.
+    pub device_id: String,
+    /// Hardware binding.
+    pub device_binding: DeviceBinding,
+    /// OS version the bundle installs.
+    pub version: String,
+    /// RAUC compatible of the target image.
+    pub compatible: String,
+    /// Oldest OS version the update may start from.
+    pub min_current_version: String,
+    /// OS rollback floor once the new slot is healthy.
+    pub rollback_floor: String,
+    /// Agent ABI range of the new OS, `MIN-MAX`.
+    pub supported_agent_abi: String,
+    /// Monotonic per device and payload kind.
+    pub update_seq: u64,
+    /// Window start.
+    pub not_before: String,
+    /// Window end.
+    pub expires_at: String,
+    /// The RAUC bundle.
+    pub bundle: OsBundle,
+    /// Whether root schedules the reboot only after a local approval.
+    pub local_approval: bool,
+    /// Outage budget in seconds.
+    pub max_outage_seconds: u64,
+}
+
+#[cfg(test)]
+impl Statement for OsUpdate {
+    const TYPE: StatementType = StatementType::OsUpdate;
+
+    fn validate(&self) -> Check {
+        type_member(&self.type_, Self::TYPE)?;
+        uuid(&self.tenant_id, "tenant_id is not a UUID")?;
+        uuid(&self.device_id, "device_id is not a UUID")?;
+        self.device_binding.validate()?;
+        for (version, what) in [
+            (&self.version, "version"),
+            (&self.min_current_version, "min_current_version"),
+            (&self.rollback_floor, "rollback_floor"),
+        ] {
+            ensure(is_os_version(version), what)?;
+        }
+        ensure(
+            is_rauc_compatible(&self.compatible),
+            "compatible is not a RAUC compatible",
+        )?;
+        ensure(
+            self.supported_agent_abi.len() <= 21
+                && parse_abi_range(&self.supported_agent_abi).is_some(),
+            "supported_agent_abi is not MIN-MAX",
+        )?;
+        // rollback_floor <= version: JSON Schema cannot state it.
+        ensure(
+            parse_version_core(&self.rollback_floor) <= parse_version_core(&self.version),
+            "rollback_floor is above version",
+        )?;
+        sequence(self.update_seq, "update_seq out of range")?;
+        window(&self.not_before, &self.expires_at)?;
+        ensure(
+            is_https_url(&self.bundle.url),
+            "bundle.url is not an https URL",
+        )?;
+        self.bundle.digest.validate()?;
+        ensure(
+            (1..=2_147_483_648).contains(&self.bundle.size_bytes),
+            "bundle.size_bytes out of range",
+        )?;
+        ensure(
+            (1..=3600).contains(&self.max_outage_seconds),
+            "max_outage_seconds out of range",
+        )
+    }
+
+    fn window(&self) -> Option<(&str, &str)> {
+        Some((&self.not_before, &self.expires_at))
+    }
+    fn binding(&self) -> Option<&DeviceBinding> {
+        Some(&self.device_binding)
+    }
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+    fn tenant_id(&self) -> Option<&str> {
+        Some(&self.tenant_id)
+    }
+    fn sequence(&self) -> Option<u64> {
+        Some(self.update_seq)
+    }
+}
+
+// ----------------------------------------------------------- site net policy
+
+/// Network role of an interface.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum NetRole {
+    /// WAN / IT side.
+    Wan,
+    /// OT / PLC side.
+    Ot,
+}
+
+/// site-netpolicy `interfaces[]`: a role for the interface a MAC address or a
+/// PCI path names.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InterfaceRole {
+    /// The role.
+    pub role: NetRole,
+    /// MAC address match.
+    #[serde(default, deserialize_with = "present")]
+    pub mac: Option<String>,
+    /// PCI path match.
+    #[serde(default, deserialize_with = "present")]
+    pub pci_path: Option<String>,
+}
+
+/// Transport protocol of an OT rule.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Proto {
+    /// TCP.
+    Tcp,
+    /// UDP.
+    Udp,
+}
+
+/// An inclusive port range.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PortRange {
+    /// First port.
+    pub from: u64,
+    /// Last port.
+    pub to: u64,
+}
+
+/// site-netpolicy `ot_rules[]`.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OtRule {
+    /// Rule name, unique in the policy.
+    pub id: String,
+    /// Protocol.
+    pub proto: Proto,
+    /// Destination network, CIDR notation.
+    pub dst: String,
+    /// Destination ports.
+    pub ports: Vec<PortRange>,
+    /// Explicit flag that a prefix shorter than /16 is intended.
+    #[serde(default, deserialize_with = "present")]
+    pub wide: Option<bool>,
+}
+
+/// Prefixes shorter than this need `wide: true` in a site policy.
+#[cfg(test)]
+pub(crate) const WIDE_PREFIX_LENGTH: u8 = 16;
+
+/// True when the network address has no bit set below its prefix; JSON Schema
+/// cannot state it.
+#[cfg(test)]
+fn host_bits_zero(address: u32, prefix: u8) -> bool {
+    // host_bits is 0..=32: a u64 mask avoids the shift by 32 of a u32.
+    let host_bits = 32 - u32::from(prefix);
+    u64::from(address) & ((1u64 << host_bits) - 1) == 0
+}
+
+/// site-netpolicy `time_sources[]`.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TimeSource {
+    /// Source name, unique in the policy.
+    pub id: String,
+    /// DNS name or IPv4 address.
+    pub host: String,
+    /// Reached through NTS-KE.
+    pub nts: bool,
+    /// Explicit mark of a plain-NTP source (DEC-7.1).
+    #[serde(default, deserialize_with = "present")]
+    pub unauthenticated: Option<bool>,
+}
+
+/// suderra.site-netpolicy.v1.
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SiteNetpolicy {
+    #[serde(rename = "_type")]
+    type_: String,
+    /// Tenant.
+    pub tenant_id: String,
+    /// Device.
+    pub device_id: String,
+    /// Hardware binding.
+    pub device_binding: DeviceBinding,
+    /// Monotonic per device and payload kind.
+    pub update_seq: u64,
+    /// Window start.
+    pub not_before: String,
+    /// Window end.
+    pub expires_at: String,
+    /// Interface role mapping.
+    pub interfaces: Vec<InterfaceRole>,
+    /// Egress allow rules toward the OT role.
+    pub ot_rules: Vec<OtRule>,
+    /// Site NTP servers.
+    pub time_sources: Vec<TimeSource>,
+}
+
+#[cfg(test)]
+impl Statement for SiteNetpolicy {
+    const TYPE: StatementType = StatementType::SiteNetpolicy;
+
+    fn validate(&self) -> Check {
+        type_member(&self.type_, Self::TYPE)?;
+        uuid(&self.tenant_id, "tenant_id is not a UUID")?;
+        uuid(&self.device_id, "device_id is not a UUID")?;
+        self.device_binding.validate()?;
+        sequence(self.update_seq, "update_seq out of range")?;
+        window(&self.not_before, &self.expires_at)?;
+        ensure(self.interfaces.len() <= 8, "more than 8 interfaces")?;
+        let mut matches = Vec::new();
+        for interface in &self.interfaces {
+            match (&interface.mac, &interface.pci_path) {
+                (Some(mac), None) => {
+                    ensure(is_mac(mac), "interface mac")?;
+                    matches.push(mac.as_str());
+                }
+                (None, Some(path)) => {
+                    ensure(is_pci_path(path), "interface pci_path")?;
+                    matches.push(path.as_str());
+                }
+                _ => return Err("an interface names exactly one of mac and pci_path".to_owned()),
+            }
+        }
+        ensure(unique(&matches), "an interface match value appears twice")?;
+        ensure(self.ot_rules.len() <= 64, "more than 64 OT rules")?;
+        for rule in &self.ot_rules {
+            ensure(is_slug(&rule.id), "rule id")?;
+            let Some((address, prefix)) = parse_cidr4(&rule.dst) else {
+                return Err("dst is not a CIDR".to_owned());
+            };
+            ensure(host_bits_zero(address, prefix), "dst has host bits set")?;
+            // A prefix shorter than /16 needs the flag, a longer one must not carry it.
+            ensure(
+                (prefix < WIDE_PREFIX_LENGTH) == (rule.wide == Some(true)),
+                "wide is required on a prefix shorter than /16 and refused elsewhere",
+            )?;
+            ensure(rule.wide.is_none_or(|w| w), "wide is only ever true")?;
+            ensure(
+                (1..=16).contains(&rule.ports.len()),
+                "a rule has 1 to 16 port ranges",
+            )?;
+            for range in &rule.ports {
+                ensure(
+                    (1..=65_535).contains(&range.from) && (1..=65_535).contains(&range.to),
+                    "port out of range",
+                )?;
+                ensure(range.from <= range.to, "port range runs backwards")?;
+            }
+        }
+        let ids: Vec<&str> = self.ot_rules.iter().map(|r| r.id.as_str()).collect();
+        ensure(unique(&ids), "a rule id appears twice")?;
+        ensure(self.time_sources.len() <= 4, "more than 4 time sources")?;
+        for source in &self.time_sources {
+            ensure(is_slug(&source.id), "time source id")?;
+            ensure(is_host(&source.host), "time source host")?;
+            // nts true carries no mark; nts false needs unauthenticated true.
+            ensure(
+                match (source.nts, source.unauthenticated) {
+                    (true, None) | (false, Some(true)) => true,
+                    (true, Some(_)) | (false, _) => false,
+                },
+                "a plain-NTP source needs unauthenticated true; an NTS source refuses it",
+            )?;
+        }
+        let ids: Vec<&str> = self.time_sources.iter().map(|s| s.id.as_str()).collect();
+        let hosts: Vec<&str> = self.time_sources.iter().map(|s| s.host.as_str()).collect();
+        ensure(
+            unique(&ids) && unique(&hosts),
+            "a time source appears twice",
         )
     }
 

@@ -1,0 +1,19 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 16,
+  "kind": "site-netpolicy",
+  "outcome": "alarm",
+  "reason": "firewall-load-failed",
+  "subject": {
+    "statement_type": "suderra.site-netpolicy.v1",
+    "statement_digest": {
+      "sha256": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c"
+    },
+    "update_seq": 2
+  },
+  "detail": "nft -c refused the rendered ruleset; the last-known-good ruleset stays in force"
+}

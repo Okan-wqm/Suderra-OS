@@ -35,7 +35,11 @@
         "lifecycle",
         "health-gate",
         "data-unlock",
-        "time-state"
+        "time-state",
+        "os-update",
+        "update-request",
+        "site-netpolicy",
+        "trust-anchors"
       ]
     },
     "outcome": {
@@ -167,7 +171,8 @@
               "site-file-digest-mismatch",
               "tenant-mismatch",
               "tenant-scope-mismatch",
-              "trust-anchors-digest-mismatch"
+              "trust-anchors-digest-mismatch",
+              "usb-layout-invalid"
             ]
           }
         }
@@ -224,24 +229,35 @@
           "reason": {
             "enum": [
               "agent-abi-unsupported",
+              "approval-missing",
               "archive-invalid",
               "artifact-digest-mismatch",
               "binary-digest-mismatch",
               "board-mismatch",
               "clock-unsynced",
+              "device-binding-mismatch",
+              "device-id-mismatch",
               "envelope-invalid",
+              "expired",
               "fetch-failed",
               "io-error",
               "kernel-config-missing",
               "key-epoch-below-ratchet",
               "key-purpose-mismatch",
               "key-unknown",
+              "maintenance-blocked",
+              "not-yet-valid",
               "os-version-too-old",
               "payload-json-invalid",
               "payload-type-mismatch",
+              "release-digest-mismatch",
+              "release-mismatch",
               "release-profile-mismatch",
+              "rollback-below-floor",
               "schema-invalid",
-              "signature-invalid"
+              "sequence-replay",
+              "signature-invalid",
+              "tenant-mismatch"
             ]
           }
         }
@@ -324,15 +340,19 @@
               "actor-key-not-anchored",
               "anchor-invalid",
               "anchor-not-os-pinned",
+              "approval-missing",
               "clock-unsynced",
+              "config-rsc-load-failed",
               "device-binding-mismatch",
               "device-id-mismatch",
               "envelope-invalid",
               "expired",
+              "fetch-failed",
               "io-error",
               "key-epoch-below-ratchet",
               "key-purpose-mismatch",
               "key-unknown",
+              "maintenance-blocked",
               "not-yet-valid",
               "payload-json-invalid",
               "payload-type-mismatch",
@@ -340,6 +360,7 @@
               "schema-invalid",
               "sequence-replay",
               "signature-invalid",
+              "site-bundle-missing",
               "site-file-digest-mismatch",
               "tenant-mismatch",
               "tenant-scope-mismatch"
@@ -360,7 +381,13 @@
       "then": {
         "properties": {
           "reason": {
-            "enum": ["firewall-load-failed", "io-error", "receipt-missing"]
+            "enum": [
+              "firewall-load-failed",
+              "io-error",
+              "lifecycle-inconsistent",
+              "provisioning-mode-active",
+              "receipt-missing"
+            ]
           }
         }
       }
@@ -458,6 +485,137 @@
         "properties": {
           "reason": {
             "enum": ["clock-below-floor", "clock-unsynced"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "os-update"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "agent-abi-unsupported",
+              "approval-missing",
+              "artifact-digest-mismatch",
+              "clock-unsynced",
+              "compatible-mismatch",
+              "device-binding-mismatch",
+              "device-id-mismatch",
+              "envelope-invalid",
+              "expired",
+              "fetch-failed",
+              "io-error",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "maintenance-blocked",
+              "not-yet-valid",
+              "os-version-too-old",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "rauc-install-failed",
+              "rollback-below-floor",
+              "schema-invalid",
+              "sequence-replay",
+              "signature-invalid",
+              "tenant-mismatch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update-request"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "io-error",
+              "request-not-regular-file",
+              "request-too-large",
+              "request-unsupported"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "site-netpolicy"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "clock-unsynced",
+              "device-binding-mismatch",
+              "device-id-mismatch",
+              "envelope-invalid",
+              "expired",
+              "firewall-load-failed",
+              "io-error",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "not-yet-valid",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "schema-invalid",
+              "sequence-replay",
+              "signature-invalid",
+              "tenant-mismatch"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "trust-anchors"
+          }
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "anchor-invalid",
+              "anchor-not-os-pinned",
+              "envelope-invalid",
+              "io-error",
+              "key-epoch-below-ratchet",
+              "key-purpose-mismatch",
+              "key-unknown",
+              "payload-json-invalid",
+              "payload-type-mismatch",
+              "schema-invalid",
+              "sequence-replay",
+              "signature-invalid",
+              "tenant-scope-mismatch"
+            ]
           }
         }
       }

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:site-bundle",
+  "title": "suderra.site-bundle.v1 site files and RBAC manifest for a site-config update",
+  "description": "What root fetches from the site_bundle_url of a suderra.site-config.v1 statement on the update channel (channels.json update_channel, ADR-048 DEC-4.12). The site-config update request carries only the signed statement, which fits the agent's hand-over bounds; the site files and the RBAC manifest it names by digest travel in this one document instead, because they can be larger than a command may carry. The document is unsigned: every byte of it is checked against the signed site config (site-file-digest-mismatch, rbac-manifest-digest-mismatch), so a substituted or truncated document can only fail the update. It has the members of an edge-provisioning delivery that the site config names (delivery.json), and root installs them the same way (delivery.json installation). Because the URL is part of the signed statement and may be time-limited, the cloud serves it only for the statement's window; the document itself carries no secret beyond the site's own configuration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_type", "rbac_manifest", "site_files"],
+  "properties": {
+    "_type": {
+      "const": "suderra.site-bundle.v1"
+    },
+    "rbac_manifest": {
+      "description": "suderra.rbac-manifest.v1 envelope the site config names.",
+      "$ref": "urn:suderra:edge-contract:v1:schema:dsse-envelope"
+    },
+    "site_files": {
+      "description": "Base64 bytes of every site file the site config names, keyed by its fixed path.",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/site_path"
+      },
+      "required": ["config.yaml"],
+      "additionalProperties": {
+        "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/base64"
+      },
+      "properties": {
+        "config.yaml": {
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/base64"
+        }
+      }
+    }
+  }
+}

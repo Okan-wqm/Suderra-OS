@@ -1,0 +1,10 @@
+{
+  "payloadType": "application/vnd.suderra.site-netpolicy.v1+json",
+  "payload": "eyJfdHlwZSI6InN1ZGVycmEuc2l0ZS1uZXRwb2xpY3kudjEiLCJkZXZpY2VfYmluZGluZyI6eyJkaWdlc3QiOnsic2hhMjU2IjoiN2RjMTIyNTIwMWNlODNjNDhmNTAyZDA0MjFhZDdiZmU1OWFhZjljMDA4OGZlY2FiMGM1YTZiYjgwZDM2MGFmNCJ9LCJtZXRob2QiOiJ0cG0tZWstc2hhMjU2In0sImRldmljZV9pZCI6IjdlNTcwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDBkMSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIxVDAwOjAwOjAwWiIsImludGVyZmFjZXMiOltdLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0yMFQwMDowMDowMFoiLCJvdF9ydWxlcyI6W10sInRlbmFudF9pZCI6IjdlNTcwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInRpbWVfc291cmNlcyI6W10sInVwZGF0ZV9zZXEiOjJ9",
+  "signatures": [
+    {
+      "keyid": "bcd0a5d3f56388b013455d45f0c0285d9aa35770d237ab7b32db7f9b9bd4952a",
+      "sig": "Y3fCCfin0B76Gh0cNUerrxAq/i2uEk38dyZbzhOuVHmxi4xbuKiOdELrquHN4MnAQXBf4nGUPmBW2lCEsDvcDw=="
+    }
+  ]
+}

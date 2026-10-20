@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:suderra:edge-contract:v1:schema:edge-activation-request",
+  "title": "POST /api/devices/activate request of a Suderra OS agent",
+  "description": "The activation request of a device on the Suderra OS channel (channels.json activation, ADR-048 DEC-5.7, DEC-5.8, DEC-10). It keeps the member names of the cloud's DeviceActivationRequest (camelCase) and adds what the Suderra OS flow needs: deviceBinding, the hardware binding root recorded (identity.json device_binding), which the cloud compares with the binding the manifest reservation was made for, so a token alone never activates another device; and installedManifest, the statement digest of the manifest root installed (identity.json device.installed_manifest), so the cloud names exactly that manifest in the activation receipt even when the device fetched more than one. The fingerprint carries no machine-id and no CPU serial: Suderra OS has no machine-id identity (DEC-4.9) and the binding replaces both. The token is the single-use provisioning token the technician used; it is never logged. Generic-channel devices keep the legacy request, which this schema does not describe.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["deviceId", "token", "fingerprint", "agentVersion", "deviceBinding"],
+  "properties": {
+    "deviceId": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/uuid"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["macAddresses"],
+      "properties": {
+        "macAddresses": {
+          "description": "SHA-256 of each interface's MAC address, lowercase hex; raw MAC addresses are never sent.",
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/sha256_hex"
+          }
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        }
+      }
+    },
+    "agentVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "deviceBinding": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/device_binding"
+    },
+    "installedManifest": {
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
+    }
+  }
+}
