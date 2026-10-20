@@ -211,6 +211,12 @@ if [ -n "${BUILD_DIR:-}" ]; then
     fi
     grep -E '^CONFIG_[A-Z0-9_]+=[ym]$' "${kernel_configs[0]}" > "${TARGET_DIR}/etc/suderra/kernel-config"
     chmod 0644 "${TARGET_DIR}/etc/suderra/kernel-config"
+    # Kernel config contract (ADR-048 DEC-8.10): no image is built whose
+    # resolved kernel lacks a required symbol, names a symbol the kernel does
+    # not define, or silently drops a line of its config files.
+    python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-kernel-config.py" resolved \
+        --root "${SUDERRA_EXTERNAL_DIR}" --defconfig "${DEFCONFIG_NAME}_defconfig" \
+        --kernel-tree "$(dirname -- "${kernel_configs[0]}")"
 else
     echo "ERROR: BUILD_DIR is not set; post-build runs from Buildroot, which exports it"
     exit 1
