@@ -112,9 +112,10 @@ pub(crate) fn build_request(paths: &Paths, facts: &ImageFacts) -> Result<Provisi
     Ok(request)
 }
 
-/// Lifecycle states in which root installs a provisioning delivery.
-fn provisionable(paths: &Paths) -> Result<LifecycleState> {
-    let state = lifecycle::read(paths).state();
+/// Lifecycle states in which root installs a provisioning delivery; an
+/// ended MAINTENANCE window is ACTIVE and closed.
+fn provisionable(paths: &Paths, now: &str) -> Result<LifecycleState> {
+    let state = lifecycle::effective(paths, now);
     if !matches!(
         state,
         LifecycleState::Provisioning | LifecycleState::Maintenance
@@ -554,7 +555,7 @@ pub(crate) fn install_from_files(
     artifact: &Path,
     now: &str,
 ) -> Result<Installed> {
-    provisionable(paths)?;
+    provisionable(paths, now)?;
     let outcome = verify_delivery(paths, facts, keys, delivery_bytes, request, now);
     let manifest = outcome.as_ref().ok().map(|(d, _)| d.manifest.clone());
     let installed =
@@ -695,7 +696,7 @@ pub(crate) async fn provision(
     if !is_device_code(device_code) {
         bail!("device code {device_code:?} is not a contract device_code");
     }
-    provisionable(paths)?;
+    provisionable(paths, &now_timestamp())?;
     let token_bytes = read_root_file(token_file, MAX_TOKEN)?.context("token file is missing")?;
     let token = String::from_utf8(token_bytes).context("token is not UTF-8")?;
     let token = token.strip_suffix('\n').unwrap_or(&token).to_owned();
@@ -1545,6 +1546,21 @@ mod tests {
                 .reason,
             Reason::CurrentLinkMismatch
         );
+    }
+
+    #[test]
+    fn an_ended_maintenance_window_refuses_provisioning() {
+        let dev = device(LifecycleState::Provisioning);
+        dev.install(&Spec::default()).unwrap();
+        let newer = reprovisioning(&dev);
+        lifecycle::write(
+            &dev.paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-20T11:00:00Z".into()),
+        )
+        .unwrap();
+        assert!(dev.install(&newer).is_err());
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
     }
 
     #[test]

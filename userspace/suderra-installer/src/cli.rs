@@ -130,9 +130,15 @@ pub struct LifecycleArgs {
 /// Lifecycle operations (ADR-048 DEC-12).
 #[derive(Subcommand, Debug)]
 pub enum LifecycleCommand {
-    /// Print the lifecycle state (LOCKED when unknown).
+    /// Print the lifecycle state in force now (LOCKED when unknown; ACTIVE
+    /// once a MAINTENANCE window has ended).
     Status,
-    /// Boot-time evaluation and mirror to /run/suderra/lifecycle.
+    /// Create the store as FACTORY on the boot that formatted /data
+    /// (suderra-data-unlock; needs /run/suderra-os/data-created).
+    Factory,
+    /// Boot-time and periodic evaluation: record FACTORY -> PROVISIONING
+    /// and the end of a MAINTENANCE window, and mirror the state to
+    /// /run/suderra/lifecycle.
     Init,
     /// Verify the agent's activation receipt and record ACTIVE.
     Activate,

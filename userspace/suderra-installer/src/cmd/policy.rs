@@ -15,7 +15,7 @@
 
 use crate::cli::PolicyArgs;
 use crate::cmd::lifecycle;
-use crate::contracts::encoding::sha256_hex;
+use crate::contracts::encoding::{now_timestamp, sha256_hex};
 use crate::contracts::registry::LifecycleState;
 use crate::fsutil::{ensure_dir, read_root_file, write_atomic};
 use crate::paths::Paths;
@@ -74,8 +74,8 @@ pub(crate) fn default_route_iface(route: &str) -> Option<String> {
 }
 
 /// Selects the ruleset for the current lifecycle (DEC-11.3).
-pub(crate) fn select(paths: &Paths) -> Result<Ruleset> {
-    let state = lifecycle::read(paths).state();
+pub(crate) fn select(paths: &Paths, now: &str) -> Result<Ruleset> {
+    let state = lifecycle::effective(paths, now);
     if !matches!(
         state,
         LifecycleState::Provisioning | LifecycleState::Maintenance
@@ -152,8 +152,8 @@ fn load(paths: &Paths, runner: &dyn Runner, program: &str) -> Result<()> {
 
 /// Applies the selected ruleset (falling back to the appliance ruleset) and
 /// records the loaded hash; returns what was loaded.
-pub(crate) fn apply(paths: &Paths, runner: &dyn Runner) -> Result<Ruleset> {
-    let selected = select(paths)?;
+pub(crate) fn apply(paths: &Paths, runner: &dyn Runner, now: &str) -> Result<Ruleset> {
+    let selected = select(paths, now)?;
     let loaded = match render(paths, &selected).and_then(|p| load(paths, runner, &p)) {
         Ok(()) => selected,
         Err(e) if selected != Ruleset::Appliance => {
@@ -178,7 +178,7 @@ pub(crate) fn apply(paths: &Paths, runner: &dyn Runner) -> Result<Ruleset> {
 /// `suderra-installer policy apply`.
 pub(crate) fn run(_args: PolicyArgs) -> Result<()> {
     let paths = Paths::system()?;
-    match apply(&paths, &SystemRunner)? {
+    match apply(&paths, &SystemRunner, &now_timestamp())? {
         Ruleset::Appliance => println!("appliance"),
         Ruleset::Provisioning { iface } => println!("provisioning {iface}"),
     }
@@ -189,6 +189,8 @@ pub(crate) fn run(_args: PolicyArgs) -> Result<()> {
 mod tests {
     use super::*;
     use crate::test_support::FakeRunner;
+
+    const NOW: &str = "2026-10-20T12:00:00Z";
 
     const ROUTE: &str =
         "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
@@ -227,7 +229,7 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
         let (_tmp, paths) = setup(Some(LifecycleState::Provisioning));
         let runner = FakeRunner::default();
         assert_eq!(
-            apply(&paths, &runner).unwrap(),
+            apply(&paths, &runner, NOW).unwrap(),
             Ruleset::Provisioning {
                 iface: "eth0".into()
             }
@@ -243,11 +245,33 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
         ] {
             let (_tmp, paths) = setup(state);
             assert_eq!(
-                apply(&paths, &FakeRunner::default()).unwrap(),
+                apply(&paths, &FakeRunner::default(), NOW).unwrap(),
                 Ruleset::Appliance,
                 "{state:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_ended_maintenance_window_loads_the_appliance_ruleset() {
+        let (_tmp, paths) = setup(None);
+        lifecycle::write(
+            &paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-20T13:00:00Z".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
+            Ruleset::Provisioning {
+                iface: "eth0".into()
+            }
+        );
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), "2026-10-20T13:00:00Z").unwrap(),
+            Ruleset::Appliance,
+            "the window has ended even though init has not recorded it"
+        );
     }
 
     #[test]
@@ -259,7 +283,7 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
         )
         .unwrap();
         assert_eq!(
-            apply(&paths, &FakeRunner::default()).unwrap(),
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
             Ruleset::Appliance
         );
 
@@ -268,6 +292,6 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
             fail_check_containing: Some("provision_iface".into()),
             ..FakeRunner::default()
         };
-        assert_eq!(apply(&paths, &runner).unwrap(), Ruleset::Appliance);
+        assert_eq!(apply(&paths, &runner, NOW).unwrap(), Ruleset::Appliance);
     }
 }

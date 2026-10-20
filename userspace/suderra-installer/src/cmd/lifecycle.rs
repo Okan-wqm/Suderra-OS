@@ -66,6 +66,35 @@ impl Reading {
             Reading::Missing | Reading::Corrupt(_) => LifecycleState::Locked,
         }
     }
+
+    /// The state in force at `now`: a MAINTENANCE window whose end has
+    /// passed is ACTIVE (lifecycle.json MAINTENANCE -> ACTIVE), whether or
+    /// not `init` has recorded that transition yet, so an expired window
+    /// never keeps the provisioning surface open.
+    pub(crate) fn state_at(&self, now: &str) -> LifecycleState {
+        match self {
+            Reading::Known(r) if window_ended(r, now) => LifecycleState::Active,
+            other => other.state(),
+        }
+    }
+}
+
+fn window_ended(r: &LifecycleRecord, now: &str) -> bool {
+    r.state == LifecycleState::Maintenance
+        && r.maintenance_expires_at
+            .as_deref()
+            .is_some_and(|end| now >= end)
+}
+
+/// The lifecycle state in force at `now` (see [`Reading::state_at`]).
+pub(crate) fn effective(paths: &Paths, now: &str) -> LifecycleState {
+    read(paths).state_at(now)
+}
+
+/// Path of the proof suderra-data-unlock writes on the boot that formatted
+/// /data (DEC-12).
+fn data_created(paths: &Paths) -> std::path::PathBuf {
+    paths.run_os().join("data-created")
 }
 
 fn record_ok(r: &LifecycleRecord) -> bool {
@@ -149,64 +178,95 @@ fn transition_report(from: LifecycleState, to: LifecycleState) -> Report {
     )
 }
 
-/// Boot-time evaluation (suderra-lifecycle.service, after /data unlock).
-pub(crate) fn init(paths: &Paths, facts: &ImageFacts, now: &str) -> Result<LifecycleState> {
+/// Creates the store as FACTORY on the boot that formatted /data
+/// (suderra-data-unlock, DEC-12). It needs the data-created proof and never
+/// replaces an existing store.
+pub(crate) fn factory(paths: &Paths) -> Result<()> {
+    if read_root_file(&data_created(paths), 4096)?.is_none() {
+        bail!("no data-created evidence: /data was not formatted on this boot (DEC-12)");
+    }
     match read(paths) {
-        Reading::Known(r) => {
-            if r.state == LifecycleState::Maintenance
-                && r.maintenance_expires_at
-                    .as_deref()
-                    .is_some_and(|t| now >= t)
-            {
-                write(paths, LifecycleState::Active, None)?;
-                record(
-                    paths,
-                    facts,
-                    transition_report(LifecycleState::Maintenance, LifecycleState::Active),
-                )?;
-                return Ok(LifecycleState::Active);
+        Reading::Missing => write(paths, LifecycleState::Factory, None),
+        other => bail!("the lifecycle store already exists ({})", other.state()),
+    }
+}
+
+fn locked_alarm(paths: &Paths, facts: &ImageFacts, why: String) -> Result<LifecycleState> {
+    mirror(paths, LifecycleState::Locked)?;
+    record(
+        paths,
+        facts,
+        Report::not_ok(ResultKind::Lifecycle, Outcome::Alarm, Reason::StateCorrupt)
+            .with_detail(why),
+    )?;
+    Ok(LifecycleState::Locked)
+}
+
+/// FACTORY -> PROVISIONING on positive evidence; the evidence is consumed
+/// only once PROVISIONING is stored.
+fn enter_provisioning(
+    paths: &Paths,
+    facts: &ImageFacts,
+    stored: Option<LifecycleState>,
+) -> Result<LifecycleState> {
+    if facts.variant == Variant::Production && stored.is_none() {
+        write(paths, LifecycleState::Factory, None)?;
+    }
+    write(paths, LifecycleState::Provisioning, None)?;
+    if facts.variant == Variant::Production {
+        std::fs::remove_file(data_created(paths))
+            .context("cannot consume data-created evidence")?;
+    }
+    record(
+        paths,
+        facts,
+        transition_report(LifecycleState::Factory, LifecycleState::Provisioning),
+    )?;
+    Ok(LifecycleState::Provisioning)
+}
+
+/// Boot-time and periodic evaluation (suderra-lifecycle.service, after
+/// /data unlock): records the end of an expired MAINTENANCE window and the
+/// FACTORY -> PROVISIONING entry, and mirrors the state for the agent.
+pub(crate) fn init(paths: &Paths, facts: &ImageFacts, now: &str) -> Result<LifecycleState> {
+    let evidence = match facts.variant {
+        Variant::Dev => true,
+        Variant::Production => read_root_file(&data_created(paths), 4096)?.is_some(),
+    };
+    match read(paths) {
+        Reading::Known(r) if window_ended(&r, now) => {
+            write(paths, LifecycleState::Active, None)?;
+            record(
+                paths,
+                facts,
+                transition_report(LifecycleState::Maintenance, LifecycleState::Active),
+            )?;
+            Ok(LifecycleState::Active)
+        }
+        Reading::Known(r) if r.state == LifecycleState::Factory => {
+            if evidence {
+                return enter_provisioning(paths, facts, Some(LifecycleState::Factory));
             }
+            // A FACTORY store on a later boot is a first boot cut off before
+            // PROVISIONING; without fresh evidence it opens nothing.
+            locked_alarm(
+                paths,
+                facts,
+                "FACTORY store without data-created evidence: the first boot was interrupted (DEC-12)"
+                    .into(),
+            )
+        }
+        Reading::Known(r) => {
             mirror(paths, r.state)?;
             Ok(r.state)
         }
-        Reading::Missing => {
-            let evidence = paths.run_os().join("data-created");
-            let entered = match facts.variant {
-                Variant::Dev => true,
-                Variant::Production => read_root_file(&evidence, 4096)?.is_some(),
-            };
-            if !entered {
-                mirror(paths, LifecycleState::Locked)?;
-                record(
-                    paths,
-                    facts,
-                    Report::not_ok(ResultKind::Lifecycle, Outcome::Alarm, Reason::StateCorrupt)
-                        .with_detail("lifecycle store missing without data-created evidence"),
-                )?;
-                return Ok(LifecycleState::Locked);
-            }
-            if facts.variant == Variant::Production {
-                write(paths, LifecycleState::Factory, None)?;
-                std::fs::remove_file(&evidence).context("cannot consume data-created evidence")?;
-            }
-            write(paths, LifecycleState::Provisioning, None)?;
-            record(
-                paths,
-                facts,
-                transition_report(LifecycleState::Factory, LifecycleState::Provisioning),
-            )?;
-            Ok(LifecycleState::Provisioning)
-        }
-        Reading::Corrupt(why) => {
-            mirror(paths, LifecycleState::Locked)?;
-            record(
-                paths,
-                facts,
-                Report::not_ok(ResultKind::Lifecycle, Outcome::Alarm, Reason::StateCorrupt)
-                    .with_detail(why),
-            )?;
-            Ok(LifecycleState::Locked)
-        }
+        Reading::Missing if evidence => enter_provisioning(paths, facts, None),
+        Reading::Missing => locked_alarm(
+            paths,
+            facts,
+            "lifecycle store missing without data-created evidence".into(),
+        ),
+        Reading::Corrupt(why) => locked_alarm(paths, facts, why),
     }
 }
 
@@ -298,7 +358,7 @@ pub(crate) fn request(
     keys: &KeyStore,
     now: &str,
 ) -> Result<LifecycleState> {
-    let from = read(paths).state();
+    let from = effective(paths, now);
     if from != LifecycleState::Active {
         bail!("lifecycle requests are accepted only in ACTIVE, not {from}");
     }
@@ -373,7 +433,12 @@ pub(crate) fn run(args: LifecycleArgs) -> Result<()> {
     let now = now_timestamp();
     match args.command {
         LifecycleCommand::Status => {
-            println!("{}", read(&paths).state());
+            println!("{}", effective(&paths, &now));
+            Ok(())
+        }
+        LifecycleCommand::Factory => {
+            factory(&paths)?;
+            println!("{}", LifecycleState::Factory);
             Ok(())
         }
         LifecycleCommand::Init => {
@@ -481,6 +546,62 @@ mod tests {
                 corrupt
             );
         }
+    }
+
+    #[test]
+    fn the_factory_store_of_data_unlock_enters_provisioning() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = production(tmp.path());
+        assert!(
+            factory(&paths).is_err(),
+            "FACTORY needs data-created evidence"
+        );
+        std::fs::create_dir_all(paths.run_os()).unwrap();
+        std::fs::write(paths.run_os().join("data-created"), "").unwrap();
+        factory(&paths).unwrap();
+        assert_eq!(read(&paths).state(), LifecycleState::Factory);
+        assert!(
+            factory(&paths).is_err(),
+            "an existing store is never replaced"
+        );
+        assert_eq!(
+            init(&paths, &facts, NOW).unwrap(),
+            LifecycleState::Provisioning
+        );
+        assert_eq!(mirrored(&paths), "PROVISIONING\n");
+        assert!(!paths.run_os().join("data-created").exists());
+    }
+
+    #[test]
+    fn a_factory_store_without_fresh_evidence_opens_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = production(tmp.path());
+        write(&paths, LifecycleState::Factory, None).unwrap();
+        assert_eq!(init(&paths, &facts, NOW).unwrap(), LifecycleState::Locked);
+        assert_eq!(mirrored(&paths), "LOCKED\n");
+        assert_eq!(
+            read(&paths).state(),
+            LifecycleState::Factory,
+            "store untouched"
+        );
+    }
+
+    #[test]
+    fn an_ended_window_is_active_before_init_records_it() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, _) = image(tmp.path());
+        write(
+            &paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-21T00:00:00Z".into()),
+        )
+        .unwrap();
+        assert_eq!(effective(&paths, NOW), LifecycleState::Maintenance);
+        assert_eq!(
+            effective(&paths, "2026-10-21T00:00:00Z"),
+            LifecycleState::Active
+        );
+        assert_eq!(read(&paths).state(), LifecycleState::Maintenance);
     }
 
     #[test]

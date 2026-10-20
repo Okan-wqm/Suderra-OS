@@ -13,6 +13,7 @@
 
 use crate::cli::HealthArgs;
 use crate::cmd::{lifecycle, policy};
+use crate::contracts::encoding::now_timestamp;
 use crate::contracts::registry::{LifecycleState, Outcome, Reason, ResultKind};
 use crate::fsutil::read_root_file;
 use crate::paths::Paths;
@@ -64,6 +65,7 @@ pub(crate) fn evaluate(
     runner: &dyn Runner,
     wait: Duration,
     poll: Duration,
+    now: &str,
 ) -> Result<BTreeSet<Reason>> {
     let mut reasons = BTreeSet::new();
     let features = &facts.board.features;
@@ -83,7 +85,7 @@ pub(crate) fn evaluate(
             reasons.insert(Reason::FirewallHashMismatch);
         }
     }
-    let state = lifecycle::read(paths).state();
+    let state = lifecycle::effective(paths, now);
     let receipt = Records::new(paths).receipt()?;
     match state {
         LifecycleState::Locked => {
@@ -122,7 +124,14 @@ pub(crate) fn evaluate(
 pub(crate) fn run(_args: HealthArgs) -> Result<()> {
     let paths = Paths::system()?;
     let facts = ImageFacts::load(&paths)?;
-    let reasons = evaluate(&paths, &facts, &SystemRunner, AGENT_WAIT, AGENT_POLL)?;
+    let reasons = evaluate(
+        &paths,
+        &facts,
+        &SystemRunner,
+        AGENT_WAIT,
+        AGENT_POLL,
+        &now_timestamp(),
+    )?;
     if reasons.is_empty() {
         record(&paths, &facts, Report::ok(ResultKind::HealthGate, None))?;
         return Ok(());
@@ -145,8 +154,10 @@ mod tests {
     use super::*;
     use crate::test_support::{image, FakeRunner};
 
+    const NOW: &str = "2026-10-20T12:00:00Z";
+
     fn reasons(paths: &Paths, facts: &ImageFacts, runner: &FakeRunner) -> BTreeSet<Reason> {
-        evaluate(paths, facts, runner, Duration::ZERO, Duration::ZERO).unwrap()
+        evaluate(paths, facts, runner, Duration::ZERO, Duration::ZERO, NOW).unwrap()
     }
 
     #[test]
@@ -164,7 +175,7 @@ mod tests {
         );
         std::fs::create_dir_all(tmp.path().join("etc")).unwrap();
         std::fs::write(paths.nft_appliance(), "flush ruleset\n").unwrap();
-        policy::apply(&paths, &runner).unwrap();
+        policy::apply(&paths, &runner, NOW).unwrap();
         assert!(reasons(&paths, &facts, &runner).is_empty());
     }
 
