@@ -510,9 +510,21 @@ string_enum!(
     }
 );
 
+string_enum!(
+    /// boards.json `boards[].role`.
+    BoardRole {
+        Primary => "primary",
+        Secondary => "secondary",
+        Ci => "ci",
+    }
+);
+
 /// One row of boards.json `boards`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BoardSpec {
+    /// Role of the board: `ci` boards are dev/CI targets that pin dev/CI
+    /// keys in every variant (DEC-3.9).
+    pub role: BoardRole,
     /// Release architecture.
     pub arch: Arch,
     /// Agent profile.
@@ -531,6 +543,7 @@ impl BoardProfile {
         use CargoFeature as F;
         match self {
             BoardProfile::RevpiConnect4 => BoardSpec {
+                role: BoardRole::Primary,
                 arch: Arch::Aarch64,
                 agent_profile: AgentProfile::SuderraOs,
                 cargo_features: &[F::RevpiIo, F::ScadaDisplay, F::SuderraOs],
@@ -538,6 +551,7 @@ impl BoardProfile {
                 device_binding_method: BindingMethod::TpmEkSha256,
             },
             BoardProfile::Rpi4Cm4 => BoardSpec {
+                role: BoardRole::Secondary,
                 arch: Arch::Aarch64,
                 agent_profile: AgentProfile::SuderraOs,
                 cargo_features: &[F::Gpio, F::ScadaDisplay, F::SuderraOs],
@@ -545,6 +559,7 @@ impl BoardProfile {
                 device_binding_method: BindingMethod::Bcm2711SerialOtpSha256,
             },
             BoardProfile::QemuX86_64 => BoardSpec {
+                role: BoardRole::Ci,
                 arch: Arch::X86_64,
                 agent_profile: AgentProfile::SuderraOs,
                 cargo_features: &[F::ScadaDisplay, F::SuderraOs],
@@ -904,6 +919,7 @@ mod tests {
         for row in rows {
             let board = BoardProfile::parse(row["board_profile"].as_str().unwrap()).unwrap();
             let spec = board.spec();
+            assert_eq!(row["role"], spec.role.as_str(), "{board}");
             assert_eq!(row["arch"], spec.arch.as_str(), "{board}");
             assert_eq!(row["agent_profile"], spec.agent_profile.as_str(), "{board}");
             assert_eq!(
@@ -918,6 +934,13 @@ mod tests {
                 "{board}"
             );
         }
+        let boards_schema = load("schemas/boards.schema.json");
+        assert_eq!(
+            set(strings(
+                &boards_schema["properties"]["boards"]["items"]["properties"]["role"]["enum"]
+            )),
+            set(BoardRole::ALL.iter().map(|r| r.as_str()))
+        );
         let common = load("schemas/common.schema.json");
         let defs = &common["$defs"];
         let enum_set = |name: &str| set(strings(&defs[name]["enum"]));

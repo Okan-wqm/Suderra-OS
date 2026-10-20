@@ -8,13 +8,15 @@
 //! device-lifecycle statements only against keys pinned in the OS image
 //! (`/etc/suderra/keys/<purpose>/<epoch>.pub`), and site-config and RBAC
 //! statements against the anchors of a bundle that verified against the
-//! pinned fleet-root. The loader refuses every contract TEST-ONLY key in
-//! every variant, and on production images every key outside the
-//! production keyid allowlist.
+//! pinned fleet-root. The loader refuses every contract TEST-ONLY key on
+//! every image, and on production images of hardware boards every key
+//! outside the production keyid allowlist. Dev images and the `ci` boards
+//! of boards.json (the QEMU targets, whose prod_ab image is VARIANT=prod)
+//! pin dev/CI keys (DEC-3.9).
 
 use crate::contracts::encoding::sha256_hex;
 use crate::contracts::keys::{KeyEntry, KeyStore};
-use crate::contracts::registry::{Purpose, TEST_ONLY_KEYIDS};
+use crate::contracts::registry::{BoardProfile, BoardRole, Purpose, TEST_ONLY_KEYIDS};
 use crate::fsutil::read_root_file;
 use crate::paths::Paths;
 use crate::variant::Variant;
@@ -62,8 +64,28 @@ fn parse_epoch(name: &str) -> Option<u16> {
     }
 }
 
-/// Admits one pinned key under the variant's policy.
-pub(crate) fn admit(entry: &KeyEntry, variant: Variant) -> Result<()> {
+/// Which keys an image may pin (DEC-3.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PinPolicy {
+    /// Dev images and `ci` boards: dev/CI keys.
+    DevCi,
+    /// Production images of hardware boards: the production allowlist only.
+    ProductionAllowlist,
+}
+
+impl PinPolicy {
+    /// The policy of an image, from its verity-protected facts.
+    pub(crate) fn of(variant: Variant, board: BoardProfile) -> Self {
+        if variant == Variant::Production && board.spec().role != BoardRole::Ci {
+            PinPolicy::ProductionAllowlist
+        } else {
+            PinPolicy::DevCi
+        }
+    }
+}
+
+/// Admits one pinned key under the image's policy.
+pub(crate) fn admit(entry: &KeyEntry, policy: PinPolicy) -> Result<()> {
     let keyid = sha256_hex(&entry.raw);
     if TEST_ONLY_KEYIDS.contains(&keyid.as_str()) {
         bail!(
@@ -72,7 +94,7 @@ pub(crate) fn admit(entry: &KeyEntry, variant: Variant) -> Result<()> {
             entry.epoch
         );
     }
-    if variant == Variant::Production
+    if policy == PinPolicy::ProductionAllowlist
         && !PRODUCTION_KEYIDS
             .iter()
             .any(|(p, e, k)| *p == entry.purpose && *e == entry.epoch && *k == keyid)
@@ -87,7 +109,7 @@ pub(crate) fn admit(entry: &KeyEntry, variant: Variant) -> Result<()> {
 }
 
 /// Loads every key pinned in the OS image for the os-image purposes.
-pub(crate) fn load_os_pins(paths: &Paths, variant: Variant) -> Result<KeyStore> {
+pub(crate) fn load_os_pins(paths: &Paths, policy: PinPolicy) -> Result<KeyStore> {
     let mut entries = Vec::new();
     for purpose in Purpose::ALL
         .iter()
@@ -115,7 +137,7 @@ pub(crate) fn load_os_pins(paths: &Paths, variant: Variant) -> Result<KeyStore> 
                 epoch,
                 raw: parse_spki_pem(&text).with_context(|| path.display().to_string())?,
             };
-            admit(&entry, variant)?;
+            admit(&entry, policy)?;
             entries.push(entry);
         }
     }
@@ -134,7 +156,7 @@ mod tests {
         let release = signing_key("edge-release");
         pin_key(&paths, Purpose::EdgeRelease, 1, &release);
         pin_key(&paths, Purpose::FleetRoot, 3, &signing_key("fleet"));
-        let store = load_os_pins(&paths, Variant::Dev).unwrap();
+        let store = load_os_pins(&paths, PinPolicy::DevCi).unwrap();
         assert_eq!(store.len(), 2);
         let keyid = sha256_hex(release.verifying_key().as_bytes());
         let entry = store.get(&keyid).unwrap();
@@ -161,8 +183,8 @@ mod tests {
             epoch: 1,
             raw,
         };
-        for variant in [Variant::Dev, Variant::Production] {
-            let err = admit(&entry, variant).unwrap_err().to_string();
+        for policy in [PinPolicy::DevCi, PinPolicy::ProductionAllowlist] {
+            let err = admit(&entry, policy).unwrap_err().to_string();
             assert!(err.contains("TEST-ONLY"), "{err}");
         }
     }
@@ -172,11 +194,32 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let paths = Paths::under(tmp.path());
         pin_key(&paths, Purpose::EdgeRelease, 1, &signing_key("dev-release"));
-        assert!(load_os_pins(&paths, Variant::Production)
+        assert!(load_os_pins(&paths, PinPolicy::ProductionAllowlist)
             .unwrap_err()
             .to_string()
             .contains("allowlist"));
-        assert!(load_os_pins(&paths, Variant::Dev).is_ok());
+        assert!(load_os_pins(&paths, PinPolicy::DevCi).is_ok());
+    }
+
+    #[test]
+    fn only_production_hardware_images_need_the_allowlist() {
+        use BoardProfile::*;
+        let cases = [
+            (
+                Variant::Production,
+                RevpiConnect4,
+                PinPolicy::ProductionAllowlist,
+            ),
+            (Variant::Production, Rpi4Cm4, PinPolicy::ProductionAllowlist),
+            // suderra_qemu_x86_64_prod_ab_defconfig is VARIANT=prod and pins
+            // dev/CI keys (DEC-3.9).
+            (Variant::Production, QemuX86_64, PinPolicy::DevCi),
+            (Variant::Dev, RevpiConnect4, PinPolicy::DevCi),
+            (Variant::Dev, QemuX86_64, PinPolicy::DevCi),
+        ];
+        for (variant, board, want) in cases {
+            assert_eq!(PinPolicy::of(variant, board), want, "{variant:?} {board}");
+        }
     }
 
     #[test]
@@ -186,13 +229,13 @@ mod tests {
         let dir = paths.key_pins().join("edge-release");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("01.pub"), "x").unwrap();
-        assert!(load_os_pins(&paths, Variant::Dev).is_err());
+        assert!(load_os_pins(&paths, PinPolicy::DevCi).is_err());
         std::fs::remove_file(dir.join("01.pub")).unwrap();
         std::fs::write(
             dir.join("1.pub"),
             "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n",
         )
         .unwrap();
-        assert!(load_os_pins(&paths, Variant::Dev).is_err());
+        assert!(load_os_pins(&paths, PinPolicy::DevCi).is_err());
     }
 }

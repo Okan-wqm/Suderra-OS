@@ -449,13 +449,13 @@ pub(crate) fn run(args: LifecycleArgs) -> Result<()> {
         }
         LifecycleCommand::Activate => {
             let facts = ImageFacts::load(&paths)?;
-            let keys = load_os_pins(&paths, facts.variant)?;
+            let keys = load_os_pins(&paths, facts.pin_policy())?;
             println!("{}", activate(&paths, &facts, &keys, &now)?);
             Ok(())
         }
         LifecycleCommand::Request => {
             let facts = ImageFacts::load(&paths)?;
-            let keys = load_os_pins(&paths, facts.variant)?;
+            let keys = load_os_pins(&paths, facts.pin_policy())?;
             println!("{}", request(&paths, &facts, &keys, &now)?);
             Ok(())
         }

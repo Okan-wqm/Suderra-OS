@@ -898,7 +898,7 @@ pub(crate) async fn run(args: EdgeArgs) -> Result<()> {
             device_code,
             token_file,
         }) => {
-            let keys = load_os_pins(&paths, facts.variant)?;
+            let keys = load_os_pins(&paths, facts.pin_policy())?;
             let _lock = update_lock(&paths)?;
             let installed = provision(&paths, &facts, &keys, &device_code, &token_file).await?;
             println!(
@@ -912,7 +912,7 @@ pub(crate) async fn run(args: EdgeArgs) -> Result<()> {
             artifact,
             request,
         }) => {
-            let keys = load_os_pins(&paths, facts.variant)?;
+            let keys = load_os_pins(&paths, facts.pin_policy())?;
             let _lock = update_lock(&paths)?;
             let request = read_request(&request)?;
             let bytes = read_root_file(&delivery, MAX_DELIVERY)?
@@ -933,7 +933,7 @@ pub(crate) async fn run(args: EdgeArgs) -> Result<()> {
             Ok(())
         }
         EdgeCommand::VerifyCurrent => {
-            let keys = load_os_pins(&paths, facts.variant)?;
+            let keys = load_os_pins(&paths, facts.pin_policy())?;
             match verify_current(&paths, &facts, &keys, &now_timestamp()) {
                 Ok(Current {
                     receipt,
@@ -1058,7 +1058,7 @@ mod tests {
     fn keys_pinned_in_the_image_verify_the_delivery() {
         let dev = device(LifecycleState::Provisioning);
         dev.keys.pin(&dev.paths);
-        let pins = crate::trust_anchors::load_os_pins(&dev.paths, dev.facts.variant).unwrap();
+        let pins = crate::trust_anchors::load_os_pins(&dev.paths, dev.facts.pin_policy()).unwrap();
         assert_eq!(pins, dev.pins);
         let spec = Spec::default();
         let built = build_delivery(&dev.keys, &spec);

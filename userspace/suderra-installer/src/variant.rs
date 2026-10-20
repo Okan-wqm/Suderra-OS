@@ -176,6 +176,11 @@ pub(crate) struct ImageFacts {
 }
 
 impl ImageFacts {
+    /// Which keys this image may pin (DEC-3.9).
+    pub(crate) fn pin_policy(&self) -> crate::trust_anchors::PinPolicy {
+        crate::trust_anchors::PinPolicy::of(self.variant, self.board.board)
+    }
+
     /// Reads the image facts; any missing or malformed fact is an error.
     pub(crate) fn load(paths: &Paths) -> Result<Self> {
         let os_text = std::fs::read_to_string(paths.os_release())
