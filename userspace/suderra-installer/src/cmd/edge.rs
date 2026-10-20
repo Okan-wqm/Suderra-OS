@@ -4,13 +4,16 @@
 //! `suderra-installer edge`: the single agent delivery channel (ADR-048
 //! DEC-1, DEC-2.5, DEC-3, DEC-5.5, DEC-5.6, DEC-23, DEC-27).
 //!
-//! * `edge request` writes the provisioning request document (binding from
-//!   root's record, fresh CSPRNG nonce, board, OS version, agent ABI).
+//! * `edge request` issues the provisioning request (binding from root's
+//!   record, fresh CSPRNG nonce, board, OS version, agent ABI) into
+//!   root-only /run/suderra-os and prints its nonce.
 //! * `edge provision` fetches the delivery itself with the token in the
 //!   `X-Provisioning-Token` header, verifies it, downloads and verifies the
 //!   artifact and installs (delivery.json `network`).
-//! * `edge install` installs a delivery and artifact already on disk with the
-//!   request that produced it (offline and USB paths).
+//! * `edge install` installs a delivery and artifact already on disk; the
+//!   delivery must answer the request root issued, which is read from its
+//!   fixed root-only location, never from a caller-named file, and spent by
+//!   the install (offline and USB paths).
 //! * `edge verify-current` re-verifies the installed release before every
 //!   agent start (`ExecStartPre=+`, DEC-1.5).
 //!
@@ -19,7 +22,7 @@
 //! itself (root:root 0755, never the archive's owner or mode) under a
 //! path-safe version directory, and `current` switches with `rename(2)`.
 
-use crate::cli::{EdgeArgs, EdgeCommand, EdgeInstallArgs, EdgeProvisionArgs, EdgeRequestArgs};
+use crate::cli::{EdgeArgs, EdgeCommand, EdgeInstallArgs, EdgeProvisionArgs};
 use crate::cmd::{lifecycle, site};
 use crate::contracts::delivery::{
     Delivery, ProvisioningRequest, DELIVERY_CONTENT_TYPE, REQUEST_PATH, TOKEN_HEADER,
@@ -581,12 +584,18 @@ fn cloud_endpoint(paths: &Paths) -> Result<String> {
     Ok(url.to_owned())
 }
 
-fn http_client(paths: &Paths) -> Result<reqwest::Client> {
+/// HTTPS client of the provisioning path: https only, the image's extra
+/// cloud CA (dev and QEMU images) added to the public roots.
+fn http_client(
+    paths: &Paths,
+    redirect: reqwest::redirect::Policy,
+    timeout: std::time::Duration,
+) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .https_only(true)
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(redirect)
         .connect_timeout(std::time::Duration::from_secs(30))
-        .timeout(std::time::Duration::from_secs(600));
+        .timeout(timeout);
     if let Some(pem) = read_root_file(&paths.cloud_ca(), 64 * 1024)? {
         builder =
             builder.add_root_certificate(reqwest::Certificate::from_pem(&pem).context("cloud CA")?);
@@ -622,13 +631,17 @@ async fn fetch_delivery(
     let mut token_header =
         reqwest::header::HeaderValue::from_str(token).context("token is not a header value")?;
     token_header.set_sensitive(true);
-    let response = http_client(paths)?
-        .get(url)
-        .query(&request.query())
-        .header(TOKEN_HEADER, token_header)
-        .send()
-        .await
-        .context("provisioning request failed")?;
+    let response = http_client(
+        paths,
+        reqwest::redirect::Policy::none(),
+        std::time::Duration::from_secs(600),
+    )?
+    .get(url)
+    .query(&request.query())
+    .header(TOKEN_HEADER, token_header)
+    .send()
+    .await
+    .context("provisioning request failed")?;
     if response.status() != reqwest::StatusCode::OK {
         bail!("provisioning endpoint answered {}", response.status());
     }
@@ -653,18 +666,19 @@ async fn fetch_artifact(paths: &Paths, set: &ProvisioningSet) -> Result<PathBuf>
     ensure_dir(&work, 0o700)?;
     let path = work.join("artifact.tar.gz");
     let _ = std::fs::remove_file(&path);
-    let response = reqwest::Client::builder()
-        .https_only(true)
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .connect_timeout(std::time::Duration::from_secs(30))
-        .timeout(std::time::Duration::from_secs(1800))
-        .build()?
-        .get(&set.manifest.statement.artifact_url)
-        .send()
-        .await
-        .context("artifact download failed")?
-        .error_for_status()
-        .context("artifact download failed")?;
+    // Release hosting redirects to object storage; integrity comes from the
+    // release statement's digest, checked before anything is installed.
+    let response = http_client(
+        paths,
+        reqwest::redirect::Policy::limited(5),
+        std::time::Duration::from_secs(1800),
+    )?
+    .get(&set.manifest.statement.artifact_url)
+    .send()
+    .await
+    .context("artifact download failed")?
+    .error_for_status()
+    .context("artifact download failed")?;
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -875,11 +889,39 @@ pub(crate) fn verify_current(
     })
 }
 
-fn read_request(path: &Path) -> Result<ProvisioningRequest> {
-    let bytes = read_root_file(path, 64 * 1024)?
-        .with_context(|| format!("{} is missing", path.display()))?;
-    ProvisioningRequest::parse(&bytes)
-        .map_err(|r| anyhow::anyhow!("request document is invalid: {r}"))
+/// Issues a fresh provisioning request into /run/suderra-os, replacing any
+/// earlier one, so only the last nonce shown on the console is answerable.
+pub(crate) fn issue_request(paths: &Paths, facts: &ImageFacts) -> Result<ProvisioningRequest> {
+    let request = build_request(paths, facts)?;
+    ensure_dir(&paths.run_os(), 0o700)?;
+    write_atomic(
+        &paths.provisioning_request(),
+        &serde_json::to_vec(&request)?,
+        0o600,
+        None,
+    )?;
+    Ok(request)
+}
+
+/// Installs a delivery on disk against the request root issued; the
+/// request is spent once the delivery is installed.
+pub(crate) fn install_issued(
+    paths: &Paths,
+    facts: &ImageFacts,
+    keys: &KeyStore,
+    delivery_bytes: &[u8],
+    artifact: &Path,
+    now: &str,
+) -> Result<Installed> {
+    let bytes = read_root_file(&paths.provisioning_request(), 64 * 1024)?
+        .context("no provisioning request was issued: run `edge request` first")?;
+    let request = ProvisioningRequest::parse(&bytes)
+        .map_err(|r| anyhow::anyhow!("issued request document is invalid: {r}"))?;
+    let installed =
+        install_from_files(paths, facts, keys, delivery_bytes, &request, artifact, now)?;
+    std::fs::remove_file(paths.provisioning_request())
+        .context("cannot spend the provisioning request")?;
+    Ok(installed)
 }
 
 /// `suderra-installer edge <command>`.
@@ -887,11 +929,8 @@ pub(crate) async fn run(args: EdgeArgs) -> Result<()> {
     let paths = Paths::system()?;
     let facts = ImageFacts::load(&paths)?;
     match args.command {
-        EdgeCommand::Request(EdgeRequestArgs { out }) => {
-            let request = build_request(&paths, &facts)?;
-            ensure_dir(out.parent().context("--out has no parent")?, 0o700)?;
-            write_atomic(&out, &serde_json::to_vec(&request)?, 0o600, None)?;
-            println!("{}", request.nonce);
+        EdgeCommand::Request => {
+            println!("{}", issue_request(&paths, &facts)?.nonce);
             Ok(())
         }
         EdgeCommand::Provision(EdgeProvisionArgs {
@@ -907,25 +946,13 @@ pub(crate) async fn run(args: EdgeArgs) -> Result<()> {
             );
             Ok(())
         }
-        EdgeCommand::Install(EdgeInstallArgs {
-            delivery,
-            artifact,
-            request,
-        }) => {
+        EdgeCommand::Install(EdgeInstallArgs { delivery, artifact }) => {
             let keys = load_os_pins(&paths, facts.pin_policy())?;
             let _lock = update_lock(&paths)?;
-            let request = read_request(&request)?;
             let bytes = read_root_file(&delivery, MAX_DELIVERY)?
                 .with_context(|| format!("{} is missing", delivery.display()))?;
-            let installed = install_from_files(
-                &paths,
-                &facts,
-                &keys,
-                &bytes,
-                &request,
-                &artifact,
-                &now_timestamp(),
-            )?;
+            let installed =
+                install_issued(&paths, &facts, &keys, &bytes, &artifact, &now_timestamp())?;
             println!(
                 "installed {} (waiting for activation)",
                 installed.receipt.version
@@ -1560,6 +1587,53 @@ mod tests {
         )
         .unwrap();
         assert!(dev.install(&newer).is_err());
+        assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
+    }
+
+    #[test]
+    fn install_answers_only_the_request_root_issued() {
+        let dev = device(LifecycleState::Provisioning);
+        let spec = Spec::default();
+        let artifact = dev.tmp.path().join("usb.tar.gz");
+        std::fs::write(&artifact, &spec.artifact).unwrap();
+        let built = build_delivery(&dev.keys, &spec);
+        let install = |dev: &Device| {
+            install_issued(
+                &dev.paths,
+                &dev.facts,
+                &dev.pins,
+                &built.delivery,
+                &artifact,
+                NOW,
+            )
+        };
+        assert!(install(&dev).is_err(), "nothing was issued");
+        assert!(dev.current().is_none());
+
+        // A fresh nonce the delivery does not echo.
+        let issued = issue_request(&dev.paths, &dev.facts).unwrap();
+        assert_ne!(issued.nonce, spec.nonce);
+        assert!(install(&dev).is_err());
+        assert_eq!(dev.last_result().reason.as_deref(), Some("nonce-mismatch"));
+
+        // The delivery generated for the issued nonce installs and spends it.
+        let answered = build_delivery(
+            &dev.keys,
+            &Spec {
+                nonce: issued.nonce.clone(),
+                ..Spec::default()
+            },
+        );
+        install_issued(
+            &dev.paths,
+            &dev.facts,
+            &dev.pins,
+            &answered.delivery,
+            &artifact,
+            NOW,
+        )
+        .unwrap();
+        assert!(!dev.paths.provisioning_request().exists(), "spent");
         assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
     }
 

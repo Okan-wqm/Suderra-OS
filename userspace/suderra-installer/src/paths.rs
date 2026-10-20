@@ -156,6 +156,12 @@ impl Paths {
     pub(crate) fn run_os(&self) -> PathBuf {
         self.at("/run/suderra-os")
     }
+    /// The provisioning request root issued for the next delivery
+    /// (`edge request`); its nonce is shown on the console (delivery.json
+    /// `usb.nonce`) and the delivery must echo it.
+    pub(crate) fn provisioning_request(&self) -> PathBuf {
+        self.at("/run/suderra-os/provisioning-request.json")
+    }
     /// Lock shared by agent and OS update operations (DEC-2.3).
     pub(crate) fn update_lock(&self) -> PathBuf {
         self.at("/run/suderra-update.lock")

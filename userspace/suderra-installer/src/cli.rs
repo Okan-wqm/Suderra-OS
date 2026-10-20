@@ -74,23 +74,15 @@ pub struct EdgeArgs {
 /// Edge agent delivery operations (ADR-048 DEC-1, DEC-5).
 #[derive(Subcommand, Debug)]
 pub enum EdgeCommand {
-    /// Write a provisioning request document (binding, fresh nonce, board,
-    /// OS version, agent ABI) and print its nonce.
-    Request(EdgeRequestArgs),
+    /// Issue a provisioning request (binding, fresh nonce, board, OS
+    /// version, agent ABI) into /run/suderra-os and print its nonce.
+    Request,
     /// Fetch, verify and install this device's provisioning delivery.
     Provision(EdgeProvisionArgs),
     /// Verify and install a delivery and artifact already on disk.
     Install(EdgeInstallArgs),
     /// Re-verify the installed release before an agent start.
     VerifyCurrent,
-}
-
-/// `edge request`
-#[derive(clap::Args, Debug)]
-pub struct EdgeRequestArgs {
-    /// Where to write the request document (root-only).
-    #[arg(long, value_name = "FILE")]
-    pub out: std::path::PathBuf,
 }
 
 /// `edge provision`
@@ -111,12 +103,10 @@ pub struct EdgeInstallArgs {
     /// Delivery document (suderra.edge-provisioning-delivery.v1).
     #[arg(long, value_name = "FILE")]
     pub delivery: std::path::PathBuf,
-    /// Release artifact the delivery's release statement names.
+    /// Release artifact the delivery's release statement names. The
+    /// delivery must echo the nonce of the request `edge request` issued.
     #[arg(long, value_name = "FILE")]
     pub artifact: std::path::PathBuf,
-    /// The request document `edge request` wrote for this delivery.
-    #[arg(long, value_name = "FILE")]
-    pub request: std::path::PathBuf,
 }
 
 /// `lifecycle <command>`
