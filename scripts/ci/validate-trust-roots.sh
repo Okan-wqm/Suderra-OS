@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #
 # Validate a Suderra trust-root keyring before expensive image builds.
+#
+# dev and ci sets carry the per-purpose edge keys, the dev/CI fleet-root and
+# the trust-anchor bundle it signed (<keyring-dir>/edge, ADR-048 DEC-3.9,
+# checked by scripts/ci/edge-dev-keys.py). A prod set carries no edge key:
+# no production edge keyid is inventoried before the P1 key ceremony, and a
+# hardware production image pins only inventoried keyids (DEC-3.9).
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -59,6 +65,8 @@ die() {
     exit 1
 }
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 require_file() {
     local path="$1"
     [ -e "${path}" ] || die "required Suderra trust-root file missing: ${path}"
@@ -90,8 +98,7 @@ for required in \
     rauc-signing.crt \
     verity-signing.crt \
     installer-payload.ed25519.pub \
-    os-update-manifest.ed25519.pub \
-    edge-artifact.ed25519.pub; do
+    os-update-manifest.ed25519.pub; do
     require_file "${KEYS_DIR}/${required}"
 done
 
@@ -111,10 +118,23 @@ if command -v openssl >/dev/null 2>&1; then
         die "invalid X.509 certificate: ${KEYS_DIR}/verity-signing.crt"
     openssl pkey -pubin -in "${KEYS_DIR}/installer-payload.ed25519.pub" -noout >/dev/null 2>&1 ||
         die "invalid Ed25519 public key: ${KEYS_DIR}/installer-payload.ed25519.pub"
-    openssl pkey -pubin -in "${KEYS_DIR}/edge-artifact.ed25519.pub" -noout >/dev/null 2>&1 ||
-        die "invalid Ed25519 public key: ${KEYS_DIR}/edge-artifact.ed25519.pub"
 fi
 validate_raw_ed25519_public_key "${KEYS_DIR}/os-update-manifest.ed25519.pub"
+
+case "${profile}" in
+    prod)
+        [ ! -e "${KEYS_DIR}/edge" ] ||
+            die "a prod trust-root set may not carry edge keys before the P1 key ceremony inventories production keyids (ADR-048 DEC-3.9): ${KEYS_DIR}/edge"
+        ;;
+    *)
+        edge_verify=(verify --keys-dir "${KEYS_DIR}")
+        if [ "${FORBID_INSTALLER_SIGNING}" -eq 1 ]; then
+            edge_verify+=(--public-only)
+        fi
+        python3 -I "${SCRIPT_DIR}/edge-dev-keys.py" "${edge_verify[@]}" ||
+            die "invalid dev/CI edge keys or trust-anchor bundle under ${KEYS_DIR}/edge"
+        ;;
+esac
 
 if [ "${REQUIRE_INSTALLER_SIGNING}" -eq 1 ]; then
     require_file "${KEYS_DIR}/installer-payload.key"
@@ -128,7 +148,7 @@ if [ "${FORBID_INSTALLER_SIGNING}" -eq 1 ]; then
     if [ -e "${KEYS_DIR}/installer-payload.key" ]; then
         die "installer payload private key is forbidden in this trust-root set: ${KEYS_DIR}/installer-payload.key"
     fi
-    if find "${KEYS_DIR}" -maxdepth 1 -type f -name '*.key' | grep -q .; then
+    if find "${KEYS_DIR}" -type f -name '*.key' | grep -q .; then
         die "private key files are forbidden in this trust-root set"
     fi
 fi

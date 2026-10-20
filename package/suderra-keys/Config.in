@@ -11,7 +11,11 @@ config BR2_PACKAGE_SUDERRA_KEYS
 	  - /etc/dm-verity/pubkey.pem    (verity root hash doğrulama)
 	  - /etc/suderra/os-installer-payload.ed25519.pub
 	  - /etc/suderra/os-update-manifest.ed25519.pub
-	  - /etc/suderra/edge-artifact.ed25519.pub
+	  - /etc/suderra/keys/<purpose>/<epoch>.pub for edge-release,
+	    edge-provisioning, fleet-root and device-lifecycle (ADR-048
+	    DEC-3.4): the dev/CI keys of SUDERRA_TRUST_ROOTS_DIR/edge on dev
+	    images; on production images only keyids the P1 key ceremony
+	    inventories (none yet, so none is pinned)
 
 	  Anahtarlar SUDERRA_TRUST_ROOTS_DIR env var ile belirtilir.
 	  DEV variant: ~/.suderra-keys/dev/

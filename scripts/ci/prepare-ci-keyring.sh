@@ -4,6 +4,11 @@
 #
 # Production keys must come from the external signing/HSM path. CI keys exist
 # only to build dev/lab artifacts and to exercise trust-root plumbing.
+#
+# Edge keys (ADR-048 DEC-3.9): one Ed25519 key per purpose and epoch, a CI
+# fleet-root, the CI MQTT test-broker CA and the CI trust-anchor bundle signed
+# by that fleet-root, under <keys-dir>/edge/ (scripts/ci/edge-dev-keys.py).
+# They are never the contract's TEST-ONLY keys.
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -15,6 +20,9 @@ Usage: $0 <keys-dir> [profile] [--installer-public-only|--installer-private-requ
 Environment:
   SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64   Base64 PEM public key for public-only/base jobs.
   SUDERRA_CI_INSTALLER_PAYLOAD_PRIVATE_KEY_B64  Base64 PEM private key for payload signing jobs.
+  SUDERRA_EDGE_TENANT_IDS                       Comma-separated tenant UUIDs of the CI
+                                                trust-anchor bundle's tenant_scope (default:
+                                                kept from an existing bundle, else one random).
 EOF
 }
 
@@ -59,6 +67,7 @@ if [ "${PROFILE}" = "prod" ]; then
     exit 1
 fi
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
@@ -197,34 +206,40 @@ case "${INSTALLER_MODE}" in
         ;;
 esac
 
-generate_ed25519 \
-    "${KEYS_DIR}/edge-artifact.key" \
-    "${KEYS_DIR}/edge-artifact.ed25519.pub"
+edge_args=(generate --keys-dir "${KEYS_DIR}" --profile "${PROFILE}" --days 14)
+IFS=',' read -r -a edge_tenants <<<"${SUDERRA_EDGE_TENANT_IDS:-}"
+for tenant in "${edge_tenants[@]}"; do
+    [ -n "${tenant}" ] && edge_args+=(--tenant-id "${tenant}")
+done
+python3 -I "${SCRIPT_DIR}/edge-dev-keys.py" "${edge_args[@]}"
 
 generate_raw_ed25519_public_hex \
     "${KEYS_DIR}/os-update-manifest.key" \
     "${KEYS_DIR}/os-update-manifest.ed25519.pub"
 
 if [ "${INSTALLER_MODE}" = "public-only" ]; then
-    find "${KEYS_DIR}" -maxdepth 1 -type f -name '*.key' -delete
+    find "${KEYS_DIR}" -type f -name '*.key' -delete
 elif compgen -G "${KEYS_DIR}/*.key" >/dev/null; then
     chmod 0600 "${KEYS_DIR}"/*.key
 fi
 chmod 0644 "${KEYS_DIR}"/*.crt "${KEYS_DIR}"/*.pub "${profile_file}"
+edge_verify=(verify --keys-dir "${KEYS_DIR}")
+[ "${INSTALLER_MODE}" = "public-only" ] && edge_verify+=(--public-only)
+python3 -I "${SCRIPT_DIR}/edge-dev-keys.py" "${edge_verify[@]}"
 
 for required in \
     rauc-signing.crt \
     verity-signing.crt \
     installer-payload.ed25519.pub \
     os-update-manifest.ed25519.pub \
-    edge-artifact.ed25519.pub; do
+    edge/trust-anchors.dsse.json; do
     if [ ! -s "${KEYS_DIR}/${required}" ]; then
         echo "ERROR: failed to create ${KEYS_DIR}/${required}" >&2
         exit 1
     fi
 done
 
-if [ "${INSTALLER_MODE}" = "public-only" ] && find "${KEYS_DIR}" -maxdepth 1 -type f -name '*.key' | grep -q .; then
+if [ "${INSTALLER_MODE}" = "public-only" ] && find "${KEYS_DIR}" -type f -name '*.key' | grep -q .; then
     echo "ERROR: public-only installer keyring contains private keys." >&2
     exit 1
 fi

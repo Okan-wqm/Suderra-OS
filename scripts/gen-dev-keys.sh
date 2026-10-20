@@ -8,11 +8,21 @@
 # Kullanım:
 #   ./scripts/gen-dev-keys.sh                       # ~/.suderra-keys/dev/
 #   ./scripts/gen-dev-keys.sh /custom/path
+#
+# Edge anahtarları (ADR-048 DEC-3.9): amaç başına birer Ed25519 anahtarı
+# (edge-release, edge-provisioning, fleet-root, device-lifecycle,
+# config-integrity, rbac-manifest, command; epoch 1), dev fleet-root'u, dev
+# MQTT test broker CA'sı ve dev fleet-root'uyla imzalı trust-anchor bundle'ı
+# <dir>/edge/ altına yazılır (scripts/ci/edge-dev-keys.py). Bunlar sözleşmenin
+# TEST-ONLY anahtarları değildir; yalnız dev imajları ve QEMU hedefleri pinler.
+# Bundle'ın tenant_scope'u SUDERRA_EDGE_TENANT_IDS (virgülle ayrılmış UUID'ler)
+# ile verilir; verilmezse mevcut bundle'ınki korunur, yoksa rastgele biri.
 
 set -euo pipefail
 IFS=$'\n\t'
 
 KEYS_DIR="${1:-${HOME}/.suderra-keys/dev}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -d "${KEYS_DIR}" ] && [ -n "$(ls -A "${KEYS_DIR}" 2>/dev/null)" ]; then
     echo "WARNING: ${KEYS_DIR} zaten dolu."
@@ -28,6 +38,9 @@ fi
 umask 077
 mkdir -p "${KEYS_DIR}"
 chmod 0700 "${KEYS_DIR}"
+# Absolute from here on: the usage lines printed at the end name it, and a
+# relative path stops resolving once the script has cd'd into it.
+KEYS_DIR="$(cd -- "${KEYS_DIR}" && pwd)"
 cd "${KEYS_DIR}"
 
 echo "==> Geliştirme anahtarları üretiliyor: ${KEYS_DIR}"
@@ -93,15 +106,21 @@ openssl pkey -in os-update-manifest.key -pubout -outform DER 2>/dev/null |
     od -An -tx1 -v |
     tr -d ' \n' > os-update-manifest.ed25519.pub
 
-# Edge artifact/provisioning manifest signing
-echo "==> Edge artifact signing key (Ed25519)"
-openssl genpkey -algorithm ED25519 -out edge-artifact.key 2>/dev/null
-openssl pkey -in edge-artifact.key -pubout \
-    -out edge-artifact.ed25519.pub 2>/dev/null
+# Trust-root profile (validate-trust-roots.sh, package/suderra-keys).
+printf 'dev\n' > suderra-keys.profile
+
+# Edge keys, dev fleet-root and the signed dev trust-anchor bundle.
+echo "==> Edge per-purpose keys, dev fleet-root, trust-anchor bundle (Ed25519)"
+edge_args=(generate --keys-dir "${KEYS_DIR}" --profile dev --days 365)
+IFS=',' read -r -a edge_tenants <<<"${SUDERRA_EDGE_TENANT_IDS:-}"
+for tenant in "${edge_tenants[@]}"; do
+    [ -n "${tenant}" ] && edge_args+=(--tenant-id "${tenant}")
+done
+python3 -I "${SCRIPT_DIR}/ci/edge-dev-keys.py" "${edge_args[@]}"
 
 # Permissions
 chmod 0600 ./*.key
-chmod 0644 ./*.crt ./*.pub
+chmod 0644 ./*.crt ./*.pub suderra-keys.profile
 
 echo ""
 echo "==> Tamamlandı:"
