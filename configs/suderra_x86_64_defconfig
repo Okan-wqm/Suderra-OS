@@ -100,8 +100,11 @@ BR2_PACKAGE_LIBCURL_OPENSSL=y
 BR2_PACKAGE_CA_CERTIFICATES=y
 # Production runtime must not boot with an SSH provisioning surface.
 # Factory/provisioning access belongs in a separate lab/installer profile.
-# BR2_PACKAGE_DROPBEAR is not set
+# Provisioning SSH only (ADR-048 DEC-5.1): it runs inside the provisioning
+# window of suderra-provision-mode.service, never at boot.
+BR2_PACKAGE_DROPBEAR=y
 # BR2_PACKAGE_DROPBEAR_CLIENT is not set
+BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
 
 # Time sync (PTP destekli, endüstriyel için kritik)
 BR2_PACKAGE_CHRONY=y
@@ -112,7 +115,6 @@ BR2_PACKAGE_SUDERRA_OS_INSTALLER=y
 BR2_PACKAGE_SUDERRA_KEYS=y
 BR2_PACKAGE_SUDERRA_RAUC_CONFIG=y
 BR2_PACKAGE_SUDERRA_OTA=y
-# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
 
 # Build optimizations
@@ -123,6 +125,8 @@ BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
 # plane after production boot/verity/OTA gates are implemented.
 # BR2_TARGET_ENABLE_ROOT_LOGIN is not set
 # BR2_TARGET_GENERIC_GETTY is not set
+# The root is a read-only dm-verity mount: never remount it rw (ADR-048 DEC-24).
+# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set
 
 # Reproducible build
 BR2_REPRODUCIBLE=y

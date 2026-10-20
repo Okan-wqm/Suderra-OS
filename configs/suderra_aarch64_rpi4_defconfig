@@ -181,7 +181,6 @@ BR2_PACKAGE_I2C_TOOLS=y
 BR2_PACKAGE_SUDERRA_OS_INSTALLER=y     # Runtime manifest verifier
 BR2_PACKAGE_SUDERRA_KEYS=y             # Runtime trust roots
 
-# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
 
 # ============================================================================

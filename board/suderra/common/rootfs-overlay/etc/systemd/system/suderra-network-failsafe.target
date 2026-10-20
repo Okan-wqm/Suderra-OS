@@ -1,0 +1,11 @@
+# Reached when nftables.service fails (ADR-048 DEC-11.2). The always-loadable
+# base drop ruleset stays in force and the interfaces stay unconfigured: the
+# target stops systemd-networkd and keeps it stopped. The health check sees
+# the firewall hash mismatch (DEC-6.8).
+
+[Unit]
+Description=Suderra OS network failsafe (firewall did not load)
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+Conflicts=systemd-networkd.service systemd-networkd.socket
+After=nftables.service

@@ -1,23 +1,39 @@
+# Fail-closed firewall (ADR-048 DEC-11.2, DEC-11.3).
+#
+# 1. The base drop ruleset (/etc/nftables.base.conf) uses no conntrack, limit
+#    or meter expressions, so it loads on any nf_tables kernel; it is checked
+#    with `nft -c` and loaded first.
+# 2. `suderra-installer policy apply` selects the ruleset from the root-owned
+#    lifecycle: the appliance ruleset by default, the provisioning ruleset
+#    only in PROVISIONING or reprovisioning MAINTENANCE, scoped to the
+#    interface that carries the default route. It checks the program with
+#    `nft -c`, loads it atomically and records its hash for the health check.
+# 3. systemd-networkd requires this unit; if it fails, the base drop ruleset
+#    stays, no interface is configured and suderra-network-failsafe.target is
+#    reached.
+
 [Unit]
 Description=Suderra OS nftables firewall
 Documentation=man:nft(8)
 DefaultDependencies=no
-Wants=suderra-data.service
-After=suderra-data.service
+Wants=suderra-data.service suderra-lifecycle.service network-pre.target
+After=suderra-data.service suderra-lifecycle.service
 Before=network-pre.target shutdown.target
-Wants=network-pre.target
 Conflicts=shutdown.target
-ConditionPathExists=/usr/sbin/suderra-firewall
+OnFailure=suderra-network-failsafe.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/suderra-firewall
-ExecReload=/usr/sbin/suderra-firewall
 RemainAfterExit=yes
+ExecStartPre=/usr/sbin/nft -c -f /etc/nftables.base.conf
+ExecStartPre=/usr/sbin/nft -f /etc/nftables.base.conf
+ExecStart=/usr/bin/suderra-installer policy apply
+ExecReload=/usr/bin/suderra-installer policy apply
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
+ReadWritePaths=-/data/suderra/os /run/suderra-os
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]

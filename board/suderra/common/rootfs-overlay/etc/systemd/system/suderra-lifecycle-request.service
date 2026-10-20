@@ -1,0 +1,23 @@
+# Root-verifies the agent's device-lifecycle request (key, payloadType, device
+# binding, tenant, time window, update_seq) and transitions. In P0 the only
+# accepted action is enter-maintenance for reprovisioning, which then opens
+# the provisioning surface for the statement's window (ADR-048 DEC-5.14,
+# DEC-12, DEC-17 flow a). A rejection is a typed result and a failed unit.
+
+[Unit]
+Description=Verify the agent's device-lifecycle request
+Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+ConditionPathExists=/data/suderra/agent/state/lifecycle-request.dsse
+After=suderra-data.service suderra-lifecycle.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/suderra-installer lifecycle request
+ExecStartPost=/usr/sbin/suderra-provision-mode open-window
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os

@@ -82,11 +82,8 @@ updates:
           - "minor"
           - "patch"
 
-  # Faz 2'de eklenince: suderra-edge-agent kendi repo'sundan vendored
-  # - package-ecosystem: "cargo"
-  #   directory: "/package/suderra-edge-agent"
-  #   schedule: { interval: "daily" }
-  #   labels: ["dependencies", "rust", "security", "edge-agent"]
+  # The edge agent is not packaged into the image (ADR-048 DEC-1.1); its
+  # cargo dependencies are tracked in aquaculture_platform/sens-api-gateway.
 
   # Faz 1 sonu: git submodule (Buildroot) updates
   - package-ecosystem: "gitsubmodule"

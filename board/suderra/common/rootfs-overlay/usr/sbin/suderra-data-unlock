@@ -1,39 +1,92 @@
 #!/bin/sh
+# Mount /data, apply its layout and bind its trees onto the read-only root
+# (ADR-048 DEC-1.3, DEC-1.7, DEC-4.2, DEC-4.3, DEC-12, DEC-24;
+# contracts/suderra-edge/v1/mutable-state.json).
+#
+# * /data is mounted nosuid,nodev,noexec; the only exec location is the
+#   verified release bind at /opt/suderra/edge.
+# * Owner and mode of every /data tree come from
+#   /usr/lib/suderra/data-layout.tmpfiles.conf alone; this script never
+#   chowns or chmods (DEC-4.3).
+# * Device, mapper and variant are image facts, never environment (DEC-19).
+# * On the boot that formats a blank production /data it leaves the
+#   data-created evidence in /run/suderra-os and creates the lifecycle store
+#   as FACTORY (DEC-12).
+# * When /data cannot be mounted, it records a data-unlock alarm and fails;
+#   the lifecycle then reads LOCKED (DEC-12, DEC-27).
 set -eu
 
-variant="dev"
-if [ -r /etc/os-release ]; then
-    variant="$(sed -n 's/^VARIANT=//p' /etc/os-release | tr -d '"' | head -n 1)"
+LAYOUT=/usr/lib/suderra/data-layout.tmpfiles.conf
+DATA_DEVICE=/dev/disk/by-partlabel/data
+DATA_MAPPER=suderra-data
+DATA_OPTIONS=nosuid,nodev,noexec
+INSTALLER=/usr/bin/suderra-installer
+
+variant="prod"
+if grep -qx 'VARIANT="\{0,1\}dev"\{0,1\}' /etc/os-release; then
+    variant="dev"
 fi
 
-mount_data_bindings() {
-    mkdir -p /data/suderra/lib /data/suderra/log /data/suderra/releases
-    mkdir -p /var/lib/suderra /var/log/suderra /opt/suderra/edge/releases
-    if ! mountpoint -q /var/lib/suderra; then
-        mount --bind /data/suderra/lib /var/lib/suderra
+# Data-unlock results exist on images that run the root installer (the
+# images that declare a board_profile).
+reports_results() {
+    [ -x "${INSTALLER}" ] && [ -f /etc/suderra/board ]
+}
+
+alarm() {
+    reason="$1"
+    shift
+    echo "ERROR: $*" >&2
+    if reports_results; then
+        "${INSTALLER}" result write --kind data-unlock --outcome alarm \
+            --reason "${reason}" --detail "$*" >/dev/null
     fi
-    if ! mountpoint -q /var/log/suderra; then
-        mount --bind /data/suderra/log /var/log/suderra
+    exit 1
+}
+
+# mutable-state.json data-bind entries: source on /data, mountpoint on the
+# root (created by post-build.sh), mount options.
+bind_tree() {
+    source="$1"
+    target="$2"
+    options="$3"
+    [ -d "${source}" ] || alarm data-unmountable "data layout did not create ${source}"
+    [ -d "${target}" ] || alarm data-unmountable "the image has no mountpoint ${target}"
+    if mountpoint -q "${target}"; then
+        return 0
     fi
-    if ! mountpoint -q /opt/suderra/edge/releases; then
-        mount --bind /data/suderra/releases /opt/suderra/edge/releases
+    mount --bind "${source}" "${target}"
+    mount -o "remount,bind,${options}" "${target}"
+}
+
+apply_layout_and_bind() {
+    systemd-tmpfiles --create "${LAYOUT}" ||
+        alarm data-unmountable "systemd-tmpfiles could not apply ${LAYOUT}"
+    bind_tree /data/suderra/os /var/lib/suderra-os "${DATA_OPTIONS}"
+    bind_tree /data/suderra/os/installer /var/lib/suderra-installer "${DATA_OPTIONS}"
+    bind_tree /data/suderra/os/chrony /var/lib/chrony "${DATA_OPTIONS}"
+    bind_tree /data/suderra/os/ssh /etc/dropbear "${DATA_OPTIONS}"
+    bind_tree /data/suderra/site /var/lib/suderra-site "ro,${DATA_OPTIONS}"
+    bind_tree /data/suderra/edge /opt/suderra/edge "ro,nosuid,nodev,exec"
+    bind_tree /data/suderra/agent /var/lib/suderra "${DATA_OPTIONS}"
+    bind_tree /data/suderra/log /var/log/suderra "${DATA_OPTIONS}"
+}
+
+mount_data() {
+    device="$1"
+    if mountpoint -q /data; then
+        return 0
     fi
-    chown root:root /data /data/suderra /var/lib/suderra 2>/dev/null || true
-    chown 200:200 /data/suderra/lib /data/suderra/log 2>/dev/null || true
-    chmod 0755 /data /data/suderra 2>/dev/null || true
-    chmod 0750 /data/suderra/lib /data/suderra/log /var/lib/suderra /var/log/suderra 2>/dev/null || true
+    mount -o "${DATA_OPTIONS}" "${device}" /data ||
+        alarm data-unmountable "cannot mount ${device} on /data"
 }
 
 mount_dev_data() {
-    mkdir -p /data
-    if ! mountpoint -q /data; then
-        [ -e /dev/disk/by-label/SUDERRA-DATA ] || {
-            echo "SUDERRA-DATA partition missing" >&2
-            exit 1
-        }
-        mount -L SUDERRA-DATA /data
-    fi
-    mount_data_bindings
+    # Dev images mount a plain ext4 partition by label (EI-044: PARTUUID in P1).
+    [ -e /dev/disk/by-label/SUDERRA-DATA ] ||
+        alarm data-unmountable "SUDERRA-DATA partition missing"
+    mount_data /dev/disk/by-label/SUDERRA-DATA
+    apply_layout_and_bind
 }
 
 # First-boot provisioning (RT-1): format a BLANK data partition as LUKS2 and seal
@@ -47,27 +100,22 @@ provision_luks_data() {
     # already false here; if blkid still sees ANY signature (ext4, etc.) this is
     # not our fresh partition — refuse and require manual intervention.
     if blkid "${dev}" >/dev/null 2>&1; then
-        echo "refusing to auto-format ${dev}: it has a non-LUKS filesystem/signature (manual step required)" >&2
-        exit 1
+        alarm data-unmountable "refusing to auto-format ${dev}: it has a non-LUKS filesystem/signature (manual step required)"
     fi
     # Fail-closed: production at-rest encryption requires a TPM2 device.
     if [ ! -e /dev/tpmrm0 ] && [ ! -e /dev/tpm0 ]; then
-        echo "production /data encryption requires a TPM2 device; none found (/dev/tpm*)" >&2
-        exit 1
+        alarm tpm-unavailable "production /data encryption requires a TPM2 device; none found (/dev/tpm*)"
     fi
-    command -v systemd-cryptenroll >/dev/null 2>&1 || {
-        echo "systemd-cryptenroll missing; cannot provision TPM-sealed /data" >&2
-        exit 1
-    }
-    # Ephemeral key lives only in /run (tmpfs, RAM) and is shredded below; it is
+    command -v systemd-cryptenroll >/dev/null 2>&1 ||
+        alarm data-unmountable "systemd-cryptenroll missing; cannot provision TPM-sealed /data"
+    # Ephemeral key lives only in /run (tmpfs, RAM) and is removed below; it is
     # never written to persistent storage.
     keyfile="$(mktemp /run/suderra-data-key.XXXXXX)"
     chmod 0600 "${keyfile}"
     dd if=/dev/urandom of="${keyfile}" bs=512 count=1 status=none
     if ! cryptsetup luksFormat --type luks2 --batch-mode --key-file "${keyfile}" "${dev}"; then
         rm -f "${keyfile}"
-        echo "luksFormat failed on ${dev}" >&2
-        exit 1
+        alarm data-unmountable "luksFormat failed on ${dev}"
     fi
     # Seal the volume key to the TPM2, bound to PCR7 (UEFI/boot secure-boot policy).
     if ! systemd-cryptenroll "${dev}" --unlock-key-file="${keyfile}" \
@@ -76,53 +124,40 @@ provision_luks_data() {
         # boot re-provisions cleanly instead of leaving an unopenable volume.
         cryptsetup erase --batch-mode "${dev}" >/dev/null 2>&1 || true
         rm -f "${keyfile}"
-        echo "TPM2 enroll failed; erased fresh LUKS header for clean retry" >&2
-        exit 1
+        alarm tpm-unseal-failed "TPM2 enroll failed; erased fresh LUKS header for clean retry"
     fi
     # Drop the ephemeral passphrase slot so TPM2 becomes the ONLY unlock path.
-    systemd-cryptenroll "${dev}" --wipe-slot=password >/dev/null 2>&1 || true
+    # Its key exists only in ${keyfile}, which is removed below either way, so
+    # a failed wipe leaves a slot nobody can open: it is reported, not fatal.
+    if ! systemd-cryptenroll "${dev}" --wipe-slot=password >/dev/null; then
+        echo "WARNING: could not wipe the ephemeral passphrase slot of ${dev}; its key is discarded" >&2
+    fi
     rm -f "${keyfile}"
     echo "==> provisioned LUKS2 /data on ${dev} (TPM2-sealed, PCR7)"
 }
 
 unlock_prod_luks_data() {
-    data_dev="${SUDERRA_DATA_DEVICE:-/dev/disk/by-partlabel/data}"
-    mapper="${SUDERRA_DATA_MAPPER:-suderra-data}"
-    mapper_dev="/dev/mapper/${mapper}"
+    mapper_dev="/dev/mapper/${DATA_MAPPER}"
     fresh=0
 
-    command -v cryptsetup >/dev/null 2>&1 || {
-        echo "cryptsetup missing; production /data cannot unlock" >&2
-        exit 1
-    }
-    [ -e "${data_dev}" ] || {
-        echo "production data partition missing: ${data_dev}" >&2
-        exit 1
-    }
-    if ! cryptsetup isLuks "${data_dev}"; then
-        provision_luks_data "${data_dev}"
+    command -v cryptsetup >/dev/null 2>&1 ||
+        alarm data-unmountable "cryptsetup missing; production /data cannot unlock"
+    [ -e "${DATA_DEVICE}" ] || alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
+    if ! cryptsetup isLuks "${DATA_DEVICE}"; then
+        provision_luks_data "${DATA_DEVICE}"
         fresh=1
     fi
-    luks_type="$(cryptsetup luksDump "${data_dev}" 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -n 1)"
-    [ "${luks_type}" = "2" ] || {
-        echo "production data partition must be LUKS2" >&2
-        exit 1
-    }
+    luks_type="$(cryptsetup luksDump "${DATA_DEVICE}" | sed -n 's/^Version:[[:space:]]*//p' | head -n 1)"
+    [ "${luks_type}" = "2" ] || alarm data-unmountable "production data partition must be LUKS2"
 
     if [ ! -e "${mapper_dev}" ]; then
         if command -v systemd-cryptsetup >/dev/null 2>&1; then
-            systemd-cryptsetup attach "${mapper}" "${data_dev}" - \
+            systemd-cryptsetup attach "${DATA_MAPPER}" "${DATA_DEVICE}" - \
                 tpm2-device=auto,headless=yes >/dev/null ||
-                {
-                    echo "TPM2-backed systemd-cryptsetup unlock failed" >&2
-                    exit 1
-                }
+                alarm tpm-unseal-failed "TPM2-backed systemd-cryptsetup unlock failed"
         else
-            cryptsetup open --token-only "${data_dev}" "${mapper}" >/dev/null ||
-                {
-                    echo "TPM2 token unlock failed" >&2
-                    exit 1
-                }
+            cryptsetup open --token-only "${DATA_DEVICE}" "${DATA_MAPPER}" >/dev/null ||
+                alarm tpm-unseal-failed "TPM2 token unlock failed"
         fi
     fi
 
@@ -132,18 +167,27 @@ unlock_prod_luks_data() {
         mkfs.ext4 -q -L SUDERRA-DATA "${mapper_dev}"
     fi
 
-    mkdir -p /data
-    if ! mountpoint -q /data; then
-        mount "${mapper_dev}" /data
+    mount_data "${mapper_dev}"
+    apply_layout_and_bind
+
+    if [ "${fresh}" = "1" ] && [ -f /etc/suderra/board ]; then
+        # Positive evidence that /data was created on this boot (DEC-12); the
+        # lifecycle consumes it on this boot to enter PROVISIONING.
+        umask 077
+        printf '%s\n' "${DATA_DEVICE}" > /run/suderra-os/data-created
+        "${INSTALLER}" lifecycle factory >/dev/null ||
+            alarm state-corrupt "cannot create the lifecycle store as FACTORY"
     fi
-    mount_data_bindings
 }
 
 case "${variant}" in
-    prod)
-        unlock_prod_luks_data
-        ;;
-    *)
+    dev)
         mount_dev_data
         ;;
+    *)
+        unlock_prod_luks_data
+        ;;
 esac
+if reports_results; then
+    "${INSTALLER}" result write --kind data-unlock --outcome ok >/dev/null
+fi

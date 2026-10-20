@@ -1,5 +1,9 @@
-# Provisioning-only SSH.
+# Provisioning-only SSH (ADR-048 DEC-5.1 - DEC-5.5).
 #
-# Root SSH is always disabled. The temporary provision user is constrained by
-# its login shell (/usr/sbin/suderra-provision) and removed by lockdown.
-DROPBEAR_ARGS="-w -j -k -I 600 -K 60"
+# dropbear runs only while suderra-provision-mode.service holds the
+# provisioning window open (dropbear.service.d/10-suderra-provisioning.conf).
+# Root logins are refused (-w), forwarding is off (-j -k), each connection
+# gets one password attempt (-T 1; every failed attempt also renews the
+# one-time password), and the only host key is the ed25519 key on /data
+# whose fingerprint the console shows next to the one-time password.
+DROPBEAR_ARGS="-w -j -k -T 1 -I 600 -K 60 -r /etc/dropbear/dropbear_ed25519_host_key"

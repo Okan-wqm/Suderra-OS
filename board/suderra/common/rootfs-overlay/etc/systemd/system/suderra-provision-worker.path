@@ -1,10 +1,17 @@
+# Starts the root provisioning worker when the forced command publishes its
+# trigger file (ADR-048 DEC-5.5). Only the trigger is watched: the forced
+# command writes the token and the request under temporary names, renames
+# them into place, then renames the trigger, so the worker never sees a
+# half-written file. Runs only inside the open provisioning window.
+
 [Unit]
 Description=Watch Suderra OS provisioning requests
 Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+ConditionPathExists=/run/suderra-os/provisioning-open
+BindsTo=suderra-provision-mode.service
+After=suderra-provision-mode.service
 
 [Path]
-PathModified=/var/spool/suderra-provision/inbox
-MakeDirectory=true
-
-[Install]
-WantedBy=multi-user.target
+PathExists=/var/spool/suderra-provision/inbox/trigger
+Unit=suderra-provision-worker.service

@@ -1,0 +1,16 @@
+# Re-evaluates the lifecycle every minute, so a MAINTENANCE window or a
+# provisioning one-time-password window closes on time (ADR-048 DEC-5.2,
+# DEC-12).
+
+[Unit]
+Description=Periodic Suderra OS lifecycle evaluation
+Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+
+[Timer]
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Unit=suderra-lifecycle.service
+
+[Install]
+WantedBy=timers.target

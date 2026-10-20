@@ -1,0 +1,17 @@
+# The agent writes a cloud-signed suderra.device-lifecycle.v1 statement to its
+# state directory; root verifies it and performs the transition (ADR-048
+# DEC-5.14, DEC-12). Ordered after /data: a watch set up on the empty
+# mountpoint would never see the mounted filesystem.
+
+[Unit]
+Description=Watch the agent's device-lifecycle request
+Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+After=suderra-data.service
+
+[Path]
+PathChanged=/data/suderra/agent/state/lifecycle-request.dsse
+Unit=suderra-lifecycle-request.service
+
+[Install]
+WantedBy=paths.target

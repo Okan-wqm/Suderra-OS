@@ -155,8 +155,11 @@ BR2_PACKAGE_LIBCURL=y
 BR2_PACKAGE_LIBCURL_CURL=y
 BR2_PACKAGE_LIBCURL_OPENSSL=y
 BR2_PACKAGE_CA_CERTIFICATES=y
-# BR2_PACKAGE_DROPBEAR is not set
+# Provisioning SSH only (ADR-048 DEC-5.1): it runs inside the provisioning
+# window of suderra-provision-mode.service, never at boot.
+BR2_PACKAGE_DROPBEAR=y
 # BR2_PACKAGE_DROPBEAR_CLIENT is not set
+BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
 BR2_PACKAGE_UTIL_LINUX=y
 BR2_PACKAGE_UTIL_LINUX_BINARIES=y
 
@@ -201,7 +204,6 @@ BR2_PACKAGE_LVM2=y
 BR2_PACKAGE_CRYPTSETUP=y
 # Version anti-rollback (M4): rollback-floor / monotonic install guard.
 BR2_PACKAGE_SUDERRA_OTA=y
-# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y      # Faz 2
 
 # ============================================================================
@@ -211,6 +213,8 @@ BR2_TARGET_GENERIC_HOSTNAME="suderra-rpi4"
 BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
 # BR2_TARGET_ENABLE_ROOT_LOGIN is not set
 # BR2_TARGET_GENERIC_GETTY is not set
+# The root is a read-only dm-verity mount: never remount it rw (ADR-048 DEC-24).
+# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set
 
 # ============================================================================
 # Reproducible build

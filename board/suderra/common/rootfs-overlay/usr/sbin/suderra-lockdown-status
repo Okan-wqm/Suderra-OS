@@ -1,6 +1,9 @@
 #!/bin/sh
+# Reports whether the device is locked down (ADR-048 DEC-5.9, DEC-11, DEC-12).
+# Exit 0 when every check passes. Read-only: it changes nothing.
 set -eu
 
+INSTALLER=/usr/bin/suderra-installer
 status=0
 
 ok() {
@@ -12,79 +15,69 @@ fail() {
     status=1
 }
 
-check_user_locked() {
-    user="$1"
-    while IFS=: read -r name password _rest; do
-        if [ "${name}" = "${user}" ]; then
-            case "${password}" in
-                !*) return 0 ;;
-                *) return 1 ;;
-            esac
-        fi
-    done < /etc/shadow
-    return 1
+is_mounted() {
+    awk -v target="$1" '$5 == target { found = 1 } END { exit !found }' /proc/self/mountinfo
 }
 
-check_masked() {
-    unit="$1"
-    [ -L "/etc/systemd/system/${unit}" ] &&
-        [ "$(readlink "/etc/systemd/system/${unit}")" = "/dev/null" ]
+account_locked() {
+    awk -F: -v user="$1" '$1 == user { found = 1; locked = ($2 ~ /^[!*]/) } END { exit !(found && locked) }' /etc/shadow
 }
 
-if [ -f /var/lib/suderra/.appliance-locked ]; then
-    ok "appliance lock marker exists"
+state="$("${INSTALLER}" lifecycle status 2>/dev/null || echo unknown)"
+if [ "${state}" = ACTIVE ]; then
+    ok "lifecycle is ACTIVE (root-verified activation receipt)"
 else
-    fail "appliance lock marker missing"
+    fail "lifecycle is ${state}, not ACTIVE"
 fi
 
-if check_user_locked root; then
-    ok "root password login locked"
+if is_mounted /etc/shadow; then
+    fail "a provisioning one-time-password shadow is bound over /etc/shadow"
 else
-    fail "root password login is not locked"
+    ok "no one-time-password shadow is bound"
 fi
-
-if check_user_locked provision; then
-    ok "provision password login locked"
-else
-    fail "provision password login is not locked"
-fi
-
-for unit in \
-    getty@.service \
-    serial-getty@.service \
-    debug-shell.service \
-    rescue.service \
-    emergency.service \
-    ssh.service \
-    sshd.service \
-    dropbear.service \
-    systemd-logind.service
-do
-    if check_masked "${unit}"; then
-        ok "${unit} masked"
+for user in root provision; do
+    if account_locked "${user}"; then
+        ok "${user} password login locked"
     else
-        fail "${unit} not masked"
+        fail "${user} password login is not locked"
     fi
 done
 
-if [ -x /opt/suderra/edge/current/suderra-agent ]; then
-    ok "suderra-agent binary installed"
-else
-    fail "suderra-agent binary missing"
-fi
-
-if [ -s /var/lib/suderra/config/config.yaml ]; then
-    ok "mutable agent config exists"
-else
-    fail "mutable agent config missing"
-fi
-
-if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-enabled suderra-agent.service >/dev/null 2>&1; then
-        ok "suderra-agent.service enabled"
+for unit in suderra-provision-mode.service dropbear.service suderra-provision-worker.path; do
+    if systemctl is-active --quiet "${unit}"; then
+        fail "${unit} is active"
     else
-        fail "suderra-agent.service not enabled"
+        ok "${unit} is not active"
     fi
+done
+if is_mounted /var/spool/suderra-provision; then
+    fail "the provisioning spool is still bound"
+else
+    ok "the provisioning spool is gone"
+fi
+
+recorded="/data/suderra/os/firewall/loaded.sha256"
+if [ -f "${recorded}" ] &&
+   [ "$(nft list ruleset | sha256sum | cut -d' ' -f1)" = "$(cat "${recorded}")" ]; then
+    ok "loaded ruleset matches the recorded hash"
+else
+    fail "loaded ruleset does not match the recorded hash"
+fi
+if nft list ruleset | grep -q 'dport 22'; then
+    fail "an SSH rule is loaded"
+else
+    ok "no SSH rule is loaded"
+fi
+
+if [ -x /opt/suderra/edge/current/suderra-agent ]; then
+    ok "suderra-agent release installed"
+else
+    fail "suderra-agent release missing"
+fi
+if systemctl is-active --quiet suderra-agent.service; then
+    ok "suderra-agent.service active"
+else
+    fail "suderra-agent.service not active"
 fi
 
 exit "${status}"

@@ -17,7 +17,6 @@ config BR2_EXTERNAL_SUDERRA_PATH
 #
 # Custom paketler — package/<name>/Config.in dosyaları
 #
-source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-edge-agent/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-firstboot/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-os-installer/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-keys/Config.in"
@@ -38,12 +37,16 @@ config BR2_PACKAGE_SUDERRA_VARIANT_DEV
 	  Production'da KULLANMA.
 
 config BR2_PACKAGE_SUDERRA_VARIANT_PROD
-	bool "Production appliance (locked runtime, no factory provisioning)"
+	bool "Production appliance (locked runtime, provisioning by lifecycle state)"
 	help
-	  Üretim varyantı kilitli runtime imajıdır. Dropbear, getty,
-	  debug shell ve local factory provisioning bu imajda açık
-	  gelmez. Factory/provisioning akışı ayrı dev/lab veya installer
-	  profiliyle yapılır.
+	  Üretim varyantı kilitli runtime imajıdır. Getty ve debug shell
+	  bu imajda açık gelmez. Provisioning bir imaj varyantı değil,
+	  /data'ya bağlı bir boot durumudur (ADR-048 DEC-5.1): Dropbear
+	  ve provisioning birimleri imajdadır ama yalnız root-owned yaşam
+	  döngüsü PROVISIONING (veya yeniden provisioning amaçlı
+	  MAINTENANCE) iken, /run'daki tek-kullanımlık parolayla ve
+	  varsayılan rota arayüzüyle sınırlı açılır; kayıttan sonra
+	  kapanır.
 	  dm-verity, secure boot, imzalı release, RAUC ve hardware evidence
 	  üretim kapılarıdır.
 

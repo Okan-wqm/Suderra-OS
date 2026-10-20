@@ -227,13 +227,15 @@ for rollback_file in /data/suderra/ota/rollback-floor /etc/suderra/rollback-floo
     fi
 done
 
+# First-boot initialization is the root-owned lifecycle store on /data
+# (ADR-048 DEC-12): it exists once the first boot evaluated the lifecycle.
 firstboot_done=0
-if [ -f /var/lib/suderra/.firstboot-done ]; then
+if [ -f /data/suderra/os/lifecycle ]; then
     firstboot_done=1
 fi
 firstboot_state="not_collected"
-if command -v systemctl >/dev/null 2>&1; then
-    firstboot_state="$(systemctl is-active suderra-firstboot.service 2>/dev/null || true)"
+if command -v suderra-installer >/dev/null 2>&1; then
+    firstboot_state="$(suderra-installer lifecycle status 2>/dev/null || true)"
 fi
 
 lockdown_output="${WORK_DIR}/lockdown-status.txt"

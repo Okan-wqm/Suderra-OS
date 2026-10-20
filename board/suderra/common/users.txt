@@ -8,9 +8,10 @@
 # Buildroot tarafından `BR2_ROOTFS_USERS_TABLES` ile okunur.
 #
 # Root: TÜM imajlarda password login kilitli (`!`). Erişim yalnız provisioning
-# akışı üzerinden: firstboot `provision` kullanıcısına tek-kullanımlık bir parola
-# atar ve login shell'i genel shell yerine forced-command `suderra-provision`'dır.
-# Runtime appliance: suderra-lockdown root login/getty/debug/remote shell kapatır.
+# akışı üzerinden: suderra-provision-mode `provision` kullanıcısına /run'da
+# tek-kullanımlık bir parola bağlar ve login shell'i genel shell yerine
+# forced-command `suderra-provision`'dır. Kayıttan sonra suderra-lockdown bu
+# yüzeyi kapatır (ADR-048 DEC-5).
 # (Repo'ya gömülü sabit root parolası GÜVENLİK NEDENİYLE KALDIRILDI — post-build.sh
 #  guardrail'i gömülü bir root parolası tespit ederse build'i fail eder.)
 #
@@ -25,6 +26,19 @@
 # UID 200 sabit (reproducible) — Buildroot'un auto-assign (-1) yerine.
 suderra 200 suderra 200 ! /var/lib/suderra /sbin/nologin - Suderra_Edge_Agent_runtime
 
-# Temporary provisioning user — firstboot assigns a one-time password, and the
-# login shell is a forced provisioning command instead of a general shell.
+# Provisioning user (ADR-048 DEC-5.2, DEC-5.5). Its password stays locked in
+# the image; while the root-owned lifecycle is PROVISIONING (or MAINTENANCE for
+# reprovisioning) suderra-provision-mode binds a one-time-password shadow from
+# /run/suderra-os over /etc/shadow. The login shell is the forced provisioning
+# command (listed in /etc/shells by post-build.sh) and the home is the
+# provisioning spool, a bind of /run/suderra-provision.
 provision 201 provision 201 ! /var/spool/suderra-provision /usr/sbin/suderra-provision - Suderra_OS_provisioning_user
+
+# Field-I/O device groups (ADR-048 DEC-1.8). No account belongs to them: the
+# agent joins the ones its board drop-in names through SupplementaryGroups=,
+# and usr/lib/udev/rules.d/60-suderra-devices.rules gives them their nodes.
+# dialout comes from the Buildroot skeleton.
+- -1 suderra-io 210 - - - - -
+- -1 gpio 211 - - - - -
+- -1 i2c 212 - - - - -
+- -1 spi 213 - - - - -

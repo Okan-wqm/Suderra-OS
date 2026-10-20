@@ -1,0 +1,28 @@
+# Root-verifies the agent's activation receipt (provisioning key, payloadType,
+# device binding, device and tenant, manifest digest), records ACTIVE and
+# locks the device down (ADR-048 DEC-5.8, DEC-5.9, DEC-12). A marker the agent
+# writes is never registration evidence. It also runs at boot, for a receipt
+# written before a reboot; once the lifecycle is ACTIVE the condition skips
+# it.
+
+[Unit]
+Description=Verify the activation receipt and lock the device down
+Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+ConditionPathExists=/data/suderra/agent/state/activation-receipt.dsse
+After=suderra-data.service suderra-lifecycle.service suderra-provision-mode.service nftables.service
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/sbin/suderra-provision-mode awaiting-activation
+ExecStart=/usr/bin/suderra-installer lifecycle activate
+ExecStartPost=/usr/sbin/suderra-lockdown
+TimeoutStartSec=20min
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os
+
+[Install]
+WantedBy=multi-user.target

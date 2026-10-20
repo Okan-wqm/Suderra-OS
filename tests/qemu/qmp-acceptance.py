@@ -374,9 +374,9 @@ def release_checks(
             firstboot_done = firstboot.get("idempotent")
         checks["firstboot-idempotence"] = semantic_result(
             firstboot_done is True,
-            "/var/lib/suderra/.firstboot-done marker exists"
-            if firstboot_done is True else "firstboot done marker was not observed",
-            "guest: /var/lib/suderra/.firstboot-done",
+            "lifecycle store /data/suderra/os/lifecycle exists"
+            if firstboot_done is True else "the lifecycle store was not observed",
+            "guest: /data/suderra/os/lifecycle",
         )
 
         lockdown = facts.get("lockdown")

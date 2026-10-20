@@ -3,7 +3,8 @@
 # ARM production build lane sözleşmesi (PR-A9, ADR-0007).
 #
 # Ayrı prod_ab defconfig + gated signing workflow deseninin bütünlüğünü korur:
-# prod defconfig'ler kilitli (dropbear/getty yok, VARIANT_PROD), standart Image
+# prod defconfig'ler kilitli (getty yok, dropbear yalnız provisioning penceresinde,
+# ADR-048 DEC-5.1; VARIANT_PROD; read-only kök), standart Image
 # Build'den hariç, GPT/verity-signed-fit, uboot-rauc OTA, HSM-signed gated
 # workflow. Dev rpi4/revpi4 DOKUNULMAZ (her-PR build yeşil kalır).
 #
@@ -12,15 +13,21 @@ IFS=$'\n\t'
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# 1. Prod defconfig'ler: VARIANT_PROD + kilitli (dropbear/getty yok).
+# 1. Prod defconfig'ler: VARIANT_PROD + kilitli (getty yok; dropbear yalnız
+#    provisioning penceresinde çalışır, ADR-048 DEC-5.1; kök hiç rw olmaz, DEC-24).
 for b in rpi4 revpi4; do
     dc="${ROOT}/configs/suderra_aarch64_${b}_prod_ab_defconfig"
     [ -f "${dc}" ] || { echo "ERROR: ${b} prod_ab defconfig yok" >&2; exit 1; }
     grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${dc}" || { echo "ERROR: ${b} prod_ab VARIANT_PROD değil" >&2; exit 1; }
-    grep -q '^# BR2_PACKAGE_DROPBEAR is not set' "${dc}" || { echo "ERROR: ${b} prod_ab dropbear kapalı değil" >&2; exit 1; }
     grep -q '^# BR2_TARGET_GENERIC_GETTY is not set' "${dc}" || { echo "ERROR: ${b} prod_ab getty kapalı değil" >&2; exit 1; }
-    if grep -qE '^BR2_PACKAGE_DROPBEAR=y|^BR2_TARGET_GENERIC_GETTY=y' "${dc}"; then
-        echo "ERROR: ${b} prod_ab hâlâ dropbear/getty açık" >&2; exit 1; fi
+    if grep -qE '^BR2_TARGET_GENERIC_GETTY=y' "${dc}"; then
+        echo "ERROR: ${b} prod_ab hâlâ getty açık" >&2; exit 1; fi
+    grep -q '^# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set' "${dc}" || {
+        echo "ERROR: ${b} prod_ab read-only kökü rw remount ediyor (ADR-048 DEC-24)" >&2; exit 1; }
+    if grep -q '^BR2_PACKAGE_DROPBEAR=y' "${dc}"; then
+        grep -q 'production Dropbear runs only inside the provisioning window' "${ROOT}/board/suderra/common/post-image.sh" || {
+            echo "ERROR: ${b} prod_ab dropbear içeriyor ama post-image provisioning-penceresi kapısı yok" >&2; exit 1; }
+    fi
     grep -q "^BR2_ROOTFS_POST_SCRIPT_ARGS=\"suderra_aarch64_${b}_prod_ab\"" "${dc}" || {
         echo "ERROR: ${b} prod_ab post-script arg yanlış" >&2; exit 1; }
     # Data-at-rest (M2) + anti-rollback (M4) hardening parity with x86 prod.

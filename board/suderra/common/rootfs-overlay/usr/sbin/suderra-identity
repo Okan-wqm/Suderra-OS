@@ -1,0 +1,117 @@
+#!/bin/sh
+# OS-owned device identity (ADR-048 DEC-3.6, DEC-4.9).
+#
+#   suderra-identity create   first boot: record the hardware binding, then mirror
+#   suderra-identity mirror   publish /run/suderra/identity.json for the agent
+#
+# The hardware binding is written once, by root, to
+# /data/suderra/os/identity/device-binding.json and never replaced: every
+# provisioning manifest is bound to it and the root installer compares the
+# two (DEC-3.6). Its method is the board's device_binding_method from the
+# image (/etc/suderra/board, derived from contracts boards.json):
+#
+#   tpm-ek-sha256              SHA-256 of the DER SubjectPublicKeyInfo of the
+#                              TPM's RSA-2048 endorsement key (default TCG EK
+#                              template; RevPi SLB9670, x86 dTPM/PTT, QEMU swtpm)
+#   bcm2711-serial-otp-sha256  SHA-256(serial || customer OTP); refused until
+#                              the operator decision on TPM-less RPi4/CM4
+#                              (ADR-048 Soru 3, EDGE-MEDIUM-120)
+#
+# There is no fallback between methods: a board whose method needs a TPM and
+# has none gets no binding, so it cannot be provisioned, rather than a weaker
+# identity. /etc/machine-id is never an identity source (DEC-4.9).
+set -eu
+
+BOARD_FILE=/etc/suderra/board
+IDENTITY_DIR=/data/suderra/os/identity
+BINDING="${IDENTITY_DIR}/device-binding.json"
+DEVICE="${IDENTITY_DIR}/device.json"
+RUN_IDENTITY=/run/suderra/identity.json
+TCTI=device:/dev/tpmrm0
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+board_value() {
+    sed -n "s/^$1=//p" "${BOARD_FILE}" | tr -d '"'
+}
+
+is_sha256() {
+    case "$1" in
+        *[!0-9a-f]*|"") return 1 ;;
+    esac
+    [ "${#1}" -eq 64 ]
+}
+
+tpm_ek_sha256() {
+    [ -c /dev/tpmrm0 ] || fail "the board binds to its TPM endorsement key, but /dev/tpmrm0 is missing"
+    command -v tpm2_createek >/dev/null 2>&1 ||
+        fail "the board binds to its TPM endorsement key, but tpm2-tools are not in the image"
+    work="$(mktemp -d /run/suderra-os/identity.XXXXXX)"
+    if ! tpm2_createek -T "${TCTI}" -G rsa -c "${work}/ek.ctx" -u "${work}/ek.der" -f der >/dev/null; then
+        rm -rf "${work}"
+        fail "tpm2_createek could not create the endorsement key"
+    fi
+    tpm2_flushcontext -T "${TCTI}" -t >/dev/null
+    digest="$(sha256sum "${work}/ek.der" | cut -d' ' -f1)"
+    rm -rf "${work}"
+    printf '%s\n' "${digest}"
+}
+
+create() {
+    [ -d /data/suderra/os ] || fail "/data/suderra/os is missing: /data is not mounted"
+    if [ -e "${BINDING}" ]; then
+        return 0
+    fi
+    method="$(board_value DEVICE_BINDING_METHOD)"
+    case "${method}" in
+        tpm-ek-sha256)
+            digest="$(tpm_ek_sha256)"
+            ;;
+        bcm2711-serial-otp-sha256)
+            fail "bcm2711-serial-otp-sha256 binding needs the customer OTP value, which awaits the operator decision (ADR-048 Soru 3)"
+            ;;
+        *)
+            fail "${BOARD_FILE} declares no supported DEVICE_BINDING_METHOD (got '${method}')"
+            ;;
+    esac
+    is_sha256 "${digest}" || fail "binding digest is not a SHA-256"
+    umask 077
+    mkdir -p "${IDENTITY_DIR}"
+    printf '{"method":"%s","digest":{"sha256":"%s"}}\n' "${method}" "${digest}" > "${BINDING}.tmp"
+    sync
+    mv "${BINDING}.tmp" "${BINDING}"
+    sync
+}
+
+mirror() {
+    [ -f "${BINDING}" ] || fail "${BINDING} is missing; run suderra-identity create"
+    binding="$(cat "${BINDING}")"
+    board="$(board_value BOARD_PROFILE)"
+    device=""
+    if [ -f "${DEVICE}" ]; then
+        device=",\"device\":$(cat "${DEVICE}")"
+    fi
+    umask 027
+    printf '{"board_profile":"%s","device_binding":%s%s}\n' "${board}" "${binding}" "${device}" \
+        > "${RUN_IDENTITY}.tmp"
+    chgrp suderra "${RUN_IDENTITY}.tmp"
+    chmod 0640 "${RUN_IDENTITY}.tmp"
+    mv "${RUN_IDENTITY}.tmp" "${RUN_IDENTITY}"
+}
+
+case "${1:-}" in
+    create)
+        create
+        mirror
+        ;;
+    mirror)
+        mirror
+        ;;
+    *)
+        echo "Usage: suderra-identity create|mirror" >&2
+        exit 2
+        ;;
+esac

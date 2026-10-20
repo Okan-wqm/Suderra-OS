@@ -1,0 +1,32 @@
+# Root-owned device lifecycle (ADR-048 DEC-5.14, DEC-12; contracts
+# lifecycle.json). Boot-time and periodic evaluation: records FACTORY ->
+# PROVISIONING on positive evidence and the end of a MAINTENANCE window,
+# mirrors the state to /run/suderra/lifecycle, then closes the provisioning
+# surface if the state or its window no longer allows it. A missing, corrupt
+# or unmountable store reads LOCKED with an alarm result.
+# suderra-lifecycle.timer repeats it; suderra-lifecycle.path hands the agent's
+# signed lifecycle requests to suderra-lifecycle-request.service.
+
+[Unit]
+Description=Suderra OS device lifecycle evaluation
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+ConditionPathExists=/etc/suderra/board
+After=suderra-data.service suderra-identity.service systemd-tmpfiles-setup.service
+Before=nftables.service suderra-provision-mode.service suderra-activation.service suderra-agent.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/suderra-installer lifecycle init
+ExecStartPost=/usr/sbin/suderra-provision-mode reconcile
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os
+
+[Install]
+WantedBy=sysinit.target

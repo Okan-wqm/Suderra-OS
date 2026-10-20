@@ -1,0 +1,28 @@
+# OS-owned device identity (ADR-048 DEC-3.6, DEC-4.9): records the hardware
+# binding once on /data and mirrors /run/suderra/identity.json every boot.
+
+[Unit]
+Description=Suderra OS device identity
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+ConditionPathExists=/etc/suderra/board
+Requires=suderra-data.service
+Wants=tpm2.target
+After=suderra-data.service systemd-tmpfiles-setup.service tpm2.target
+Before=suderra-lifecycle.service suderra-provision-mode.service suderra-agent.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/suderra-identity create
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os
+
+[Install]
+WantedBy=sysinit.target

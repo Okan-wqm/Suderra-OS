@@ -1,70 +1,84 @@
 #!/bin/sh
+# Login shell of the provision account: a forced command, not a shell
+# (ADR-048 DEC-5.5, DEC-5.9).
+#
+#   ssh provision@<device> provision <device-code>     then type the token
+#
+# The provisioning token is read from stdin, so it never appears in argv,
+# `ps` or a shell history. The token and the request are written into the
+# inbox under temporary names and renamed into place; the trigger the path
+# unit watches is renamed last, so the root worker only ever sees complete
+# files. The worker fetches the device's signed delivery itself. This command
+# waits for the worker's result, prints it and acknowledges that it was read,
+# which lockdown waits for before it closes the session.
 set -eu
 
-REQUEST_DIR=/var/spool/suderra-provision/inbox
-RESULT_FILE=/var/spool/suderra-provision/result
-TIMEOUT="${SUDERRA_PROVISION_TIMEOUT:-900}"
+SPOOL=/var/spool/suderra-provision
+INBOX="${SPOOL}/inbox"
+RESULT="${SPOOL}/result"
+TIMEOUT=2700
+MAX_TOKEN=4096
 
 usage() {
-    cat <<'EOF'
-Usage:
-  ssh provision@DEVICE install-manifest-url https://...
-  ssh provision@DEVICE install-manifest-json < suderra-os-edge-manifest.json
+    cat >&2 <<'EOF'
+Usage: ssh provision@DEVICE provision DEVICE-CODE
+       (then type the provisioning token and press Enter)
 
-This account is a forced-command provisioning endpoint. It does not provide a
-general shell.
+This account is a forced-command provisioning endpoint, not a shell.
 EOF
-}
-
-if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
-    command="${SSH_ORIGINAL_COMMAND}"
-elif [ "${1:-}" = "-c" ]; then
-    shift
-    command="${*:-}"
-else
-    command="${*:-}"
-fi
-# Saldırgan kontrolündeki komut üzerinde glob genişletmesini kapat;
-# yalnız word-splitting kalsın (ör. '*' home dizinine genişlemesin).
-set -f
-set -- ${command}
-set +f
-
-[ "$#" -gt 0 ] || {
-    usage
     exit 2
 }
 
-umask 077
-mkdir -p "${REQUEST_DIR}"
-rm -f "${RESULT_FILE}"
+[ "${1:-}" = "-c" ] || usage
+command="${2:-}"
+# No glob expansion on the remote command; split on whitespace only.
+set -f
+# shellcheck disable=SC2086
+set -- ${command}
+set +f
+if [ "$#" -ne 2 ] || [ "$1" != "provision" ]; then
+    usage
+fi
+device_code="$2"
+case "${device_code}" in
+    *[!A-Za-z0-9_-]*|"") usage ;;
+esac
+[ "${#device_code}" -le 50 ] || usage
 
-case "$1" in
-    install-manifest-url)
-        [ -n "${2:-}" ] || {
-            usage >&2
-            exit 2
-        }
-        printf '%s\n' "$2" > "${REQUEST_DIR}/manifest-url"
-        rm -f "${REQUEST_DIR}/manifest.json"
-        ;;
-    install-manifest-json)
-        cat > "${REQUEST_DIR}/manifest.json"
-        rm -f "${REQUEST_DIR}/manifest-url"
-        ;;
-    *)
-        usage >&2
-        exit 2
+IFS= read -r token || [ -n "${token:-}" ] || {
+    echo "status=error"
+    echo "message=no provisioning token on stdin"
+    exit 1
+}
+case "${token}" in
+    *[!!-~]*|"")
+        echo "status=error"
+        echo "message=the provisioning token must be visible ASCII"
+        exit 1
         ;;
 esac
+[ "${#token}" -le "${MAX_TOKEN}" ] || {
+    echo "status=error"
+    echo "message=the provisioning token is too long"
+    exit 1
+}
 
-touch "${REQUEST_DIR}/trigger"
+umask 077
+request_id="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+printf '%s\n' "${token}" > "${INBOX}/.token.$$"
+mv -f "${INBOX}/.token.$$" "${INBOX}/token"
+printf 'id=%s\ndevice_code=%s\n' "${request_id}" "${device_code}" > "${INBOX}/.request.$$"
+mv -f "${INBOX}/.request.$$" "${INBOX}/request"
+: > "${INBOX}/.trigger.$$"
+mv -f "${INBOX}/.trigger.$$" "${INBOX}/trigger"
 
 elapsed=0
 while [ "${elapsed}" -lt "${TIMEOUT}" ]; do
-    if [ -f "${RESULT_FILE}" ]; then
-        cat "${RESULT_FILE}"
-        if grep -q '^status=ok$' "${RESULT_FILE}"; then
+    if [ -f "${RESULT}" ] && grep -qx "request=${request_id}" "${RESULT}"; then
+        grep -v '^request=' "${RESULT}"
+        printf 'id=%s\n' "${request_id}" > "${INBOX}/.result-read.$$"
+        mv -f "${INBOX}/.result-read.$$" "${INBOX}/result-read"
+        if grep -qx 'status=installed' "${RESULT}"; then
             exit 0
         fi
         exit 1

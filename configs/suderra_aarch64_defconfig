@@ -93,7 +93,6 @@ BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
 BR2_PACKAGE_CHRONY=y
 
 # Suderra custom paketleri (Faz 2+)
-# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
 
 # Build optimizations

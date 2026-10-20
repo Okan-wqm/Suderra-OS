@@ -1,0 +1,17 @@
+# The agent stores the cloud-signed activation receipt in its state directory;
+# root verifies it and records ACTIVE (ADR-048 DEC-5.8). Ordered after /data:
+# a watch set up on the empty mountpoint would never see the mounted
+# filesystem.
+
+[Unit]
+Description=Watch the agent's activation receipt
+Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+After=suderra-data.service
+
+[Path]
+PathChanged=/data/suderra/agent/state/activation-receipt.dsse
+Unit=suderra-activation.service
+
+[Install]
+WantedBy=paths.target

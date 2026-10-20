@@ -1,0 +1,261 @@
+#!/bin/sh
+# Provisioning mode of Suderra OS (ADR-048 DEC-5.1 - DEC-5.4, DEC-5.9, DEC-5.14,
+# DEC-12, DEC-24).
+#
+#   condition            exit 0 if the provisioning window may open now
+#   awaiting-activation  exit 0 if an activation receipt is accepted now
+#   open                 one-time password, shadow and spool binds, console
+#   close                restore the locked shadow, destroy OTP and spool
+#   rotate               new one-time password (after a failed attempt)
+#   guard                rotate on every failed provision password attempt
+#   reconcile            close the window when its state or time is over
+#   open-window          after a verified reprovisioning request: reload the
+#                        firewall and open a new window
+#
+# The window exists only while the root-owned lifecycle is PROVISIONING, or
+# MAINTENANCE for reprovisioning; a missing lock marker never opens it, and an
+# unknown or unmountable lifecycle reads LOCKED. /etc is never written: the
+# one-time-password shadow lives in /run/suderra-os and is bind-mounted over
+# /etc/shadow; the spool is /run/suderra-provision, bind-mounted over the
+# provision user's home. The password expires with its window (2 h) and on
+# reboot. A window that expired stays closed until the next boot (physical
+# action); only a newly verified reprovisioning statement opens another.
+#
+# ExecCondition contract: 0 = proceed, 1 = skip, 255 = failure.
+set -eu
+
+INSTALLER=/usr/bin/suderra-installer
+RUN=/run/suderra-os
+OPEN_MARKER="${RUN}/provisioning-open"
+CLOSED_MARKER="${RUN}/provisioning-closed"
+EXPIRES="${RUN}/provisioning-expires"
+IFACE_RECORD="${RUN}/provisioning-iface"
+ROUTE_WAIT_SECONDS=60
+SHADOW="${RUN}/shadow"
+SPOOL_SOURCE=/run/suderra-provision
+SPOOL=/var/spool/suderra-provision
+HOST_KEY=/etc/dropbear/dropbear_ed25519_host_key
+WINDOW_SECONDS=7200
+OTP_ALPHABET=ABCDEFGHJKLMNPQRSTUVWXYZ23456789
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+console() {
+    printf '%s\n' "$@" > /dev/console
+}
+
+is_mounted() {
+    awk -v target="$1" '$5 == target { found = 1 } END { exit !found }' /proc/self/mountinfo
+}
+
+uptime_seconds() {
+    cut -d. -f1 /proc/uptime
+}
+
+lifecycle_state() {
+    "${INSTALLER}" lifecycle status
+}
+
+provisioning_state() {
+    case "$1" in
+        PROVISIONING|MAINTENANCE) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+window_expired() {
+    [ -f "${EXPIRES}" ] || return 1
+    [ "$(uptime_seconds)" -ge "$(cat "${EXPIRES}")" ]
+}
+
+condition() {
+    if ! state="$(lifecycle_state)"; then
+        echo "ERROR: cannot read the lifecycle state" >&2
+        exit 255
+    fi
+    if [ -e "${CLOSED_MARKER}" ]; then
+        exit 1
+    fi
+    provisioning_state "${state}" || exit 1
+    exit 0
+}
+
+awaiting_activation() {
+    if ! state="$(lifecycle_state)"; then
+        echo "ERROR: cannot read the lifecycle state" >&2
+        exit 255
+    fi
+    provisioning_state "${state}" || exit 1
+    exit 0
+}
+
+# Prints a fresh one-time password: 20 symbols of a 32-symbol alphabet
+# (100 bits), each from one uniformly random byte (256 = 8 * 32).
+new_otp() {
+    od -An -N20 -tu1 /dev/urandom |
+        awk -v a="${OTP_ALPHABET}" '{ for (i = 1; i <= NF; i++) printf "%s", substr(a, ($i % 32) + 1, 1) } END { print "" }'
+}
+
+# Binds a shadow in which only the provision account's password differs from
+# the image's, carrying the hash of a new one-time password; prints it.
+bind_otp_shadow() {
+    otp="$(new_otp)"
+    [ "${#otp}" -eq 20 ] || fail "could not generate a one-time password"
+    hash="$(printf '%s\n' "${otp}" | mkpasswd -m sha512)"
+    case "${hash}" in
+        \$6\$*) ;;
+        *) fail "mkpasswd did not produce a SHA-512 crypt hash" ;;
+    esac
+    umask 077
+    awk -F: -v OFS=: -v hash="${hash}" \
+        '$1 == "provision" { $2 = hash; found = 1 } { print } END { exit !found }' \
+        /etc/shadow > "${SHADOW}.new" || fail "the image's shadow has no provision account"
+    mv -f "${SHADOW}.new" "${SHADOW}"
+    # A bind follows the inode, so a new password needs a new bind; between
+    # the two, /etc/shadow is the image's locked shadow (fail-safe).
+    if is_mounted /etc/shadow; then
+        umount /etc/shadow
+    fi
+    mount --bind "${SHADOW}" /etc/shadow
+    printf '%s\n' "${otp}"
+}
+
+default_route_iface() {
+    awk 'NR > 1 && $2 == "00000000" && $8 == "00000000" { print $1; exit }' /proc/net/route
+}
+
+# The provisioning ruleset admits SSH only on the interface that carries the
+# default route (DEC-5.4), which exists only once networkd has a lease, and
+# networkd starts after the firewall (DEC-11.2). Reload the firewall whenever
+# that interface appears or changes while the window is open.
+follow_default_route() {
+    iface="$(default_route_iface)"
+    [ -n "${iface}" ] || return 0
+    if [ "$(cat "${IFACE_RECORD}" 2>/dev/null)" != "${iface}" ]; then
+        systemctl reload nftables.service
+        printf '%s\n' "${iface}" > "${IFACE_RECORD}"
+    fi
+}
+
+show_window() {
+    otp="$1"
+    fingerprint="$(dropbearkey -y -f "${HOST_KEY}" | sed -n 's/^Fingerprint: //p')"
+    public_key="$(dropbearkey -y -f "${HOST_KEY}" | grep '^ssh-ed25519 ' | cut -d' ' -f1-2)"
+    remaining=$(( $(cat "${EXPIRES}") - $(uptime_seconds) ))
+    console "" \
+        "==================== Suderra OS provisioning ====================" \
+        " lifecycle:          $(lifecycle_state)" \
+        " interface:          $(default_route_iface)" \
+        " user:               provision" \
+        " one-time password:  ${otp}" \
+        " SSH host key:       ${fingerprint}" \
+        " known_hosts key:    ${public_key}" \
+        " window closes in:   $(( remaining / 60 )) min (every failed login renews the password)" \
+        " command:            ssh provision@<address> provision <device-code>" \
+        "                     then type the provisioning token" \
+        "================================================================="
+}
+
+open_window() {
+    [ -d "${RUN}" ] || fail "${RUN} is missing (tmpfiles)"
+    [ -d "${SPOOL_SOURCE}/inbox" ] || fail "${SPOOL_SOURCE}/inbox is missing (tmpfiles)"
+    # The host key must live on /data, never on the read-only root.
+    is_mounted /etc/dropbear || fail "/etc/dropbear is not bound from /data/suderra/os/ssh"
+    if [ ! -f "${HOST_KEY}" ]; then
+        dropbearkey -t ed25519 -f "${HOST_KEY}" >/dev/null
+    fi
+    is_mounted "${SPOOL}" || mount --bind "${SPOOL_SOURCE}" "${SPOOL}"
+    rm -f "${CLOSED_MARKER}"
+    umask 077
+    echo $(( $(uptime_seconds) + WINDOW_SECONDS )) > "${EXPIRES}"
+    otp="$(bind_otp_shadow)"
+    : > "${OPEN_MARKER}"
+    waited=0
+    while [ -z "$(default_route_iface)" ] && [ "${waited}" -lt "${ROUTE_WAIT_SECONDS}" ]; do
+        sleep 2
+        waited=$((waited + 2))
+    done
+    follow_default_route
+    show_window "${otp}"
+}
+
+# Removes every entry of a spool directory except the inbox directory itself
+# (tmpfiles owns the directories); symlinks are removed, never followed.
+wipe_entries() {
+    for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        [ -e "${entry}" ] || [ -L "${entry}" ] || continue
+        [ "${entry}" = "${SPOOL_SOURCE}/inbox" ] && continue
+        rm -rf "${entry}"
+    done
+}
+
+close_window() {
+    rm -f "${OPEN_MARKER}"
+    umask 077
+    : > "${CLOSED_MARKER}"
+    if is_mounted /etc/shadow; then
+        umount /etc/shadow
+    fi
+    rm -f "${SHADOW}" "${SHADOW}.new" "${EXPIRES}" "${IFACE_RECORD}"
+    if is_mounted "${SPOOL}"; then
+        umount -l "${SPOOL}"
+    fi
+    wipe_entries "${SPOOL_SOURCE}/inbox"
+    wipe_entries "${SPOOL_SOURCE}"
+    console "" "Suderra OS provisioning window closed." ""
+}
+
+rotate() {
+    [ -e "${OPEN_MARKER}" ] || fail "the provisioning window is not open"
+    otp="$(bind_otp_shadow)"
+    show_window "${otp}"
+}
+
+guard() {
+    journalctl --follow --lines=0 --output=cat --identifier=dropbear |
+        while IFS= read -r line; do
+            case "${line}" in
+                *"Bad password attempt for 'provision'"*)
+                    rotate
+                    ;;
+            esac
+        done
+}
+
+reconcile() {
+    [ -e "${OPEN_MARKER}" ] || return 0
+    state="$(lifecycle_state)"
+    if provisioning_state "${state}" && ! window_expired; then
+        follow_default_route
+        return 0
+    fi
+    : > "${CLOSED_MARKER}"
+    systemctl --no-block stop suderra-provision-mode.service
+    systemctl --no-block reload nftables.service
+}
+
+open_after_request() {
+    state="$(lifecycle_state)"
+    [ "${state}" = MAINTENANCE ] || fail "a verified reprovisioning request leaves MAINTENANCE, not ${state}"
+    rm -f "${CLOSED_MARKER}"
+    systemctl reload nftables.service
+    systemctl start suderra-provision-mode.service
+}
+
+case "${1:-}" in
+    condition) condition ;;
+    awaiting-activation) awaiting_activation ;;
+    open) open_window ;;
+    close) close_window ;;
+    rotate) rotate ;;
+    guard) guard ;;
+    reconcile) reconcile ;;
+    open-window) open_after_request ;;
+    *)
+        echo "Usage: suderra-provision-mode condition|awaiting-activation|open|close|rotate|guard|reconcile|open-window" >&2
+        exit 2
+        ;;
+esac

@@ -1,25 +1,44 @@
+# Suderra edge agent: the single suderra-agent.service of Suderra OS
+# (ADR-048 DEC-1.8). Every security-relevant directive is fixed by
+# contracts/suderra-edge/v1/unit-directives.json (profile suderra-os) and
+# checked by tests/image-contracts/edge-agent-unit-contract-test.sh; board
+# device access comes only from suderra-agent.service.d/10-board-<profile>.conf.
+#
+# The agent is not part of the image (DEC-1.1): the root installer puts it
+# under /data/suderra/edge, bound read-only at /opt/suderra/edge, and records
+# an install receipt. The unit runs once a receipt exists; from then on a
+# missing or altered release is refused loudly by verify-current
+# (ExecStartPre=+, DEC-1.5) rather than turning into a silent condition.
+# Paths are compile-time constants of the agent's suderra-os profile, so no
+# Environment= selects them (DEC-4.5, DEC-19). The data subdirectories in
+# ReadWritePaths= exist before the unit starts (data-layout.tmpfiles.conf);
+# a missing one fails the start with 226/NAMESPACE (DEC-4.11).
+
 [Unit]
-Description=Suderra Edge Agent (downloaded runtime)
+Description=Suderra edge agent
 Documentation=https://github.com/Okan-wqm/aquaculture_platform/tree/main/sens-api-gateway
-After=network-online.target time-sync.target
-Wants=network-online.target
-ConditionPathExists=/opt/suderra/edge/current/suderra-agent
-ConditionPathExists=/var/lib/suderra/config/config.yaml
+After=nftables.service time-sync.target suderra-data.service suderra-identity.service suderra-lifecycle.service
+Wants=time-sync.target
+ConditionPathExists=/data/suderra/os/edge/receipt.json
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=notify
 NotifyAccess=main
-Environment=SUDERRA_CONFIG=/var/lib/suderra/config/config.yaml
+ExecStartPre=+/usr/bin/suderra-installer edge verify-current
 ExecStart=/opt/suderra/edge/current/suderra-agent
+ExecReload=+/usr/bin/suderra-installer edge verify-current
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
+TimeoutStartSec=300s
 TimeoutStopSec=90s
+WatchdogSec=60s
 
 User=suderra
 Group=suderra
 UMask=0077
-
-WatchdogSec=60s
 
 LimitCORE=0
 LimitNOFILE=4096
@@ -27,14 +46,16 @@ MemoryMax=256M
 CPUQuota=75%
 TasksMax=64
 
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=
 NoNewPrivileges=true
 
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/suderra /var/log/suderra
+ReadOnlyPaths=/var/lib/suderra-site
+ReadWritePaths=/var/lib/suderra/state /var/lib/suderra/secrets /var/lib/suderra/queue
+ReadWritePaths=/var/lib/suderra/scripts /var/lib/suderra/policy-cache /var/lib/suderra/update-requests
+ReadWritePaths=/var/log/suderra /run/suderra/agent-health
 
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -48,10 +69,9 @@ ProcSubset=pid
 RestrictNamespaces=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 LockPersonality=true
 RemoveIPC=true
-
 MemoryDenyWriteExecute=true
 
 SystemCallArchitectures=native
@@ -60,15 +80,6 @@ SystemCallFilter=~@debug @mount @module @raw-io @reboot @swap @privileged
 SystemCallErrorNumber=EPERM
 
 DevicePolicy=closed
-DeviceAllow=/dev/gpiomem rw
-DeviceAllow=/dev/i2c-1 rw
-DeviceAllow=/dev/spidev0.0 rw
-DeviceAllow=/dev/spidev0.1 rw
-DeviceAllow=/dev/ttyAMA0 rw
-DeviceAllow=/dev/ttyUSB0 rw
-DeviceAllow=/dev/watchdog rw
-DeviceAllow=/dev/tpm0 rw
-DeviceAllow=/dev/tpmrm0 rw
 DeviceAllow=char-rtc r
 
 StandardInput=null

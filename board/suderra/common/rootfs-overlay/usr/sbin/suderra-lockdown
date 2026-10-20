@@ -1,112 +1,67 @@
 #!/bin/sh
+# Lockdown after registration (ADR-048 DEC-5.8, DEC-5.9, DEC-11.3, DEC-12).
+#
+# Runs from suderra-activation.service right after root verified the
+# activation receipt and recorded ACTIVE; it is keyed on that verified state,
+# never on a marker the agent could write or delete. It
+#   1. lets the technician read the install result (until the forced command
+#      acknowledges it, plus a short grace; bounded),
+#   2. stops suderra-provision-mode.service: dropbear, the worker and every
+#      provision session stop with it, the image's locked shadow returns over
+#      the one-time password and the spool is destroyed,
+#   3. loads the appliance ruleset and refuses to report success otherwise,
+#   4. writes a lockdown result (DEC-27).
+# Nothing under /etc is written: no shadow edit, no unit masks.
 set -eu
 
-FORCE=0
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --force)
-            FORCE=1
-            ;;
-        --help|-h)
-            echo "Usage: suderra-lockdown [--force]"
-            exit 0
-            ;;
-        *)
-            echo "ERROR: unknown argument: $1" >&2
-            exit 2
-            ;;
-    esac
-    shift
-done
+INSTALLER=/usr/bin/suderra-installer
+SPOOL=/var/spool/suderra-provision
+RESULT="${SPOOL}/result"
+ACK="${SPOOL}/inbox/result-read"
+GRACE_AFTER_READ=10
+MAX_WAIT=900
 
-fail() {
+failed() {
+    reason="$1"
+    shift
     echo "ERROR: $*" >&2
+    "${INSTALLER}" result write --kind lockdown --outcome failed --reason "${reason}" \
+        --detail "$*" >/dev/null
     exit 1
 }
 
-check_ready() {
-    agent=/opt/suderra/edge/current/suderra-agent
-    config=/var/lib/suderra/config/config.yaml
-
-    [ -x "${agent}" ] || fail "agent binary missing: ${agent}"
-    [ "$(stat -c '%U:%G' "${agent}")" = "root:root" ] ||
-        fail "agent binary is not root-owned"
-    [ -s "${config}" ] || fail "agent config missing: ${config}"
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl is-active --quiet suderra-agent.service ||
-            fail "suderra-agent.service is not active"
-    fi
-
-    [ -f /var/lib/suderra/edge/registered ] ||
-        [ -f /var/lib/suderra/registration.json ] ||
-        fail "agent registration marker missing"
+is_mounted() {
+    awk -v target="$1" '$5 == target { found = 1 } END { exit !found }' /proc/self/mountinfo
 }
 
-if [ "${FORCE}" != "1" ]; then
-    check_ready
-fi
+state="$("${INSTALLER}" lifecycle status)"
+[ "${state}" = ACTIVE ] ||
+    failed lifecycle-inconsistent "lockdown follows a verified activation receipt, but the lifecycle is ${state}"
 
-echo "==> Locking Suderra OS into appliance mode"
-
-lock_user() {
-    user="$1"
-    if command -v passwd >/dev/null 2>&1; then
-        passwd -l "${user}" >/dev/null 2>&1 || true
+if [ -f "${RESULT}" ]; then
+    waited=0
+    while [ ! -f "${ACK}" ] && [ "${waited}" -lt "${MAX_WAIT}" ]; do
+        sleep 2
+        waited=$((waited + 2))
+    done
+    if [ -f "${ACK}" ]; then
+        sleep "${GRACE_AFTER_READ}"
     fi
-    if [ -f /etc/shadow ]; then
-        sed -i "s#^${user}:[^:]*:#${user}:!:#" /etc/shadow
-    fi
-}
-
-lock_user root
-lock_user provision
-
-mkdir -p /etc/systemd/system
-
-for unit in \
-    getty@.service \
-    serial-getty@.service \
-    console-getty.service \
-    container-getty@.service \
-    debug-shell.service \
-    rescue.service \
-    rescue.target \
-    emergency.service \
-    emergency.target \
-    ctrl-alt-del.target \
-    ssh.service \
-    sshd.service \
-    dropbear.service \
-    suderra-provision-worker.path \
-    suderra-provision-worker.service \
-    systemd-logind.service
-do
-    ln -sfn /dev/null "/etc/systemd/system/${unit}"
-done
-
-rm -rf /etc/systemd/system/getty.target.wants \
-       /etc/systemd/system/rescue.target.wants \
-       /etc/systemd/system/emergency.target.wants \
-       /etc/systemd/system/multi-user.target.wants/dropbear.service \
-       /etc/systemd/system/multi-user.target.wants/suderra-provision-worker.path \
-       /var/spool/suderra-provision \
-       2>/dev/null || true
-
-touch /var/lib/suderra/.appliance-locked
-/usr/sbin/suderra-firewall 2>/dev/null || true
-
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-    systemctl stop dropbear.service suderra-provision-worker.path suderra-provision-worker.service \
-        getty@tty1.service serial-getty@ttyS0.service 2>/dev/null || true
-    systemctl mask dropbear.service getty@.service serial-getty@.service debug-shell.service \
-        rescue.service rescue.target emergency.service emergency.target \
-        suderra-provision-worker.path suderra-provision-worker.service 2>/dev/null || true
 fi
 
-if command -v pkill >/dev/null 2>&1; then
-    pkill -KILL -u provision 2>/dev/null || true
+systemctl stop suderra-provision-mode.service ||
+    failed io-error "cannot stop suderra-provision-mode.service"
+if systemctl is-active --quiet dropbear.service; then
+    failed state-corrupt "dropbear is still running after provisioning mode stopped"
+fi
+if is_mounted /etc/shadow; then
+    failed state-corrupt "the one-time-password shadow is still bound over /etc/shadow"
 fi
 
+loaded="$("${INSTALLER}" policy apply)" ||
+    failed firewall-load-failed "suderra-installer policy apply failed"
+[ "${loaded}" = appliance ] ||
+    failed firewall-load-failed "policy apply loaded '${loaded}' instead of the appliance ruleset"
+
+"${INSTALLER}" result write --kind lockdown --outcome ok >/dev/null
 echo "==> Appliance lockdown complete"

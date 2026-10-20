@@ -39,7 +39,7 @@ do
 done
 
 for token in \
-    'production defconfig must not include Dropbear' \
+    'production Dropbear runs only inside the provisioning window' \
     'production defconfig must not enable BR2_TARGET_GENERIC_GETTY' \
     'production defconfig must not enable BR2_TARGET_ENABLE_ROOT_LOGIN' \
     'sbverify --cert' \

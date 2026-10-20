@@ -1,20 +1,25 @@
+# /data: mount, layout, binds (ADR-048 DEC-4.2, DEC-24; mutable-state.json).
+#
+# The unit deliberately has no mount-namespace options (ProtectSystem=,
+# ProtectHome=, PrivateTmp=, ReadWritePaths=, ...): systemd would run the
+# script in a private mount namespace, and the /data mount and its binds
+# would never reach the rest of the system (EI-010).
+
 [Unit]
 Description=Suderra mutable data partition
 Documentation=https://github.com/Okan-wqm/suderra-os
 DefaultDependencies=no
 Wants=local-fs.target
 After=local-fs.target systemd-tmpfiles-setup.service
-Before=suderra-firstboot.service suderra-agent.service nftables.service
+Before=suderra-identity.service suderra-lifecycle.service nftables.service suderra-agent.service
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/suderra-data-unlock
-
 NoNewPrivileges=true
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/data /var/lib/suderra /var/log/suderra /opt/suderra/edge/releases /dev/mapper
 
 [Install]
 WantedBy=sysinit.target

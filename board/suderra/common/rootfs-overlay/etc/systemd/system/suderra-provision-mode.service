@@ -1,0 +1,34 @@
+# Provisioning mode: a /data-keyed boot state, not an image variant (ADR-048
+# DEC-5.1, DEC-5.2, DEC-12, DEC-24).
+#
+# It opens only while the root-owned lifecycle is PROVISIONING, or
+# MAINTENANCE for reprovisioning (ExecCondition). Opening generates a
+# one-time password, binds its shadow from /run/suderra-os over /etc/shadow,
+# binds the /run provisioning spool over /var/spool/suderra-provision and
+# shows the password with the SSH host-key fingerprint on the console; /etc
+# is never written. dropbear, the provisioning worker and the password guard
+# carry ConditionPathExists=/run/suderra-os/provisioning-open and
+# BindsTo=this unit, so they run only inside the open window and stop with
+# it. Stopping the unit (lockdown, window end) restores the image's locked
+# shadow and destroys the spool.
+#
+# No mount-namespace options: the binds must be visible system-wide.
+
+[Unit]
+Description=Suderra OS provisioning mode
+Documentation=https://github.com/Okan-wqm/suderra-os
+ConditionPathExists=/etc/suderra/board
+After=suderra-data.service suderra-identity.service suderra-lifecycle.service nftables.service systemd-tmpfiles-setup.service
+Wants=dropbear.service suderra-provision-worker.path suderra-provision-guard.service
+Before=dropbear.service suderra-provision-worker.path suderra-provision-guard.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecCondition=/usr/sbin/suderra-provision-mode condition
+ExecStart=/usr/sbin/suderra-provision-mode open
+ExecStop=/usr/sbin/suderra-provision-mode close
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

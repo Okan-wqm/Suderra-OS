@@ -67,14 +67,13 @@ git -C "${ROOT}/buildroot" show HEAD:package/pkg-download.mk | grep -q 'BR_FMT_V
         echo "ERROR: Buildroot 2025.05.3 cargo vendor archive format must be cargo4" >&2
         exit 1
     }
-grep -q 'BR2_PACKAGE_SUDERRA_EDGE_AGENT_CARGO4_HASH_REVALIDATED' \
-    "${ROOT}/package/suderra-edge-agent/Config.in" ||
-    {
-        echo "ERROR: suderra-edge-agent must stay gated until its cargo4 hash is revalidated" >&2
-        exit 1
-    }
-if grep -R '^BR2_PACKAGE_SUDERRA_EDGE_AGENT=y' "${ROOT}/configs"; then
-    echo "ERROR: suderra-edge-agent cannot be enabled until its Buildroot 2025.05 cargo4 hash is revalidated" >&2
+# The edge agent is not built into any image (ADR-048 DEC-1.1): the root
+# installer delivers it to /data at run time, so no Buildroot package or
+# defconfig symbol may bring it back (edge-agent-unit-contract-test.sh holds
+# the single-unit invariant).
+if [ -e "${ROOT}/package/suderra-edge-agent" ] ||
+   grep -R 'SUDERRA_EDGE_AGENT' "${ROOT}/configs" "${ROOT}/Config.in"; then
+    echo "ERROR: the edge agent must not be packaged into the image (ADR-048 DEC-1.1)" >&2
     exit 1
 fi
 if grep -R 'Rust 1\.85' "${ROOT}/docs/dev/rust-workspace.md" "${ROOT}/userspace/README.md" "${ROOT}/docs/architecture/ARCHITECTURE.md"; then

@@ -111,9 +111,14 @@ BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
 BR2_PACKAGE_CHRONY=y
 
 # Suderra custom paketleri
-# BR2_PACKAGE_SUDERRA_EDGE_AGENT is not set
 # Faz 2'de aktive: BR2_PACKAGE_SUDERRA_FIRSTBOOT=y
-# BR2_PACKAGE_SUDERRA_KEYS=y  # Faz 3'te (signing keys)
+# Root installer, pinned dev/CI keys and the swtpm-backed device identity of
+# the edge provisioning e2e lane (ADR-048 P0, DEC-3.6, DEC-25).
+BR2_PACKAGE_SUDERRA_OS_INSTALLER=y
+BR2_PACKAGE_SUDERRA_KEYS=y
+BR2_PACKAGE_TPM2_TSS=y
+BR2_PACKAGE_TPM2_TOOLS=y
+BR2_PACKAGE_CRYPTSETUP=y
 
 # Build optimizations
 BR2_TARGET_GENERIC_HOSTNAME="suderra"

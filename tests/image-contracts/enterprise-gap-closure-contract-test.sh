@@ -10,7 +10,6 @@ X86_GENIMAGE="${ROOT}/board/suderra/x86_64/genimage.cfg"
 X86_GRUB="${ROOT}/board/suderra/x86_64/grub.cfg"
 KERNEL_FRAGMENT="${ROOT}/board/suderra/common/kernel-fragment.config"
 FIRSTBOOT_UNIT="${ROOT}/package/suderra-firstboot/suderra-firstboot.service"
-OVERLAY_FIRSTBOOT_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-firstboot.service"
 DATA_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-data.service"
 NFTABLES_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/nftables.service"
 RAUC_MARK_GOOD_UNIT="${ROOT}/package/suderra-rauc-config/suderra-rauc-mark-good.service"
@@ -20,7 +19,12 @@ RAUC_BOOT_STATE="${ROOT}/package/suderra-rauc-config/suderra-rauc-boot-state"
 INSTALLER="${ROOT}/userspace/suderra-installer/src/cmd/install.rs"
 OTA_MAIN="${ROOT}/userspace/suderra-ota/src/main.rs"
 OTA_PACKAGE_MK="${ROOT}/package/suderra-ota/suderra-ota.mk"
-EDGE_INSTALL="${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-edge-install"
+PROVISION_WORKER_UNIT="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-provision-worker.service"
+PROVISION_WORKER="${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-provision-worker"
+INSTALLER_EDGE="${ROOT}/userspace/suderra-installer/src/cmd/edge.rs"
+INSTALLER_PATHS="${ROOT}/userspace/suderra-installer/src/paths.rs"
+INSTALLER_VERIFY="${ROOT}/userspace/suderra-installer/src/contracts/verify.rs"
+INSTALLER_FSUTIL="${ROOT}/userspace/suderra-installer/src/fsutil.rs"
 MANIFEST="${ROOT}/userspace/suderra-installer/src/manifest.rs"
 PRODUCTION_ARTIFACTS="${ROOT}/scripts/production-artifacts.sh"
 CREATE_RAUC_BUNDLE="${ROOT}/scripts/create-rauc-bundle.sh"
@@ -33,8 +37,14 @@ grep -q 'ExecStart=/usr/bin/suderra-firstboot' "${FIRSTBOOT_UNIT}" || {
     echo "ERROR: packaged firstboot unit must execute the installed /usr/bin binary" >&2
     exit 1
 }
-if grep -Eq '^Before=.*sysinit\.target' "${DATA_UNIT}" "${OVERLAY_FIRSTBOOT_UNIT}"; then
-    echo "ERROR: data/firstboot units must not force themselves before sysinit.target" >&2
+if grep -Eq '^Before=.*sysinit\.target' "${DATA_UNIT}"; then
+    echo "ERROR: the data unit must not force itself before sysinit.target" >&2
+    exit 1
+fi
+# ADR-048 DEC-5: suderra-provision-mode.service replaces the overlay firstboot
+# unit, which wrote /etc at run time.
+if [ -e "${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-firstboot.service" ]; then
+    echo "ERROR: the overlay must not ship suderra-firstboot.service (ADR-048 DEC-5)" >&2
     exit 1
 fi
 grep -q '/usr/sbin/suderra-data-unlock' "${DATA_UNIT}" || {
@@ -59,21 +69,22 @@ grep -q 'Production variant her zaman kilitli imaj' "${POST_BUILD}" || {
     echo "ERROR: production post-build lockdown must be explicit" >&2
     exit 1
 }
-grep -q 'dropbear.service' "${POST_BUILD}" || {
-    echo "ERROR: post-build contract must still know which remote shell unit to mask" >&2
+grep -q 'disable dropbear.service' "${POST_BUILD}" || {
+    echo "ERROR: post-build must keep dropbear disabled outside the provisioning window" >&2
     exit 1
 }
-grep -q 'enable_unit_if_present "suderra-agent.service"' "${POST_BUILD}" || {
+if ! grep -q 'enable_unit suderra-agent.service' "${POST_BUILD}" ||
+   ! grep -q 'is not in the rootfs; it cannot be enabled' "${POST_BUILD}"; then
     echo "ERROR: post-build must not enable a missing suderra-agent.service" >&2
     exit 1
-}
+fi
 if grep -q 'ln -sfn ../suderra-agent.service' "${POST_BUILD}"; then
     echo "ERROR: post-build must not create dangling suderra-agent.service wants symlinks" >&2
     exit 1
 fi
 
-grep -q 'production defconfig must not include Dropbear' "${POST_IMAGE}" || {
-    echo "ERROR: production post-image gate must reject Dropbear" >&2
+grep -q 'production Dropbear runs only inside the provisioning window' "${POST_IMAGE}" || {
+    echo "ERROR: production post-image gate must reject Dropbear outside the provisioning window" >&2
     exit 1
 }
 grep -q 'production defconfig must not enable BR2_TARGET_GENERIC_GETTY' "${POST_IMAGE}" || {
@@ -121,8 +132,10 @@ grep -q 'create-rauc-bundle.sh' "${POST_IMAGE}" || {
     exit 1
 }
 
-if grep -Eq '^BR2_PACKAGE_DROPBEAR=y|^BR2_TARGET_GENERIC_GETTY=y|^BR2_TARGET_ENABLE_ROOT_LOGIN=y' "${X86_DEFCONFIG}"; then
-    echo "ERROR: x86 production defconfig must not boot with SSH/getty/root-login debug surfaces" >&2
+# Dropbear is in every production image (ADR-048 DEC-5.1) but runs only
+# inside the provisioning window; getty and root login stay out.
+if grep -Eq '^BR2_TARGET_GENERIC_GETTY=y|^BR2_TARGET_ENABLE_ROOT_LOGIN=y' "${X86_DEFCONFIG}"; then
+    echo "ERROR: x86 production defconfig must not boot with getty/root-login debug surfaces" >&2
     exit 1
 fi
 for token in \
@@ -327,8 +340,15 @@ grep -q 'std::fs::rename' "${MANIFEST}" || {
     echo "ERROR: installed state writes must use atomic rename" >&2
     exit 1
 }
-grep -q 'WORK_DIR=/run/suderra-installer/edge' "${EDGE_INSTALL}" || {
-    echo "ERROR: edge install workdir must be root-owned runtime state, not agent-writable /var/lib/suderra" >&2
+# Edge installs run in the Rust root installer (ADR-048 DEC-1.10); its work
+# state is root-only, never the agent-writable /var/lib/suderra.
+if ! grep -q 'RuntimeDirectory=suderra-installer' "${PROVISION_WORKER_UNIT}" ||
+   ! grep -q '/data/suderra/os/installer' "${INSTALLER_PATHS}"; then
+    echo "ERROR: edge install work state must be root-owned runtime state, not agent-writable /var/lib/suderra" >&2
+    exit 1
+fi
+grep -q '/usr/bin/suderra-installer" edge provision\|INSTALLER}" edge provision' "${PROVISION_WORKER}" || {
+    echo "ERROR: the provisioning worker must delegate the install to suderra-installer edge provision" >&2
     exit 1
 }
 
@@ -351,22 +371,23 @@ grep -q 'SUDERRA_RUST_WORKSPACE_BUILD,suderra-ota' "${OTA_PACKAGE_MK}" || {
     echo "ERROR: suderra-ota package must use the shared Rust workspace build contract" >&2
     exit 1
 }
-grep -q -- "--proto '=https'" "${EDGE_INSTALL}" || {
-    echo "ERROR: edge install downloads must restrict curl to HTTPS" >&2
+grep -q 'https_only(true)' "${INSTALLER_EDGE}" || {
+    echo "ERROR: edge install downloads must be HTTPS-only" >&2
     exit 1
 }
-grep -q 'digest-bound config payload' "${EDGE_INSTALL}" || {
-    echo "ERROR: signed Edge manifest must require a config payload" >&2
+grep -q 'SiteConfigDigestMismatch' "${INSTALLER_VERIFY}" || {
+    echo "ERROR: the signed provisioning manifest must bind its site config" >&2
     exit 1
 }
-grep -q 'refusing monotonic downgrade' "${EDGE_INSTALL}" || {
-    echo "ERROR: edge install must reject downgrades without a signed rollback path" >&2
+grep -q 'RollbackBelowFloor' "${INSTALLER_VERIFY}" || {
+    echo "ERROR: edge install must reject releases below the rollback floor" >&2
     exit 1
 }
-grep -q 'rolling back current link' "${EDGE_INSTALL}" || {
-    echo "ERROR: edge activation must rollback current link on failed health/lockdown" >&2
+if ! grep -q 'fn symlink_atomic' "${INSTALLER_FSUTIL}" ||
+   ! grep -q 'fn complete_interrupted_switch' "${INSTALLER_EDGE}"; then
+    echo "ERROR: edge installs must switch current atomically and recover an interrupted switch" >&2
     exit 1
-}
+fi
 
 test -s "${PLAN_DOC}" || {
     echo "ERROR: enterprise gap closure plan documentation must exist" >&2

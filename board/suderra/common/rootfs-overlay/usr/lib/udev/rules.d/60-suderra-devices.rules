@@ -1,0 +1,21 @@
+# Field-I/O device node ownership of Suderra OS (ADR-048 DEC-1.8, EI-019).
+#
+# suderra-agent.service runs with DevicePolicy=closed: its board drop-in
+# (suderra-agent.service.d/10-board-<profile>.conf) names the nodes it may
+# open and the groups it joins through SupplementaryGroups=. These rules give
+# exactly those nodes to exactly those groups, so DeviceAllow= and the file
+# mode agree; nothing here makes a node world-accessible. The groups are
+# defined in board/suderra/common/users.txt.
+
+# RevPi PiBridge process image (revpi-connect4).
+KERNEL=="piControl0", GROUP="suderra-io", MODE="0660"
+
+# Raspberry Pi GPIO register window (rpi4-cm4).
+KERNEL=="gpiomem", GROUP="gpio", MODE="0660"
+
+# I2C and SPI character devices (rpi4-cm4).
+SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
+SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
+
+# Serial ports used for Modbus-RTU and RS485 (every board).
+SUBSYSTEM=="tty", KERNEL=="ttyAMA[0-9]*|ttyS[0-9]*|ttyUSB[0-9]*|ttyACM[0-9]*", GROUP="dialout", MODE="0660"

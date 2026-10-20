@@ -524,9 +524,19 @@ enforce_production_contract() {
         echo "ERROR: production defconfig must not enable BR2_TARGET_GENERIC_GETTY"
         exit 1
     fi
+    # Dropbear is in production images as the provisioning surface (ADR-048
+    # DEC-5.1), but it may run only inside the provisioning window: never
+    # enabled at boot, conditioned on the window marker and bound to
+    # suderra-provision-mode.service.
     if grep -q '^BR2_PACKAGE_DROPBEAR=y' "${BR2_CONFIG}" 2>/dev/null; then
-        echo "ERROR: production defconfig must not include Dropbear; use a separate factory/provisioning image"
-        exit 1
+        dropbear_target="${TARGET_DIR:?TARGET_DIR not set}"
+        dropbear_dropin="${dropbear_target}/etc/systemd/system/dropbear.service.d/10-suderra-provisioning.conf"
+        if ! grep -qx 'ConditionPathExists=/run/suderra-os/provisioning-open' "${dropbear_dropin}" ||
+           ! grep -qx 'BindsTo=suderra-provision-mode.service' "${dropbear_dropin}" ||
+           find "${dropbear_target}/etc/systemd/system" -path '*.wants/dropbear.service' | grep -q .; then
+            echo "ERROR: production Dropbear runs only inside the provisioning window (ADR-048 DEC-5.1): it must not be enabled and needs ${dropbear_dropin#"${dropbear_target}"}"
+            exit 1
+        fi
     fi
     if grep -q '^BR2_PACKAGE_SUDERRA_FIRSTBOOT=y' "${BR2_CONFIG}" 2>/dev/null; then
         echo "ERROR: production defconfig must not include placeholder suderra-firstboot"

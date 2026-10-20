@@ -1,8 +1,20 @@
+# Root provisioning worker (ADR-048 DEC-5.5, DEC-5.6, DEC-24): claims the
+# forced command's request and token and runs
+# `suderra-installer edge provision`, which fetches this device's signed
+# delivery with the token in the X-Provisioning-Token header, verifies every
+# statement and installs the agent; the result goes back to the technician.
+#
+# Every path the installer writes is listed in ReadWritePaths= (EI-001);
+# everything else is read-only. The claimed token and request live in
+# RuntimeDirectory=, which systemd removes when the run ends.
+
 [Unit]
 Description=Suderra OS provisioning worker
 Documentation=https://github.com/Okan-wqm/suderra-os
-After=network-online.target
-Wants=network-online.target
+ConditionPathExists=/etc/suderra/board
+ConditionPathExists=/run/suderra-os/provisioning-open
+BindsTo=suderra-provision-mode.service
+After=suderra-provision-mode.service suderra-data.service nftables.service
 
 [Service]
 Type=oneshot
@@ -10,22 +22,21 @@ ExecStart=/usr/sbin/suderra-provision-worker
 User=root
 Group=root
 UMask=0077
-# NNP=false bilinçli: edge-install lockdown adımı PAM/setuid araçlarına
-# dokunabilir; root servis için NNP kazancı küçük, kırma riski gerçek.
-NoNewPrivileges=false
+RuntimeDirectory=suderra-installer
+RuntimeDirectoryMode=0700
+TimeoutStartSec=45min
+NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
-
-# Ağdan tetiklenen en ayrıcalıklı yol — dosya sistemi ve kernel yüzeyi
-# kilitli; yazma yalnız aşağıdaki listeye. (ReadWritePaths ancak
-# ProtectSystem=strict ile anlam kazanır.)
 ProtectSystem=strict
-ReadWritePaths=/var/spool/suderra-provision /var/lib/suderra /var/log/suderra /opt/suderra /etc/suderra /etc/systemd/system /etc/shadow
+ReadWritePaths=-/data/suderra/os -/data/suderra/edge -/data/suderra/site
+ReadWritePaths=/run/suderra /run/suderra-os /run/suderra-update.lock /var/spool/suderra-provision
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
 ProtectClock=true
+ProtectHostname=true
 RestrictNamespaces=true
 RestrictSUIDSGID=true
 RestrictRealtime=true

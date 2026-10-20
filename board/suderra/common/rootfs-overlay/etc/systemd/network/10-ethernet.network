@@ -7,5 +7,9 @@ IPv6AcceptRA=no
 LinkLocalAddressing=no
 
 [DHCPv4]
+# The DHCP client id is the NIC's MAC, not the machine-id DUID: machine-id is
+# transient on the read-only root (ADR-048 DEC-4.9), and site DHCP
+# reservations and IP-based OT allowlists stay bound to the NIC.
+ClientIdentifier=mac
 UseDNS=true
 UseNTP=false
