@@ -107,6 +107,8 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
                                                       "lifecycle_to": "PROVISIONING"},
             json.dumps(first_lifecycle)[:300])
     journal = vm.run_probe("journal-all").get("journal", "")
+    banner = next((line for line in journal.splitlines() if "running in system mode" in line), "")
+    c.check("1 systemd enforces the units' seccomp sandbox (+SECCOMP)", "+SECCOMP" in banner, banner[-300:])
     c.check("1 the boot has no ordering cycle", "ordering cycle" not in journal,
             "\n".join(line for line in journal.splitlines() if "cycle" in line)[:600])
     chain_failures = [line for line in journal.splitlines()

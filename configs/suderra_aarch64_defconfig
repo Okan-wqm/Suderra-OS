@@ -50,6 +50,11 @@ BR2_TARGET_UBOOT_FORMAT_BIN=y
 
 # Init system
 BR2_INIT_SYSTEMD=y
+# systemd with seccomp: without libseccomp it is built -Dseccomp=disabled and
+# drops every unit's SystemCallFilter=, RestrictAddressFamilies=,
+# MemoryDenyWriteExecute=, LockPersonality=, RestrictRealtime= and
+# SystemCallArchitectures= (tests/image-contracts/edge-agent-unit-contract-test.sh).
+BR2_PACKAGE_LIBSECCOMP=y
 # BR2_PACKAGE_SYSTEMD_LOGIND is not set
 BR2_PACKAGE_SYSTEMD_NETWORKD=y
 # BR2_PACKAGE_SYSTEMD_TIMESYNCD is not set

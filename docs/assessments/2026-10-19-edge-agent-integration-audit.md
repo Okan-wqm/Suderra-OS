@@ -106,6 +106,7 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 | [EI-074](#EI-074) | LOW | P2 | sysctl hardening omits modules_disabled, ldisc_autoload, unprivileged_userfaultfd, bpf_jit_harden and io_uring_disabled |
 | [EI-075](#EI-075) | LOW | P2 | post-build strips setuid but not setgid bits, contrary to its whitelist comment |
 | [EI-076](#EI-076) | MEDIUM | P1 | The USB self-installer takes its payload key, verifier, rollback floor, key epoch, target board and confirmation from SUDERRA_INSTALLER_* environment variables |
+| [EI-077](#EI-077) | HIGH | P0 | systemd is built without seccomp on every image, so every unit's SystemCallFilter=, RestrictAddressFamilies=, MemoryDenyWriteExecute=, LockPersonality=, RestrictRealtime= and SystemCallArchitectures= are dropped, the agent's included |
 
 ## Bulgular
 
@@ -1425,3 +1426,20 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 - **Kök neden:** The script's test seam is the environment, so test-fixture paths and security decisions share one override mechanism that a runtime unit drop-in can also reach (ADR-048 DEC-19).
 - **Mimari düzeltme yönü:** Fix every security-relevant value (payload key, verifier, epoch, floor, USB-target permission, confirmation, board) as an image fact on the verity root; give tests a fixture root that production code cannot select (move the selection and verification logic into suderra-installer, where `Paths::under` exists only under `cfg(test)`), and remove the script from production images that never run it.
 - **Doğrulama:** tests/security/no-security-env-in-prod-test.sh lists this script as tracked (EI-076); removing it from that list must pass once fixed. Installer test runs against a fixture root without any SUDERRA_INSTALLER_* variable.
+
+<a id="EI-077"></a>
+
+### EI-077 — systemd is built without seccomp on every image, so every unit's SystemCallFilter=, RestrictAddressFamilies=, MemoryDenyWriteExecute=, LockPersonality=, RestrictRealtime= and SystemCallArchitectures= are dropped, the agent's included
+
+- **Önem:** Yüksek · **Faz:** P0 · **Son tarih:** 2026-11-02 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** configs/*_defconfig (systemd build), every overlay unit with a seccomp sandbox directive
+- **Köken:** QEMU edge e2e test (tests/qemu/edge-readonly-sandbox-test.py), 2026-10-20
+- **Kanıt (dosya:satır):** `buildroot/package/systemd/systemd.mk:191-196`, `configs/suderra_qemu_x86_64_defconfig:48`, `board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service` (SystemCallFilter=, RestrictAddressFamilies=, MemoryDenyWriteExecute=, LockPersonality=, RestrictRealtime=, SystemCallArchitectures=)
+- **Kanıt (ayrıntı):**
+  - the dev QEMU image's systemd reports `systemd 256.17 running in system mode (... -SECCOMP ...)` at boot
+  - systemd.mk builds `-Dseccomp=enabled` only with BR2_PACKAGE_LIBSECCOMP=y, which no defconfig selected
+  - `systemd-run -p RestrictAddressFamilies=...` on that image fails "Cannot set property RestrictAddressFamilies, or unknown property"; in unit files systemd drops the same directives
+  - the agent release requires CONFIG_SECCOMP_FILTER from every image's kernel for exactly this unit sandbox (aquaculture_platform sens-api-gateway/release/edge-release.toml), which the kernel has and systemd never used
+- **Kök neden:** The unit sandbox was specified and tested as text (unit-directives.json, edge-agent-unit-contract-test.sh) but never against the systemd the images build.
+- **Mimari düzeltme yönü:** Select BR2_PACKAGE_LIBSECCOMP=y in every systemd defconfig; fail the image contract when a systemd defconfig lacks it; check +SECCOMP on the booted image.
+- **Doğrulama:** tests/image-contracts/edge-agent-unit-contract-test.sh refuses a systemd defconfig without libseccomp; tests/qemu/edge-provisioning-e2e.py requires +SECCOMP in the booted systemd's feature string and edge-readonly-sandbox-test.py runs the agent and the installer under their units' seccomp directives.

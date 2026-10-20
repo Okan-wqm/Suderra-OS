@@ -46,6 +46,11 @@ BR2_LINUX_KERNEL_INSTALL_TARGET=y
 # Init system — systemd minimal
 # Edge Agent Type=notify + sd-notify zorunlu kıldığı için sysvinit/finit alternatif değil
 BR2_INIT_SYSTEMD=y
+# systemd with seccomp: without libseccomp it is built -Dseccomp=disabled and
+# drops every unit's SystemCallFilter=, RestrictAddressFamilies=,
+# MemoryDenyWriteExecute=, LockPersonality=, RestrictRealtime= and
+# SystemCallArchitectures= (tests/image-contracts/edge-agent-unit-contract-test.sh).
+BR2_PACKAGE_LIBSECCOMP=y
 BR2_PACKAGE_SYSTEMD_JOURNAL_GATEWAYD=n
 # BR2_PACKAGE_SYSTEMD_LOGIND is not set
 BR2_PACKAGE_SYSTEMD_NETWORKD=y

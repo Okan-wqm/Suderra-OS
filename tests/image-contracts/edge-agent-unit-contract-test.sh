@@ -87,3 +87,15 @@ fi
 # the others.
 grep -q 'suderra-agent.service.d' "${POST_BUILD}" ||
     fail "post-build.sh must prune suderra-agent.service.d to the image's board drop-in"
+
+# Every unit's seccomp sandbox needs a systemd built with seccomp. Without
+# libseccomp Buildroot builds systemd -Dseccomp=disabled, which drops
+# SystemCallFilter=, RestrictAddressFamilies=, MemoryDenyWriteExecute=,
+# LockPersonality=, RestrictRealtime= and SystemCallArchitectures= from every
+# unit (the agent's included), and refuses them on transient units; the QEMU
+# edge e2e sandbox test found the dev image's systemd reporting -SECCOMP.
+for defconfig in "${ROOT}"/configs/*_defconfig; do
+    grep -qx 'BR2_INIT_SYSTEMD=y' "${defconfig}" || continue
+    grep -qx 'BR2_PACKAGE_LIBSECCOMP=y' "${defconfig}" ||
+        fail "$(basename "${defconfig}") builds systemd without seccomp (BR2_PACKAGE_LIBSECCOMP=y missing)"
+done
