@@ -4,13 +4,17 @@
 # It checks the RAUC slot state and then calls the OS and agent predicate,
 # `suderra-installer health check`, which exists on every image and does not
 # depend on RAUC. The predicate always checks the OS (declared verity, LUKS
-# /data, the loaded firewall's hash, a consistent lifecycle, the agent ABI)
-# and counts the agent only once root has verified its activation receipt
-# (lifecycle ACTIVE), waiting a bounded time for activating -> active and
-# for a non-degraded agent. A factory-fresh device therefore never rolls
-# back an OS update over an agent it does not have yet, while an OS that
-# breaks an activated agent does. suderra-rauc-mark-good is the only caller
-# and the only mark-good path.
+# /data, the loaded firewall's hash), on an image without a board too; on an
+# image with a board it also checks a consistent lifecycle and the agent
+# ABI, and counts the agent only when root has verified its activation
+# receipt (lifecycle ACTIVE) and the agent was healthy right before the OS
+# update (/data/rauc/pre-update.json), waiting a bounded time for
+# activating -> active and for a non-degraded agent. A factory-fresh device,
+# or an agent that was already down, therefore never rolls back an OS
+# update, while an OS that breaks a healthy activated agent does.
+# suderra-rauc-mark-good is the only caller; what a failure does is
+# `suderra-ota gate-failed`'s decision (only a pending OTA's trial boot is
+# rolled back).
 set -eu
 
 fail() {

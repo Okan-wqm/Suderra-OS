@@ -129,8 +129,10 @@ default_route_iface() {
 
 # The provisioning ruleset admits SSH only on the interface that carries the
 # default route (DEC-5.4), which exists only once networkd has a lease, and
-# networkd starts after the firewall (DEC-11.2). Reload the firewall whenever
-# that interface appears or changes while the window is open.
+# networkd starts after the firewall (DEC-11.2), and only while this window's
+# markers say it is open (`policy apply`). Reload the firewall whenever that
+# interface appears or changes while the window is open; reconcile reloads it
+# once the closed marker exists, which loads the appliance ruleset.
 follow_default_route() {
     iface="$(default_route_iface)"
     [ -n "${iface}" ] || return 0
@@ -247,7 +249,9 @@ open_after_request() {
     state="$(lifecycle_state)"
     [ "${state}" = MAINTENANCE ] || fail "a verified reprovisioning request leaves MAINTENANCE, not ${state}"
     rm -f "${CLOSED_MARKER}"
-    systemctl reload nftables.service
+    # `policy apply` loads the provisioning ruleset only while the window's
+    # markers say it is open, so the firewall follows open_window's reload,
+    # not one issued before the window exists.
     systemctl start suderra-provision-mode.service
 }
 

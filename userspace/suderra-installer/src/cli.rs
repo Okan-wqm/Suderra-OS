@@ -136,7 +136,7 @@ pub enum LifecycleCommand {
     Request,
 }
 
-/// `health check`
+/// `health check|preflight`
 #[derive(clap::Args, Debug)]
 pub struct HealthArgs {
     /// Health operation.
@@ -149,6 +149,9 @@ pub struct HealthArgs {
 pub enum HealthCommand {
     /// Evaluate the OS and agent predicate and write a health-gate result.
     Check,
+    /// Record the agent's health before an OS update
+    /// (/data/rauc/pre-update.json; suderra-ota install runs it).
+    Preflight,
 }
 
 /// `policy apply`

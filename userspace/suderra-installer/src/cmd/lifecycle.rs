@@ -209,11 +209,11 @@ fn enter_provisioning(
     facts: &ImageFacts,
     stored: Option<LifecycleState>,
 ) -> Result<LifecycleState> {
-    if facts.variant == Variant::Production && stored.is_none() {
+    if facts.os.variant == Variant::Production && stored.is_none() {
         write(paths, LifecycleState::Factory, None)?;
     }
     write(paths, LifecycleState::Provisioning, None)?;
-    if facts.variant == Variant::Production {
+    if facts.os.variant == Variant::Production {
         std::fs::remove_file(data_created(paths))
             .context("cannot consume data-created evidence")?;
     }
@@ -238,7 +238,7 @@ pub(crate) fn init(paths: &Paths, facts: &ImageFacts, now: &str) -> Result<Lifec
             "/data is not available, so the lifecycle store cannot be read".into(),
         );
     }
-    let evidence = match facts.variant {
+    let evidence = match facts.os.variant {
         Variant::Dev => true,
         Variant::Production => read_root_file(&data_created(paths), 4096)?.is_some(),
     };
@@ -485,7 +485,7 @@ mod tests {
             .replace("VARIANT=dev", "VARIANT=prod");
         std::fs::write(paths.os_release(), text).unwrap();
         let facts = ImageFacts::load(&paths).unwrap();
-        assert_eq!(facts.variant, Variant::Production);
+        assert_eq!(facts.os.variant, Variant::Production);
         (paths, facts)
     }
 
@@ -562,7 +562,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let (paths, facts) = image(tmp.path());
         std::fs::remove_dir(paths.os_state()).unwrap();
-        assert_eq!(facts.variant, Variant::Dev);
+        assert_eq!(facts.os.variant, Variant::Dev);
         assert_eq!(init(&paths, &facts, NOW).unwrap(), LifecycleState::Locked);
         assert_eq!(mirrored(&paths), "LOCKED\n");
         assert!(!paths.os_state().exists(), "nothing is created under /data");

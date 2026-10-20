@@ -452,7 +452,7 @@ impl<'a> Records<'a> {
             accepted,
             ratchet: self.ratchets()?,
             installed_manifest_digest: receipt.map(|r| r.manifest_digest.sha256.clone()),
-            os: facts.compat.clone(),
+            os: facts.os.compat.clone(),
         })
     }
 }

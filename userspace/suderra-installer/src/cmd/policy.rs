@@ -5,13 +5,17 @@
 //! (ADR-048 DEC-5.4, DEC-11.2, DEC-11.3, DEC-11.9).
 //!
 //! The appliance ruleset is the default. The provisioning ruleset loads only
-//! while the root-owned lifecycle is PROVISIONING or MAINTENANCE, and only
-//! scoped to the interface that carries the default route: root renders
+//! while the root-owned lifecycle is PROVISIONING or MAINTENANCE *and* the
+//! provisioning window is open (suderra-provision-mode's root-owned markers
+//! in /run/suderra-os: open, not closed, not past its uptime deadline), and
+//! only scoped to the interface that carries the default route: root renders
 //! `define provision_iface = "<iface>"` (a validated interface name, never
 //! string-built from untrusted text) in front of the image's provisioning
 //! ruleset, which must use `$provision_iface`. Every program is checked with
 //! `nft -c` before `nft -f`; the hash of the loaded ruleset is recorded for
-//! the health check.
+//! the health check under /run/suderra-os, because it describes the ruleset
+//! loaded in this boot and must be recordable when /data is unavailable (the
+//! device that most needs to report a data-unlock alarm keeps its network).
 
 use crate::cli::PolicyArgs;
 use crate::cmd::lifecycle;
@@ -73,13 +77,41 @@ pub(crate) fn default_route_iface(route: &str) -> Option<String> {
         .map(|(_, iface)| iface)
 }
 
-/// Selects the ruleset for the current lifecycle (DEC-11.3).
+/// Whether the provisioning window is open: suderra-provision-mode wrote its
+/// open marker and deadline, the window has not been closed, and the uptime
+/// deadline has not passed. Anything unreadable is a closed window.
+pub(crate) fn window_open(paths: &Paths) -> bool {
+    let read = |path: std::path::PathBuf| std::fs::read_to_string(path).ok();
+    let seconds = |text: Option<String>| -> Option<u64> {
+        text?
+            .split_whitespace()
+            .next()?
+            .split('.')
+            .next()?
+            .parse()
+            .ok()
+    };
+    if !paths.provisioning_open().is_file() || paths.provisioning_closed().exists() {
+        return false;
+    }
+    match (
+        seconds(read(paths.provisioning_expires())),
+        seconds(read(paths.proc_uptime())),
+    ) {
+        (Some(expires), Some(uptime)) => uptime < expires,
+        _ => false,
+    }
+}
+
+/// Selects the ruleset for the current lifecycle and provisioning window
+/// (DEC-5.4, DEC-11.3).
 pub(crate) fn select(paths: &Paths, now: &str) -> Result<Ruleset> {
     let state = lifecycle::effective(paths, now);
     if !matches!(
         state,
         LifecycleState::Provisioning | LifecycleState::Maintenance
-    ) {
+    ) || !window_open(paths)
+    {
         return Ok(Ruleset::Appliance);
     }
     let route = std::fs::read_to_string(paths.proc_route()).unwrap_or_default();
@@ -123,8 +155,12 @@ pub(crate) fn loaded_ruleset_hash(runner: &dyn Runner) -> Result<String> {
     Ok(sha256_hex(&runner.output("nft", &["list", "ruleset"])?))
 }
 
+fn record_dir(paths: &Paths) -> std::path::PathBuf {
+    paths.run_os().join("firewall")
+}
+
 fn record_path(paths: &Paths) -> std::path::PathBuf {
-    paths.firewall_state().join("loaded.sha256")
+    record_dir(paths).join("loaded.sha256")
 }
 
 /// Hash recorded by the last successful apply.
@@ -164,8 +200,8 @@ pub(crate) fn apply(paths: &Paths, runner: &dyn Runner, now: &str) -> Result<Rul
         Err(e) => return Err(e),
     };
     let hash = loaded_ruleset_hash(runner)?;
-    paths.require_os_state()?;
-    ensure_dir(&paths.firewall_state(), 0o700)?;
+    ensure_dir(&paths.run_os(), 0o700)?;
+    ensure_dir(&record_dir(paths), 0o700)?;
     write_atomic(
         &record_path(paths),
         format!("{hash}\n").as_bytes(),
@@ -222,7 +258,71 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
         if let Some(state) = state {
             lifecycle::write(&paths, state, None).unwrap();
         }
+        open_window(&paths, 600, 7800);
         (tmp, paths)
+    }
+
+    /// The markers suderra-provision-mode writes when it opens a window at
+    /// `uptime` that closes at `expires` (seconds since boot).
+    fn open_window(paths: &Paths, uptime: u64, expires: u64) {
+        std::fs::create_dir_all(paths.run_os()).unwrap();
+        std::fs::write(paths.provisioning_open(), "").unwrap();
+        std::fs::write(paths.provisioning_expires(), format!("{expires}\n")).unwrap();
+        std::fs::write(paths.proc_uptime(), format!("{uptime}.42 1234.00\n")).unwrap();
+    }
+
+    #[test]
+    fn provisioning_rules_load_only_while_the_window_is_open() {
+        let provisioning = Ruleset::Provisioning {
+            iface: "eth0".into(),
+        };
+        let (_tmp, paths) = setup(Some(LifecycleState::Provisioning));
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
+            provisioning
+        );
+
+        // Expired: past the uptime deadline while still PROVISIONING.
+        open_window(&paths, 7800, 7800);
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
+            Ruleset::Appliance
+        );
+
+        // Closed by reconcile or lockdown (the closed marker wins).
+        open_window(&paths, 600, 7800);
+        std::fs::write(paths.provisioning_closed(), "").unwrap();
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
+            Ruleset::Appliance
+        );
+
+        // Never opened, or the deadline is unreadable.
+        let (_tmp, paths) = setup(Some(LifecycleState::Provisioning));
+        std::fs::remove_file(paths.provisioning_open()).unwrap();
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
+            Ruleset::Appliance
+        );
+        let (_tmp, paths) = setup(Some(LifecycleState::Provisioning));
+        std::fs::write(paths.provisioning_expires(), "soon\n").unwrap();
+        assert_eq!(
+            apply(&paths, &FakeRunner::default(), NOW).unwrap(),
+            Ruleset::Appliance
+        );
+    }
+
+    #[test]
+    fn apply_loads_and_records_without_data() {
+        let (_tmp, paths) = setup(None);
+        std::fs::remove_dir_all(paths.os_state()).unwrap();
+        let runner = FakeRunner::default();
+        assert_eq!(apply(&paths, &runner, NOW).unwrap(), Ruleset::Appliance);
+        assert_eq!(recorded_hash(&paths).unwrap(), Some(runner.ruleset_hash()));
+        assert!(
+            !paths.os_state().exists(),
+            "nothing is written under an unmounted /data"
+        );
     }
 
     #[test]

@@ -108,8 +108,8 @@ pub(crate) fn build_request(paths: &Paths, facts: &ImageFacts) -> Result<Provisi
         binding_sha256: binding.digest.sha256,
         nonce: hex::encode(nonce),
         board_profile: facts.board.board,
-        os_version: facts.os_version.clone(),
-        agent_abi: facts.agent_abi.clone(),
+        os_version: facts.os.os_version.clone(),
+        agent_abi: facts.os.agent_abi.clone(),
     };
     request.validate().map_err(anyhow::Error::msg)?;
     Ok(request)

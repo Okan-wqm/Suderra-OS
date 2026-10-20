@@ -346,7 +346,7 @@ pub(crate) fn record(paths: &Paths, facts: &ImageFacts, report: Report) -> Resul
         occurred_at: now_timestamp(),
         time_state: time_state(paths),
         board_profile: facts.board.board,
-        os_version: facts.os_version.clone(),
+        os_version: facts.os.os_version.clone(),
         subject: report.subject,
         detail: report.detail,
     };

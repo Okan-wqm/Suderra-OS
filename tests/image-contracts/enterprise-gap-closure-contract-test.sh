@@ -311,6 +311,22 @@ grep -q 'suderra-rauc-boot-state' "${RAUC_MARK_GOOD}" || {
     echo "ERROR: RAUC mark-good path must emit rollback/boot evidence" >&2
     exit 1
 }
+# DEC-6.8: a failed gate rolls back only a pending OTA's trial boot; that
+# decision belongs to `suderra-ota gate-failed`, never to the script.
+grep -q 'suderra-ota gate-failed --reason' "${RAUC_MARK_GOOD}" || {
+    echo "ERROR: a failed health gate must go to suderra-ota gate-failed" >&2
+    exit 1
+}
+if grep -Eq 'mark-bad|suderra-ota rollback|/sbin/reboot' "${RAUC_MARK_GOOD}"; then
+    echo "ERROR: suderra-rauc-mark-good must not mark a slot bad or reboot by itself" >&2
+    exit 1
+fi
+for dep in BR2_PACKAGE_SUDERRA_OTA BR2_PACKAGE_SUDERRA_OS_INSTALLER; do
+    grep -q "^	depends on ${dep}\$" "${ROOT}/package/suderra-rauc-config/Config.in" || {
+        echo "ERROR: suderra-rauc-config must depend on ${dep} (the gate's decision and predicate)" >&2
+        exit 1
+    }
+done
 grep -q 'suderra-rauc-health-gate' "${RAUC_PACKAGE_MK}" || {
     echo "ERROR: RAUC package must install the health gate" >&2
     exit 1

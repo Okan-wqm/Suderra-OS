@@ -29,6 +29,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{error, info};
 
+/// The root installer; `health preflight` records the agent's health
+/// before an OS update (ADR-048 DEC-6.8).
+const INSTALLER: &str = "/usr/bin/suderra-installer";
+/// RAUC and health-gate state; created by the /data layout, so its absence
+/// means /data is not mounted with its layout applied.
+const RAUC_STATE_DIR: &str = "/data/rauc";
+/// The pre-update record `health preflight` writes (DEC-6.8).
+const PRE_UPDATE: &str = "/data/rauc/pre-update.json";
+
 const MANIFEST_SCHEMA: &str = "suderra.os-update-manifest.v1";
 const STATE_SCHEMA: &str = "suderra.ota-state.v1";
 const EVENT_SCHEMA: &str = "suderra.ota-event.v1";
@@ -57,6 +66,9 @@ enum Commands {
     Rollback(RollbackArgs),
     /// Mark the current slot good after health checks pass.
     MarkGood(MarkGoodArgs),
+    /// Act on a failed health gate: roll back only a pending OTA booted in
+    /// its own slot; on any other boot keep the booted slot (alarm only).
+    GateFailed(GateFailedArgs),
 }
 
 #[derive(Args, Debug)]
@@ -89,6 +101,13 @@ struct RollbackArgs {
     /// Do not request reboot after marking the slot bad.
     #[arg(long, default_value_t = false)]
     no_reboot: bool,
+}
+
+#[derive(Args, Debug)]
+struct GateFailedArgs {
+    /// Why the gate failed (health-gate, mark-good-failed).
+    #[arg(long)]
+    reason: String,
 }
 
 #[derive(Args, Debug)]
@@ -170,6 +189,7 @@ async fn run(command: Commands) -> Result<()> {
         Commands::Status(args) => status(args),
         Commands::Rollback(args) => rollback(args),
         Commands::MarkGood(args) => mark_good(args),
+        Commands::GateFailed(args) => gate_failed(args),
     }
 }
 
@@ -192,8 +212,15 @@ fn install(args: InstallArgs) -> Result<()> {
     verify_manifest_policy(&manifest, &state)?;
     verify_bundle(&manifest, &args.bundle)?;
 
+    // The trial boot counts the agent only if it was healthy right before
+    // the update (DEC-6.8); no update starts without that record.
+    run_installer(&["health", "preflight"])
+        .context("cannot record the agent's pre-update health (ADR-048 DEC-6.8)")?;
     info!(version = %manifest.version, target = %manifest.target, "installing RAUC bundle");
-    run_rauc(&["install", path_str(&args.bundle)?]).context("rauc install failed")?;
+    if let Err(err) = run_rauc(&["install", path_str(&args.bundle)?]) {
+        clear_pre_update()?;
+        return Err(err.context("rauc install failed"));
+    }
     let pending_boot_slot = pending_boot_slot_after_install()
         .context("cannot prove inactive RAUC slot selected for next boot")?;
 
@@ -244,11 +271,14 @@ fn status(args: StatusArgs) -> Result<()> {
     Ok(())
 }
 
+/// Rolls the booted slot back: the decision is recorded first, then the slot
+/// is marked bad, then a reboot is requested, so a slot is never marked bad
+/// without a record of why (a state that cannot be loaded, e.g. a production
+/// image without its monotonic floor, stops before anything changes).
 fn rollback(args: RollbackArgs) -> Result<()> {
     if args.reason.trim().is_empty() {
         bail!("rollback --reason must be non-empty");
     }
-    run_rauc(&["status", "mark-bad"]).context("rauc mark-bad failed")?;
     let mut state = load_state()?;
     state.pending_version = None;
     state.pending_boot_slot = None;
@@ -265,6 +295,8 @@ fn rollback(args: RollbackArgs) -> Result<()> {
     );
     state.last_event = Some(event.clone());
     save_state(&state)?;
+    clear_pre_update()?;
+    run_rauc(&["status", "mark-bad"]).context("rauc mark-bad failed")?;
     print_json(&event)?;
     if !args.no_reboot {
         request_reboot("suderra-ota rollback")?;
@@ -272,10 +304,17 @@ fn rollback(args: RollbackArgs) -> Result<()> {
     Ok(())
 }
 
+/// An OS update recorded as pending in the state file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pending {
+    version: String,
+    boot_slot: Option<String>,
+}
+
 /// The OTA pending in the state file at `path`, if any. It is read without
 /// the production anti-rollback guard of [`load_state`] because confirming a
 /// booted slot no OTA is pending for changes neither a version nor a floor.
-fn pending_version_in(path: &Path) -> Result<Option<String>> {
+fn pending_in(path: &Path) -> Result<Option<Pending>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -286,7 +325,124 @@ fn pending_version_in(path: &Path) -> Result<Option<String>> {
     if state.schema_version != STATE_SCHEMA {
         bail!("OTA state schema_version must be {STATE_SCHEMA}");
     }
-    Ok(state.pending_version)
+    Ok(state.pending_version.map(|version| Pending {
+        version,
+        boot_slot: state.pending_boot_slot,
+    }))
+}
+
+/// What a failed health gate does (ADR-048 DEC-6.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateFailure {
+    /// A pending OTA booted (or cannot be proven not to have booted) in its
+    /// own slot: this is its trial boot, roll it back.
+    RollBack,
+    /// A pending OTA whose slot is not the booted one never booted: abandon
+    /// it and keep the booted slot.
+    AbandonUnbooted,
+    /// No OTA pending: the booted slot was proven good by its own trial boot
+    /// and stays good; the failure is an alarm (the health-gate result),
+    /// never a rollback (a rollback storm on a slot an update did not touch).
+    KeepBooted,
+}
+
+fn gate_failure(pending: Option<&Pending>, active_slot: Option<&str>) -> GateFailure {
+    match pending {
+        None => GateFailure::KeepBooted,
+        Some(p) => match (p.boot_slot.as_deref(), active_slot) {
+            (Some(expected), Some(active)) if expected != active => GateFailure::AbandonUnbooted,
+            _ => GateFailure::RollBack,
+        },
+    }
+}
+
+/// `suderra-ota gate-failed`: the only path from a failed health gate.
+fn gate_failed(args: GateFailedArgs) -> Result<()> {
+    if args.reason.trim().is_empty() {
+        bail!("gate-failed --reason must be non-empty");
+    }
+    // Without the /data layout neither the pending OTA nor RAUC's status file
+    // can be read: change nothing and leave the boot attempt unconfirmed.
+    if !Path::new(RAUC_STATE_DIR).is_dir() {
+        bail!(
+            "{RAUC_STATE_DIR} is missing (/data not mounted): the boot attempt stays unconfirmed"
+        );
+    }
+    let pending = pending_in(&state_path())?;
+    let active = active_boot_slot();
+    let decision = gate_failure(pending.as_ref(), active.as_deref());
+    match decision {
+        GateFailure::RollBack => {
+            return rollback(RollbackArgs {
+                reason: args.reason,
+                no_reboot: false,
+            })
+        }
+        GateFailure::AbandonUnbooted => {
+            let mut state = load_state()?;
+            state.pending_version = None;
+            state.pending_boot_slot = None;
+            state.reboot_required = false;
+            state.last_error = Some(format!(
+                "pending OTA never booted its slot; booted slot kept ({})",
+                args.reason
+            ));
+            let event = event_json(
+                "gate-failed",
+                "abandoned",
+                Some(json!({
+                    "reason": args.reason,
+                    "pending": pending.as_ref().map(|p| &p.version),
+                    "boot_slot": active,
+                })),
+                None,
+            );
+            state.last_event = Some(event.clone());
+            save_state(&state)?;
+            clear_pre_update()?;
+            run_rauc(&["status", "mark-good"]).context("rauc mark-good failed")?;
+            print_json(&event)?;
+        }
+        GateFailure::KeepBooted => {
+            run_rauc(&["status", "mark-good"]).context("rauc mark-good failed")?;
+            print_json(&event_json(
+                "gate-failed",
+                "alarm",
+                Some(
+                    json!({ "reason": args.reason, "pending_version": null, "boot_slot": active }),
+                ),
+                None,
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+/// Removes the pre-update record once its OS update is concluded.
+fn clear_pre_update() -> Result<()> {
+    match fs::remove_file(PRE_UPDATE) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("cannot remove {PRE_UPDATE}")),
+    }
+}
+
+fn run_installer(args: &[&str]) -> Result<()> {
+    let installer = dev_override("SUDERRA_OTA_INSTALLER").unwrap_or_else(|| INSTALLER.to_string());
+    let output = Command::new(&installer)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to execute {installer}"))?;
+    if !output.status.success() {
+        bail!(
+            "{installer} {:?} exited with {}: {}{}",
+            args,
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
 /// The single mark-good path runs after the health gate on every boot
@@ -296,7 +452,7 @@ fn pending_version_in(path: &Path) -> Result<Option<String>> {
 /// With an OTA pending it completes that OTA: version, slot and floor checks,
 /// then the floor rises.
 fn mark_good(args: MarkGoodArgs) -> Result<()> {
-    if args.version.is_none() && pending_version_in(&state_path())?.is_none() {
+    if args.version.is_none() && pending_in(&state_path())?.is_none() {
         run_rauc(&["status", "mark-good"]).context("rauc mark-good failed")?;
         print_json(&event_json(
             "mark-good",
@@ -352,6 +508,7 @@ fn mark_good(args: MarkGoodArgs) -> Result<()> {
     state.last_event = Some(event.clone());
     save_state(&state)?;
     persist_rollback_floor(&state.rollback_floor)?;
+    clear_pre_update()?;
     print_json(&event)?;
     Ok(())
 }
@@ -1134,11 +1291,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("suderra-ota-pending-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("state.json");
-        assert_eq!(
-            pending_version_in(&path).unwrap(),
-            None,
-            "no state: a normal boot"
-        );
+        assert_eq!(pending_in(&path).unwrap(), None, "no state: a normal boot");
         let mut state = OtaState {
             schema_version: STATE_SCHEMA.to_string(),
             target: "x86_64".into(),
@@ -1151,22 +1304,67 @@ mod tests {
             last_error: None,
         };
         fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
-        assert_eq!(pending_version_in(&path).unwrap(), None, "nothing pending");
+        assert_eq!(pending_in(&path).unwrap(), None, "nothing pending");
         state.pending_version = Some("1.1.0".into());
+        state.pending_boot_slot = Some("B".into());
         fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
-        assert_eq!(pending_version_in(&path).unwrap().as_deref(), Some("1.1.0"));
+        assert_eq!(
+            pending_in(&path).unwrap(),
+            Some(Pending {
+                version: "1.1.0".into(),
+                boot_slot: Some("B".into())
+            })
+        );
         state.schema_version = "suderra.ota-state.v0".into();
         fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
         assert!(
-            pending_version_in(&path).is_err(),
+            pending_in(&path).is_err(),
             "a foreign state is not read as nothing pending"
         );
         fs::write(&path, b"{").unwrap();
-        assert!(
-            pending_version_in(&path).is_err(),
-            "corrupt state is an error"
-        );
+        assert!(pending_in(&path).is_err(), "corrupt state is an error");
         fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn a_failed_gate_rolls_back_only_the_trial_boot_of_a_pending_ota() {
+        let pending = |slot: Option<&str>| Pending {
+            version: "1.1.0".into(),
+            boot_slot: slot.map(str::to_string),
+        };
+        // A normal boot: the slot an update did not touch stays good.
+        for active in [Some("A"), Some("B"), None] {
+            assert_eq!(gate_failure(None, active), GateFailure::KeepBooted);
+        }
+        // The trial boot of the pending OTA, or one that cannot be told apart.
+        assert_eq!(
+            gate_failure(Some(&pending(Some("B"))), Some("B")),
+            GateFailure::RollBack
+        );
+        assert_eq!(
+            gate_failure(Some(&pending(Some("B"))), None),
+            GateFailure::RollBack
+        );
+        assert_eq!(
+            gate_failure(Some(&pending(None)), Some("A")),
+            GateFailure::RollBack
+        );
+        // The bootloader already fell back: the old slot is never marked bad.
+        assert_eq!(
+            gate_failure(Some(&pending(Some("B"))), Some("A")),
+            GateFailure::AbandonUnbooted
+        );
+    }
+
+    #[test]
+    fn rollback_records_before_it_marks_a_slot_bad() {
+        let src = include_str!("main.rs");
+        let body = &src[src.find("fn rollback(args: RollbackArgs)").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let load = body.find("load_state()?").unwrap();
+        let save = body.find("save_state(&state)?").unwrap();
+        let mark_bad = body.find("\"mark-bad\"").unwrap();
+        assert!(load < save && save < mark_bad, "record, then mark bad");
     }
 
     #[test]

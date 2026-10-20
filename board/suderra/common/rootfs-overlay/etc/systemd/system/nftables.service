@@ -5,9 +5,12 @@
 #    with `nft -c` and loaded first.
 # 2. `suderra-installer policy apply` selects the ruleset from the root-owned
 #    lifecycle: the appliance ruleset by default, the provisioning ruleset
-#    only in PROVISIONING or reprovisioning MAINTENANCE, scoped to the
-#    interface that carries the default route. It checks the program with
-#    `nft -c`, loads it atomically and records its hash for the health check.
+#    only in PROVISIONING or reprovisioning MAINTENANCE while the
+#    provisioning window is open, scoped to the interface that carries the
+#    default route. It checks the program with `nft -c`, loads it atomically
+#    and records its hash for the health check under /run/suderra-os, so it
+#    needs no /data (a device whose /data cannot be unlocked keeps its
+#    network to report that alarm).
 # 3. systemd-networkd requires this unit; if it fails, the base drop ruleset
 #    stays, no interface is configured and suderra-network-failsafe.target is
 #    reached.
@@ -33,7 +36,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
-ReadWritePaths=-/data/suderra/os /run/suderra-os
+ReadWritePaths=/run/suderra-os
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]

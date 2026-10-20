@@ -3,12 +3,18 @@
 
 //! Facts of the signed OS image (ADR-048 DEC-8.2, DEC-19, DEC-23).
 //!
-//! The production/dev variant, the OS version and agent ABI range, the board
-//! and the kernel config list all come from files on the verity rootfs
-//! (`/etc/os-release`, `/etc/suderra/board`, `/etc/suderra/kernel-config`),
-//! never from the environment: an env var or unit drop-in can change at run
-//! time, the verity image cannot. A variant that is not exactly `dev`, or an
-//! unreadable os-release, is production (fail-safe).
+//! The production/dev variant, the OS version and agent ABI range, the
+//! declared features, the board and the kernel config list all come from
+//! files on the verity rootfs (`/etc/os-release`, `/etc/suderra/features`,
+//! `/etc/suderra/board`, `/etc/suderra/kernel-config`), never from the
+//! environment: an env var or unit drop-in can change at run time, the verity
+//! image cannot. A variant that is not exactly `dev`, or an unreadable
+//! os-release, is production (fail-safe).
+//!
+//! Every image carries the OS facts ([`OsFacts`]); only an image that
+//! boards.json maps to a board_profile carries `/etc/suderra/board`, and only
+//! such an image runs the edge chain ([`ImageFacts`] requires the board, so no
+//! edge, lifecycle or result path can run on a boardless image).
 
 use crate::contracts::encoding::{
     is_kernel_symbol, is_os_version, parse_abi_range, parse_version_core,
@@ -92,18 +98,20 @@ pub(crate) struct BoardFile {
     pub board: BoardProfile,
     /// arch.
     pub arch: Arch,
-    /// Features the image declares (verity, secure-boot, rauc, tpm, luks).
-    pub features: BTreeSet<String>,
 }
 
-/// Feature names /etc/suderra/board may declare.
-pub(crate) const BOARD_FEATURES: [&str; 5] = ["verity", "secure-boot", "rauc", "tpm", "luks"];
+/// Feature names /etc/suderra/features may declare.
+pub(crate) const IMAGE_FEATURES: [&str; 5] = ["verity", "secure-boot", "rauc", "tpm", "luks"];
 
 impl BoardFile {
-    /// Parses `BOARD_PROFILE=`, `ARCH=`, optional `RAUC_COMPATIBLE=` and
-    /// `FEATURES=` (space separated); the values must agree with boards.json.
+    /// Parses `BOARD_PROFILE=`, `ARCH=` and optional `RAUC_COMPATIBLE=`; the
+    /// values must agree with boards.json. Features are an image fact of
+    /// every image and live in /etc/suderra/features only.
     pub(crate) fn parse(text: &str) -> Result<Self> {
         let map = parse_env_file(text)?;
+        if map.contains_key("FEATURES") {
+            bail!("FEATURES belongs in /etc/suderra/features, not the board file");
+        }
         let board_text = map.get("BOARD_PROFILE").context("BOARD_PROFILE missing")?;
         let board = BoardProfile::parse(board_text)
             .with_context(|| format!("unknown board_profile {board_text:?}"))?;
@@ -124,24 +132,41 @@ impl BoardFile {
                 );
             }
         }
-        let mut features = BTreeSet::new();
-        for feature in map
-            .get("FEATURES")
-            .map(String::as_str)
-            .unwrap_or("")
-            .split_whitespace()
-        {
-            if !BOARD_FEATURES.contains(&feature) {
-                bail!("unknown board feature {feature:?}");
-            }
-            features.insert(feature.to_owned());
-        }
-        Ok(Self {
-            board,
-            arch,
-            features,
-        })
+        Ok(Self { board, arch })
     }
+
+    /// The image's board, or `None` on an image that declares none (no
+    /// /etc/suderra/board).
+    pub(crate) fn load(paths: &Paths) -> Result<Option<Self>> {
+        match std::fs::read_to_string(paths.board_file()) {
+            Ok(text) => Self::parse(&text).context("/etc/suderra/board").map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => {
+                Err(e).with_context(|| format!("cannot read {}", paths.board_file().display()))
+            }
+        }
+    }
+}
+
+/// Parses /etc/suderra/features: one `FEATURES=` line (space separated
+/// names from [`IMAGE_FEATURES`]), nothing else.
+pub(crate) fn parse_features(text: &str) -> Result<BTreeSet<String>> {
+    let map = parse_env_file(text)?;
+    if map.keys().any(|k| k != "FEATURES") {
+        bail!("/etc/suderra/features holds only FEATURES");
+    }
+    let mut features = BTreeSet::new();
+    for feature in map
+        .get("FEATURES")
+        .context("FEATURES missing")?
+        .split_whitespace()
+    {
+        if !IMAGE_FEATURES.contains(&feature) {
+            bail!("unknown image feature {feature:?}");
+        }
+        features.insert(feature.to_owned());
+    }
+    Ok(features)
 }
 
 /// Parses /etc/suderra/kernel-config: one `CONFIG_<NAME>=y|m` line per
@@ -160,28 +185,24 @@ pub(crate) fn parse_kernel_config(text: &str) -> Result<BTreeSet<String>> {
     Ok(symbols)
 }
 
-/// Every image fact the installer depends on.
+/// The facts every image carries, with or without a board.
 #[derive(Debug, Clone)]
-pub(crate) struct ImageFacts {
+pub(crate) struct OsFacts {
     /// Production or dev.
     pub variant: Variant,
     /// VERSION_ID text.
     pub os_version: String,
     /// SUDERRA_AGENT_ABI text.
     pub agent_abi: String,
-    /// Board identity.
-    pub board: BoardFile,
+    /// Features the image declares (DEC-6.8): the health predicate fails on
+    /// a declared feature that is absent and never probes undeclared ones.
+    pub features: BTreeSet<String>,
     /// Compatibility facts for release verification.
     pub compat: OsCompat,
 }
 
-impl ImageFacts {
-    /// Which keys this image may pin (DEC-3.9).
-    pub(crate) fn pin_policy(&self) -> crate::trust_anchors::PinPolicy {
-        crate::trust_anchors::PinPolicy::of(self.variant, self.board.board)
-    }
-
-    /// Reads the image facts; any missing or malformed fact is an error.
+impl OsFacts {
+    /// Reads the OS facts; any missing or malformed fact is an error.
     pub(crate) fn load(paths: &Paths) -> Result<Self> {
         let os_text = std::fs::read_to_string(paths.os_release())
             .with_context(|| format!("cannot read {}", paths.os_release().display()))?;
@@ -196,9 +217,9 @@ impl ImageFacts {
         let abi = parse_abi_range(abi_text)
             .filter(|(min, max)| min <= max)
             .with_context(|| format!("SUDERRA_AGENT_ABI {abi_text:?} is not MIN-MAX"))?;
-        let board_text = std::fs::read_to_string(paths.board_file())
-            .with_context(|| format!("cannot read {}", paths.board_file().display()))?;
-        let board = BoardFile::parse(&board_text).context("/etc/suderra/board")?;
+        let features_text = std::fs::read_to_string(paths.features_file())
+            .with_context(|| format!("cannot read {}", paths.features_file().display()))?;
+        let features = parse_features(&features_text).context("/etc/suderra/features")?;
         let kernel_text = std::fs::read_to_string(paths.kernel_config())
             .with_context(|| format!("cannot read {}", paths.kernel_config().display()))?;
         let kernel_config = parse_kernel_config(&kernel_text)?;
@@ -207,13 +228,42 @@ impl ImageFacts {
             variant: variant_of(&os_text),
             os_version: version.clone(),
             agent_abi: abi_text.clone(),
-            board,
+            features,
             compat: OsCompat {
                 version: version_tuple,
                 abi,
                 kernel_config,
             },
         })
+    }
+}
+
+/// Every image fact the edge chain depends on: the OS facts and the board.
+#[derive(Debug, Clone)]
+pub(crate) struct ImageFacts {
+    /// The OS facts.
+    pub os: OsFacts,
+    /// Board identity.
+    pub board: BoardFile,
+}
+
+impl ImageFacts {
+    /// Which keys this image may pin (DEC-3.9).
+    pub(crate) fn pin_policy(&self) -> crate::trust_anchors::PinPolicy {
+        crate::trust_anchors::PinPolicy::of(self.os.variant, self.board.board)
+    }
+
+    /// Reads the image facts; any missing or malformed fact is an error,
+    /// and so is an image that declares no board (it runs no edge agent).
+    pub(crate) fn load(paths: &Paths) -> Result<Self> {
+        let os = OsFacts::load(paths)?;
+        let board = BoardFile::load(paths)?.with_context(|| {
+            format!(
+                "{} is missing: this image declares no board_profile and runs no edge agent",
+                paths.board_file().display()
+            )
+        })?;
+        Ok(Self { os, board })
     }
 }
 
@@ -294,20 +344,40 @@ mod tests {
     #[test]
     fn board_file_agrees_with_boards_json() {
         let ok = BoardFile::parse(
-            "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nRAUC_COMPATIBLE=suderra-os-revpi-connect4\nFEATURES=\"verity rauc tpm luks\"\n",
+            "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nRAUC_COMPATIBLE=suderra-os-revpi-connect4\nDEVICE_BINDING_METHOD=tpm-ek-sha256\n",
         )
         .unwrap();
         assert_eq!(ok.board, BoardProfile::RevpiConnect4);
-        assert!(ok.features.contains("tpm"));
         for bad in [
             "BOARD_PROFILE=revpi4\nARCH=aarch64\n",
             "BOARD_PROFILE=revpi-connect4\nARCH=x86_64\n",
             "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nRAUC_COMPATIBLE=suderra-os-aarch64\n",
-            "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nFEATURES=wifi\n",
+            "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nFEATURES=tpm\n",
             "ARCH=aarch64\n",
         ] {
             assert!(BoardFile::parse(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn features_are_one_strict_declaration() {
+        let got = parse_features("FEATURES=\"verity rauc tpm luks\"\n").unwrap();
+        assert!(got.contains("tpm") && got.contains("verity"));
+        assert!(parse_features("FEATURES=\"\"\n").unwrap().is_empty());
+        for bad in ["", "FEATURES=wifi\n", "FEATURES=rauc\nBOARD_PROFILE=x\n"] {
+            assert!(parse_features(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_boardless_image_has_os_facts_but_no_image_facts() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, _) = crate::test_support::image(tmp.path());
+        std::fs::remove_file(paths.board_file()).unwrap();
+        let os = OsFacts::load(&paths).unwrap();
+        assert_eq!(os.variant, Variant::Dev);
+        assert!(BoardFile::load(&paths).unwrap().is_none());
+        assert!(ImageFacts::load(&paths).is_err());
     }
 
     #[test]

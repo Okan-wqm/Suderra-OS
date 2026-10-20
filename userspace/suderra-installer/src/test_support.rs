@@ -36,9 +36,10 @@ pub(crate) fn image(root: &Path) -> (Paths, ImageFacts) {
     .unwrap();
     std::fs::write(
         paths.board_file(),
-        "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nRAUC_COMPATIBLE=suderra-os-revpi-connect4\nFEATURES=\"tpm\"\n",
+        "BOARD_PROFILE=revpi-connect4\nARCH=aarch64\nRAUC_COMPATIBLE=suderra-os-revpi-connect4\nDEVICE_BINDING_METHOD=tpm-ek-sha256\n",
     )
     .unwrap();
+    std::fs::write(paths.features_file(), "FEATURES=\"tpm\"\n").unwrap();
     std::fs::write(
         paths.kernel_config(),
         "CONFIG_SECCOMP_FILTER=y\nCONFIG_TCG_TPM=y\n",

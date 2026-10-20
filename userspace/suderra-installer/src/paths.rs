@@ -59,9 +59,13 @@ impl Paths {
     pub(crate) fn os_release(&self) -> PathBuf {
         self.at("/etc/os-release")
     }
-    /// /etc/suderra/board (DEC-8.2).
+    /// /etc/suderra/board (DEC-8.2): only on images with a board_profile.
     pub(crate) fn board_file(&self) -> PathBuf {
         self.at("/etc/suderra/board")
+    }
+    /// /etc/suderra/features: the features every image declares (DEC-6.8).
+    pub(crate) fn features_file(&self) -> PathBuf {
+        self.at("/etc/suderra/features")
     }
     /// /etc/suderra/kernel-config (statements.json compatibility).
     pub(crate) fn kernel_config(&self) -> PathBuf {
@@ -135,16 +139,21 @@ impl Paths {
     pub(crate) fn results_store(&self) -> PathBuf {
         self.at("/data/suderra/os/results")
     }
-    /// Firewall last-known-good record.
-    pub(crate) fn firewall_state(&self) -> PathBuf {
-        self.at("/data/suderra/os/firewall")
-    }
     /// Installer work state (/var/lib/suderra-installer).
     pub(crate) fn installer_work(&self) -> PathBuf {
         self.at("/data/suderra/os/installer")
     }
 
     // ---- other /data trees
+
+    /// RAUC and health-gate state (/data/rauc, root:root 0700).
+    pub(crate) fn rauc_state(&self) -> PathBuf {
+        self.at("/data/rauc")
+    }
+    /// The agent's health before a pending OS update (DEC-6.8).
+    pub(crate) fn pre_update(&self) -> PathBuf {
+        self.at("/data/rauc/pre-update.json")
+    }
 
     /// Release tree bound read-only at /opt/suderra/edge.
     pub(crate) fn edge_root(&self) -> PathBuf {
@@ -187,9 +196,25 @@ impl Paths {
     pub(crate) fn agent_health(&self) -> PathBuf {
         self.at("/run/suderra/agent-health/health.json")
     }
+    /// suderra-provision-mode's open-window marker (DEC-5.4).
+    pub(crate) fn provisioning_open(&self) -> PathBuf {
+        self.at("/run/suderra-os/provisioning-open")
+    }
+    /// suderra-provision-mode's closed-window marker.
+    pub(crate) fn provisioning_closed(&self) -> PathBuf {
+        self.at("/run/suderra-os/provisioning-closed")
+    }
+    /// The open window's deadline in seconds of uptime.
+    pub(crate) fn provisioning_expires(&self) -> PathBuf {
+        self.at("/run/suderra-os/provisioning-expires")
+    }
     /// Kernel routing table, for the provisioning interface (DEC-5.4).
     pub(crate) fn proc_route(&self) -> PathBuf {
         self.at("/proc/net/route")
+    }
+    /// Seconds since boot, against the provisioning window's deadline.
+    pub(crate) fn proc_uptime(&self) -> PathBuf {
+        self.at("/proc/uptime")
     }
     /// Device-mapper names, for the health check.
     pub(crate) fn dev_mapper(&self) -> PathBuf {

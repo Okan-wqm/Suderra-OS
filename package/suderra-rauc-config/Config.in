@@ -2,8 +2,14 @@ config BR2_PACKAGE_SUDERRA_RAUC_CONFIG
 	bool "suderra-rauc-config"
 	depends on BR2_INIT_SYSTEMD
 	depends on BR2_PACKAGE_RAUC
+	depends on BR2_PACKAGE_SUDERRA_OTA
+	depends on BR2_PACKAGE_SUDERRA_OS_INSTALLER
 	help
 	  Suderra OS RAUC runtime configuration for A/B rootfs slots.
+	  Its health gate and single mark-good path need suderra-ota
+	  (pending-OTA decisions) and suderra-installer (the OS and
+	  agent health predicate), ADR-048 DEC-6.8.
 
-comment "suderra-rauc-config needs systemd and rauc"
-	depends on !BR2_INIT_SYSTEMD || !BR2_PACKAGE_RAUC
+comment "suderra-rauc-config needs systemd, rauc, suderra-ota and suderra-os-installer"
+	depends on !BR2_INIT_SYSTEMD || !BR2_PACKAGE_RAUC || \
+		!BR2_PACKAGE_SUDERRA_OTA || !BR2_PACKAGE_SUDERRA_OS_INSTALLER

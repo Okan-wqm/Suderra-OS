@@ -1,38 +1,36 @@
 #!/bin/sh
+# The single mark-good path (ADR-048 DEC-6.8), run once per boot by
+# suderra-rauc-mark-good.service.
+#
+# A passing health gate confirms the booted slot through `suderra-ota
+# mark-good` (which also completes a pending OTA). A failing gate, or a
+# failing mark-good, goes to `suderra-ota gate-failed`, which rolls back only
+# the trial boot of a pending OTA: on a boot no OTA is pending for, the slot
+# was proven good by its own trial boot and stays good, and the failure is an
+# alarm (the health-gate result), never a rollback. A rollback there would
+# mark a slot bad that no update touched and, with the same condition on the
+# other slot, start a rollback storm.
 set -eu
 
-if [ ! -x /usr/bin/rauc ]; then
-    echo "ERROR: rauc binary missing" >&2
-    exit 1
-fi
-if [ ! -x /usr/sbin/suderra-rauc-boot-state ]; then
-    echo "ERROR: suderra-rauc-boot-state missing" >&2
-    exit 1
-fi
-if [ ! -x /usr/sbin/suderra-rauc-health-gate ]; then
-    echo "ERROR: suderra-rauc-health-gate missing" >&2
-    exit 1
-fi
-
-mkdir -p /data/rauc
-if ! /usr/sbin/suderra-rauc-health-gate; then
-    /usr/sbin/suderra-rauc-boot-state >/data/rauc/health-rollback-pre.json || true
-    if [ -x /usr/bin/suderra-ota ]; then
-        /usr/bin/suderra-ota rollback --reason health-gate
-    else
-        /usr/bin/rauc status mark-bad
-        /sbin/reboot "suderra-rauc health-gate" || true
-    fi
-    exit 1
-fi
-/usr/sbin/suderra-rauc-boot-state >/data/rauc/pre-mark-good.json
-if [ -x /usr/bin/suderra-ota ]; then
-    if ! /usr/bin/suderra-ota mark-good; then
-        /usr/bin/suderra-ota rollback --reason mark-good-failed || true
+for tool in /usr/bin/rauc /usr/bin/suderra-ota /usr/sbin/suderra-rauc-boot-state \
+    /usr/sbin/suderra-rauc-health-gate
+do
+    if [ ! -x "${tool}" ]; then
+        echo "ERROR: ${tool} missing" >&2
         exit 1
     fi
-elif ! /usr/bin/rauc status mark-good; then
-    /usr/bin/rauc status mark-bad || true
-    exit 1
+done
+
+if /usr/sbin/suderra-rauc-health-gate; then
+    /usr/sbin/suderra-rauc-boot-state >/data/rauc/pre-mark-good.json
+    if /usr/bin/suderra-ota mark-good; then
+        /usr/sbin/suderra-rauc-boot-state >/data/rauc/mark-good.json
+        exit 0
+    fi
+    reason=mark-good-failed
+else
+    reason=health-gate
 fi
-/usr/sbin/suderra-rauc-boot-state >/data/rauc/mark-good.json
+/usr/sbin/suderra-rauc-boot-state >/data/rauc/health-rollback-pre.json || true
+/usr/bin/suderra-ota gate-failed --reason "${reason}"
+exit 1
