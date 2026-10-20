@@ -16,6 +16,7 @@ nft-ruleset-smoke-test.py.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -65,6 +66,45 @@ def find_ovmf() -> tuple[Path, Path]:
         if Path(code_path).is_file() and Path(vars_path).is_file():
             return Path(code_path), Path(vars_path)
     raise HarnessError("OVMF firmware not found; set OVMF_CODE and OVMF_VARS")
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def tpm_ek_sha256(state: Path, work: Path) -> str:
+    """SHA-256 of the DER SubjectPublicKeyInfo of the TPM's RSA-2048
+    endorsement key (default TCG template), read on the host from the swtpm
+    state the guest will boot with: the hardware binding suderra-identity
+    must record (tpm-ek-sha256, boards.json), computed independently of the
+    device."""
+    port, ctrl = free_port(), free_port()
+    swtpm = subprocess.Popen(
+        ["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={state}",
+         "--server", f"type=tcp,port={port},bindaddr=127.0.0.1",
+         "--ctrl", f"type=tcp,port={ctrl},bindaddr=127.0.0.1",
+         "--flags", "not-need-init,startup-clear"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                if swtpm.poll() is not None or time.monotonic() > deadline:
+                    raise HarnessError("the host swtpm for the EK read did not start")
+                time.sleep(0.2)
+        der = work / "ek.der"
+        subprocess.run(["tpm2_createek", "-T", f"swtpm:host=127.0.0.1,port={port}", "-G", "rsa",
+                        "-c", str(work / "ek.ctx"), "-u", str(der), "-f", "der"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return hashlib.sha256(der.read_bytes()).hexdigest()
+    finally:
+        swtpm.terminate()
+        swtpm.wait(timeout=10)
 
 
 class Probe:
@@ -151,6 +191,7 @@ class Vm:
         self.qemu: subprocess.Popen | None = None
         self.swtpm: subprocess.Popen | None = None
         self.probe = Probe(self.work / "probe.sock")
+        self.ek_sha256 = ""
 
     def start(self, fresh_disk: bool = True) -> Vm:
         if not self.image.is_file():
@@ -166,6 +207,7 @@ class Vm:
         if fresh_disk:
             shutil.rmtree(tpm_state, ignore_errors=True)
         tpm_state.mkdir(exist_ok=True)
+        self.ek_sha256 = tpm_ek_sha256(tpm_state, self.work)
         tpm_sock = self.work / "swtpm.sock"
         tpm_sock.unlink(missing_ok=True)
         self.swtpm = subprocess.Popen(

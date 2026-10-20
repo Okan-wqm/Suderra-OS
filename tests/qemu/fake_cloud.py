@@ -589,8 +589,14 @@ class FakeCloud:
             "site_files": {p: b64(b) for p, b in sorted(site_files.items())},
         }
         with self.lock:
-            self.deliveries[delivery_id] = {"scenario": scenario, "manifest": manifest,
-                                            "manifest_digest": statement_digest(manifest)}
+            self.deliveries[delivery_id] = {
+                "scenario": scenario, "manifest": manifest,
+                "manifest_digest": statement_digest(manifest),
+                "site_config_digest": statement_digest(site),
+                "rbac_manifest_digest": statement_digest(self.rbac_envelope),
+                "trust_anchors_digest": statement_digest(self.keys.bundle),
+                "release_statement_digest": statement_digest(self.release.envelope),
+            }
         return delivery_id, delivery
 
     def artifact_bytes(self, delivery_id: str) -> bytes | None:
@@ -648,10 +654,13 @@ class FakeCloud:
         self.record("command-sent", command=cmd, jti=jti)
         return jti
 
-    def send_receipt(self, signed: bool = True) -> str:
+    def send_receipt(self, signed: bool = True) -> tuple[str, str]:
+        """Publishes an activation_receipt command; returns its jti and the
+        receipt's statement digest."""
         envelope = self.receipt(signed=signed)
-        return self.publish_command("activation_receipt",
-                                    {"statement": json.dumps(envelope, separators=(",", ":"))})
+        jti = self.publish_command("activation_receipt",
+                                   {"statement": json.dumps(envelope, separators=(",", ":"))})
+        return jti, statement_digest(envelope)
 
     def wait_response(self, jti: str, timeout: float) -> dict:
         event = self.wait_for(lambda e: e.kind == "mqtt" and e.data.get("topic") == self.topic("responses")

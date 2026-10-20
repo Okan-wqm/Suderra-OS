@@ -100,10 +100,12 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
     c.require("1 first boot: lifecycle PROVISIONING", facts.get("lifecycle") == "PROVISIONING",
               facts.get("lifecycle", ""))
     c.check("1 provisioning window open", facts.get("provisioning_open") == "yes")
-    c.check("1 no lifecycle store existed before this boot",
-            any(r.get("kind") == "lifecycle" and (r.get("subject") or {}).get("lifecycle_from") == "FACTORY"
-                for r in eq.results(facts)) or "FACTORY" not in facts.get("results", ""),
-            "lifecycle result")
+    first_lifecycle = [r for r in eq.results(facts) if r.get("kind") == "lifecycle"][:1]
+    c.check("1 no lifecycle store on the first boot: root recorded FACTORY -> PROVISIONING",
+            bool(first_lifecycle) and first_lifecycle[0].get("outcome") == "ok"
+            and first_lifecycle[0].get("subject") == {"lifecycle_from": "FACTORY",
+                                                      "lifecycle_to": "PROVISIONING"},
+            json.dumps(first_lifecycle)[:300])
     journal = vm.run_probe("journal-all").get("journal", "")
     c.check("1 the boot has no ordering cycle", "ordering cycle" not in journal,
             "\n".join(line for line in journal.splitlines() if "cycle" in line)[:600])
@@ -159,19 +161,32 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
             bool(delivered) and not any(e.kind == "install-refused" for e in cloud.events[mark:]))
     query = delivered[-1].data["query"] if delivered else {}
     binding = json.loads(vm.facts().get("binding") or "{}")
-    c.check("3 the request carries the device's TPM EK binding",
-            query.get("binding_method") == "tpm-ek-sha256"
-            and query.get("binding_sha256") == (binding.get("digest") or {}).get("sha256"),
-            f"{query.get('binding_sha256')} vs {binding}")
+    c.check("3 the device's binding is the SHA-256 of the swtpm's EK, read on the host",
+            bool(vm.ek_sha256) and (binding.get("digest") or {}).get("sha256") == vm.ek_sha256
+            and binding.get("method") == "tpm-ek-sha256", f"{binding} vs EK {vm.ek_sha256}")
+    c.check("3 the request carries that binding",
+            query.get("binding_method") == "tpm-ek-sha256" and query.get("binding_sha256") == vm.ek_sha256,
+            f"{query.get('binding_method')} {query.get('binding_sha256')}")
     c.check("3 the manifest is bound to that binding",
             device.binding == {"method": "tpm-ek-sha256", "digest": {"sha256": query.get("binding_sha256")}})
     facts = vm.facts()
     receipt = json.loads(facts.get("receipt") or "{}")
     c.require("4 install receipt recorded", bool(receipt), facts.get("receipt", "")[:300])
-    c.check("4 the receipt names the release, manifest, bundle and site config",
-            receipt.get("version") == cloud.release.body["version"]
-            and receipt.get("manifest_digest", {}).get("sha256", receipt.get("manifest_statement_digest"))
-            is not None, json.dumps(receipt)[:500])
+    served = cloud.deliveries[delivered[-1].data["delivery"]] if delivered else {}
+    artifact = cloud.release.body["artifact"]
+    expected = {
+        "version": cloud.release.body["version"],
+        "artifact_digest": artifact["digest"],
+        "binary_digest": artifact["binary_digest"],
+        "release_statement_digest": {"sha256": served.get("release_statement_digest")},
+        "manifest_digest": {"sha256": served.get("manifest_digest")},
+        "trust_anchors_digest": {"sha256": served.get("trust_anchors_digest")},
+        "site_config_digest": {"sha256": served.get("site_config_digest")},
+        "rbac_manifest_digest": {"sha256": served.get("rbac_manifest_digest")},
+    }
+    differing = {k: (receipt.get(k), v) for k, v in expected.items() if receipt.get(k) != v}
+    c.check("4 the install receipt records exactly the delivered statements and artifact",
+            not differing, json.dumps(differing)[:600])
     result = last_provisioning_result(facts)
     c.check("4 provisioning result ok", result.get("outcome") == "ok", json.dumps(result)[:300])
 
@@ -210,7 +225,7 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
             f"u'{device.mqtt_username}'" in broker_log and "8883" in (args.work_dir / "cloud" / "mosquitto.conf").read_text())
     time.sleep(10)  # the agent subscribes to its command topic after CONNACK
 
-    jti = cloud.send_receipt(signed=False)
+    jti, _ = cloud.send_receipt(signed=False)
     response = cloud.wait_response(jti, 300)
     c.check("neg unsigned receipt: the agent refuses it",
             response.get("success") is False and (response.get("result") or {}).get("handed_to_root") is False,
@@ -220,13 +235,21 @@ def drive(args: argparse.Namespace, c: eq.Checks, cloud: FakeCloud, vm: eq.Vm) -
     c.check("neg unsigned receipt: lifecycle stays PROVISIONING",
             unchanged.get("lifecycle") == "PROVISIONING", unchanged.get("lifecycle", ""))
 
-    jti = cloud.send_receipt(signed=True)
+    jti, receipt_digest = cloud.send_receipt(signed=True)
     response = cloud.wait_response(jti, 300)
+    result = response.get("result") or {}
     c.require("6 the agent hands the signed receipt to root",
-              response.get("success") is True and (response.get("result") or {}).get("handed_to_root") is True,
+              response.get("success") is True and result.get("handed_to_root") is True
+              and result.get("statement_digest") == {"sha256": receipt_digest},
               json.dumps(response)[:300])
     facts = eq.wait_facts(vm, lambda f: f.get("lifecycle") == "ACTIVE", 1200, "lifecycle ACTIVE")
-    c.check("6 root accepted the receipt: lifecycle ACTIVE", True)
+    activation = [r for r in eq.results(facts) if r.get("kind") == "lifecycle"
+                  and (r.get("subject") or {}).get("lifecycle_to") == "ACTIVE"]
+    c.check("6 root accepted that receipt: lifecycle PROVISIONING -> ACTIVE",
+            bool(activation) and activation[-1].get("outcome") == "ok"
+            and activation[-1]["subject"].get("lifecycle_from") == "PROVISIONING"
+            and activation[-1]["subject"].get("statement_digest") == {"sha256": receipt_digest},
+            json.dumps(activation[-1:])[:400])
 
     # --- 7. lockdown
     facts = eq.wait_facts(vm, lambda f: any(r.get("kind") == "lockdown" for r in eq.results(f)),
