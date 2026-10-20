@@ -596,20 +596,34 @@ pub(crate) mod naming {
     }
 }
 
-/// Keyids of test-keys/keyring.json (keys and unanchored keys). No image of
-/// any variant may pin one (DEC-3.9); the root key loader refuses them.
-pub(crate) const TEST_ONLY_KEYIDS: [&str; 10] = [
-    "db2ece11a39c4cb39f98ad5fa8b57364e541d75a1d472cc1888419511e7fe960",
-    "c6ccc90002dec0e2f1865bf9b50cae1fd74a1cd1c702f42581e04ed14dfadf62",
-    "764ec4404fabe892613c0099b16c522e887f2267296c6fb492a2e4c978280d1c",
-    "8f988d1b618c110b257473e63edda9a57883c0b6d14ab66c3b4be45ebf83a966",
-    "aceb2263f3d33a06ea83b2354a81a8e8122c6b46d6242a21821dd3f381d637f8",
-    "bcd0a5d3f56388b013455d45f0c0285d9aa35770d237ab7b32db7f9b9bd4952a",
-    "5d1b012be5cf4c6710362cdb29f0773ef6682f4fab94d290473ac1c8715476c4",
-    "a280c5390dfc828353d3fe865d46b8fbee0536f17a2f445bc8e06be4b2e71dc5",
-    "5b217d35a6a37da9cb5fcf55a3e2131a0870bcb03756e2950b3d7e082678a45a",
-    "96c1211cfc1f9bb53b6ec2fad77749216960de90f239df90da4064a6f58e7dca",
+/// Domain prefix of [`TEST_ONLY_KEYID_DIGESTS`].
+pub(crate) const TEST_ONLY_DIGEST_PREFIX: &str = "suderra-test-only-keyid:";
+
+/// SHA-256 of `TEST_ONLY_DIGEST_PREFIX ‖ keyid` for every key of
+/// test-keys/keyring.json (keys and unanchored keys). No image of any variant
+/// may pin one (DEC-3.9); the root key loader refuses them. The keyids
+/// themselves never appear in this source or the binary: they are contract
+/// key material, which scripts/ci/check-no-contract-test-keys.py refuses in
+/// every tracked file and every built rootfs.
+pub(crate) const TEST_ONLY_KEYID_DIGESTS: [&str; 10] = [
+    "6312b1a979b3772b75af0ee3d503388f8c51a36d8b0db1443dcee6afe1eea946",
+    "e1a54e464806e01d452063f3e6ab77b575ae879371c291aa8602a928a5636979",
+    "182750ec9905b0935311a44b89a0b703b6071f0f3813c686a005bb3d87415305",
+    "945f94543aab29ddfe9dc6022bfe877b6ab3be175f29dc4e2209065f3ca969bd",
+    "a5e8adf4c980b8783c5b51de02d0fcbb37c902eb69ab0034d3b47c864f7ac450",
+    "2bd600715a406e089dde59f8ece94321a18030cda6dcd2c2f702ca0f689fce06",
+    "191397efe5d5af9c6d2cb7049ee0dfef37119864ae3d06361805bf204346d69b",
+    "2316cd164dbf5f52e14b0b717735c573d945516214cdf0d1f360c3af1cd1e0fd",
+    "899c29ded5253070371e2d54310450dfd820371e8cf6792852f29ad9934a33ca",
+    "b91ac42615956e27827a52c6944582c203b1f1765cf4bb9405126655c2c8ba00",
 ];
+
+/// Whether `keyid` is a contract TEST-ONLY key.
+pub(crate) fn is_test_only_keyid(keyid: &str) -> bool {
+    let digest =
+        super::encoding::sha256_hex(format!("{TEST_ONLY_DIGEST_PREFIX}{keyid}").as_bytes());
+    TEST_ONLY_KEYID_DIGESTS.contains(&digest.as_str())
+}
 
 string_enum!(
     /// Result kinds (result.schema.json `kind`).
@@ -988,17 +1002,30 @@ mod tests {
     fn test_keyids_match_keyring() {
         let ring = load("test-keys/keyring.json");
         assert_eq!(ring["test_only"], true);
-        let mut ids: Vec<String> = ring["keys"]
+        let keyids: Vec<&str> = ring["keys"]
             .as_array()
             .unwrap()
             .iter()
             .chain(ring["unanchored_keys"].as_array().unwrap())
-            .map(|k| k["keyid"].as_str().unwrap().to_owned())
+            .map(|k| k["keyid"].as_str().unwrap())
             .collect();
-        ids.sort();
-        let mut ours: Vec<String> = TEST_ONLY_KEYIDS.iter().map(|s| (*s).to_owned()).collect();
+        let mut digests: Vec<String> = keyids
+            .iter()
+            .map(|id| {
+                crate::contracts::encoding::sha256_hex(
+                    format!("{TEST_ONLY_DIGEST_PREFIX}{id}").as_bytes(),
+                )
+            })
+            .collect();
+        digests.sort();
+        let mut ours: Vec<String> = TEST_ONLY_KEYID_DIGESTS
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
         ours.sort();
-        assert_eq!(ours, ids);
+        assert_eq!(ours, digests);
+        assert!(keyids.iter().all(|id| is_test_only_keyid(id)));
+        assert!(!is_test_only_keyid(&"0".repeat(64)));
     }
 
     #[test]

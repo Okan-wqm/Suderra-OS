@@ -16,7 +16,7 @@
 
 use crate::contracts::encoding::sha256_hex;
 use crate::contracts::keys::{KeyEntry, KeyStore};
-use crate::contracts::registry::{BoardProfile, BoardRole, Purpose, TEST_ONLY_KEYIDS};
+use crate::contracts::registry::{is_test_only_keyid, BoardProfile, BoardRole, Purpose};
 use crate::fsutil::read_root_file;
 use crate::paths::Paths;
 use crate::variant::Variant;
@@ -87,7 +87,7 @@ impl PinPolicy {
 /// Admits one pinned key under the image's policy.
 pub(crate) fn admit(entry: &KeyEntry, policy: PinPolicy) -> Result<()> {
     let keyid = sha256_hex(&entry.raw);
-    if TEST_ONLY_KEYIDS.contains(&keyid.as_str()) {
+    if is_test_only_keyid(&keyid) {
         bail!(
             "{}/{} pins contract TEST-ONLY key {keyid}; no image may pin it (DEC-3.9)",
             entry.purpose,
