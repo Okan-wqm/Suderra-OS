@@ -58,6 +58,11 @@ if grep -qE '^(ProtectSystem|ProtectHome|PrivateTmp|ReadWritePaths|ReadOnlyPaths
     fail "units that bind-mount (data, provisioning mode, guard) must not get a private mount namespace"
 fi
 has_line "${UNITS}/suderra-provision-worker.path" 'PathExists=/var/spool/suderra-provision/inbox/trigger'
+# Bound to and ordered after suderra-provision-mode.service (after
+# basic.target), so it cannot keep a path unit's default Before=paths.target:
+# that is an ordering cycle systemd breaks by dropping paths.target.
+has_line "${UNITS}/suderra-provision-worker.path" 'DefaultDependencies=no'
+has_line "${UNITS}/suderra-provision-worker.path" 'Conflicts=shutdown.target'
 grep -q 'disable dropbear.service' "${POST_BUILD}" || fail "post-build must keep dropbear disabled at boot"
 grep -q 'grep -qxF /usr/sbin/suderra-provision "${TARGET_DIR}/etc/shells"' "${POST_BUILD}" ||
     fail "post-build must list the forced provisioning command in /etc/shells (EI-003)"

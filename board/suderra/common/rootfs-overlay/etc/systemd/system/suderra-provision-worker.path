@@ -3,14 +3,24 @@
 # command writes the token and the request under temporary names, renames
 # them into place, then renames the trigger, so the worker never sees a
 # half-written file. Runs only inside the open provisioning window.
+#
+# No default dependencies: a path unit's defaults order it before
+# paths.target, which basic.target and therefore suderra-provision-mode.service
+# come after, while this unit is bound to and ordered after that service. The
+# defaults made an ordering cycle at every boot that systemd broke by dropping
+# paths.target, so no path unit of the image ran (the QEMU edge e2e test
+# found it).
 
 [Unit]
 Description=Watch Suderra OS provisioning requests
 Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
 ConditionPathExists=/etc/suderra/board
 ConditionPathExists=/run/suderra-os/provisioning-open
 BindsTo=suderra-provision-mode.service
 After=suderra-provision-mode.service
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Path]
 PathExists=/var/spool/suderra-provision/inbox/trigger
