@@ -17,7 +17,7 @@
 //! loaded in this boot and must be recordable when /data is unavailable (the
 //! device that most needs to report a data-unlock alarm keeps its network).
 
-use crate::cli::PolicyArgs;
+use crate::cli::{PolicyArgs, PolicyCommand};
 use crate::cmd::lifecycle;
 use crate::contracts::encoding::{now_timestamp, sha256_hex};
 use crate::contracts::registry::LifecycleState;
@@ -211,12 +211,30 @@ pub(crate) fn apply(paths: &Paths, runner: &dyn Runner, now: &str) -> Result<Rul
     Ok(loaded)
 }
 
-/// `suderra-installer policy apply`.
-pub(crate) fn run(_args: PolicyArgs) -> Result<()> {
+/// Whether the loaded ruleset is the one `apply` checked and recorded this
+/// boot (the health predicate and suderra-lockdown-status).
+pub(crate) fn loaded_matches_record(paths: &Paths, runner: &dyn Runner) -> Result<bool> {
+    let recorded = recorded_hash(paths)?;
+    Ok(match loaded_ruleset_hash(runner) {
+        Ok(hash) => recorded.as_deref() == Some(hash.as_str()),
+        Err(_) => false,
+    })
+}
+
+/// `suderra-installer policy apply|verify`.
+pub(crate) fn run(args: PolicyArgs) -> Result<()> {
     let paths = Paths::system()?;
-    match apply(&paths, &SystemRunner, &now_timestamp())? {
-        Ruleset::Appliance => println!("appliance"),
-        Ruleset::Provisioning { iface } => println!("provisioning {iface}"),
+    match args.command {
+        PolicyCommand::Apply => match apply(&paths, &SystemRunner, &now_timestamp())? {
+            Ruleset::Appliance => println!("appliance"),
+            Ruleset::Provisioning { iface } => println!("provisioning {iface}"),
+        },
+        PolicyCommand::Verify => {
+            if !loaded_matches_record(&paths, &SystemRunner)? {
+                bail!("the loaded ruleset is not the one policy apply recorded this boot");
+            }
+            println!("loaded ruleset matches the recorded hash");
+        }
     }
     Ok(())
 }
@@ -310,6 +328,23 @@ eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n";
             apply(&paths, &FakeRunner::default(), NOW).unwrap(),
             Ruleset::Appliance
         );
+    }
+
+    #[test]
+    fn verify_matches_only_the_ruleset_apply_recorded() {
+        let (_tmp, paths) = setup(None);
+        let runner = FakeRunner::default();
+        assert!(
+            !loaded_matches_record(&paths, &runner).unwrap(),
+            "nothing recorded"
+        );
+        apply(&paths, &runner, NOW).unwrap();
+        assert!(loaded_matches_record(&paths, &runner).unwrap());
+        let changed = FakeRunner {
+            ruleset: b"table inet other {}\n".to_vec(),
+            ..FakeRunner::default()
+        };
+        assert!(!loaded_matches_record(&paths, &changed).unwrap());
     }
 
     #[test]

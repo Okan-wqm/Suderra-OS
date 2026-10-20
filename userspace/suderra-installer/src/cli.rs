@@ -167,6 +167,9 @@ pub struct PolicyArgs {
 pub enum PolicyCommand {
     /// Load the ruleset the lifecycle selects.
     Apply,
+    /// Exit 0 only when the loaded ruleset is the one `apply` checked and
+    /// recorded this boot.
+    Verify,
 }
 
 /// `result write`

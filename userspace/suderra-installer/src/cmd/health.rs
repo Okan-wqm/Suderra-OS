@@ -115,11 +115,8 @@ pub(crate) fn evaluate(
     {
         reasons.insert(Reason::DataMapperMissing);
     }
-    match policy::loaded_ruleset_hash(runner) {
-        Ok(hash) if policy::recorded_hash(paths)?.as_deref() == Some(hash.as_str()) => {}
-        _ => {
-            reasons.insert(Reason::FirewallHashMismatch);
-        }
+    if !policy::loaded_matches_record(paths, runner)? {
+        reasons.insert(Reason::FirewallHashMismatch);
     }
     if board.is_none() {
         return Ok(reasons);

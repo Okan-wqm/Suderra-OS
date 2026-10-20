@@ -56,12 +56,10 @@ else
     ok "the provisioning spool is gone"
 fi
 
-recorded="/data/suderra/os/firewall/loaded.sha256"
-if [ -f "${recorded}" ] &&
-   [ "$(nft list ruleset | sha256sum | cut -d' ' -f1)" = "$(cat "${recorded}")" ]; then
-    ok "loaded ruleset matches the recorded hash"
+if "${INSTALLER}" policy verify >/dev/null 2>&1; then
+    ok "loaded ruleset matches the hash policy apply recorded"
 else
-    fail "loaded ruleset does not match the recorded hash"
+    fail "loaded ruleset does not match the hash policy apply recorded"
 fi
 if nft list ruleset | grep -q 'dport 22'; then
     fail "an SSH rule is loaded"
