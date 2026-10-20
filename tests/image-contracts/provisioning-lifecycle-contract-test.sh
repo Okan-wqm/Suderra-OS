@@ -209,8 +209,10 @@ for ruleset in "${APPLIANCE}" "${PROVISIONING}"; do
     grep -q 'tcp dport 4460 accept' "${ruleset}" || fail "${ruleset#"${ROOT}/"} must allow NTS-KE"
 done
 # The rulesets also parse, when this host may run `nft -c` (it needs
-# CAP_NET_ADMIN); tests/qemu/nft-ruleset-smoke-test.py checks them against the
-# target kernels.
+# CAP_NET_ADMIN), against this host's nft and kernel only. Loading them on
+# each image's own kernel needs a booted image: that is part of the ADR-048
+# P0 exit runtime suite and is not automated yet, so this test makes no claim
+# about the target kernels.
 if command -v nft >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
     nft -c -f "${BASE}" || fail "nft -c rejects the base ruleset"
     nft -c -f "${APPLIANCE}" || fail "nft -c rejects the appliance ruleset"

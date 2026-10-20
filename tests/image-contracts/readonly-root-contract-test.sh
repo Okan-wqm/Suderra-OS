@@ -17,9 +17,11 @@
 #     or makes /etc writable;
 #   * /etc/machine-id ships empty, nothing Suderra reads it, the journal is
 #     volatile.
-# The dynamic half (EROFS in the boot journal of the production QEMU image)
-# is the P1 prod-QEMU lane; P0 runs the production units' sandboxes in
-# tests/qemu/edge-readonly-sandbox-test.py.
+# This is the static half only. The dynamic half (the production units'
+# sandboxes on a read-only root, ADR-048's tests/qemu/edge-readonly-sandbox-
+# test.py for P0, and EROFS in the boot journal of the production QEMU image
+# for P1) does not exist yet, so the runtime behaviour these sources describe
+# is unverified.
 #
 set -euo pipefail
 IFS=$'\n\t'
