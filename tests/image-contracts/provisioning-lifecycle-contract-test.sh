@@ -50,7 +50,7 @@ done
 MODE_UNIT="${UNITS}/suderra-provision-mode.service"
 has_line "${MODE_UNIT}" 'ExecCondition=/usr/sbin/suderra-provision-mode condition'
 has_line "${MODE_UNIT}" 'ExecStart=/usr/sbin/suderra-provision-mode open'
-has_line "${MODE_UNIT}" 'ExecStop=/usr/sbin/suderra-provision-mode close'
+has_line "${MODE_UNIT}" 'ExecStopPost=/usr/sbin/suderra-provision-mode close'
 has_line "${MODE_UNIT}" 'Wants=dropbear.service suderra-provision-worker.path suderra-provision-guard.service'
 # Its binds must reach the whole system: no private mount namespace.
 if grep -qE '^(ProtectSystem|ProtectHome|PrivateTmp|ReadWritePaths|ReadOnlyPaths|PrivateDevices|PrivateMounts)=' "${MODE_UNIT}" \

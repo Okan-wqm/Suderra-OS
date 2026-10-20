@@ -10,7 +10,8 @@
 # carry ConditionPathExists=/run/suderra-os/provisioning-open and
 # BindsTo=this unit, so they run only inside the open window and stop with
 # it. Stopping the unit (lockdown, window end) restores the image's locked
-# shadow and destroys the spool.
+# shadow and destroys the spool; ExecStopPost= does the same after an open
+# that failed half-way, so no bind outlives a failed window.
 #
 # No mount-namespace options: the binds must be visible system-wide.
 
@@ -27,7 +28,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecCondition=/usr/sbin/suderra-provision-mode condition
 ExecStart=/usr/sbin/suderra-provision-mode open
-ExecStop=/usr/sbin/suderra-provision-mode close
+ExecStopPost=/usr/sbin/suderra-provision-mode close
 NoNewPrivileges=true
 
 [Install]

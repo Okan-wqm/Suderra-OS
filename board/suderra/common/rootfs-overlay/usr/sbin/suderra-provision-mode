@@ -193,6 +193,10 @@ wipe_entries() {
 }
 
 close_window() {
+    was_open=0
+    if [ -e "${OPEN_MARKER}" ] || is_mounted /etc/shadow || is_mounted "${SPOOL}"; then
+        was_open=1
+    fi
     rm -f "${OPEN_MARKER}"
     umask 077
     : > "${CLOSED_MARKER}"
@@ -205,7 +209,9 @@ close_window() {
     fi
     wipe_entries "${SPOOL_SOURCE}/inbox"
     wipe_entries "${SPOOL_SOURCE}"
-    console "" "Suderra OS provisioning window closed." ""
+    if [ "${was_open}" = "1" ]; then
+        console "" "Suderra OS provisioning window closed." ""
+    fi
 }
 
 rotate() {
