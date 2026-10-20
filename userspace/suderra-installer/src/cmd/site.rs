@@ -7,10 +7,17 @@
 //! `/data/suderra/site` is the stable source of the agent's read-only bind
 //! at `/var/lib/suderra-site`, so it is never itself replaced (a renamed
 //! directory would leave the bind on the old inode). Each verified site set
-//! is written complete under `versions/<update_seq>-<digest>/` and activated
-//! by renaming the `current` symlink; the fixed names (`config.yaml`,
-//! `site-config.dsse`, …) are relative symlinks into `current`, so the agent's
-//! compile-time paths resolve to exactly one complete set at any instant.
+//! is written complete under `versions/<update_seq>-<set digest>/` and
+//! activated by renaming the `current` symlink; the fixed names
+//! (`config.yaml`, `site-config.dsse`, …) are relative symlinks into
+//! `current`, so the agent's compile-time paths resolve to exactly one
+//! complete set at any instant.
+//!
+//! A version directory is content-addressed: its name is derived from every
+//! byte of every file of the set (the site config, trust-anchors and RBAC
+//! envelopes and each site file), so two sets that differ in any statement
+//! never share a directory, and an existing directory is reused only after
+//! its files are proven byte-identical to the set being installed.
 
 use crate::contracts::dsse::Envelope;
 use crate::contracts::keys::KeyStore;
@@ -23,7 +30,9 @@ use crate::fsutil::{ensure_dir, fsync_dir, read_root_file, symlink_atomic, write
 use crate::paths::Paths;
 use crate::state::{site_version_name_ok, InstallReceipt};
 use anyhow::{bail, Context, Result};
-use std::collections::BTreeSet;
+use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Statement files of a site set.
@@ -52,9 +61,91 @@ fn fixed_links() -> Vec<(&'static str, String)> {
     links
 }
 
-/// Version directory name of a site config.
-pub(crate) fn version_name(update_seq: u64, statement_digest: &str) -> String {
-    format!("{update_seq}-{}", &statement_digest[..12])
+/// Mode of every file of a site set.
+const SITE_FILE_MODE: u32 = 0o640;
+
+/// Every file of a site set by its path relative to the version directory.
+type SetEntries = BTreeMap<String, Vec<u8>>;
+
+fn set_entries(envelopes: [&Envelope; 3], files: &SiteFiles) -> SetEntries {
+    let [site_env, ta_env, rbac_env] = envelopes;
+    let mut entries = SetEntries::new();
+    entries.insert(SITE_CONFIG_FILE.to_owned(), site_env.to_json());
+    entries.insert(TRUST_ANCHORS_FILE.to_owned(), ta_env.to_json());
+    entries.insert(RBAC_MANIFEST_FILE.to_owned(), rbac_env.to_json());
+    for (path, bytes) in files {
+        entries.insert(path.as_str().to_owned(), bytes.clone());
+    }
+    entries
+}
+
+/// Version directory name of a site set: its site config's update_seq and
+/// the first 12 hex digits of a SHA-256 over every (path, bytes) pair,
+/// length-prefixed so no two sets encode alike.
+fn version_name(update_seq: u64, entries: &SetEntries) -> String {
+    let mut hasher = Sha256::new();
+    for (path, bytes) in entries {
+        hasher.update((path.len() as u64).to_be_bytes());
+        hasher.update(path.as_bytes());
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    let digest = hex::encode(hasher.finalize());
+    format!("{update_seq}-{}", &digest[..12])
+}
+
+/// Regular files under `dir`, by relative path; `None` when the tree holds
+/// anything else (a symlink, a device, a FIFO).
+fn tree_files(dir: &Path, prefix: &str, out: &mut BTreeMap<String, PathBuf>) -> Result<bool> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("cannot list {}", dir.display()))? {
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|n| anyhow::anyhow!("{} holds a non-UTF-8 name {n:?}", dir.display()))?;
+        let rel = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            if !tree_files(&entry.path(), &rel, out)? {
+                return Ok(false);
+            }
+        } else if kind.is_file() {
+            out.insert(rel, entry.path());
+        } else {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether the version directory `dir` holds exactly `entries`: the same
+/// paths, the same bytes, root-owned with the site file mode and group.
+fn holds_exactly(paths: &Paths, dir: &Path, entries: &SetEntries) -> Result<bool> {
+    let mut found = BTreeMap::new();
+    if !tree_files(dir, "", &mut found)? || !found.keys().eq(entries.keys()) {
+        return Ok(false);
+    }
+    let uid = nix::unistd::geteuid().as_raw();
+    for (rel, path) in &found {
+        let meta = std::fs::symlink_metadata(path)?;
+        if meta.uid() != uid
+            || meta.mode() & 0o7777 != SITE_FILE_MODE
+            || paths
+                .agent_group()
+                .is_some_and(|gid| meta.gid() != gid.as_raw())
+        {
+            return Ok(false);
+        }
+        let bytes = read_root_file(path, MAX_SITE_FILE)?;
+        if bytes.as_ref() != entries.get(rel) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn versions_dir(paths: &Paths) -> PathBuf {
@@ -71,70 +162,80 @@ fn site_dir_mode(paths: &Paths, dir: &Path) -> Result<()> {
 }
 
 /// Writes a verified site set under `versions/` (not yet active) and
-/// returns its version name.
+/// returns its version name. A directory of that name is reused only when it
+/// holds exactly this set; anything else there (a torn or tampered set) is
+/// replaced by a freshly staged copy.
 pub(crate) fn stage(
     paths: &Paths,
     set: &ProvisioningSet,
     envelopes: [&Envelope; 3],
     files: &SiteFiles,
 ) -> Result<String> {
-    let [site_env, ta_env, rbac_env] = envelopes;
-    let name = version_name(
-        set.site_config.statement.update_seq,
-        &set.site_config.digest,
-    );
+    let entries = set_entries(envelopes, files);
+    let name = version_name(set.site_config.statement.update_seq, &entries);
     let root = paths.site_root();
     site_dir_mode(paths, &root)?;
     let versions = versions_dir(paths);
     site_dir_mode(paths, &versions)?;
     let final_dir = versions.join(&name);
-    if std::fs::symlink_metadata(&final_dir).is_ok() {
-        // The same site config (same update_seq and digest) is already
-        // staged; verify-current re-checks its files before every start.
-        return Ok(name);
+    let existing = std::fs::symlink_metadata(&final_dir).ok();
+    if let Some(meta) = &existing {
+        if meta.file_type().is_dir() && holds_exactly(paths, &final_dir, &entries)? {
+            return Ok(name);
+        }
     }
-    let nonce = crate::fsutil::random_bytes::<6>()?;
-    let tmp = versions.join(format!(".{name}.tmp-{}", hex::encode(nonce)));
+    let nonce = hex::encode(crate::fsutil::random_bytes::<6>()?);
+    let tmp = versions.join(format!(".{name}.tmp-{nonce}"));
+    let stale = versions.join(format!(".{name}.stale-{nonce}"));
     let staged = (|| -> Result<()> {
         site_dir_mode(paths, &tmp)?;
         let group = paths.agent_group();
-        write_atomic(
-            &tmp.join(SITE_CONFIG_FILE),
-            &site_env.to_json(),
-            0o640,
-            group,
-        )?;
-        write_atomic(
-            &tmp.join(TRUST_ANCHORS_FILE),
-            &ta_env.to_json(),
-            0o640,
-            group,
-        )?;
-        write_atomic(
-            &tmp.join(RBAC_MANIFEST_FILE),
-            &rbac_env.to_json(),
-            0o640,
-            group,
-        )?;
-        for (path, bytes) in files {
-            let target = tmp.join(path.as_str());
+        for (rel, bytes) in &entries {
+            let target = tmp.join(rel);
             if let Some(dir) = target.parent() {
                 if dir != tmp {
                     site_dir_mode(paths, dir)?;
                 }
             }
-            write_atomic(&target, bytes, 0o640, group)?;
+            write_atomic(&target, bytes, SITE_FILE_MODE, group)?;
         }
         fsync_dir(&tmp)?;
+        if existing.is_some() {
+            // rename(2) cannot replace a non-empty directory: move the
+            // drifted one aside first. A crash in between leaves no
+            // directory of this name, which the next install restages.
+            std::fs::rename(&final_dir, &stale)
+                .with_context(|| format!("cannot move aside {}", final_dir.display()))?;
+        }
         std::fs::rename(&tmp, &final_dir)
             .with_context(|| format!("cannot activate {}", final_dir.display()))?;
         fsync_dir(&versions)
     })();
     if let Err(e) = staged {
         let _ = std::fs::remove_dir_all(&tmp);
+        if std::fs::symlink_metadata(&final_dir).is_err() {
+            let _ = std::fs::rename(&stale, &final_dir);
+        }
         return Err(e);
     }
+    if existing.is_some() {
+        remove_entry(&stale)?;
+    }
     Ok(name)
+}
+
+/// Removes a directory tree, or a single non-directory entry, at `path`.
+fn remove_entry(path: &Path) -> Result<()> {
+    let is_dir = std::fs::symlink_metadata(path)
+        .with_context(|| format!("cannot stat {}", path.display()))?
+        .file_type()
+        .is_dir();
+    if is_dir {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+    .with_context(|| format!("cannot remove {}", path.display()))
 }
 
 /// Makes `version` the current site set and keeps only it and `keep`.
@@ -156,7 +257,7 @@ pub(crate) fn activate(paths: &Paths, version: &str, keep: Option<&str>) -> Resu
         let name = entry?.file_name();
         let name = name.to_string_lossy();
         if name != version && Some(name.as_ref()) != keep {
-            std::fs::remove_dir_all(versions.join(name.as_ref()))
+            remove_entry(&versions.join(name.as_ref()))
                 .with_context(|| format!("cannot prune site version {name}"))?;
         }
     }

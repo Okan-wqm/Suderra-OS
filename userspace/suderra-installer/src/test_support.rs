@@ -196,6 +196,7 @@ pub(crate) struct Spec {
     pub artifact: Vec<u8>,
     pub nonce: String,
     pub binding_hex: &'static str,
+    pub bundle_seq: u64,
 }
 
 impl Default for Spec {
@@ -210,6 +211,7 @@ impl Default for Spec {
             binary,
             nonce: "0ab05211b2bb9ff799cce532f64ddbe3".into(),
             binding_hex: BINDING_HEX,
+            bundle_seq: 1,
         }
     }
 }
@@ -257,7 +259,7 @@ pub(crate) fn build_delivery(keys: &Keys, spec: &Spec) -> Built {
         "trust-anchors",
         &json!({
             "_type": "suderra.trust-anchors.v1",
-            "bundle_seq": 1,
+            "bundle_seq": spec.bundle_seq,
             "issued_at": "2026-10-19T00:00:00Z",
             "tenant_scope": [TENANT],
             "anchors": [
@@ -331,7 +333,7 @@ pub(crate) fn build_delivery(keys: &Keys, spec: &Spec) -> Built {
             "release_statement": {"digest": {"sha256": statement_digest(&release)}},
             "artifact_url": format!("https://edge-releases.example.com/{artifact_name}"),
             "site_config": {"digest": {"sha256": statement_digest(&site)}, "update_seq": spec.site_seq},
-            "trust_anchors": {"digest": {"sha256": statement_digest(&bundle)}, "bundle_seq": 1},
+            "trust_anchors": {"digest": {"sha256": statement_digest(&bundle)}, "bundle_seq": spec.bundle_seq},
         }),
         &keys.provisioning,
     );

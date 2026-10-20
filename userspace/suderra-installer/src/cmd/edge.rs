@@ -1713,4 +1713,84 @@ mod tests {
         keep_sorted.sort();
         assert_eq!(stored, keep_sorted);
     }
+
+    /// The trust-anchors bundle the active site set holds.
+    fn active_bundle_seq(dev: &Device) -> u64 {
+        let bytes = std::fs::read(dev.paths.site_root().join(site::TRUST_ANCHORS_FILE)).unwrap();
+        let env = crate::contracts::dsse::Envelope::parse(&bytes).unwrap();
+        let statement: serde_json::Value = serde_json::from_slice(&env.payload).unwrap();
+        statement["bundle_seq"].as_u64().unwrap()
+    }
+
+    #[test]
+    fn reprovisioning_with_the_same_site_config_and_a_new_bundle_activates_the_new_bundle() {
+        let dev = device(LifecycleState::Provisioning);
+        let first = dev.install(&Spec::default()).unwrap();
+        verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        lifecycle::write(
+            &dev.paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-21T00:00:00Z".into()),
+        )
+        .unwrap();
+        // Same site config (re-verified under equal_seq identical-only), a
+        // new trust-anchors bundle.
+        let second = dev
+            .install(&Spec {
+                update_seq: 2,
+                bundle_seq: 2,
+                ..Spec::default()
+            })
+            .unwrap();
+        assert_eq!(
+            first.receipt.site_config_digest,
+            second.receipt.site_config_digest
+        );
+        assert_ne!(
+            first.receipt.site_version, second.receipt.site_version,
+            "a site set is named after every statement it holds"
+        );
+        assert_eq!(active_bundle_seq(&dev), 2);
+        verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+    }
+
+    #[test]
+    fn a_staged_site_set_is_reused_only_when_byte_identical() {
+        let dev = device(LifecycleState::Provisioning);
+        let first = dev.install(&Spec::default()).unwrap();
+        let staged = dev
+            .paths
+            .site_root()
+            .join("versions")
+            .join(&first.receipt.site_version);
+        // The site set on disk drifts (a tampered or torn file).
+        std::fs::write(staged.join("config.yaml"), "site: tampered\n").unwrap();
+        assert!(verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).is_err());
+        lifecycle::write(
+            &dev.paths,
+            LifecycleState::Maintenance,
+            Some("2026-10-21T00:00:00Z".into()),
+        )
+        .unwrap();
+        // The same site set under a new manifest names the same version
+        // directory, which is restaged rather than trusted.
+        let second = dev
+            .install(&Spec {
+                update_seq: 2,
+                ..Spec::default()
+            })
+            .unwrap();
+        assert_eq!(first.receipt.site_version, second.receipt.site_version);
+        assert_eq!(
+            std::fs::read_to_string(staged.join("config.yaml")).unwrap(),
+            "site: test\nseq: 1\n"
+        );
+        verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(dev.paths.site_root().join("versions"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
 }
