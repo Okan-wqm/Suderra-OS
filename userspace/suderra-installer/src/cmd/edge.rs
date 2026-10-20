@@ -294,8 +294,22 @@ fn place_binary(
     ensure_dir(&dir, 0o755).map_err(io)?;
     let target = dir.join(naming::BINARY_NAME);
     let expected = &release.artifact.binary_digest.sha256;
-    if file_sha256(&target).map_err(io)?.as_deref() == Some(expected.as_str()) {
-        return Ok(());
+    match file_sha256(&target).map_err(io)? {
+        Some(digest) if &digest == expected => return Ok(()),
+        // A release version is immutable: replacing the binary of an
+        // installed version would break the committed receipt that names it
+        // if this install stopped before its own receipt.
+        Some(_) => {
+            return Err(Rejection::failed(
+                Reason::IoError,
+                format!(
+                    "releases/{}/{} holds a different binary of the same version",
+                    release.version,
+                    naming::BINARY_NAME
+                ),
+            ))
+        }
+        None => {}
     }
     let nonce = random_bytes::<8>().map_err(io)?;
     let tmp = dir.join(format!(
@@ -1636,6 +1650,29 @@ mod tests {
         .unwrap();
         assert!(!dev.paths.provisioning_request().exists(), "spent");
         assert_eq!(dev.current().unwrap(), Path::new("releases/1.6.0"));
+    }
+
+    #[test]
+    fn an_installed_version_is_never_rewritten_with_another_binary() {
+        let dev = device(LifecycleState::Provisioning);
+        let spec = Spec::default();
+        dev.install(&spec).unwrap();
+        reprovisioning(&dev);
+        let other = b"\x7fELF another build of 1.6.0".to_vec();
+        let same_version = Spec {
+            update_seq: 2,
+            site_seq: 2,
+            artifact: tarball(&[("suderra-agent", &other)]),
+            binary: other,
+            ..Spec::default()
+        };
+        assert!(dev.install(&same_version).is_err());
+        assert_eq!(dev.last_result().reason.as_deref(), Some("io-error"));
+        assert_eq!(
+            std::fs::read(dev.paths.edge_root().join("releases/1.6.0/suderra-agent")).unwrap(),
+            spec.binary
+        );
+        verify_current(&dev.paths, &dev.facts, &dev.pins, NOW).unwrap();
     }
 
     #[test]
