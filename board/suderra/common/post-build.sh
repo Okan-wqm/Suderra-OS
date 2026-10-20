@@ -166,7 +166,8 @@ config_enabled() {
 }
 
 mkdir -p "${TARGET_DIR}/etc/suderra"
-rm -f "${TARGET_DIR}/etc/suderra/board" "${TARGET_DIR}/etc/suderra/features"
+rm -f "${TARGET_DIR}/etc/suderra/board" "${TARGET_DIR}/etc/suderra/features" \
+      "${TARGET_DIR}/etc/suderra/cloud-endpoint"
 # Declared features of every image, with or without a board, from what the
 # image is built with: the health predicate (`suderra-installer health
 # check`, which runs on every image) fails on a declared feature that is
@@ -209,6 +210,23 @@ DEVICE_BINDING_METHOD=${SUDERRA_DEVICE_BINDING_METHOD}
 EOF
     chmod 0644 "${TARGET_DIR}/etc/suderra/board"
     echo "==> board_profile ${SUDERRA_BOARD_PROFILE}"
+    # The provisioning API the root installer fetches deliveries from
+    # (DEC-5.5): a build-time fact of every image with a board.
+    config_enabled BR2_PACKAGE_SUDERRA_OS_INSTALLER || {
+        echo "ERROR: ${DEFCONFIG_NAME} has a board but no root installer (BR2_PACKAGE_SUDERRA_OS_INSTALLER)"
+        exit 1
+    }
+    cloud_endpoint="$(sed -n 's/^BR2_PACKAGE_SUDERRA_OS_INSTALLER_CLOUD_ENDPOINT="\(.*\)"$/\1/p' "${BR2_CONFIG}")"
+    # The installer's is_https_url: https, host [A-Za-z0-9.-], optional port,
+    # no query, no fragment, no trailing slash.
+    if ! printf '%s\n' "${cloud_endpoint}" |
+        grep -Eqx 'https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&()*+,;=:@/-]*[^/])?'; then
+        echo "ERROR: ${DEFCONFIG_NAME}: BR2_PACKAGE_SUDERRA_OS_INSTALLER_CLOUD_ENDPOINT=\"${cloud_endpoint}\" is not an https base URL"
+        exit 1
+    fi
+    printf '%s\n' "${cloud_endpoint}" > "${TARGET_DIR}/etc/suderra/cloud-endpoint"
+    chmod 0644 "${TARGET_DIR}/etc/suderra/cloud-endpoint"
+    echo "==> provisioning API ${cloud_endpoint}"
 else
     echo "==> ${DEFCONFIG_NAME} declares no board_profile; it runs no edge agent"
 fi

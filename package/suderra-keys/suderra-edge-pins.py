@@ -8,13 +8,20 @@ and device-lifecycle statements only against keys pinned on the verity
 rootfs at /etc/suderra/keys/<purpose>/<epoch>.pub. This installs them from
 <trust-roots>/edge/<purpose>/<epoch>.pub (scripts/ci/edge-dev-keys.py).
 
-* dev images (and the QEMU targets) pin the dev/CI keys of the set; every
-  os-image purpose must be present, each file an Ed25519
-  SubjectPublicKeyInfo, no key shared by two purposes.
-* production images pin only keyids the P1 key ceremony records in
-  docs/security/key-management.md. None is recorded yet, so a production
-  build whose trust-root set carries edge keys fails, and a production image
-  pins no edge key (its installer then provisions nothing).
+* dev images and every image of a `ci`-role board (the QEMU targets,
+  production variant included) pin the dev/CI keys of the set: the same
+  board-role rule as the root installer's PinPolicy
+  (userspace/suderra-installer/src/trust_anchors.rs). Every os-image purpose
+  must be present, each file an Ed25519 SubjectPublicKeyInfo, no key shared
+  by two purposes. These images also carry the set's dev provisioning-API CA
+  (edge/cloud-ca/ca.crt) as /etc/suderra/cloud-ca.pem, which the QEMU fake
+  cloud's https certificate chains to.
+* production images of hardware boards (and boardless production images)
+  pin only keyids the P1 key ceremony records in
+  docs/security/key-management.md. None is recorded yet, so such a build
+  whose trust-root set carries edge keys fails, and the image pins no edge
+  key (its installer then provisions nothing) and carries no cloud CA (the
+  provisioning API is verified against the public roots only).
 
 The contract's TEST-ONLY keys are refused before this runs
 (scripts/ci/check-no-contract-test-keys.py in suderra-keys.mk).
@@ -25,6 +32,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import json
 import re
 import shutil
 import sys
@@ -46,19 +54,41 @@ def raw_key(path: Path) -> bytes:
     return der[len(SPKI_PREFIX):]
 
 
+def board_role(boards: Path, defconfig: str) -> str | None:
+    """The boards.json role of the board `defconfig` builds; None when it
+    declares no board. A defconfig boards.json does not classify fails."""
+    data = json.loads(boards.read_text(encoding="utf-8"))
+    rows = [b for b in data["boards"] if any(i["defconfig"] == defconfig for i in b["os_images"])]
+    boardless = [f for f in data["pending_board_families"]
+                 if any(i["defconfig"] == defconfig for i in f["os_images"])]
+    boardless += [e for e in data["excluded_os_images"] if e["defconfig"] == defconfig]
+    if len(rows) + len(boardless) != 1:
+        raise ValueError(f"{defconfig} is classified {len(rows) + len(boardless)} times in {boards}")
+    return rows[0]["role"] if rows else None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--trust-roots", type=Path, required=True)
     ap.add_argument("--target", type=Path, required=True)
     ap.add_argument("--variant", choices=("dev", "prod"), required=True)
+    ap.add_argument("--defconfig", required=True, help="e.g. suderra_qemu_x86_64_defconfig")
+    ap.add_argument("--boards", type=Path, required=True, help="the vendored contract's boards.json")
     args = ap.parse_args()
 
+    try:
+        role = board_role(args.boards, args.defconfig)
+    except (OSError, ValueError, KeyError) as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
     edge = args.trust_roots / "edge"
     pins = args.target / "etc/suderra/keys"
+    cloud_ca = args.target / "etc/suderra/cloud-ca.pem"
     if pins.exists():
         shutil.rmtree(pins)
+    cloud_ca.unlink(missing_ok=True)
 
-    if args.variant == "prod":
+    if args.variant == "prod" and role != "ci":
         if edge.exists():
             print(
                 f"ERROR: {edge}: a production image pins only keyids the P1 key ceremony "
@@ -68,6 +98,14 @@ def main() -> int:
             return 1
         print("suderra-keys: production image, no edge key pinned (no inventoried keyid)")
         return 0
+
+    ca_source = edge / "cloud-ca" / "ca.crt"
+    if not ca_source.is_file() or not ca_source.read_text(encoding="ascii").startswith(
+        "-----BEGIN CERTIFICATE-----\n"
+    ):
+        print(f"ERROR: {ca_source}: no dev provisioning-API CA certificate (run "
+              "scripts/gen-dev-keys.sh or scripts/ci/prepare-ci-keyring.sh)", file=sys.stderr)
+        return 1
 
     seen: dict[bytes, str] = {}
     staged: list[tuple[Path, Path, str]] = []
@@ -101,6 +139,10 @@ def main() -> int:
         shutil.copyfile(source, dest)
         dest.chmod(0o644)
         print(f"suderra-keys: pinned {dest.relative_to(args.target)} keyid {keyid}")
+    cloud_ca.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ca_source, cloud_ca)
+    cloud_ca.chmod(0o644)
+    print(f"suderra-keys: dev provisioning-API CA {cloud_ca.relative_to(args.target)}")
     return 0
 
 

@@ -19,6 +19,9 @@ QEMU fake cloud):
     <purpose>/<epoch>.key        Ed25519 private key, PKCS#8 PEM, 0600
     <purpose>/<epoch>.pub        Ed25519 SubjectPublicKeyInfo PEM, 0644
     mqtt-ca/ca.key, ca.crt       root CA of the dev/QEMU test broker
+    cloud-ca/ca.key, ca.crt      root CA of the QEMU fake cloud's provisioning
+                                 API (https); dev images and the QEMU targets
+                                 carry ca.crt as /etc/suderra/cloud-ca.pem
     trust-anchors.dsse.json      DSSE envelope of the dev bundle, signed by
                                  fleet-root/<epoch>.key
 
@@ -123,8 +126,8 @@ def ensure_ed25519(edge: Path, purpose: str) -> None:
     write_public(pub, openssl("pkey", "-in", str(key), "-pubout"))
 
 
-def ensure_mqtt_ca(edge: Path, profile: str, days: int) -> None:
-    ca_dir = edge / "mqtt-ca"
+def ensure_test_ca(edge: Path, name: str, subject: str, profile: str, days: int) -> None:
+    ca_dir = edge / name
     ca_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(ca_dir, 0o755)
     key, crt = ca_dir / "ca.key", ca_dir / "ca.crt"
@@ -134,11 +137,19 @@ def ensure_mqtt_ca(edge: Path, profile: str, days: int) -> None:
     label = "Dev" if profile == "dev" else "CI"
     cert = openssl(
         "req", "-new", "-x509", "-key", str(key), "-sha256", "-days", str(days),
-        "-subj", f"/CN=Suderra {label} QEMU MQTT test broker CA/",
+        "-subj", f"/CN=Suderra {label} {subject}/",
         "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
         "-addext", "keyUsage=critical,keyCertSign,cRLSign",
     )
     write_public(crt, cert)
+
+
+def ensure_mqtt_ca(edge: Path, profile: str, days: int) -> None:
+    ensure_test_ca(edge, "mqtt-ca", "QEMU MQTT test broker CA", profile, days)
+
+
+def ensure_cloud_ca(edge: Path, profile: str, days: int) -> None:
+    ensure_test_ca(edge, "cloud-ca", "QEMU provisioning API test CA", profile, days)
 
 
 def anchors(edge: Path) -> list[dict]:
@@ -214,6 +225,7 @@ def generate(keys_dir: Path, profile: str, tenant_ids: list[str], days: int) -> 
     for purpose in PURPOSES:
         ensure_ed25519(edge, purpose)
     ensure_mqtt_ca(edge, profile, days)
+    ensure_cloud_ca(edge, profile, days)
     for t in tenant_ids:
         if not UUID_RE.match(t):
             raise KeyError_(f"tenant id {t!r} is not a lowercase RFC 9562 UUID")
@@ -260,6 +272,15 @@ def verify(keys_dir: Path, public_only: bool) -> list[str]:
             problems.append(f"{crt} is not a CA certificate")
     if public_only and (edge / "mqtt-ca" / "ca.key").exists():
         problems.append("mqtt-ca/ca.key in a public-only trust-root set")
+    cloud_crt = edge / "cloud-ca" / "ca.crt"
+    if not cloud_crt.is_file():
+        problems.append(f"{cloud_crt} is missing")
+    else:
+        text = openssl("x509", "-in", str(cloud_crt), "-noout", "-text").decode()
+        if "CA:TRUE" not in text:
+            problems.append(f"{cloud_crt} is not a CA certificate")
+    if public_only and (edge / "cloud-ca" / "ca.key").exists():
+        problems.append("cloud-ca/ca.key in a public-only trust-root set")
     bundle = read_bundle(edge)
     if bundle is None:
         problems.append(f"{edge / BUNDLE} is missing")

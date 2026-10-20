@@ -8,9 +8,12 @@
 # boards.json for every image boards.json lists as a board's image, and
 # writes none for the images that declare no board. The declared features
 # the health predicate checks are a fact of every image, board or not, and
-# live in /etc/suderra/features only. This runs post-build's image-facts
-# section for every defconfig and checks both files against boards.json and
-# the defconfig, as the root installer does again at run time.
+# live in /etc/suderra/features only. Every image with a board also carries
+# /etc/suderra/cloud-endpoint, the https base URL of the provisioning API
+# (DEC-5.5), so `edge provision` has somewhere to fetch from. This runs
+# post-build's image-facts section for every defconfig and checks the files
+# against boards.json and the defconfig, as the root installer does again at
+# run time.
 #
 set -euo pipefail
 IFS=$'\n\t'
@@ -59,6 +62,7 @@ boards_path, defconfig, target, variant, defconfig_path = sys.argv[1:]
 boards = json.load(open(boards_path, encoding="utf-8"))
 board_file = Path(target) / "etc/suderra/board"
 features_file = Path(target) / "etc/suderra/features"
+endpoint_file = Path(target) / "etc/suderra/cloud-endpoint"
 
 def env_file(path):
     values = {}
@@ -93,6 +97,8 @@ rows = [b for b in boards["boards"] if any(i["defconfig"] == defconfig for i in 
 if not rows:
     if board_file.exists():
         sys.exit(f"{defconfig} declares no board in boards.json but got {board_file}")
+    if endpoint_file.exists():
+        sys.exit(f"{defconfig} declares no board but got {endpoint_file}")
     if "tpm" in features:
         sys.exit(f"{defconfig}: an image without a board has no TPM device binding")
     sys.exit(0)
@@ -114,6 +120,14 @@ for key, value in want.items():
 tpm_bound = b["device_binding_method"] == "tpm-ek-sha256" and "BR2_PACKAGE_TPM2_TOOLS" in selected
 if ("tpm" in features) != tpm_bound:
     sys.exit(f"{defconfig}: FEATURES tpm must follow a TPM-EK binding with tpm2-tools")
+if not endpoint_file.is_file():
+    sys.exit(f"{defconfig}: no /etc/suderra/cloud-endpoint for board {b['board_profile']}")
+endpoint = endpoint_file.read_text(encoding="utf-8")
+if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&()*+,;=:@/-]*[^/])?\n", endpoint):
+    sys.exit(f"{defconfig}: cloud endpoint {endpoint!r} is not one https base URL line")
+fake_cloud = endpoint.startswith("https://10.0.2.2:")
+if (b["role"] == "ci") != fake_cloud:
+    sys.exit(f"{defconfig}: only ci-role boards (the QEMU targets) point at the QEMU fake cloud, got {endpoint.strip()}")
 PY
     checked=$((checked + 1))
 done

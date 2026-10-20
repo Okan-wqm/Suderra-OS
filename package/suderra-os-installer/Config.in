@@ -14,5 +14,24 @@ config BR2_PACKAGE_SUDERRA_OS_INSTALLER
 	  helper selects a safe SD/eMMC target, writes the target image,
 	  verifies the written image prefix, and powers off.
 
+if BR2_PACKAGE_SUDERRA_OS_INSTALLER
+
+config BR2_PACKAGE_SUDERRA_OS_INSTALLER_CLOUD_ENDPOINT
+	string "provisioning API base URL"
+	default ""
+	help
+	  https base URL of the provisioning API the root installer
+	  fetches signed deliveries from (ADR-048 DEC-5.5; contracts
+	  delivery.json network: GET <base>/install/<code>/suderra-os).
+	  post-build.sh writes it to /etc/suderra/cloud-endpoint on every
+	  image with a board_profile and fails the build when it is empty
+	  or not an https URL; it is a fact of the signed image, never of
+	  the environment (DEC-19). Production boards use the platform's
+	  PROVISIONING_API_BASE_URL; the QEMU targets use the QEMU fake
+	  cloud, whose certificate chains to the dev provisioning-API CA
+	  that package/suderra-keys installs on dev and ci-board images.
+
+endif
+
 comment "suderra-os-installer needs systemd, threads, and a Rust-supported target"
 	depends on !BR2_INIT_SYSTEMD || !BR2_TOOLCHAIN_HAS_THREADS || !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

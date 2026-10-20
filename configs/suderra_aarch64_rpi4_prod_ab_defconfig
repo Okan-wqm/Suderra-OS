@@ -185,6 +185,7 @@ BR2_PACKAGE_I2C_TOOLS=y
 # Suderra custom paketleri — Faz 2+'da aktif olur
 # ============================================================================
 BR2_PACKAGE_SUDERRA_OS_INSTALLER=y     # Runtime manifest verifier
+BR2_PACKAGE_SUDERRA_OS_INSTALLER_CLOUD_ENDPOINT="https://app.suderra.com"
 BR2_PACKAGE_SUDERRA_KEYS=y             # Runtime trust roots
 
 # RAUC A/B OTA (ADR-0007/ADR-0004) — U-Boot backend, signed-FIT slot hook.

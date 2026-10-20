@@ -20,7 +20,8 @@ for required in \
     os-update-manifest.key \
     os-update-manifest.ed25519.pub \
     edge/trust-anchors.dsse.json \
-    edge/mqtt-ca/ca.crt; do
+    edge/mqtt-ca/ca.crt \
+    edge/cloud-ca/ca.crt; do
     test -s "${KEYS_DIR}/${required}"
 done
 # One Ed25519 key per purpose, epoch 1 (ADR-048 DEC-3.3, DEC-3.9).
@@ -201,20 +202,54 @@ printf 'prod\n' > "${T}/suderra-keys.profile"
 expect_fail "prod trust-root set carrying edge keys" "P1 key ceremony" \
     "${ROOT}/scripts/ci/validate-trust-roots.sh" "${T}" --expected-profile prod
 
-# package/suderra-keys pins exactly the os-image purposes on dev images and
-# nothing on production images.
+# package/suderra-keys pins exactly the os-image purposes, plus the dev
+# provisioning-API CA, on dev images and on every image of a ci-role board
+# (the QEMU targets, production variant included: the installer's PinPolicy
+# board-role rule), and nothing on production images of hardware boards.
+BOARDS="${ROOT}/contracts/suderra-edge/v1/boards.json"
+pins() {
+    local trust_roots="$1" variant="$2" defconfig="$3"
+    python3 -I "${PINS}" --trust-roots "${trust_roots}" --target "${TARGET}" \
+        --variant "${variant}" --defconfig "${defconfig}" --boards "${BOARDS}"
+}
+expect_dev_ci_pins() {
+    [ "$(cd "${TARGET}/etc/suderra/keys" && find . -type f | sort | tr '\n' ' ')" = \
+        "./device-lifecycle/1.pub ./edge-provisioning/1.pub ./edge-release/1.pub ./fleet-root/1.pub " ]
+    cmp -s "${KEYS_DIR}/edge/fleet-root/1.pub" "${TARGET}/etc/suderra/keys/fleet-root/1.pub"
+    cmp -s "${KEYS_DIR}/edge/cloud-ca/ca.crt" "${TARGET}/etc/suderra/cloud-ca.pem"
+}
 TARGET="${TMPDIR}/target"
-python3 -I "${PINS}" --trust-roots "${KEYS_DIR}" --target "${TARGET}" --variant dev >/dev/null
-[ "$(cd "${TARGET}/etc/suderra/keys" && find . -type f | sort | tr '\n' ' ')" = \
-    "./device-lifecycle/1.pub ./edge-provisioning/1.pub ./edge-release/1.pub ./fleet-root/1.pub " ]
-cmp -s "${KEYS_DIR}/edge/fleet-root/1.pub" "${TARGET}/etc/suderra/keys/fleet-root/1.pub"
-expect_fail "production image given edge keys" "none is inventoried yet" \
-    python3 -I "${PINS}" --trust-roots "${KEYS_DIR}" --target "${TARGET}" --variant prod
+pins "${KEYS_DIR}" dev suderra_qemu_x86_64_defconfig >/dev/null
+expect_dev_ci_pins
+pins "${KEYS_DIR}" dev suderra_aarch64_revpi4_defconfig >/dev/null
+expect_dev_ci_pins
+rm -rf "${TARGET}"
+pins "${KEYS_DIR}" prod suderra_qemu_x86_64_prod_ab_defconfig >/dev/null
+expect_dev_ci_pins
+expect_fail "production image of a hardware board given edge keys" "none is inventoried yet" \
+    pins "${KEYS_DIR}" prod suderra_aarch64_revpi4_prod_ab_defconfig
+expect_fail "production boardless image given edge keys" "none is inventoried yet" \
+    pins "${KEYS_DIR}" prod suderra_x86_64_defconfig
+T="${TMPDIR}/prod-hardware"
+cp -a "${KEYS_DIR}" "${T}"
+rm -rf "${T}/edge"
+pins "${T}" prod suderra_aarch64_rpi4_prod_ab_defconfig >/dev/null
+[ ! -e "${TARGET}/etc/suderra/keys" ] && [ ! -e "${TARGET}/etc/suderra/cloud-ca.pem" ] || {
+    echo "a production hardware image must pin no edge key and carry no cloud CA" >&2
+    exit 1
+}
+expect_fail "an unclassified defconfig" "classified 0 times" \
+    pins "${KEYS_DIR}" dev suderra_unknown_defconfig
 T="${TMPDIR}/missing-purpose"
 cp -a "${KEYS_DIR}" "${T}"
 rm -rf "${T}/edge/device-lifecycle"
 expect_fail "dev set without a device-lifecycle key" "device-lifecycle: no <epoch>.pub" \
-    python3 -I "${PINS}" --trust-roots "${T}" --target "${TARGET}" --variant dev
+    pins "${T}" dev suderra_qemu_x86_64_defconfig
+T="${TMPDIR}/missing-cloud-ca"
+cp -a "${KEYS_DIR}" "${T}"
+rm -rf "${T}/edge/cloud-ca"
+expect_fail "dev set without the provisioning-API CA" "no dev provisioning-API CA" \
+    pins "${T}" dev suderra_qemu_x86_64_defconfig
 
 # Every boards.json board image runs the root installer and so must carry it
 # and its pinned keys (EI-023); the dev QEMU image also carries the swtpm EK
