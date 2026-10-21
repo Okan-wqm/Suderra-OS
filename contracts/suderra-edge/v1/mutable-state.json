@@ -28,7 +28,7 @@
       "schema": "schemas/time-state.schema.json",
       "writer": "os-root",
       "readers": ["agent"],
-      "rule": "Written by the root time helper from chrony's tracking data and the time floor; the agent's only clock authority (DEC-7.3)."
+      "rule": "Written by the root time helper from chrony's tracking data and the time floor, at least every 30 seconds; the agent's only clock authority (DEC-7.3). channels.json time says which state each consumer needs and when the document is stale."
     },
     {
       "path": "/run/suderra/lifecycle",
@@ -42,7 +42,7 @@
       "schema": "schemas/agent-health.schema.json",
       "writer": "agent",
       "readers": ["os-root"],
-      "rule": "Written atomically by the agent; an absent, unreadable, oversized or non-conforming document counts as degraded and as an update blocker (DEC-6.8, DEC-13.4)."
+      "rule": "Written atomically by the agent and rewritten at least every 15 seconds on Suderra OS. An absent, unreadable, oversized or non-conforming document counts as degraded for the health gate (DEC-6.8); for the update worker only schema, update_blockers and updated_at matter and an unavailable view blocks only while the agent unit is active (channels.json update_channel.maintenance.blockers, DEC-13.4)."
     },
     {
       "path": "/run/suderra/results/<seq>-<kind>.json",
@@ -153,9 +153,16 @@
     {
       "id": "agent-health-update-blockers",
       "topic": "update_blockers in the agent health view",
-      "decision": "schemas/agent-health.schema.json requires update_blockers (active-alarm, forced-output): root's update worker refuses an edge-update, an os-update or a site-config while it is non-empty or the view is absent or non-conforming (channels.json update_channel.maintenance).",
-      "why": "DEC-13.4 rejects an update while an alarm is active or a value is forced. The agent is the only component that knows both, and root must not infer them.",
-      "code": "sens-api-gateway/src/degraded.rs document() writes the P0 members only; it must add update_blockers from the alarm and force registries before any root worker can accept an update."
+      "decision": "schemas/agent-health.schema.json requires update_blockers (active-alarm, forced-output). Root's update worker reads schema, update_blockers and updated_at only and applies channels.json update_channel.maintenance.blockers: while the agent unit is not active nothing blocks and the view may be absent or stale; while it is active, a non-empty list or an unavailable view (absent, unreadable, oversized, ill-formed, older than 60 seconds) blocks; an operator's blockers_override, which requires a local approval, ignores the gate. On Suderra OS the agent rewrites the view at least every 15 seconds, also when nothing changed.",
+      "why": "DEC-13.4 rejects an update while an alarm is active or a value is forced, and says nothing about an absent view; the agent is the only component that knows both, and root must not infer them. Treating an absent view as always blocking would let a crash-looping, hung or hostile agent veto the very statements that repair or replace it, with physical re-provisioning as the only exit. A stopped agent holds no alarm or forced value (its outputs are in the safe state), an agent that runs but says nothing is bounded by its watchdog, and the signed override covers one that lies. The decision is recorded in ADR-048 DEC-13.4.",
+      "code": "sens-api-gateway/src/degraded.rs document() writes the P0 members only: it must add update_blockers from the alarm and force registries and, on the suderra-os profile, rewrite the document every refresh_seconds even when its content did not change (the generic profile keeps rewriting on change only). The root update worker (Suderra-OS userspace/suderra-installer, not written yet) must implement the gate and run fixtures/update-channel/gate-vectors.json as its conformance test; today only the reference verifier in tests/invariants/lib/suderra-edge-contract.ts implements it."
+    },
+    {
+      "id": "activation-device-binding",
+      "topic": "deviceBinding and installedManifest in the activation request",
+      "decision": "The activation request MUST carry deviceBinding (schemas/edge-activation-request.schema.json requires it) and the cloud MUST refuse, without committing the activation or issuing credentials, an activation whose binding differs from the one the manifest reservation was made for; installedManifest is optional and, when present, must be a manifest the cloud issued to the device (channels.json activation.binding_rule). Neither side does this today: the agent sends deviceId, token, fingerprint and agentVersion, and the cloud's DTO has neither member and checks no binding.",
+      "why": "The binding ties an activation to the hardware root recorded at install (DEC-5.7). Without the check a token reserved for one device's binding activates another's, and the DTO's whitelist (forbidNonWhitelisted, main.ts) would answer a request built to this contract with 400.",
+      "code": "Agent: sens-api-gateway/src/provisioning.rs ActivationRequest adds deviceBinding (from identity.json, schemas/identity.schema.json) and installedManifest. Cloud: apps/sensor-service/src/edge-device/dto/provisioning.dto.ts DeviceActivationRequest adds both members, and provisioning.service.ts activateDevice compares the binding with the reservation's and refuses a mismatch. Deferred work: owner @Okan-wqm, deadline 2026-11-30 (P1 exit), tracked by EDGE-MEDIUM-141 (docs/reviews/claude/2026-10-19-suderra-os-edge-integration-audit.md); EDGE-MEDIUM-126 is the separate P3 proof-of-possession finding. Until the code lands the contract binds both sides and neither meets it."
     },
     {
       "id": "update-request-statements",

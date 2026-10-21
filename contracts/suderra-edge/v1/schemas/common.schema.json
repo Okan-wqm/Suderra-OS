@@ -35,15 +35,21 @@
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
     },
     "os_version": {
-      "description": "OS version as published in /etc/os-release VERSION_ID: MAJOR.MINOR.PATCH, compared as an integer tuple (statements.json compatibility).",
+      "description": "OS version as published in /etc/os-release VERSION_ID: MAJOR.MINOR.PATCH, compared as an integer tuple (statements.json compatibility). Each component has at most 9 digits (at most 999999999), so every verifier, whatever its integer width, reads the same number.",
       "type": "string",
-      "maxLength": 32,
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+      "maxLength": 29,
+      "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
     },
     "https_url": {
       "type": "string",
       "maxLength": 2048,
       "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*)?$"
+    },
+    "fetch_url": {
+      "description": "A URL root fetches from on behalf of a signed statement (channels.json update_channel.fetch): https on port 443 (no port, or :443), a lowercase DNS name of at least two labels whose last label starts with a letter, so never an IP literal, no userinfo and no query or fragment. https_url is the wider form for the image's own cloud endpoint and the provisioning manifest, which a development image may point at an address and port.",
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?(:443)?(/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*)?$"
     },
     "board_profile": {
       "description": "Board vocabulary; must equal the board_profile set of boards.json. x86 boards join as x86-ipc-<model> once a model is qualified (boards.json pending_board_families).",
@@ -119,10 +125,10 @@
       "pattern": "^suderra-os-[a-z0-9]+(-[a-z0-9]+)*$"
     },
     "agent_abi_range": {
-      "description": "Inclusive agent ABI range MIN-MAX with decimal integers and MIN <= MAX, the syntax of SUDERRA_AGENT_ABI in /etc/os-release (statements.json compatibility). A range with MIN > MAX contains no ABI, so every installed agent lies outside it.",
+      "description": "Inclusive agent ABI range MIN-MAX with decimal integers of at most 9 digits and MIN <= MAX, the syntax of SUDERRA_AGENT_ABI in /etc/os-release (statements.json compatibility). A range with MIN > MAX contains no ABI, so every installed agent lies outside it.",
       "type": "string",
-      "maxLength": 21,
-      "pattern": "^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$"
+      "maxLength": 19,
+      "pattern": "^(0|[1-9][0-9]{0,8})-(0|[1-9][0-9]{0,8})$"
     },
     "slug": {
       "description": "Lowercase identifier: [a-z0-9] groups separated by single hyphens.",

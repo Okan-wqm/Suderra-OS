@@ -111,6 +111,12 @@ BOARD_KERNEL = {
     "qemu-x86_64": ["CONFIG_CAN", "CONFIG_SECCOMP_FILTER"],
 }
 PLATFORM_PERMISSIONS = ["FailoverControl", "ReadAuditLog", "ReadTag", "WatchSubscribe"]
+# The Ethernet interfaces of the fixtures' device as root reads them: the SoC interface has no PCI
+# path, the second one is a PCIe NIC (schemas/fixture-index.schema.json network_interfaces).
+NETWORK_INTERFACES = [
+    {"name": "eth0", "mac": "02:00:00:7e:57:01", "pci_path": None},
+    {"name": "eth1", "mac": "02:00:00:7e:57:02", "pci_path": "0000:01:00.0"},
+]
 
 
 def sha256_hex(data: bytes) -> str:
@@ -350,6 +356,55 @@ FILES_V3 = {
 }
 
 
+def point_table() -> list[dict]:
+    """Every encoding with y < 19 that decodes to a point of edwards25519, in the canonical form y and
+    the non-canonical form y + p, with either sign bit."""
+    p = 2**255 - 19
+    d = (-121665 * pow(121666, -1, p)) % p
+
+    def decode(y: int) -> int | None:
+        u = (y * y - 1) % p
+        v = (d * y * y + 1) % p
+        x = pow(u * pow(v, -1, p) % p, (p + 3) // 8, p)
+        if (x * x * v - u) % p != 0:
+            x = x * pow(2, (p - 1) // 4, p) % p
+        return x if (x * x * v - u) % p == 0 else None
+
+    def add(a: tuple, b: tuple) -> tuple:
+        (x1, y1, z1, t1), (x2, y2, z2, t2) = a, b
+        aa, bb = (y1 - x1) * (y2 - x2) % p, (y1 + x1) * (y2 + x2) % p
+        cc, dd = t1 * 2 * d * t2 % p, z1 * 2 * z2 % p
+        e, f, g, h = bb - aa, dd - cc, dd + cc, bb + aa
+        return (e * f % p, g * h % p, f * g % p, e * h % p)
+
+    def small_order(x: int, y: int) -> bool:
+        base = (x, y, 1, x * y % p)
+        for _ in range(3):  # [8]P
+            base = add(base, base)
+        return base[0] % p == 0 and (base[1] - base[2]) % p == 0
+
+    rows = []
+    for y in range(19):
+        x = decode(y)
+        if x is None:
+            continue
+        small = small_order(x, y)
+        for sign in (0, 1):
+            if x == 0 and sign == 1:
+                continue  # x = 0 with the sign bit set ("negative zero") fails to decode
+            for canonical_point, value in ((True, y), (False, y + p)):
+                rows.append(
+                    {
+                        "y": y,
+                        "sign": sign,
+                        "small_order": small,
+                        "canonical": canonical_point,
+                        "encoding": (value | (sign << 255)).to_bytes(32, "little"),
+                    }
+                )
+    return rows
+
+
 class Generator:
     def __init__(self) -> None:
         self.boards = {
@@ -381,6 +436,9 @@ class Generator:
         }
         self.nonce_first = label_digest("nonce of the first provisioning request")[:32]
         self.nonce_again = label_digest("nonce of the re-provisioning request")[:32]
+        # Payload bytes of the statements the revpi-active device "accepted last": the context records
+        # their real digests, so the equal-sequence fixtures can present the identical statement.
+        self.replay: dict[str, bytes] = {}
 
     # ------------------------------------------------------------------ output
     def put(self, rel: str, data: bytes) -> None:
@@ -403,6 +461,7 @@ class Generator:
         inputs: dict | None = None,
         verifier: str = "os-root",
         mode: str = "accept",
+        also: list[str] | None = None,
     ) -> None:
         item: dict = {
             "path": rel,
@@ -416,6 +475,8 @@ class Generator:
         }
         if reason is not None:
             item["reason"] = reason
+        if also is not None:
+            item["also"] = also
         self.statements.append(item)
 
     def write(self, rel: str, env: dict, body: bytes, statement_type: str, **index: object) -> None:
@@ -748,6 +809,7 @@ class Generator:
     OS_UPDATE = "os-update/valid/revpi-connect4-1.1.0-seq-3.dsse.json"
     NETPOL1 = "site-netpolicy/valid/policy-seq-1.dsse.json"
     NETPOL2 = "site-netpolicy/valid/policy-seq-2.dsse.json"
+    NETPOL_ONE_OT = "site-netpolicy/valid/policy-one-interface-to-ot.dsse.json"
 
     def releases(self) -> None:
         st = ST_RELEASE
@@ -888,6 +950,14 @@ class Generator:
                 "rpi4-cm4 release built without the gpio feature (INFRA-CRITICAL-236 class).",
             ),
             (
+                "arch-differs-from-device",
+                self.release("revpi-connect4", "1.6.0", 6, arch="x86_64"),
+                "revpi-active",
+                "board-mismatch",
+                "A revpi-connect4 release statement labelled x86_64: the board is the device's but the arch is not, so the arch term of the device check refuses it, and the profile check (boards.json says aarch64) refuses it too, one defect.",
+                ["release-profile-mismatch"],
+            ),
+            (
                 "os-too-old",
                 self.release("revpi-connect4", "1.6.0", 6, min_os_version="1.1.0"),
                 "revpi-active",
@@ -916,7 +986,8 @@ class Generator:
                 "Requires CONFIG_CAN_RAW, which the device kernel config does not list (DEC-23).",
             ),
         ]
-        for name, payload, context, reason, text in cases:
+        for item in cases:
+            name, payload, context, reason, text = item[:5]
             body = canonical(payload)
             self.signed(
                 f"edge-release/invalid/{name}.dsse.json",
@@ -926,6 +997,7 @@ class Generator:
                 expect="reject",
                 reason=reason,
                 context=context,
+                also=item[5] if len(item) > 5 else None,
                 description=text,
             )
 
@@ -976,6 +1048,25 @@ class Generator:
                 anchor["keyid"] = UNPINNED.keyid
                 anchor["public_key"] = b64(UNPINNED.raw_public)
         extra = {**ta, "valid_for_devices": [DEVICE]}
+        non_canonical = next(
+            r["encoding"] for r in point_table() if not r["canonical"] and not r["small_order"]
+        )
+        small_order = next(r["encoding"] for r in point_table() if r["canonical"] and r["small_order"])
+
+        def with_extra_anchor(raw: bytes) -> dict:
+            body = copy.deepcopy(ta)
+            body["anchors"].insert(
+                1,
+                {
+                    "purpose": "command",
+                    "algorithm": "ed25519",
+                    "keyid": sha256_hex(raw),
+                    "epoch": 2,
+                    "public_key": b64(raw),
+                },
+            )
+            return body
+
         cases = [
             (
                 "tenant-scope-excludes-device",
@@ -1000,6 +1091,18 @@ class Generator:
                 keyid_unrelated,
                 "anchor-invalid",
                 "The command anchor's keyid is the SHA-256 of nothing: not the digest of its public key and not another anchor's keyid either, so no duplicate-keyid check can catch it.",
+            ),
+            (
+                "anchor-non-canonical-key",
+                with_extra_anchor(non_canonical),
+                "anchor-invalid",
+                "A command anchor whose public key is the non-canonical encoding (y + p) of a point of full order, with the keyid of those bytes: no key store may admit it, and no signature under it exists, so only the key-admission rule can refuse it (dsse.signature_algorithm).",
+            ),
+            (
+                "anchor-small-order-key",
+                with_extra_anchor(small_order),
+                "anchor-invalid",
+                "A command anchor whose public key is the identity point, a small-order point: no key store may admit it.",
             ),
             (
                 "anchor-duplicate-slot",
@@ -1505,6 +1608,7 @@ class Generator:
                 **changes,
             )
 
+        self.replay["provisioning-3"] = canonical(manifest(update_seq=3))
         again = canonical(manifest())
         self.signed(
             self.PROV_AGAIN,
@@ -1700,7 +1804,45 @@ class Generator:
                 {"update_seq": 3},
                 {},
                 "sequence-replay",
-                "update_seq equal to the last accepted one; provisioning manifests never repeat a sequence (DEC-2.4).",
+                "The identical manifest root accepted at update_seq 3, presented again byte for byte; provisioning manifests never repeat a sequence, not even the accepted one (DEC-2.4).",
+            ),
+            (
+                "sequence-replay-other-statement",
+                {"update_seq": 3, "expires_at": "2026-10-21T01:00:00Z"},
+                {},
+                "sequence-replay",
+                "update_seq equal to the last accepted one, but not the manifest root accepted: only the digest differs from sequence-replay.",
+            ),
+            (
+                "release-mismatch-security-version",
+                {"security_version": 9},
+                {},
+                "release-mismatch",
+                "Claims security_version 9 for the 1.6.0 release statement it names (security_version 6, DEC-3.1).",
+            ),
+            (
+                "release-mismatch-board",
+                {"board": "rpi4-cm4"},
+                {},
+                "release-mismatch",
+                "Names board rpi4-cm4 while the release statement it names is the device's own revpi-connect4 one: the manifest differs from the device (board-mismatch) and from its release (release-mismatch), one defect.",
+                ["board-mismatch"],
+            ),
+            (
+                "release-mismatch-arch",
+                {"arch": "x86_64"},
+                {},
+                "release-mismatch",
+                "Names arch x86_64 for a manifest whose release statement is aarch64: the manifest differs from the device (board-mismatch) and from its release (release-mismatch), one defect.",
+                ["board-mismatch"],
+            ),
+            (
+                "release-for-other-board",
+                {"release_rel": self.REL_RPI, "board": "revpi-connect4"},
+                {"release": self.REL_RPI},
+                "release-mismatch",
+                "The manifest is for this revpi-connect4 but the release statement it names is the rpi4-cm4 one: that release differs from the device (board-mismatch, by its own check) and from the manifest (release-mismatch), one defect.",
+                ["board-mismatch"],
             ),
             (
                 "release-digest-mismatch",
@@ -1743,7 +1885,8 @@ class Generator:
                 "Delivers, and binds by digest, a fleet-root bundle whose tenant_scope excludes the device's tenant (DEC-22).",
             ),
         ]
-        for name, changes, inp, reason, text in semantic:
+        for item in semantic:
+            name, changes, inp, reason, text = item[:5]
             body = canonical(manifest(**changes))
             self.signed(
                 f"edge-provisioning/invalid/{name}.dsse.json",
@@ -1756,6 +1899,7 @@ class Generator:
                 inputs=inputs(
                     release=str(inp.get("release", self.REL_160)), ta=str(inp.get("ta", self.TA2))
                 ),
+                also=item[5] if len(item) > 5 else None,
                 description=text,
             )
 
@@ -1916,6 +2060,7 @@ class Generator:
                     body[name] = value
             return canonical(body)
 
+        self.replay["lifecycle-2"] = statement(update_seq=2)
         body = statement()
         self.signed(
             self.LIFE,
@@ -1964,7 +2109,13 @@ class Generator:
                 "sequence-replay",
                 statement(update_seq=2),
                 "sequence-replay",
-                "update_seq equal to the last accepted lifecycle statement; a transition is never applied twice.",
+                "The identical lifecycle statement root accepted at update_seq 2, presented again byte for byte; a transition is never applied twice.",
+            ),
+            (
+                "sequence-replay-other-statement",
+                statement(update_seq=2, expires_at="2026-10-20T16:00:00Z"),
+                "sequence-replay",
+                "update_seq equal to the last accepted lifecycle statement, but not the one root accepted: only the digest differs from sequence-replay.",
             ),
             (
                 "maintenance-without-purpose",
@@ -2022,7 +2173,8 @@ class Generator:
         inputs: dict | None = None,
     ) -> None:
         """One signed one-defect negative per case: (name, payload, reason, description
-        [, inputs]). The case's inputs replace the default ones."""
+        [, inputs [, also]]). The case's inputs replace the default ones, and `also` names the
+        reasons that follow from the one defect without being a second one."""
         for item in cases:
             name, payload, reason, text = item[:4]
             self.signed(
@@ -2033,7 +2185,8 @@ class Generator:
                 expect="reject",
                 reason=reason,
                 context=context,
-                inputs=item[4] if len(item) > 4 else inputs,
+                inputs=item[4] if len(item) > 4 and item[4] is not None else inputs,
+                also=item[5] if len(item) > 5 else None,
                 description=text,
             )
 
@@ -2092,6 +2245,14 @@ class Generator:
         def update(release: str = self.REL_170, seq: int = 4, **changes: object) -> dict:
             return self.edge_update(release, seq, **changes)
 
+        art170 = json.loads(self.payloads[self.REL_170])["artifact"]["name"]
+        stmt170 = self.naming["statement"].format(artifact=art170)
+        ref170 = update()["release_statement"]
+
+        def without(body: dict, name: str) -> dict:
+            return {k: v for k, v in body.items() if k != name}
+
+        self.replay["edge-update-3"] = canonical(update(seq=3))
         good = canonical(update())
         self.signed(
             self.EDGE_UPDATE,
@@ -2122,6 +2283,34 @@ class Generator:
             context="revpi-active",
             inputs=inputs(),
             description="not_before equal to the evaluation time is inside the window, which is the maintenance window (statements.json dsse.time_window, DEC-13.4).",
+        )
+        self.signed(
+            "edge-update/valid/revpi-connect4-1.7.0-override-at-outage-limit.dsse.json",
+            st,
+            canonical(update(local_approval=True, blockers_override=True, max_outage_seconds=3600)),
+            signer,
+            expect="accept",
+            context="revpi-active",
+            inputs=inputs(),
+            description="An operator's update: blockers_override true with the local approval it requires, and the longest outage budget the schema allows, 3600 seconds (channels.json update_channel.maintenance.blockers.override).",
+        )
+        self.signed(
+            "edge-update/valid/revpi-connect4-1.7.0-explicit-port-443.dsse.json",
+            st,
+            canonical(
+                update(
+                    artifact_url=f"https://edge-releases.example.com:443/agent/1.7.0/{art170}",
+                    release_statement={
+                        **ref170,
+                        "url": f"https://edge-releases.example.com:443/agent/1.7.0/{stmt170}",
+                    },
+                )
+            ),
+            signer,
+            expect="accept",
+            context="revpi-active",
+            inputs=inputs(),
+            description="Both fetch URLs name port 443 explicitly: the one port the device firewall lets the installer reach (common.schema.json fetch_url).",
         )
         release_ref = update()["release_statement"]
         nested_os = "edge-release/invalid/os-too-old.dsse.json"
@@ -2186,13 +2375,96 @@ class Generator:
                     "sequence-replay-equal",
                     update(seq=3),
                     "sequence-replay",
-                    "update_seq equal to the last accepted one: equal_seq is reject for updates, because every update causes a transition and is never applied twice (DEC-2.4).",
+                    "The identical statement root accepted at update_seq 3, presented again byte for byte: equal_seq is reject for updates, because every update causes a transition and even the statement root accepted is never applied twice (DEC-2.4).",
+                ),
+                (
+                    "sequence-replay-equal-other-statement",
+                    update(seq=3, max_outage_seconds=121),
+                    "sequence-replay",
+                    "update_seq equal to the last accepted one, but not the statement root accepted: only the digest differs from sequence-replay-equal, and equal_seq reject refuses both.",
                 ),
                 (
                     "sequence-replay-lower",
                     update(seq=2),
                     "sequence-replay",
                     "update_seq below the last accepted one: an old valid update replayed by a compromised agent (DEC-2.4).",
+                ),
+                (
+                    "release-mismatch-version",
+                    update(version="1.6.9"),
+                    "release-mismatch",
+                    "Claims version 1.6.9 for the 1.7.0 release statement it names (DEC-3.1).",
+                ),
+                (
+                    "release-mismatch-board",
+                    update(board="rpi4-cm4"),
+                    "release-mismatch",
+                    "Names board rpi4-cm4 while the release statement it names is the device's own revpi-connect4 one: the update differs from the device (board-mismatch) and from its release (release-mismatch), one defect.",
+                    None,
+                    ["board-mismatch"],
+                ),
+                (
+                    "release-mismatch-arch",
+                    update(arch="x86_64"),
+                    "release-mismatch",
+                    "Names arch x86_64 for an update whose release statement is aarch64: the update differs from the device (board-mismatch) and from its release (release-mismatch), one defect.",
+                    None,
+                    ["board-mismatch"],
+                ),
+                (
+                    "release-for-other-board",
+                    self.edge_update(self.REL_RPI, 4, board="revpi-connect4"),
+                    "release-mismatch",
+                    "The update is for this revpi-connect4 but the release statement it names is the rpi4-cm4 one: that release differs from the device (board-mismatch, by its own check) and from the update (release-mismatch), one defect.",
+                    inputs(self.REL_RPI),
+                    ["board-mismatch"],
+                ),
+                (
+                    "local-approval-missing",
+                    without(update(), "local_approval"),
+                    "schema-invalid",
+                    "No local_approval member: a statement that omits it is schema-invalid, never read as no approval.",
+                ),
+                (
+                    "blockers-override-without-approval",
+                    update(local_approval=False, blockers_override=True),
+                    "schema-invalid",
+                    "blockers_override without the local approval it requires: an operator's override needs a person on site.",
+                ),
+                (
+                    "blockers-override-false",
+                    update(blockers_override=False),
+                    "schema-invalid",
+                    "blockers_override is present only as true; absent means the gate applies.",
+                ),
+                (
+                    "outage-over-limit",
+                    update(max_outage_seconds=3601),
+                    "schema-invalid",
+                    "An outage budget one second above the 3600 the schema allows.",
+                ),
+                (
+                    "artifact-url-ip-literal",
+                    update(artifact_url=f"https://203.0.113.7/agent/1.7.0/{art170}"),
+                    "schema-invalid",
+                    "The artifact is named by an IP literal: a fetch URL is a DNS name of the platform's artifact host (common.schema.json fetch_url).",
+                ),
+                (
+                    "release-url-port",
+                    update(
+                        release_statement={
+                            **ref170,
+                            "url": f"https://edge-releases.example.com:8443/agent/1.7.0/{stmt170}",
+                        }
+                    ),
+                    "schema-invalid",
+                    "The release statement is named on port 8443, which the device firewall drops: a fetch URL uses 443 only.",
+                ),
+                (
+                    "artifact-url-uppercase-host",
+                    update(artifact_url=f"https://Edge-Releases.example.com/agent/1.7.0/{art170}"),
+                    "schema-invalid",
+                    "A host name with an uppercase letter: fetch URLs are lowercase, so no two spellings name one host.",
                 ),
                 (
                     "release-digest-mismatch",
@@ -2332,6 +2604,11 @@ class Generator:
         def update(seq: int = 3, **changes: object) -> dict:
             return self.os_update(seq, **changes)
 
+        def without(body: dict, name: str) -> dict:
+            return {k: v for k, v in body.items() if k != name}
+
+        bundle170 = update()["bundle"]
+        self.replay["os-update-2"] = canonical(update(seq=2))
         good = canonical(update())
         self.signed(
             self.OS_UPDATE,
@@ -2368,6 +2645,30 @@ class Generator:
             expect="accept",
             context="revpi-active",
             description="The installed agent's ABI 1 equals the highest ABI the new OS supports (range 0-1): the range is inclusive at both ends (DEC-23).",
+        )
+        self.signed(
+            "os-update/valid/revpi-connect4-override-at-limits.dsse.json",
+            st,
+            canonical(
+                update(
+                    blockers_override=True,
+                    max_outage_seconds=3600,
+                    bundle={**bundle170, "size_bytes": 2147483648},
+                )
+            ),
+            signer,
+            expect="accept",
+            context="revpi-active",
+            description="An operator's OS update at the schema's limits: blockers_override with the local approval it requires, an outage budget of 3600 seconds and a bundle of exactly 2147483648 bytes.",
+        )
+        self.signed(
+            "os-update/valid/revpi-connect4-version-and-abi-at-max.dsse.json",
+            st,
+            canonical(update(version="1.1.999999999", supported_agent_abi="1-999999999")),
+            signer,
+            expect="accept",
+            context="revpi-active",
+            description="A version patch component and an ABI maximum of nine digits, the largest the contract allows: every verifier reads the same number (common.schema.json os_version).",
         )
         other_compatible = self.boards["rpi4-cm4"]["rauc_compatible"]
         self.negatives(
@@ -2439,7 +2740,133 @@ class Generator:
                     "sequence-replay-equal",
                     update(seq=2),
                     "sequence-replay",
-                    "update_seq equal to the last accepted one: equal_seq is reject for updates (DEC-2.4).",
+                    "The identical statement root accepted at update_seq 2, presented again byte for byte: equal_seq is reject for updates, so even the accepted statement is never applied twice (DEC-2.4).",
+                ),
+                (
+                    "sequence-replay-equal-other-statement",
+                    update(seq=2, max_outage_seconds=601),
+                    "sequence-replay",
+                    "update_seq equal to the last accepted one, but not the statement root accepted: only the digest differs from sequence-replay-equal.",
+                ),
+                (
+                    "local-approval-missing",
+                    without(update(), "local_approval"),
+                    "schema-invalid",
+                    "No local_approval member: a statement that omits it is schema-invalid, never read as no approval.",
+                ),
+                (
+                    "blockers-override-without-approval",
+                    update(local_approval=False, blockers_override=True),
+                    "schema-invalid",
+                    "blockers_override without the local approval it requires.",
+                ),
+                (
+                    "blockers-override-false",
+                    update(blockers_override=False),
+                    "schema-invalid",
+                    "blockers_override is present only as true.",
+                ),
+                (
+                    "outage-over-limit",
+                    update(max_outage_seconds=3601),
+                    "schema-invalid",
+                    "An outage budget one second above the 3600 the schema allows.",
+                ),
+                (
+                    "outage-zero",
+                    update(max_outage_seconds=0),
+                    "schema-invalid",
+                    "An outage budget of 0 seconds: a reboot takes time, so the budget is at least 1.",
+                ),
+                (
+                    "bundle-size-over-limit",
+                    update(bundle={**bundle170, "size_bytes": 2147483649}),
+                    "schema-invalid",
+                    "A bundle of one byte more than the 2147483648 the schema allows.",
+                ),
+                (
+                    "bundle-url-ip-literal",
+                    update(bundle={**bundle170, "url": "https://203.0.113.7/os/1.1.0/suderra-os-revpi-connect4-1.1.0.raucb"}),
+                    "schema-invalid",
+                    "The bundle is named by an IP literal (common.schema.json fetch_url).",
+                ),
+                (
+                    "os-version-component-too-long",
+                    update(version="1.1.1000000000"),
+                    "schema-invalid",
+                    "A patch component of ten digits: above the nine the contract allows, so a verifier with a narrow integer cannot read another number than a wide one.",
+                ),
+                (
+                    "os-version-major-too-long",
+                    update(version="1000000000.0.0"),
+                    "schema-invalid",
+                    "A major component of ten digits: each component of an OS version has its own bound, so this one is pinned apart from the patch component.",
+                ),
+                (
+                    "os-version-minor-too-long",
+                    update(version="1.1000000000.0"),
+                    "schema-invalid",
+                    "A minor component of ten digits (see os-version-major-too-long).",
+                ),
+                (
+                    "os-version-leading-zero",
+                    update(min_current_version="01.0.0"),
+                    "schema-invalid",
+                    "A component with a leading zero is not the canonical decimal form.",
+                ),
+                (
+                    "os-version-minor-leading-zero",
+                    update(rollback_floor="1.01.0"),
+                    "schema-invalid",
+                    "A minor component with a leading zero, in rollback_floor (os-version-leading-zero pins the major component of min_current_version).",
+                ),
+                (
+                    "os-version-patch-leading-zero",
+                    update(rollback_floor="1.0.01"),
+                    "schema-invalid",
+                    "A patch component with a leading zero, in rollback_floor: every member of the OS version form is held to the same pattern.",
+                ),
+                (
+                    "abi-leading-zero",
+                    update(supported_agent_abi="01-2"),
+                    "schema-invalid",
+                    "An ABI bound with a leading zero.",
+                ),
+                (
+                    "abi-max-leading-zero",
+                    update(supported_agent_abi="1-02"),
+                    "schema-invalid",
+                    "An ABI upper bound with a leading zero (abi-leading-zero pins the lower bound).",
+                ),
+                (
+                    "abi-min-too-long",
+                    update(supported_agent_abi="1000000000-2"),
+                    "schema-invalid",
+                    "An ABI lower bound of ten digits, above the upper bound 2 (abi-component-too-long pins the upper bound, and a range with MIN above MAX is valid syntax): the range holds no ABI, so it cannot contain the installed ABI 1, which a verifier that keeps evaluating reports.",
+                    None,
+                    ["agent-abi-unsupported"],
+                ),
+                (
+                    "abi-component-too-long",
+                    update(supported_agent_abi="1-1000000000"),
+                    "schema-invalid",
+                    "An ABI bound of ten digits.",
+                ),
+                (
+                    "compatible-uppercase",
+                    update(compatible="suderra-os-Revpi-connect4"),
+                    "schema-invalid",
+                    "A RAUC compatible with an uppercase letter: the compatible is lowercase, so one image has one spelling. It also differs from the device's, which a verifier that keeps evaluating reports.",
+                    None,
+                    ["compatible-mismatch"],
+                ),
+                (
+                    "compatible-too-long",
+                    update(compatible="suderra-os-" + "a" * 54),
+                    "schema-invalid",
+                    "A RAUC compatible of 65 characters, one above the 64 the schema allows. It also differs from the device's, which a verifier that keeps evaluating reports.",
+                    None,
+                    ["compatible-mismatch"],
                 ),
                 (
                     "sequence-replay-lower",
@@ -2751,6 +3178,190 @@ class Generator:
             ],
             inputs=inputs,
         )
+        eth0, eth1 = NETWORK_INTERFACES
+        wan0 = {"role": "wan", "mac": eth0["mac"]}
+        ot1 = {"role": "ot", "pci_path": eth1["pci_path"]}
+
+        def numbered_rules(count: int) -> list[dict]:
+            return [
+                {
+                    "id": f"rule-{i:02d}",
+                    "proto": "tcp",
+                    "dst": f"192.168.{i}.0/24",
+                    "ports": [{"from": 502, "to": 502}],
+                }
+                for i in range(1, count + 1)
+            ]
+
+        def port_ranges(count: int) -> list[dict]:
+            fixed = [{"from": 1, "to": 1}, {"from": 65535, "to": 65535}]
+            return (fixed + [{"from": 1000 + 10 * i, "to": 1005 + 10 * i} for i in range(count)])[:count]
+
+        def absent_interfaces(count: int) -> list[dict]:
+            return [{"role": "ot", "mac": f"02:00:00:7e:58:{i:02x}"} for i in range(count)]
+
+        def sources(count: int) -> list[dict]:
+            return [
+                {"id": f"ntp-{i}", "host": f"ntp{i}.site.example.com", "nts": True}
+                for i in range(count)
+            ]
+
+        at_limits = self.netpolicy(
+            2,
+            interfaces=[wan0, ot1] + absent_interfaces(6),
+            ot_rules=[{**numbered_rules(1)[0], "ports": port_ranges(16)}] + numbered_rules(64)[1:],
+            time_sources=sources(4),
+        )
+        for name, body, text in [
+            (
+                "policy-counts-at-limits",
+                at_limits,
+                "The schema's counts at their limits: 8 interface entries, 64 OT rules, 16 port ranges in one rule (with ports 1 and 65535) and 4 site NTP sources.",
+            ),
+            (
+                "policy-prefix-boundaries",
+                self.netpolicy(
+                    2,
+                    ot_rules=[
+                        {
+                            "id": "slash-16",
+                            "proto": "tcp",
+                            "dst": "10.1.0.0/16",
+                            "ports": [{"from": 502, "to": 502}],
+                        },
+                        {
+                            "id": "slash-15",
+                            "proto": "tcp",
+                            "dst": "10.2.0.0/15",
+                            "ports": [{"from": 502, "to": 502}],
+                            "wide": True,
+                        },
+                        {
+                            "id": "slash-0",
+                            "proto": "udp",
+                            "dst": "0.0.0.0/0",
+                            "ports": [{"from": 123, "to": 123}],
+                            "wide": True,
+                        },
+                        {
+                            "id": "slash-32",
+                            "proto": "tcp",
+                            "dst": "192.168.10.20/32",
+                            "ports": [{"from": 4840, "to": 4840}],
+                        },
+                    ],
+                ),
+                "The wide flag at its boundary: a /16 without it, a /15 and a /0 with it, and a /32 (DEC-11.7).",
+            ),
+            (
+                "policy-one-interface-to-ot",
+                self.netpolicy(2, interfaces=[ot1]),
+                "Only the PCIe interface is mapped, to the OT role; eth0 keeps the board's default role wan, so the device keeps its WAN interface.",
+            ),
+            (
+                "policy-absent-interface-ignored",
+                self.netpolicy(2, interfaces=[{"role": "ot", "mac": "02:00:00:7e:57:99"}]),
+                "An entry that matches no interface of the device is ignored (an adapter that is not plugged in): both interfaces keep the default role wan.",
+            ),
+        ]:
+            self.signed(
+                f"site-netpolicy/valid/{name}.dsse.json",
+                st,
+                canonical(body),
+                signer,
+                expect="accept",
+                context="revpi-active",
+                inputs=inputs,
+                description=text,
+            )
+        self.negatives(
+            "site-netpolicy",
+            st,
+            signer,
+            [
+                (
+                    "no-wan-interface",
+                    self.netpolicy(2, interfaces=[{"role": "ot", "mac": eth0["mac"]}, ot1]),
+                    "interface-mapping-invalid",
+                    "Both interfaces of the device are mapped to the OT role: no interface is left to carry the broker and API rule, the ruleset would still load, and the device would be cut off (DEC-11.6).",
+                ),
+                (
+                    "interface-matched-twice",
+                    self.netpolicy(
+                        2, interfaces=[{"role": "wan", "mac": eth1["mac"]}, ot1]
+                    ),
+                    "interface-mapping-invalid",
+                    "One interface matched by MAC in one entry and by PCI path in another, with two roles: the entries are unique by value, so only the device's interfaces show the conflict.",
+                ),
+                (
+                    "interfaces-over-limit",
+                    self.netpolicy(2, interfaces=[wan0, ot1] + absent_interfaces(7)),
+                    "schema-invalid",
+                    "Nine interface entries, one above the limit of 8.",
+                ),
+                (
+                    "rules-over-limit",
+                    self.netpolicy(2, ot_rules=numbered_rules(65)),
+                    "schema-invalid",
+                    "65 OT rules, one above the limit of 64.",
+                ),
+                (
+                    "ports-over-limit",
+                    self.netpolicy(2, ot_rules=rules(ports=port_ranges(17))),
+                    "schema-invalid",
+                    "17 port ranges in one rule, one above the limit of 16.",
+                ),
+                (
+                    "time-sources-over-limit",
+                    self.netpolicy(2, time_sources=sources(5)),
+                    "schema-invalid",
+                    "Five site NTP sources, one above the limit of 4.",
+                ),
+                (
+                    "dst-slash-16-with-wide",
+                    self.netpolicy(2, ot_rules=rules(dst="10.1.0.0/16", wide=True)),
+                    "schema-invalid",
+                    "wide true on a /16: the flag is for a prefix shorter than /16 only.",
+                ),
+                (
+                    "dst-slash-15-without-wide",
+                    self.netpolicy(2, ot_rules=rules(dst="10.2.0.0/15")),
+                    "schema-invalid",
+                    "A /15 without wide true: every prefix shorter than /16 needs the flag.",
+                ),
+                (
+                    "dst-prefix-33",
+                    self.netpolicy(2, ot_rules=rules(dst="192.168.10.0/33")),
+                    "schema-invalid",
+                    "A prefix length of 33: an IPv4 network has at most 32 bits.",
+                ),
+                (
+                    "dst-leading-zero",
+                    self.netpolicy(2, ot_rules=rules(dst="192.168.010.0/24")),
+                    "schema-invalid",
+                    "An octet with a leading zero: dotted decimal without leading zeros, so no renderer reads octal.",
+                ),
+                (
+                    "port-zero",
+                    self.netpolicy(2, ot_rules=rules(ports=[{"from": 0, "to": 10}])),
+                    "schema-invalid",
+                    "Port 0 is no port a rule can name.",
+                ),
+                (
+                    "port-65536",
+                    self.netpolicy(2, ot_rules=rules(ports=[{"from": 65535, "to": 65536}])),
+                    "schema-invalid",
+                    "Port 65536 does not exist.",
+                ),
+                (
+                    "time-source-host-without-dot",
+                    self.netpolicy(2, time_sources=[{"id": "site-ntp", "host": "ntp", "nts": True}]),
+                    "schema-invalid",
+                    "A single-label host: a site time source is a fully qualified name or an address.",
+                ),
+            ],
+            inputs=inputs,
+        )
         self.envelope_negatives(
             "site-netpolicy",
             st,
@@ -2810,6 +3421,15 @@ class Generator:
             mode="reverify",
             description="Re-verification finds a policy other than the installed one.",
         )
+        self.alias(
+            self.NETPOL_ONE_OT,
+            st,
+            expect="accept",
+            context="revpi-active-pcie-only",
+            inputs=inputs,
+            mode="reverify",
+            description="Re-verification of the installed policy after the SoC interface went away: it now leaves the device no wan interface, and re-verification does not evaluate the interface mapping, because the interfaces present change after installation (the renderer repeats the check at every load and falls back to the last-known-good ruleset with an alarm).",
+        )
 
     def site_updates(self) -> None:
         """Site config version 3 on the update channel: it adds the I/O map file and
@@ -2850,6 +3470,31 @@ class Generator:
             },
             description="The same site config with its files delivered one by one, as a provisioning delivery carries them: the bundle is only a transport (DEC-4.12).",
         )
+        for name, url, text in [
+            (
+                "site-bundle-url-ip-literal",
+                f"https://203.0.113.7/site/{DEVICE}/3/site-bundle.json",
+                "The site bundle is named by an IP literal: a fetch URL is a DNS name of the platform's artifact host (common.schema.json fetch_url).",
+            ),
+            (
+                "site-bundle-url-port",
+                f"https://edge-releases.example.com:8443/site/{DEVICE}/3/site-bundle.json",
+                "The site bundle is named on port 8443, which the device firewall drops: a fetch URL uses 443 only.",
+            ),
+        ]:
+            self.signed(
+                f"site-config/invalid/{name}.dsse.json",
+                st,
+                canonical(
+                    self.site_config(3, FILES_V3, self.RBAC1, VALID, site_bundle_url=url)
+                ),
+                signer,
+                expect="reject",
+                reason="schema-invalid",
+                context="revpi-active",
+                inputs=inputs,
+                description=text,
+            )
         tampered = copy.deepcopy(bundle)
         tampered["site_files"]["io-config.yaml"] = b64(
             self.site_bytes("site-files/v3/io-config.yaml") + b"# changed in transit\n"
@@ -3171,6 +3816,10 @@ class Generator:
             "agent-health",
             {
                 "running": (health, "READY sent, outputs safe, control enabled, nothing blocks an update."),
+                "running-whole-second": (
+                    {**health, "updated_at": "2026-10-20T11:59:00Z"},
+                    "A running view whose updated_at is a whole second in the Z form, so a reader's age bound can be tested at its exact edge (channels.json update_channel.maintenance.blockers.health_view).",
+                ),
                 "running-alarm-blocks-update": (
                     {**health, "update_blockers": ["active-alarm"]},
                     "Control is enabled and an alarm is active: root's update worker refuses an update now (DEC-13.4).",
@@ -3853,66 +4502,267 @@ class Generator:
             ),
         )
 
+    # ----------------------------------------------------------- settlement and gate vectors
+    def settlement_vectors(self) -> None:
+        """How a request ends: what the agent prunes from the spool and what the cloud does,
+        for the result root wrote (channels.json update_channel.settlement)."""
+        channels = json.loads((CONTRACT / "channels.json").read_text())
+        spool = channels["update_channel"]["spool"]
+        max_age = int(spool["max_entry_age_seconds"])
+
+        def hexdigest(rel: str) -> str:
+            return digest_of(self.payloads[rel])["sha256"]
+
+        owed_edge = {
+            "statement_type": ST_EDGE_UPDATE,
+            "result_kind": "edge-update",
+            "digest": hexdigest(self.EDGE_UPDATE),
+            "expires_at": json.loads(self.payloads[self.EDGE_UPDATE])["expires_at"],
+        }
+        owed_os = {
+            "statement_type": ST_OS_UPDATE,
+            "result_kind": "os-update",
+            "digest": hexdigest(self.OS_UPDATE),
+            "expires_at": json.loads(self.payloads[self.OS_UPDATE])["expires_at"],
+        }
+        owed_policy = {
+            "statement_type": ST_NETPOL,
+            "result_kind": "site-netpolicy",
+            "digest": hexdigest(self.NETPOL2),
+            "expires_at": json.loads(self.payloads[self.NETPOL2])["expires_at"],
+        }
+
+        def result(owed: dict, seq: int, outcome: str, reason: str | None, digest: str | None = None) -> dict:
+            doc: dict = {
+                "seq": seq,
+                "kind": owed["result_kind"],
+                "outcome": outcome,
+                "subject": {
+                    "statement_type": owed["statement_type"],
+                    "statement_digest": {"sha256": digest or owed["digest"]},
+                },
+            }
+            if reason is not None:
+                doc["reason"] = reason
+            return doc
+
+        def vector(
+            vid: str,
+            owed: dict,
+            results: list[dict],
+            *,
+            prune: bool,
+            cloud: str,
+            note: str,
+            now: str = EVALUATION_TIME,
+            age: int = 60,
+        ) -> dict:
+            return {
+                "id": vid,
+                "statement": owed,
+                "spool": [{"name": owed["digest"] + ".dsse", "age_seconds": age}],
+                "results": results,
+                "now": now,
+                "expect": {"agent_prunes": prune, "cloud": cloud},
+                "note": note,
+            }
+
+        other = label_digest("a statement nobody owes")
+        after_window = owed_edge["expires_at"]
+        vectors = [
+            vector("ok", owed_edge, [result(owed_edge, 1, "ok", None)], prune=True, cloud="done",
+                   note="The update was applied: the result settles the request, the agent removes the entry, the cloud stops."),
+            vector("not-yet-valid", owed_edge, [result(owed_edge, 1, "rejected", "not-yet-valid")], prune=True, cloud="reissue",
+                   note="root's clock was behind the window start. The entry is concluded and pruned; the statement is not held for the window to open, and the cloud issues a new one."),
+            vector("clock-unsynced", owed_edge, [result(owed_edge, 1, "rejected", "clock-unsynced")], prune=True, cloud="reissue",
+                   note="The clock was not synchronized: nothing was verified and nothing spent, and the intent is issued again as a new statement."),
+            vector("maintenance-blocked", owed_edge, [result(owed_edge, 1, "rejected", "maintenance-blocked")], prune=True, cloud="reissue",
+                   note="An alarm blocked the update: the entry is concluded and pruned, and the cloud issues a new statement later instead of root holding this one."),
+            vector("fetch-failed", owed_edge, [result(owed_edge, 1, "failed", "fetch-failed")], prune=True, cloud="reissue",
+                   note="The artifact could not be downloaded."),
+            vector("io-error", owed_os, [result(owed_os, 1, "failed", "io-error")], prune=True, cloud="reissue",
+                   note="A filesystem step failed."),
+            vector("approval-missing", owed_os, [result(owed_os, 1, "rejected", "approval-missing")], prune=True, cloud="reschedule",
+                   note="The window closed without a local approval: only an operator chooses another window."),
+            vector("expired", owed_edge, [result(owed_edge, 1, "rejected", "expired")], prune=True, cloud="reschedule",
+                   note="The window closed before root looked."),
+            vector("signature-invalid", owed_edge, [result(owed_edge, 1, "rejected", "signature-invalid")], prune=True, cloud="final",
+                   note="A forged or corrupted statement is never issued again as it was."),
+            vector("sequence-replay", owed_os, [result(owed_os, 1, "rejected", "sequence-replay")], prune=True, cloud="final",
+                   note="A replayed sequence value."),
+            vector("rauc-install-failed", owed_os, [result(owed_os, 1, "failed", "rauc-install-failed")], prune=True, cloud="final",
+                   note="The bundle would fail the same way again."),
+            vector("firewall-load-failed", owed_policy, [result(owed_policy, 1, "alarm", "firewall-load-failed")], prune=True, cloud="final",
+                   note="The rendered ruleset would fail to load again."),
+            vector("interface-mapping-invalid", owed_policy, [result(owed_policy, 1, "rejected", "interface-mapping-invalid")], prune=True, cloud="final",
+                   note="The policy leaves the device no wan interface."),
+            vector("no-result-yet", owed_edge, [], prune=False, cloud="wait",
+                   note="Root has not concluded the entry: it stays in the spool and the cloud keeps redelivering inside the window."),
+            vector("no-result-window-closed", owed_edge, [], prune=False, cloud="lapsed", now=after_window,
+                   note="Silence ends at expires_at: the cloud marks the request lapsed. The entry is still young, so the agent keeps it."),
+            vector("entry-at-max-age", owed_edge, [], prune=False, cloud="wait", age=max_age,
+                   note="An entry exactly max_entry_age_seconds old is kept: only an older one is pruned."),
+            vector("entry-over-max-age", owed_edge, [], prune=True, cloud="wait", age=max_age + 1,
+                   note="An entry older than max_entry_age_seconds is pruned although no result named it; the cloud is not settled by that."),
+            vector("result-for-another-statement", owed_edge, [result(owed_os, 1, "ok", None, digest=other)], prune=False, cloud="wait",
+                   note="A result that names another digest settles nothing and prunes nothing."),
+        ]
+        self.put(
+            "fixtures/update-channel/settlement-vectors.json",
+            pretty(
+                {
+                    "test_only": True,
+                    "description": "Vectors of how an update request ends (channels.json update_channel.settlement and spool.agent_is_only_writer). For each: the statement the cloud owes, the agent's spool entry for it, the results root wrote, and the verdicts: agent_prunes (the agent removes the entry: a result of any outcome names its digest, or the entry is older than max_entry_age_seconds) and cloud (done: settled ok; reissue, reschedule and final: settled by a refusal of that class; wait: unsettled, redelivered; lapsed: unsettled at expires_at). The agent's and the cloud's rules read the same result, so a settled request is always a pruned one.",
+                    "max_entry_age_seconds": max_age,
+                    "vectors": vectors,
+                }
+            ),
+        )
+
+    def gate_vectors(self) -> None:
+        """The maintenance gate and the clock gate (channels.json update_channel.maintenance.blockers
+        and time): what root and the agent decide for the documents they read."""
+        channels = json.loads((CONTRACT / "channels.json").read_text())
+        gate = channels["update_channel"]["maintenance"]["blockers"]
+        clock = channels["time"]
+        view = gate["health_view"]
+        # The vectors below place their documents at and beside these bounds in absolute
+        # times; a contract that moves a bound must move them, so the generator refuses to
+        # write vectors for another bound than the ones they were written for.
+        view_max = int(view["max_age_seconds"])
+        clock_max = int(clock["max_age_seconds"])
+        assert (view_max, clock_max) == (60, 120), (view_max, clock_max)
+        edge, os_, site = ST_EDGE_UPDATE, ST_OS_UPDATE, ST_SITE
+        running = "agent-health/valid/running.json"
+        whole = "agent-health/valid/running-whole-second.json"  # updated_at 2026-10-20T11:59:00Z
+
+        def doc(path: str) -> dict:
+            return {"kind": "document", "path": path}
+
+        def maintenance(
+            vid: str,
+            statement_type: str,
+            unit: str,
+            health: dict,
+            expect: str,
+            note: str,
+            *,
+            override: bool = False,
+            now: str = EVALUATION_TIME,
+        ) -> dict:
+            item: dict = {
+                "id": vid,
+                "statement_type": statement_type,
+                "agent_unit_state": unit,
+                "health_view": health,
+                "now": now,
+                "expect": expect,
+                "note": note,
+            }
+            if override:
+                item["blockers_override"] = True
+            return item
+
+        P, B = "proceed", "maintenance-blocked"
+        vectors = [
+            maintenance("active-clean-view", edge, "active", doc(running), P, "A running agent with nothing blocking: the update starts."),
+            maintenance("active-alarm", edge, "active", doc("agent-health/valid/running-alarm-blocks-update.json"), B, "An active alarm blocks."),
+            maintenance("active-forced-output", os_, "active", doc("agent-health/valid/running-forced-output.json"), B, "A forced output blocks an OS update too."),
+            maintenance("active-alarm-site-config", site, "active", doc("agent-health/valid/running-alarm-blocks-update.json"), B, "A site config is held to the gate as well."),
+            maintenance("reloading-alarm", edge, "reloading", doc("agent-health/valid/running-alarm-blocks-update.json"), B, "A unit that is reloading still runs its control loop."),
+            maintenance("active-view-absent", edge, "active", {"kind": "absent"}, B, "A running agent without a view cannot prove that no alarm is active."),
+            maintenance("active-view-unreadable", edge, "active", {"kind": "unreadable"}, B, "A view root cannot read counts as unavailable."),
+            maintenance("active-view-oversized", edge, "active", {"kind": "oversized", "size_bytes": 65537}, B, "A view larger than 64 KiB counts as unavailable."),
+            maintenance("active-view-at-size-limit", edge, "active", {**doc(running), "size_bytes": 65536}, "proceed", "A view of exactly 64 KiB is read: only a larger one is unavailable."),
+            maintenance("active-view-over-size-limit", edge, "active", {**doc(running), "size_bytes": 65537}, B, "The same view one byte larger than 64 KiB is unavailable, whatever it holds."),
+            maintenance("active-view-missing-blockers", edge, "active", doc("agent-health/invalid/blockers-missing.json"), B, "update_blockers is a member root reads: without it the view is unavailable."),
+            maintenance("active-view-duplicate-blocker", edge, "active", doc("agent-health/invalid/duplicate-blocker.json"), B, "A duplicate in update_blockers makes the view ill-formed."),
+            maintenance("active-view-unknown-blocker", edge, "active", doc("agent-health/invalid/unknown-blocker.json"), B, "A blocker outside the vocabulary makes the view ill-formed."),
+            maintenance("active-view-offset-timestamp", edge, "active", doc("agent-health/invalid/offset-timestamp.json"), B, "updated_at in a non-UTC offset makes the view ill-formed."),
+            maintenance("active-view-other-member-invalid", edge, "active", doc("agent-health/invalid/unknown-member.json"), P, "A member root does not read never makes the gate refuse: the health gate's business, not this gate's."),
+            maintenance("active-view-degraded-contradiction", edge, "active", doc("agent-health/invalid/degraded-with-control-enabled.json"), P, "Another member root does not read."),
+            maintenance("active-view-at-max-age", edge, "active", doc(whole), P, "updated_at 60 seconds before root's clock is exactly max_age_seconds: fresh.", now="2026-10-20T12:00:00Z"),
+            maintenance("active-view-stale", edge, "active", doc(whole), B, "One second beyond max_age_seconds: stale.", now="2026-10-20T12:00:01Z"),
+            maintenance("active-view-future-at-max-age", edge, "active", doc(whole), P, "updated_at exactly max_age_seconds ahead of root's clock: fresh.", now="2026-10-20T11:58:00Z"),
+            maintenance("active-view-future-stale", edge, "active", doc(whole), B, "updated_at beyond max_age_seconds ahead of root's clock: stale in either direction.", now="2026-10-20T11:57:59Z"),
+            maintenance("inactive-view-absent", edge, "inactive", {"kind": "absent"}, P, "A stopped agent holds no alarm: the update that replaces it starts."),
+            maintenance("failed-view-stale", edge, "failed", doc(whole), P, "A failed unit with a stale view: nothing to protect.", now="2026-10-20T12:30:00Z"),
+            maintenance("failed-alarm-view", os_, "failed", doc("agent-health/valid/running-alarm-blocks-update.json"), P, "The view of a dead agent is history, not a blocker."),
+            maintenance("activating-alarm-view", edge, "activating", doc("agent-health/valid/running-alarm-blocks-update.json"), P, "An agent that is restarting has not taken its outputs yet (the boot safe-state runs before READY)."),
+            maintenance("deactivating-view-absent", site, "deactivating", {"kind": "absent"}, P, "An agent that is stopping holds its outputs in the safe state."),
+            maintenance("override-alarm", edge, "active", doc("agent-health/valid/running-alarm-blocks-update.json"), P, "An operator's edge-update with blockers_override ignores an active alarm (it carries local_approval true).", override=True),
+            maintenance("override-view-absent", os_, "active", {"kind": "absent"}, P, "An operator's os-update with blockers_override ignores a missing view.", override=True),
+            maintenance("override-stale-view", edge, "active", doc(whole), P, "An operator's override ignores a stale view.", override=True, now="2026-10-20T12:30:00Z"),
+        ]
+
+        def clock_vector(vid: str, consumer: str, state: dict, expect: str, note: str, now: str = EVALUATION_TIME) -> dict:
+            return {"id": vid, "consumer": consumer, "time_state": state, "now": now, "expect": expect, "note": note}
+
+        nts = doc("time-state/valid/synced-nts.json")
+        plain = doc("time-state/valid/synced-unauthenticated.json")
+        unsynced = doc("time-state/valid/unsynced.json")
+        S, I = "sufficient", "insufficient"
+        clock_vectors = []
+        for consumer in ("root-acceptance", "agent-fresh-actuation"):
+            clock_vectors += [
+                clock_vector(f"{consumer}-nts", consumer, nts, S, "A clock disciplined against pinned NTS servers."),
+                clock_vector(f"{consumer}-unauthenticated", consumer, plain, S, "A clock disciplined by a site NTP server the signed policy marked: sufficient, because only a signed policy produces it and the time floor bounds a rewind."),
+                clock_vector(f"{consumer}-unsynced", consumer, unsynced, I, "A clock that only passed the time floor."),
+                clock_vector(f"{consumer}-absent", consumer, {"kind": "absent"}, I, "No time-state counts as unsynced."),
+                clock_vector(f"{consumer}-unreadable", consumer, {"kind": "unreadable"}, I, "An unreadable time-state counts as unsynced."),
+                clock_vector(f"{consumer}-non-conforming", consumer, doc("time-state/invalid/unknown-state.json"), I, "A time-state outside the closed state set counts as unsynced."),
+                clock_vector(f"{consumer}-at-max-age", consumer, nts, S, "updated_at exactly max_age_seconds before the reader's clock: fresh.", now="2026-10-20T12:01:59Z"),
+                clock_vector(f"{consumer}-stale", consumer, nts, I, "One second beyond max_age_seconds: the state is stale and counts as unsynced.", now="2026-10-20T12:02:00Z"),
+                clock_vector(f"{consumer}-future-stale", consumer, nts, I, "updated_at beyond max_age_seconds ahead of the reader's clock: stale in either direction.", now="2026-10-20T11:57:58Z"),
+            ]
+        clock_vectors += [
+            clock_vector("local-control-unsynced", "agent-local-control", unsynced, S, "Local control, safe-state and alarms run in every state."),
+            clock_vector("local-control-absent", "agent-local-control", {"kind": "absent"}, S, "They do not depend on the time-state document at all."),
+            clock_vector("local-control-stale", "agent-local-control", nts, S, "Nor on its age.", now="2026-10-21T12:00:00Z"),
+        ]
+        self.put(
+            "fixtures/update-channel/gate-vectors.json",
+            pretty(
+                {
+                    "test_only": True,
+                    "description": "Vectors of the two gates that read documents the agent or the root time helper writes. maintenance: whether root's update worker starts an edge-update, an os-update or a site-config (proceed) or concludes it with maintenance-blocked, given the state of the agent unit (systemd ActiveState), the agent health view root finds (absent, unreadable, oversized, or a document of the fixtures, whose size_bytes, when given, is the size of the file: more than 64 KiB is oversized, whatever it holds; read for schema, update_blockers and updated_at only), root's clock and, for an edge-update or os-update, the statement's blockers_override (channels.json update_channel.maintenance.blockers). clock: whether a consumer's clock requirement is met (sufficient) by the time-state document the reader finds (channels.json time). Paths are relative to fixtures/.",
+                    "maintenance": vectors,
+                    "clock": clock_vectors,
+                }
+            ),
+        )
+
     # ----------------------------------------------------------- point-decoding vectors
     def point_vectors(self) -> None:
-        p = 2**255 - 19
-        d = (-121665 * pow(121666, -1, p)) % p
-
-        def decode(y: int) -> int | None:
-            u = (y * y - 1) % p
-            v = (d * y * y + 1) % p
-            x = pow(u * pow(v, -1, p) % p, (p + 3) // 8, p)
-            if (x * x * v - u) % p != 0:
-                x = x * pow(2, (p - 1) // 4, p) % p
-            return x if (x * x * v - u) % p == 0 else None
-
-        def add(a: tuple, b: tuple) -> tuple:
-            (x1, y1, z1, t1), (x2, y2, z2, t2) = a, b
-            aa, bb = (y1 - x1) * (y2 - x2) % p, (y1 + x1) * (y2 + x2) % p
-            cc, dd = t1 * 2 * d * t2 % p, z1 * 2 * z2 % p
-            e, f, g, h = bb - aa, dd - cc, dd + cc, bb + aa
-            return (e * f % p, g * h % p, f * g % p, e * h % p)
-
-        def small_order(x: int, y: int) -> bool:
-            acc, base = (0, 1, 1, 0), (x, y, 1, x * y % p)
-            for _ in range(3):  # [8]P
-                base = add(base, base)
-            acc = base
-            return acc[0] % p == 0 and (acc[1] - acc[2]) % p == 0
-
         vectors = []
-        for y in range(19):
-            x = decode(y)
-            if x is None:
-                continue
-            small = small_order(x, y)
-            for sign in (0, 1):
-                if x == 0 and sign == 1:
-                    continue  # x = 0 with the sign bit set ("negative zero") fails to decode
-                high = sign << 255
-                for label, value, canonical_point in (("canonical", y, True), ("non-canonical", y + p, False)):
-                    encoding = ((value | high).to_bytes(32, "little"))
-                    vectors.append(
-                        {
-                            "id": f"y{y}-{label}-sign{sign}",
-                            "encoding_hex": encoding.hex(),
-                            "y": y,
-                            "sign_bit": sign,
-                            "canonical": canonical_point,
-                            "small_order": small,
-                            "note": (
-                                f"y = {y}{' + p' if not canonical_point else ''}, sign bit {sign}: "
-                                + ("a canonical encoding" if canonical_point else "a non-canonical encoding (y >= p) of the same point")
-                                + (" of a small-order point" if small else " of a valid point of full order")
-                            ),
-                        }
-                    )
+        for row in point_table():
+            label = "canonical" if row["canonical"] else "non-canonical"
+            y, sign, small = row["y"], row["sign"], row["small_order"]
+            vectors.append(
+                {
+                    "id": f"y{y}-{label}-sign{sign}",
+                    "encoding_hex": row["encoding"].hex(),
+                    "y": y,
+                    "sign_bit": sign,
+                    "canonical": row["canonical"],
+                    "small_order": small,
+                    "note": (
+                        f"y = {y}{' + p' if not row['canonical'] else ''}, sign bit {sign}: "
+                        + (
+                            "a canonical encoding"
+                            if row["canonical"]
+                            else "a non-canonical encoding (y >= p) of the same point"
+                        )
+                        + (" of a small-order point" if small else " of a valid point of full order")
+                    ),
+                }
+            )
         self.put(
             "fixtures/dsse/point-vectors.json",
             pretty(
                 {
                     "test_only": True,
-                    "description": "Point-decoding vectors for the 'y < p' rule of statements.json dsse.signature_algorithm: every 32-byte encoding with y below 19 that decodes to a curve point, in its canonical form and in the non-canonical form y + p, with either sign bit. A verifier must reject a public key or commitment whose encoding is not canonical; for the points of full order no signature can exist, so these vectors, unlike dsse/signature-vectors.json, test the rule itself.",
+                    "description": "Point-decoding vectors for the key-admission rule of statements.json dsse.signature_algorithm: every 32-byte encoding with y below 19 that decodes to a curve point, in its canonical form and in the non-canonical form y + p, with either sign bit. A key store must refuse a public key whose encoding is non-canonical or whose point is small-order. For the points of full order no signature can exist, so these vectors cannot test signature verification (dsse/signature-vectors.json does); they test the admission of a key, and trust-anchors/invalid/anchor-non-canonical-key pins it end to end.",
                     "vectors": vectors,
                 }
             ),
@@ -4173,7 +5023,13 @@ class Generator:
                 "kind": "os-update",
                 "outcome": "rejected",
                 "reason": "compatible-mismatch",
-                "subject": {"statement_type": ST_OS_UPDATE, "update_seq": 3},
+                "subject": {
+                    "statement_type": ST_OS_UPDATE,
+                    "statement_digest": digest_of(
+                        self.payloads["os-update/invalid/compatible-mismatch.dsse.json"]
+                    ),
+                    "update_seq": 3,
+                },
             },
             "site-config-ok": {
                 "seq": 13,
@@ -4190,14 +5046,22 @@ class Generator:
                 "kind": "site-config",
                 "outcome": "rejected",
                 "reason": "site-bundle-missing",
-                "subject": {"statement_type": ST_SITE, "update_seq": 3},
+                "subject": {
+                    "statement_type": ST_SITE,
+                    "statement_digest": digest_of(self.payloads[self.SITE_SEQ3]),
+                    "update_seq": 3,
+                },
             },
             "site-config-rsc-load-failed": {
                 "seq": 15,
                 "kind": "site-config",
                 "outcome": "failed",
                 "reason": "config-rsc-load-failed",
-                "subject": {"statement_type": ST_SITE, "update_seq": 3},
+                "subject": {
+                    "statement_type": ST_SITE,
+                    "statement_digest": digest_of(self.payloads[self.SITE_SEQ3]),
+                    "update_seq": 3,
+                },
                 "detail": "piControl refused revpi/config.rsc; site version 2 restored",
             },
             "site-netpolicy-firewall-load-failed": {
@@ -4217,7 +5081,12 @@ class Generator:
                 "kind": "trust-anchors",
                 "outcome": "rejected",
                 "reason": "sequence-replay",
-                "subject": {"statement_type": ST_TA},
+                "subject": {
+                    "statement_type": ST_TA,
+                    "statement_digest": digest_of(
+                        self.payloads["trust-anchors/invalid/same-seq-different-bundle.dsse.json"]
+                    ),
+                },
             },
             "update-request-too-large": {
                 "seq": 18,
@@ -4247,6 +5116,45 @@ class Generator:
                 "reason": "lifecycle-inconsistent",
                 "subject": {"lifecycle_to": "LOCKED"},
             },
+            "edge-update-not-yet-valid": {
+                "seq": 23,
+                "kind": "edge-update",
+                "outcome": "rejected",
+                "reason": "not-yet-valid",
+                "subject": {
+                    "statement_type": ST_EDGE_UPDATE,
+                    "statement_digest": digest_of(self.payloads[self.EDGE_UPDATE]),
+                    "update_seq": 4,
+                },
+                "detail": "the window opens after root's clock; the cloud issues a new statement",
+            },
+            "edge-update-clock-unsynced": {
+                "seq": 24,
+                "kind": "edge-update",
+                "outcome": "rejected",
+                "reason": "clock-unsynced",
+                "time_state": "unsynced",
+                "subject": {
+                    "statement_type": ST_EDGE_UPDATE,
+                    "statement_digest": digest_of(self.payloads[self.EDGE_UPDATE]),
+                    "update_seq": 4,
+                },
+                "detail": "the time state is unsynced: the window is not evaluated, nothing is spent",
+            },
+            "site-netpolicy-interface-mapping-invalid": {
+                "seq": 25,
+                "kind": "site-netpolicy",
+                "outcome": "rejected",
+                "reason": "interface-mapping-invalid",
+                "subject": {
+                    "statement_type": ST_NETPOL,
+                    "statement_digest": digest_of(
+                        self.payloads["site-netpolicy/invalid/no-wan-interface.dsse.json"]
+                    ),
+                    "update_seq": 2,
+                },
+                "detail": "every interface of the device is mapped to the OT role; the ruleset is not rendered",
+            },
             "provisioning-usb-layout-invalid": {
                 "seq": 22,
                 "kind": "provisioning",
@@ -4271,6 +5179,27 @@ class Generator:
             "unknown-kind": (
                 {**base, "seq": 9, "kind": "firmware-flash", "outcome": "ok"},
                 "kind outside the DEC-27 result set.",
+            ),
+            "update-result-without-digest": (
+                {
+                    **base,
+                    "seq": 9,
+                    "kind": "site-config",
+                    "outcome": "rejected",
+                    "reason": "site-bundle-missing",
+                    "subject": {"statement_type": ST_SITE, "update_seq": 3},
+                },
+                "A result of an update-channel kind that does not name the statement digest: nothing could settle the request.",
+            ),
+            "update-result-without-subject": (
+                {
+                    **base,
+                    "seq": 9,
+                    "kind": "os-update",
+                    "outcome": "rejected",
+                    "reason": "compatible-mismatch",
+                },
+                "A result of an update-channel kind without a subject: the cloud could not tell which statement it concludes.",
             ),
             "rejected-without-reason": (
                 {**base, "seq": 9, "kind": "edge-update", "outcome": "rejected"},
@@ -4893,6 +5822,7 @@ WantedBy=multi-user.target
             "os_rollback_floor": os_floor,
             "os_compatible": self.boards["revpi-connect4"]["rauc_compatible"],
             "installed_agent_abi": agent_abi,
+            "network_interfaces": copy.deepcopy(NETWORK_INTERFACES),
         }
 
     def index_file(self) -> None:
@@ -4933,15 +5863,11 @@ WantedBy=multi-user.target
                 accepted={
                     ST_PROV: {
                         "seq": 3,
-                        "statement_digest": {
-                            "sha256": label_digest("accepted provisioning manifest 3")
-                        },
+                        "statement_digest": digest_of(self.replay["provisioning-3"]),
                     },
                     ST_LIFE: {
                         "seq": 2,
-                        "statement_digest": {
-                            "sha256": label_digest("accepted lifecycle statement 2")
-                        },
+                        "statement_digest": digest_of(self.replay["lifecycle-2"]),
                     },
                     ST_RELEASE: acc(self.REL_160, None),
                     ST_TA: acc(self.TA1, 1),
@@ -4949,11 +5875,11 @@ WantedBy=multi-user.target
                     ST_RBAC: acc(self.RBAC1, 1),
                     ST_EDGE_UPDATE: {
                         "seq": 3,
-                        "statement_digest": {"sha256": label_digest("accepted edge update 3")},
+                        "statement_digest": digest_of(self.replay["edge-update-3"]),
                     },
                     ST_OS_UPDATE: {
                         "seq": 2,
-                        "statement_digest": {"sha256": label_digest("accepted os update 2")},
+                        "statement_digest": digest_of(self.replay["os-update-2"]),
                     },
                     ST_NETPOL: acc(self.NETPOL1, 1),
                 },
@@ -5006,6 +5932,15 @@ WantedBy=multi-user.target
             ctx["description"] = description
             ctx["ratchet"].update(ratchets)
             contexts[name] = ctx
+        pcie_only = copy.deepcopy(contexts["revpi-active"])
+        pcie_only["description"] = (
+            "revpi-active after its SoC interface eth0 went away, with policy-one-interface-to-ot installed "
+            "at update_seq 2: only the PCIe interface eth1 is left and the policy maps it to ot, so no wan "
+            "interface remains. The interfaces present change after installation (statements.json reverification)."
+        )
+        pcie_only["network_interfaces"] = [copy.deepcopy(NETWORK_INTERFACES[1])]
+        pcie_only["accepted"][ST_NETPOL] = acc(self.NETPOL_ONE_OT, 2)
+        contexts["revpi-active-pcie-only"] = pcie_only
         no_agent = copy.deepcopy(contexts["revpi-active"])
         no_agent["description"] = (
             "revpi-active with no agent release installed (installed_agent_abi null): "
@@ -5028,6 +5963,8 @@ WantedBy=multi-user.target
             "point_vectors": "dsse/point-vectors.json",
             "spool_vectors": "update-channel/spool-vectors.json",
             "usb_layout_vectors": "delivery-usb/layout-vectors.json",
+            "settlement_vectors": "update-channel/settlement-vectors.json",
+            "gate_vectors": "update-channel/gate-vectors.json",
         }
         self.put("fixtures/index.json", pretty(index))
 
@@ -5054,6 +5991,8 @@ WantedBy=multi-user.target
         self.vectors()
         self.point_vectors()
         self.channel_vectors()
+        self.settlement_vectors()
+        self.gate_vectors()
         self.index_file()
         return self.files
 

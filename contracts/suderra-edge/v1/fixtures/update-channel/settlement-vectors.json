@@ -1,0 +1,583 @@
+{
+  "test_only": true,
+  "description": "Vectors of how an update request ends (channels.json update_channel.settlement and spool.agent_is_only_writer). For each: the statement the cloud owes, the agent's spool entry for it, the results root wrote, and the verdicts: agent_prunes (the agent removes the entry: a result of any outcome names its digest, or the entry is older than max_entry_age_seconds) and cloud (done: settled ok; reissue, reschedule and final: settled by a refusal of that class; wait: unsettled, redelivered; lapsed: unsettled at expires_at). The agent's and the cloud's rules read the same result, so a settled request is always a pruned one.",
+  "max_entry_age_seconds": 86400,
+  "vectors": [
+    {
+      "id": "ok",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "ok",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          }
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "done"
+      },
+      "note": "The update was applied: the result settles the request, the agent removes the entry, the cloud stops."
+    },
+    {
+      "id": "not-yet-valid",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          },
+          "reason": "not-yet-valid"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reissue"
+      },
+      "note": "root's clock was behind the window start. The entry is concluded and pruned; the statement is not held for the window to open, and the cloud issues a new one."
+    },
+    {
+      "id": "clock-unsynced",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          },
+          "reason": "clock-unsynced"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reissue"
+      },
+      "note": "The clock was not synchronized: nothing was verified and nothing spent, and the intent is issued again as a new statement."
+    },
+    {
+      "id": "maintenance-blocked",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          },
+          "reason": "maintenance-blocked"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reissue"
+      },
+      "note": "An alarm blocked the update: the entry is concluded and pruned, and the cloud issues a new statement later instead of root holding this one."
+    },
+    {
+      "id": "fetch-failed",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "failed",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          },
+          "reason": "fetch-failed"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reissue"
+      },
+      "note": "The artifact could not be downloaded."
+    },
+    {
+      "id": "io-error",
+      "statement": {
+        "statement_type": "suderra.os-update.v1",
+        "result_kind": "os-update",
+        "digest": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "os-update",
+          "outcome": "failed",
+          "subject": {
+            "statement_type": "suderra.os-update.v1",
+            "statement_digest": {
+              "sha256": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39"
+            }
+          },
+          "reason": "io-error"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reissue"
+      },
+      "note": "A filesystem step failed."
+    },
+    {
+      "id": "approval-missing",
+      "statement": {
+        "statement_type": "suderra.os-update.v1",
+        "result_kind": "os-update",
+        "digest": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "os-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.os-update.v1",
+            "statement_digest": {
+              "sha256": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39"
+            }
+          },
+          "reason": "approval-missing"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reschedule"
+      },
+      "note": "The window closed without a local approval: only an operator chooses another window."
+    },
+    {
+      "id": "expired",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          },
+          "reason": "expired"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "reschedule"
+      },
+      "note": "The window closed before root looked."
+    },
+    {
+      "id": "signature-invalid",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "edge-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.edge-update.v1",
+            "statement_digest": {
+              "sha256": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416"
+            }
+          },
+          "reason": "signature-invalid"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "final"
+      },
+      "note": "A forged or corrupted statement is never issued again as it was."
+    },
+    {
+      "id": "sequence-replay",
+      "statement": {
+        "statement_type": "suderra.os-update.v1",
+        "result_kind": "os-update",
+        "digest": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "os-update",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.os-update.v1",
+            "statement_digest": {
+              "sha256": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39"
+            }
+          },
+          "reason": "sequence-replay"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "final"
+      },
+      "note": "A replayed sequence value."
+    },
+    {
+      "id": "rauc-install-failed",
+      "statement": {
+        "statement_type": "suderra.os-update.v1",
+        "result_kind": "os-update",
+        "digest": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "os-update",
+          "outcome": "failed",
+          "subject": {
+            "statement_type": "suderra.os-update.v1",
+            "statement_digest": {
+              "sha256": "ca3625d3fbf2942b722dc8318a3b3fe5b942447e75d037320e6fa0dc1f649f39"
+            }
+          },
+          "reason": "rauc-install-failed"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "final"
+      },
+      "note": "The bundle would fail the same way again."
+    },
+    {
+      "id": "firewall-load-failed",
+      "statement": {
+        "statement_type": "suderra.site-netpolicy.v1",
+        "result_kind": "site-netpolicy",
+        "digest": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "site-netpolicy",
+          "outcome": "alarm",
+          "subject": {
+            "statement_type": "suderra.site-netpolicy.v1",
+            "statement_digest": {
+              "sha256": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c"
+            }
+          },
+          "reason": "firewall-load-failed"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "final"
+      },
+      "note": "The rendered ruleset would fail to load again."
+    },
+    {
+      "id": "interface-mapping-invalid",
+      "statement": {
+        "statement_type": "suderra.site-netpolicy.v1",
+        "result_kind": "site-netpolicy",
+        "digest": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "site-netpolicy",
+          "outcome": "rejected",
+          "subject": {
+            "statement_type": "suderra.site-netpolicy.v1",
+            "statement_digest": {
+              "sha256": "0fe0ed6c9b87fcd69dc7e75dede268b4871494f32a5c7cd720a7fa9656a84f3c"
+            }
+          },
+          "reason": "interface-mapping-invalid"
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "final"
+      },
+      "note": "The policy leaves the device no wan interface."
+    },
+    {
+      "id": "no-result-yet",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": false,
+        "cloud": "wait"
+      },
+      "note": "Root has not concluded the entry: it stays in the spool and the cloud keeps redelivering inside the window."
+    },
+    {
+      "id": "no-result-window-closed",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [],
+      "now": "2026-10-21T00:00:00Z",
+      "expect": {
+        "agent_prunes": false,
+        "cloud": "lapsed"
+      },
+      "note": "Silence ends at expires_at: the cloud marks the request lapsed. The entry is still young, so the agent keeps it."
+    },
+    {
+      "id": "entry-at-max-age",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 86400
+        }
+      ],
+      "results": [],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": false,
+        "cloud": "wait"
+      },
+      "note": "An entry exactly max_entry_age_seconds old is kept: only an older one is pruned."
+    },
+    {
+      "id": "entry-over-max-age",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 86401
+        }
+      ],
+      "results": [],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": true,
+        "cloud": "wait"
+      },
+      "note": "An entry older than max_entry_age_seconds is pruned although no result named it; the cloud is not settled by that."
+    },
+    {
+      "id": "result-for-another-statement",
+      "statement": {
+        "statement_type": "suderra.edge-update.v1",
+        "result_kind": "edge-update",
+        "digest": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416",
+        "expires_at": "2026-10-21T00:00:00Z"
+      },
+      "spool": [
+        {
+          "name": "a1dacec3cd53bfe4f236598615b106baf6456027d7631874c0b02cc145400416.dsse",
+          "age_seconds": 60
+        }
+      ],
+      "results": [
+        {
+          "seq": 1,
+          "kind": "os-update",
+          "outcome": "ok",
+          "subject": {
+            "statement_type": "suderra.os-update.v1",
+            "statement_digest": {
+              "sha256": "1f020842bbbd66107f6d02c40c4e99d69e3650e578dc099040022fd17261abda"
+            }
+          }
+        }
+      ],
+      "now": "2026-10-20T12:00:00Z",
+      "expect": {
+        "agent_prunes": false,
+        "cloud": "wait"
+      },
+      "note": "A result that names another digest settles nothing and prunes nothing."
+    }
+  ]
+}

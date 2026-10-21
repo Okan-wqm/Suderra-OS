@@ -35,13 +35,13 @@
       "response_schema": "schemas/edge-activation-response.schema.json",
       "rate_limited_status": 429
     },
-    "endpoint_rule": "Root's provisioning fetch and the agent's activation reach the cloud only through a port both device rulesets let out: https on tcp 443, with the endpoint URL carrying no port or port 443. An image whose cloud-endpoint names another port fails its build check (Suderra-OS tests/image-contracts/board-file-contract-test.sh), because nothing on the device can reach it.",
+    "endpoint_rule": "Root's provisioning fetch and the agent's activation reach the cloud only through a port both device rulesets let out: https on tcp 443, with the endpoint URL carrying no port or port 443. An image whose cloud-endpoint names another port fails its build check (Suderra-OS tests/image-contracts/board-file-contract-test.sh), because nothing on the device can reach it. Every URL a signed update statement names is held to the same reach (update_channel.fetch).",
     "endpoint_source": "The endpoint comes from the signed OS image (/etc/suderra/cloud-endpoint, one https base URL line, mutable-state.json image_files). Neither the provisioning manifest, an activation response nor the technician sets it, so a hostile delivery cannot redirect the device.",
     "token": {
       "max_age_seconds": 14400,
       "rule": "The cloud issues a provisioning manifest for a Suderra OS device only under a provisioning token issued at most 4 hours earlier (DEC-5.12); a token older than that is refused like any other refusal. The generic channel keeps its own, longer, token lifetime. The token is single-use and bound to the device binding of the manifest reservation until the activation commits (DEC-5.7)."
     },
-    "binding_rule": "The activation request carries the hardware binding root recorded (deviceBinding); the cloud refuses an activation whose binding differs from the one the manifest reservation was made for. installedManifest, when present, is the digest of the manifest root installed and is the digest the receipt names; when absent the receipt names the manifest the cloud issued last.",
+    "binding_rule": "The activation request MUST carry deviceBinding, the hardware binding root recorded (schemas/edge-activation-request.schema.json requires it), and the cloud MUST refuse, without committing the activation or issuing credentials, an activation whose binding differs from the one the manifest reservation was made for. The request MAY carry installedManifest, the statement digest of the manifest root installed: when present it is the digest the receipt names, and the cloud MUST refuse one that is not a manifest it issued to this device; when absent the receipt names the manifest the cloud issued last.",
     "self_register": {
       "suderra_os": "forbidden",
       "rule": "A Suderra OS device never self-registers with a tenant token (DEC-5.12): the Suderra OS agent has no self-registration path compiled in, and the cloud's self-register endpoint creates only generic-channel device rows, which receive no Suderra OS manifest, no signed command and no hand-over statement."
@@ -114,18 +114,24 @@
       "max_pending_entries": 4,
       "max_pending_bytes": 262144,
       "backlog_rule": "A request that would exceed max_pending_entries or max_pending_bytes is refused (update-requests-backlog) and nothing is written; a request for a statement already in the directory replaces it and is never counted twice.",
-      "agent_is_only_writer": "Root never writes, renames or deletes inside the spool (DEC-4.3). The agent removes an entry once /run/suderra/results holds a result whose subject.statement_digest is the entry's name, and any entry older than max_entry_age_seconds.",
+      "agent_is_only_writer": "Root never writes, renames or deletes inside the spool (DEC-4.3). The agent removes an entry once /run/suderra/results holds a result, of any outcome, whose subject.statement_digest is the entry's name (the request is then concluded: update_channel.settlement), and any entry older than max_entry_age_seconds.",
       "max_entry_age_seconds": 86400,
       "trigger": "suderra-edge-request.path watches the directory and starts suderra-edge-request.service, which consumes one entry at a time under /run/suderra-update.lock, shared with the RAUC processes (DEC-2.3, DEC-2.9).",
-      "root_reads": "A name that is not name_pattern is ignored. Root opens an entry with openat(O_NOFOLLOW | O_NONBLOCK), refuses anything that is not a regular file (symlink, FIFO, device) or larger than max_entry_bytes by fstat on the open descriptor, copies the bytes into its own root-only directory and processes only the copy.",
-      "concluded": "Root records the digest of every entry it concluded under /data/suderra/os/requests/ and skips a concluded entry silently, so an entry that stays in the spool until the agent prunes it never produces a second result."
+      "root_reads": "A name that is not name_pattern is ignored. Root opens an entry with openat(O_NOFOLLOW | O_NONBLOCK) and refuses anything that is not a regular file (symlink, FIFO, device, directory) or larger than max_entry_bytes by fstat on the open descriptor (request-not-regular-file, request-too-large). It then copies at most max_entry_bytes + 1 bytes into its own root-only directory and refuses the entry with request-too-large when the copy is longer than max_entry_bytes, because the agent is the spool's writer and can grow the file through its own descriptor after the fstat. Root processes only the copy.",
+      "concluded": "Root concludes every entry with exactly one result document that names the statement digest (update_channel.settlement) and records the digest under /data/suderra/os/requests/. It skips a concluded entry silently, so an entry that stays in the spool until the agent prunes it never produces a second result. A conclusion is final: a refusal is never reconsidered, and the same intent reaches root again only as a new statement with a new digest."
+    },
+    "fetch": {
+      "rule": "Every URL a carried statement names (release_statement.url, artifact_url, bundle.url, site_bundle_url) is common.schema.json fetch_url: https on port 443 (no port, or :443), a lowercase DNS name whose last label starts with a letter, so never an IP literal, and no userinfo. Root fetches only from the signed URL, follows no redirect to another host, and aborts a transfer that exceeds the byte bound below with the result reason fetch-failed. The host is the platform's artifact host, the one the root installer's egress set of the device firewall names (DEC-11.4, DEC-11.5): a host outside that set is unreachable, so the cloud signs only URLs of that host.",
+      "max_release_statement_bytes": 65536,
+      "max_site_bundle_bytes": 16777216,
+      "artifact_bound": "The release artifact is read at most as many bytes as the signed release statement's artifact.size_bytes and the RAUC bundle at most bundle.size_bytes; both are signed, so no URL can make root read more."
     },
     "carried_statements": {
       "suderra.edge-update.v1": {
         "result_kind": "edge-update",
         "sequence_file": "/data/suderra/os/seq/edge-update",
         "fetch": [
-          "release_statement.url: the suderra.edge-release.v1 envelope, whose statement digest must equal release_statement.digest",
+          "release_statement.url: the suderra.edge-release.v1 envelope, at most update_channel.fetch.max_release_statement_bytes, whose statement digest must equal release_statement.digest",
           "artifact_url: the release artifact, whose size and sha256 and whose suderra-agent member's digest come from the release statement (DEC-1.5)"
         ],
         "root_action": "Installs the release through the one installer (suderra-installer edge update): verify, download, check, unpack beside the current release, switch current atomically, restart the agent, run the health window; a failed window restores the previous release and the site config version it ran with together (DEC-2.6, EI-055).",
@@ -144,7 +150,7 @@
         "result_kind": "site-config",
         "sequence_file": "/data/suderra/os/seq/site-config",
         "fetch": [
-          "site_bundle_url: the suderra.site-bundle.v1 document with the site files and the RBAC manifest the site config names by digest; a site-config statement on this channel without it cannot be applied (site-bundle-missing)"
+          "site_bundle_url: the suderra.site-bundle.v1 document with the site files and the RBAC manifest the site config names by digest, read at most update_channel.fetch.max_site_bundle_bytes; a site-config statement on this channel without it cannot be applied (site-bundle-missing)"
         ],
         "root_action": "Verifies the site config, the RBAC manifest and the files against it, writes the complete new site directory under a temporary name next to the installed one and activates it with rename(2), updates the install receipt, then reloads the agent (ExecReload) when that is enough and restarts it otherwise; a changed revpi/config.rsc is loaded into piControl by root's own tool, never by the agent. A failed health window restores the previous site version (DEC-4.12, DEC-2.6). Refreshing an expiring RBAC manifest is the same path: a new site config at the next update_seq that names the renewed manifest; there is no separate RBAC channel.",
         "maintenance": "Root requires a local approval, and reports approval-missing if the window closes without one, when the new site config changes io-config.yaml, site-policy.json or revpi/config.rsc compared with the installed one (DEC-4.12, DEC-13.4); a change of config.yaml and the RBAC manifest alone needs only the acceptance window."
@@ -153,8 +159,8 @@
         "result_kind": "site-netpolicy",
         "sequence_file": "/data/suderra/os/seq/site-netpolicy",
         "fetch": [],
-        "root_action": "Renders the policy with the typed renderer, runs nft -c against the running kernel, loads it atomically, falls back to the last-known-good ruleset and raises an alarm when the load fails, and installs the statement as site-netpolicy.dsse beside the site config so it is re-verified before every start (DEC-11.7). The policy never removes the WAN broker and API rule.",
-        "maintenance": "The acceptance window; a policy that changes the OT allowlist needs no local approval, because it can only narrow or widen what the agent reaches, and nft's atomic load keeps the previous rules on failure."
+        "root_action": "Renders the policy with the typed renderer, runs nft -c against the running kernel, loads it atomically, falls back to the last-known-good ruleset and raises an alarm when the load fails, and installs the statement as site-netpolicy.dsse beside the site config so it is re-verified before every start (DEC-11.7). The policy cannot remove the WAN broker and API rule, because root refuses a policy whose effective interface roles leave the device no wan interface (interface-mapping-invalid), before it renders anything.",
+        "maintenance": "The acceptance window; a policy that changes the OT allowlist needs no local approval and no blockers check, because it can only narrow or widen what the agent reaches, the interface mapping check keeps a wan interface, and nft's atomic load keeps the previous rules on failure."
       },
       "suderra.trust-anchors.v1": {
         "result_kind": "trust-anchors",
@@ -165,11 +171,135 @@
       }
     },
     "maintenance": {
-      "window": "The acceptance window of a statement, not_before <= now < expires_at, is the maintenance window the cloud chose: root accepts an edge-update, an os-update or a site-config only inside it, so the cloud delivers the statement early and root applies it when the window opens (not-yet-valid until then) or refuses it after it closed (expired).",
-      "blockers": "Root refuses to start an edge-update, an os-update or a site-config while update_blockers of the agent health view (schemas/agent-health.schema.json) is not empty: an active alarm or a forced output value (DEC-13.4). The result reason is maintenance-blocked. An absent, unreadable or non-conforming health view counts as blocked.",
-      "local_approval": "A statement with local_approval true is applied only after a local operator approval, a root-local action whose mechanism the OS owns; without one by the end of the window the result reason is approval-missing.",
+      "window": "The acceptance window of a statement, not_before <= now < expires_at, is the maintenance window the cloud chose. Root verifies an edge-update, an os-update, a site-config and a site-netpolicy only inside it and concludes an entry outside it at its first look, with not-yet-valid or expired (update_channel.settlement). Root never holds a statement for its window to open: the cloud delivers only inside the window (settlement.delivery_window).",
+      "blockers": {
+        "applies_to": ["suderra.edge-update.v1", "suderra.os-update.v1", "suderra.site-config.v1"],
+        "rule": "Root refuses to start an edge-update, an os-update or a site-config while the agent holds an active alarm or a forced output value (DEC-13.4); the result reason is maintenance-blocked. Only a running control loop can hold either, so the gate blocks only while the agent unit is in one of agent_unit.blocking_active_states. In any other unit state (inactive, failed, activating, deactivating) the agent has no alarm or forced value to protect, because its outputs are held in their safe state (DEC-6.3, DEC-13.1), so an absent, stale or unreadable health view never blocks, and the update that repairs or replaces a broken agent can always start. While the unit is active, an update_blockers list that is not empty blocks, and so does an unavailable health view (absent, unreadable, larger than 64 KiB, missing or ill-formed in a member root reads, or stale), because an agent that runs and says nothing cannot prove that no alarm is active. Bounded by construction: the unit leaves the active state when its watchdog fires, and an operator can sign the override below.",
+        "agent_unit": {
+          "unit": "suderra-agent.service",
+          "blocking_active_states": ["active", "reloading"]
+        },
+        "health_view": {
+          "path": "/run/suderra/agent-health/health.json",
+          "schema": "schemas/agent-health.schema.json",
+          "read_members": ["schema", "update_blockers", "updated_at"],
+          "read_rule": "For this gate root reads three members: schema must be suderra.agent-health.v1, update_blockers a duplicate-free list of known blockers and updated_at a valid instant; a view that fails any of them is unavailable. The other members are the health gate's business (DEC-6.8) and never make this gate refuse.",
+          "refresh_seconds": 15,
+          "max_age_seconds": 60,
+          "freshness_rule": "While it runs on Suderra OS the agent rewrites the document at least every refresh_seconds, also when nothing changed, because a view written only on change cannot prove it is current; a view whose updated_at is more than max_age_seconds away from root's clock, in either direction, is stale."
+        },
+        "recheck": "Root evaluates the gate before it fetches anything and again at the moment it would stop the agent or schedule the reboot, because a local approval can take until the end of the window and an alarm can start meanwhile.",
+        "override": {
+          "member": "blockers_override",
+          "applies_to": ["suderra.edge-update.v1", "suderra.os-update.v1"],
+          "rule": "An edge-update or os-update with blockers_override true, which the schema allows only together with local_approval true, ignores the gate: root applies it after the local approval whatever update_blockers holds and whether the view is available. The cloud signs it only on an operator's explicit request, and the local approval means a person on site has seen the alarm or the forced value. It is the way out when a hostile agent keeps update_blockers non-empty or a stale view alive, and an edge-update with it replaces and restarts that agent. A site-config has no override: the agent is replaced by an edge-update first."
+        }
+      },
+      "local_approval": "A statement with local_approval true is applied only after a local operator approval, a root-local action whose mechanism the OS owns; root waits for it at most until the statement's expires_at and without one by then concludes with the result reason approval-missing.",
       "outage_budget": "max_outage_seconds bounds the outage of one update, from the shutdown safe-state to the first control tick; the health window of the update fails when the budget is exceeded.",
-      "after_failure": "After a rollback root takes no further update until a new statement with a larger update_seq arrives: a rollback never loops (DEC-2 risks)."
+      "after_failure": "After a rollback root takes no further update from the spool until a new statement with a larger update_seq arrives: a rollback never loops (DEC-2 risks)."
+    },
+    "settlement": {
+      "description": "How a request ends and what the cloud does about it. A request ends with exactly one result document that names its statement digest, and root's handling of a digest is final, so a refusal is final for that statement whatever its reason: root never defers a statement for its window to open, a blocker to clear or a clock to sync. The agent removes the spool entry when it sees that result and the cloud stops redelivering the statement when it sees it; both read the same document, so they agree by construction (fixtures/update-channel/settlement-vectors.json). What differs between refusals is whether the cloud may issue the same intent again, and it always does so as a new statement.",
+      "settled_by": "A result document of the request's result kind whose subject.statement_digest is the statement's digest, with any outcome (ok, rejected, failed, alarm). Nothing else settles a request: not the hand-over response, which says only that the spool holds the file, not the agent's removal of the entry, and not silence, which ends at the statement's expires_at, when the cloud marks the request lapsed.",
+      "delivery_window": {
+        "rule": "The cloud delivers a statement that has a window only inside it and with at least delivery_margin_seconds left, not_before <= now < expires_at - delivery_margin_seconds on the cloud's clock, and issues windows no longer than spool.max_entry_age_seconds, because the agent prunes an older entry. It never delivers early to have root hold the statement.",
+        "delivery_margin_seconds": 600
+      },
+      "reason_classes": {
+        "retryable": [
+          "clock-unsynced",
+          "fetch-failed",
+          "io-error",
+          "maintenance-blocked",
+          "not-yet-valid"
+        ],
+        "reschedule": ["approval-missing", "expired"],
+        "final": [
+          "actor-key-not-anchored",
+          "agent-abi-unsupported",
+          "anchor-invalid",
+          "anchor-not-os-pinned",
+          "archive-invalid",
+          "artifact-digest-mismatch",
+          "binary-digest-mismatch",
+          "board-mismatch",
+          "compatible-mismatch",
+          "config-rsc-load-failed",
+          "device-binding-mismatch",
+          "device-id-mismatch",
+          "envelope-invalid",
+          "firewall-load-failed",
+          "health-window-failed",
+          "interface-mapping-invalid",
+          "kernel-config-missing",
+          "key-epoch-below-ratchet",
+          "key-purpose-mismatch",
+          "key-unknown",
+          "os-version-too-old",
+          "payload-json-invalid",
+          "payload-type-mismatch",
+          "rauc-install-failed",
+          "rbac-manifest-digest-mismatch",
+          "release-digest-mismatch",
+          "release-mismatch",
+          "release-profile-mismatch",
+          "request-not-regular-file",
+          "request-too-large",
+          "request-unsupported",
+          "rollback-below-floor",
+          "schema-invalid",
+          "sequence-replay",
+          "signature-invalid",
+          "site-bundle-missing",
+          "site-file-digest-mismatch",
+          "tenant-mismatch",
+          "tenant-scope-mismatch"
+        ]
+      },
+      "class_rules": {
+        "retryable": "The cause is outside the statement and may clear (the clock, the network, the agent's alarms, a filesystem step): the cloud may issue the intent again without an operator, bounded by reissue.",
+        "reschedule": "The window passed without the update being applied (it closed before root looked, or no operator approved on site): the cloud marks the request lapsed, tells the operator, and issues a new statement only when an operator chooses a new window.",
+        "final": "The statement, the artifact or the device state is the cause: refused statements are forged, replayed, for another device, below a floor or malformed, and an installation or load that failed would fail the same way again. The cloud marks the request failed and alerts; recovery is a different statement (another release, bundle or policy) after the cause is fixed."
+      },
+      "reissue": {
+        "rule": "A re-issue is a new statement of the same kind and intent, never the same bytes: a not_before later than the refused statement's own makes its digest new, and its update_seq is greater than every update_seq the cloud has issued to the device for that kind, because root spends a sequence value when it has verified a statement (statements.json sequences.spending), so the value of a refused statement is gone. The cloud issues the next one at the earliest min_interval_seconds after the result, and stops campaign_max_seconds after the first statement of the intent, when it marks the request failed and alerts.",
+        "min_interval_seconds": 900,
+        "campaign_max_seconds": 604800
+      },
+      "approvals_note": "A retryable refusal costs a new statement, so the planned suderra.edge-update.v2 must bind its approvals to the device and the release, not to one statement digest, or every maintenance-blocked refusal would need a new two-person approval (statements.json planned_successors)."
+    }
+  },
+  "time": {
+    "description": "Which clock state each consumer needs (ADR-048 DEC-7). The state is the one root's time helper writes to /run/suderra/time-state (schemas/time-state.schema.json): unsynced, synced-unauthenticated or synced-nts. synced-unauthenticated exists only because the signed site policy (config-integrity key) explicitly marked a plain NTP source (DEC-7.1); no policy, and the default sources are NTS only, so before a policy is installed the only synced state is synced-nts. The device-lifecycle and edge-activation-receipt statements are windowed too but belong to their own hand-over units (handoff.commands), whose result kinds define no clock reason; their clock rule is not part of this table.",
+    "document": "/run/suderra/time-state",
+    "refresh_seconds": 30,
+    "max_age_seconds": 120,
+    "stale_rule": "The root helper rewrites the document at least every refresh_seconds. A reader treats an absent, unreadable or non-conforming document, and one whose updated_at is more than max_age_seconds away from its own clock in either direction, as unsynced.",
+    "consumers": {
+      "root-acceptance": {
+        "statements": [
+          "suderra.edge-provisioning.v1",
+          "suderra.edge-update.v1",
+          "suderra.os-update.v1",
+          "suderra.rbac-manifest.v1",
+          "suderra.site-config.v1",
+          "suderra.site-netpolicy.v1"
+        ],
+        "sufficient": ["synced-nts", "synced-unauthenticated"],
+        "refusal": "clock-unsynced",
+        "rule": "Root evaluates the window of a statement, not_before <= now < expires_at, only against a synchronized clock, and concludes with clock-unsynced, before it verifies the statement and spending nothing, when the state is unsynced. synced-unauthenticated suffices because only a signed site policy produces it (DEC-7: the signed exception for a site that cannot reach an NTS server) and the time floor (DEC-7.2) bounds any rewind; an installation that must not trust a plain NTP source does not mark one."
+      },
+      "agent-fresh-actuation": {
+        "sufficient": ["synced-nts", "synced-unauthenticated"],
+        "refusal": "clock-unsynced",
+        "rule": "Actuation that depends on freshness (a command envelope's iat and exp) is held or refused with the retryable result clock-unsynced while the state is unsynced; the check is never skipped (DEC-7.5)."
+      },
+      "agent-local-control": {
+        "sufficient": ["unsynced", "synced-unauthenticated", "synced-nts"],
+        "refusal": null,
+        "rule": "Local control, safe-state and alarms never depend on time and run in every state; the agent does not exit because the clock is unsynced (DEC-7.5)."
+      }
     }
   },
   "result_telemetry": {

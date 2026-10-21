@@ -10,6 +10,8 @@
     "RMA": "Terminal on the device: returned for repair with a signed device-lifecycle statement and physical presence (P3).",
     "LOCKED": "Not a stored state: the fail-safe reading of an unknown, missing, corrupt or unmountable store. The provisioning surface stays closed and an alarm result is written."
   },
+  "provisioning_surface_states": ["PROVISIONING", "MAINTENANCE"],
+  "provisioning_surface_rule": "The states in which the provisioning surface is open, that is in which the USB ingress unit may run (delivery.json usb.ingress.states equals this list): PROVISIONING and the time-boxed MAINTENANCE window; in ACTIVE USB storage is blocked by usbguard (DEC-12, DEC-18.2).",
   "transitions": [
     {
       "from": "FACTORY",

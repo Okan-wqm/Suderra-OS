@@ -57,7 +57,7 @@
     },
     "site_bundle_url": {
       "description": "Where root fetches the suderra.site-bundle.v1 document with the site files and the RBAC manifest this statement names, when the statement arrives on the update channel (channels.json update_channel, DEC-4.12). A provisioning delivery carries the files itself and root ignores the member there. The URL carries no trust: every byte fetched is checked against the digests of this statement.",
-      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/fetch_url"
     },
     "rbac_manifest": {
       "description": "The suderra.rbac-manifest.v1 statement delivered with this site config (rbac-manifest.dsse), by statement digest and policy_version.",

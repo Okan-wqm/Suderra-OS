@@ -8,8 +8,8 @@
 //! Schema accepts it; anything else is `schema-invalid`.
 
 use super::encoding::{
-    is_device_code, is_ed25519_public_key, is_https_url, is_kernel_symbol, is_nonce, is_os_version,
-    is_pem_certificate, is_semver, is_sha256_hex, is_tag_id, is_timestamp, is_uuid,
+    is_device_code, is_ed25519_public_key, is_fetch_url, is_https_url, is_kernel_symbol, is_nonce,
+    is_os_version, is_pem_certificate, is_semver, is_sha256_hex, is_tag_id, is_timestamp, is_uuid,
 };
 #[cfg(test)]
 use super::encoding::{
@@ -749,7 +749,7 @@ impl Statement for SiteConfig {
             )?;
         }
         if let Some(url) = &self.site_bundle_url {
-            ensure(is_https_url(url), "site_bundle_url is not an https URL")?;
+            ensure(is_fetch_url(url), "site_bundle_url is not a fetch URL")?;
         }
         self.rbac_manifest.digest.validate()?;
         sequence(
@@ -828,8 +828,30 @@ pub(crate) struct EdgeUpdate {
     pub artifact_url: String,
     /// Whether root applies the update only after a local approval.
     pub local_approval: bool,
+    /// Present, and then always true, when an operator asked the update to
+    /// ignore the maintenance gate's blockers (needs `local_approval`).
+    #[serde(default, deserialize_with = "present")]
+    pub blockers_override: Option<bool>,
     /// Outage budget in seconds.
     pub max_outage_seconds: u64,
+}
+
+/// The schema's `blockers_override` rule: the member is `true` or absent, and
+/// present only together with `local_approval: true`, so a person on site
+/// stands behind it (channels.json update_channel.maintenance.blockers.override).
+#[cfg(test)]
+fn blockers_override_needs_approval(
+    blockers_override: Option<bool>,
+    local_approval: bool,
+) -> Check {
+    match blockers_override {
+        None => Ok(()),
+        Some(true) => ensure(
+            local_approval,
+            "blockers_override needs local_approval true",
+        ),
+        Some(false) => Err("blockers_override is only ever true".to_owned()),
+    }
 }
 
 #[cfg(test)]
@@ -850,13 +872,14 @@ impl Statement for EdgeUpdate {
         window(&self.not_before, &self.expires_at)?;
         self.release_statement.digest.validate()?;
         ensure(
-            is_https_url(&self.release_statement.url),
-            "release_statement.url is not an https URL",
+            is_fetch_url(&self.release_statement.url),
+            "release_statement.url is not a fetch URL",
         )?;
         ensure(
-            is_https_url(&self.artifact_url),
-            "artifact_url is not an https URL",
+            is_fetch_url(&self.artifact_url),
+            "artifact_url is not a fetch URL",
         )?;
+        blockers_override_needs_approval(self.blockers_override, self.local_approval)?;
         ensure(
             (1..=3600).contains(&self.max_outage_seconds),
             "max_outage_seconds out of range",
@@ -928,6 +951,9 @@ pub(crate) struct OsUpdate {
     pub bundle: OsBundle,
     /// Whether root schedules the reboot only after a local approval.
     pub local_approval: bool,
+    /// As on the edge-update: only together with `local_approval: true`.
+    #[serde(default, deserialize_with = "present")]
+    pub blockers_override: Option<bool>,
     /// Outage budget in seconds.
     pub max_outage_seconds: u64,
 }
@@ -953,7 +979,7 @@ impl Statement for OsUpdate {
             "compatible is not a RAUC compatible",
         )?;
         ensure(
-            self.supported_agent_abi.len() <= 21
+            self.supported_agent_abi.len() <= 19
                 && parse_abi_range(&self.supported_agent_abi).is_some(),
             "supported_agent_abi is not MIN-MAX",
         )?;
@@ -965,14 +991,15 @@ impl Statement for OsUpdate {
         sequence(self.update_seq, "update_seq out of range")?;
         window(&self.not_before, &self.expires_at)?;
         ensure(
-            is_https_url(&self.bundle.url),
-            "bundle.url is not an https URL",
+            is_fetch_url(&self.bundle.url),
+            "bundle.url is not a fetch URL",
         )?;
         self.bundle.digest.validate()?;
         ensure(
             (1..=2_147_483_648).contains(&self.bundle.size_bytes),
             "bundle.size_bytes out of range",
         )?;
+        blockers_override_needs_approval(self.blockers_override, self.local_approval)?;
         ensure(
             (1..=3600).contains(&self.max_outage_seconds),
             "max_outage_seconds out of range",

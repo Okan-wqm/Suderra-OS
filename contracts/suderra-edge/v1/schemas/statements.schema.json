@@ -65,9 +65,10 @@
     "sequences": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["description", "equal_seq_policies"],
+      "required": ["description", "equal_seq_policies", "spending"],
       "properties": {
         "description": { "type": "string" },
+        "spending": { "type": "string" },
         "equal_seq_policies": {
           "type": "object",
           "additionalProperties": false,

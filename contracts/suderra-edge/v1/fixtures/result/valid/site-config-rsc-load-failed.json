@@ -10,6 +10,9 @@
   "reason": "config-rsc-load-failed",
   "subject": {
     "statement_type": "suderra.site-config.v1",
+    "statement_digest": {
+      "sha256": "7006986e1c1f7a00de0054a68c2a4af594cb84070de7ca5d3d964189e0e818c2"
+    },
     "update_seq": 3
   },
   "detail": "piControl refused revpi/config.rsc; site version 2 restored"

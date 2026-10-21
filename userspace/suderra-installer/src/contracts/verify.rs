@@ -10,7 +10,7 @@
 
 use super::dsse::{pae, verify_strict, Envelope};
 use super::encoding::{decode_base64_array, sha256_hex};
-use super::keys::{KeyEntry, KeyStore, KeyView};
+use super::keys::{is_admissible_key, KeyEntry, KeyStore, KeyView};
 use super::registry::{
     naming, Arch, BoardProfile, EqualSeq, Purpose, Reason, SitePath, StatementType,
 };
@@ -19,7 +19,7 @@ use super::statements::{
     EdgeRelease, RbacManifest, SiteConfig, Statement, TrustAnchors,
 };
 #[cfg(test)]
-use super::statements::{EdgeUpdate, OsUpdate, SiteNetpolicy};
+use super::statements::{EdgeUpdate, NetRole, OsUpdate, SiteNetpolicy};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Tenant and device a device is bound to (statements.json `identity`).
@@ -178,13 +178,15 @@ fn bound<'a>(scope: &Scope<'a>, identity: Option<&'a Identity>) -> Option<&'a Id
     scope.device.and_then(|d| d.identity.as_ref()).or(identity)
 }
 
-/// Window, sequence, binding and identity checks shared by every type.
+/// Window, sequence, binding and identity checks shared by every type. Returns
+/// whether the verification is a re-verification: `Mode::Reverify`, or an
+/// identical re-presentation of the accepted statement.
 fn generic_checks<T: Statement>(
     v: &Verified<T>,
     scope: &Scope<'_>,
     identity: Option<&Identity>,
     reasons: &mut BTreeSet<Reason>,
-) {
+) -> bool {
     let spec = T::TYPE.spec();
     let accepted = scope.device.and_then(|d| d.accepted.get(&T::TYPE));
     let mut reverify = scope.mode == Mode::Reverify;
@@ -235,6 +237,7 @@ fn generic_checks<T: Statement>(
     {
         reasons.insert(Reason::TenantMismatch);
     }
+    reverify
 }
 
 /// An integer member of an unverified payload, for digest-reference checks.
@@ -354,7 +357,9 @@ pub(crate) fn verify_trust_anchors(
     for anchor in &v.statement.anchors {
         let Anchor::Ed25519(a) = anchor else { continue };
         let raw = decode_base64_array::<32>(&a.public_key);
-        let consistent = raw.is_some_and(|raw| sha256_hex(&raw) == a.keyid);
+        // A key no key store may admit (non-canonical or small-order) is no anchor.
+        let consistent =
+            raw.is_some_and(|raw| sha256_hex(&raw) == a.keyid && is_admissible_key(&raw));
         // One keyid resolves to one (purpose, epoch): a key anchored twice is
         // as ambiguous as a slot anchored twice.
         if !consistent || !slots.insert((a.purpose, a.epoch)) || !keyids.insert(&a.keyid) {
@@ -823,13 +828,57 @@ pub(crate) fn verify_os_update(
     }
 }
 
+/// An Ethernet interface of the device as root reads it from sysfs: the facts
+/// the interface role mapping of a site policy is evaluated against.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NetworkInterface {
+    /// Lowercase colon-separated MAC address.
+    pub mac: String,
+    /// PCI address (DDDD:BB:SS.F), `None` for an interface that is no PCI device.
+    pub pci_path: Option<String>,
+}
+
+/// Whether the effective interface roles of `policy` on `interfaces` are
+/// usable (statements.json suderra.site-netpolicy.v1 notes, boards.json
+/// `interface_role_rule`): an interface has the role of the policy entry that
+/// matches its MAC or PCI path, else the board's default; an entry that matches
+/// no interface is ignored; no interface is matched by two entries; and at
+/// least one interface is `wan`, because the broker, API, NTP and DNS rules
+/// exist only on the WAN role and an `nft -c` check cannot see their absence.
+#[cfg(test)]
+fn interface_mapping_usable(
+    policy: &SiteNetpolicy,
+    board: BoardProfile,
+    interfaces: &[NetworkInterface],
+) -> bool {
+    let default_role = board.spec().default_interface_role;
+    let mut wan = 0;
+    for nic in interfaces {
+        let mut matching = policy.interfaces.iter().filter(|entry| {
+            entry.mac.as_deref() == Some(nic.mac.as_str())
+                || (entry.pci_path.is_some() && entry.pci_path == nic.pci_path)
+        });
+        let role = match (matching.next(), matching.next()) {
+            (_, Some(_)) => return false,
+            (Some(entry), None) => entry.role,
+            (None, None) => default_role,
+        };
+        if role == NetRole::Wan {
+            wan += 1;
+        }
+    }
+    wan > 0
+}
+
 /// Verifies a suderra.site-netpolicy.v1 statement against a verified bundle's
-/// anchors.
+/// anchors and the device's interfaces.
 #[cfg(test)]
 pub(crate) fn verify_site_netpolicy(
     env: &Envelope,
     scope: &Scope<'_>,
     bundle: &KeyStore,
+    interfaces: &[NetworkInterface],
 ) -> Verdict<SiteNetpolicy> {
     let keys = KeyView {
         os: scope.os_keys,
@@ -840,7 +889,16 @@ pub(crate) fn verify_site_netpolicy(
         Err(reason) => return Verdict::halted(reason),
     };
     let mut reasons = BTreeSet::new();
-    generic_checks(&v, scope, None, &mut reasons);
+    let reverified = generic_checks(&v, scope, None, &mut reasons);
+    // The roles of a policy that is not well-formed are undefined, and `open`
+    // has already refused it. The check depends on the interfaces present, which
+    // can change after installation, so re-verification skips it (statements.json
+    // `reverification`); a statement is evaluated on a device.
+    if let (false, Some(device)) = (reverified, scope.device) {
+        if !interface_mapping_usable(&v.statement, device.board, interfaces) {
+            reasons.insert(Reason::InterfaceMappingInvalid);
+        }
+    }
     Verdict {
         reasons,
         verified: Some(v),
@@ -854,6 +912,7 @@ pub(crate) fn verify_site_netpolicy_with_bundle(
     env: &Envelope,
     ta: &Envelope,
     scope: &Scope<'_>,
+    interfaces: &[NetworkInterface],
 ) -> Verdict<SiteNetpolicy> {
     if env.payload_type != StatementType::SiteNetpolicy.payload_type() {
         return Verdict::halted(Reason::PayloadTypeMismatch);
@@ -865,7 +924,7 @@ pub(crate) fn verify_site_netpolicy_with_bundle(
             verified: None,
         };
     };
-    let mut verdict = verify_site_netpolicy(env, scope, &keys);
+    let mut verdict = verify_site_netpolicy(env, scope, &keys, interfaces);
     verdict.reasons.extend(reasons);
     verdict
 }

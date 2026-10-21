@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:agent-health",
   "title": "suderra.agent-health.v1 agent health view",
-  "description": "The agent's own account of its liveness and degraded mode (ADR-048 DEC-6.3, DEC-6.4, DEC-6.8), written atomically (temporary name in the same directory, then rename) by the agent and read by root's health check and the RAUC health gate, which count an absent, unreadable or oversized (more than 64 KiB) document as degraded. Suderra OS: /run/suderra/agent-health/health.json on the tmpfs (mutable-state.json). Generic profile: <data>/state/health.json (mutable-state.json generic_profile), because the generic unit has no runtime directory; it is rewritten only when its content changes. This is the wire format of the P0 writer (sens-api-gateway/src/degraded.rs), kept member for member and extended by update_blockers: its type member is `schema`, not `_type`. Degraded mode is not an exit: the process is up, control is disabled, outputs are held in their safe state, an alarm is raised and READY is sent (DEC-6.3). `standby` is the one phase that precedes the first output being touched: the agent waits, with EXTEND_TIMEOUT_USEC and no READY, for a configuration it can verify (config-unverified), and the reason clears once one verifies, because nothing acted on the unverified one.",
+  "description": "The agent's own account of its liveness and degraded mode (ADR-048 DEC-6.3, DEC-6.4, DEC-6.8), written atomically (temporary name in the same directory, then rename) by the agent and read by root's health check and the RAUC health gate, which count an absent, unreadable or oversized (more than 64 KiB) document as degraded, and by root's update worker, which reads only schema, update_blockers and updated_at and treats an unavailable view as a blocker only while the agent unit is active (channels.json update_channel.maintenance.blockers). Suderra OS: /run/suderra/agent-health/health.json on the tmpfs (mutable-state.json). Generic profile: <data>/state/health.json (mutable-state.json generic_profile), because the generic unit has no runtime directory; it is rewritten only when its content changes. This is the wire format of the P0 writer (sens-api-gateway/src/degraded.rs), kept member for member and extended by update_blockers: its type member is `schema`, not `_type`. Degraded mode is not an exit: the process is up, control is disabled, outputs are held in their safe state, an alarm is raised and READY is sent (DEC-6.3). `standby` is the one phase that precedes the first output being touched: the agent waits, with EXTEND_TIMEOUT_USEC and no READY, for a configuration it can verify (config-unverified), and the reason clears once one verifies, because nothing acted on the unverified one.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -121,10 +121,9 @@
       ]
     },
     "update_blockers": {
-      "description": "What stops root from starting an edge-update, an os-update or a site-config now (ADR-048 DEC-13.4, channels.json update_channel.maintenance): active-alarm while any alarm is active, forced-output while any output holds a forced value. Empty when nothing blocks; root treats an absent member, like an absent or unreadable document, as blocked.",
+      "description": "What stops root from starting an edge-update, an os-update or a site-config now (ADR-048 DEC-13.4, channels.json update_channel.maintenance.blockers): active-alarm while any alarm is active, forced-output while any output holds a forced value. Empty when nothing blocks. The list is unique over a two-value vocabulary, so it holds at most two entries.",
       "type": "array",
       "uniqueItems": true,
-      "maxItems": 2,
       "items": {
         "enum": ["active-alarm", "forced-output"]
       }
@@ -135,7 +134,7 @@
       "maxLength": 512
     },
     "updated_at": {
-      "description": "RFC 3339 instant of the write in UTC, with optional fractional seconds and either the Z or the +00:00 form (chrono to_rfc3339). Not the contract timestamp form, because the document is an observation, not a statement.",
+      "description": "RFC 3339 instant of the write in UTC, with optional fractional seconds and either the Z or the +00:00 form (chrono to_rfc3339). Not the contract timestamp form, because the document is an observation, not a statement. On Suderra OS the agent rewrites the document at least every channels.json update_channel.maintenance.blockers.health_view.refresh_seconds, also when nothing changed, so the update worker can tell a current view from a stale one.",
       "type": "string",
       "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?(Z|\\+00:00)$"
     }

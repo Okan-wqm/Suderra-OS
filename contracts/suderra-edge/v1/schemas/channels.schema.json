@@ -4,7 +4,15 @@
   "title": "channels.json runtime channels",
   "type": "object",
   "additionalProperties": false,
-  "required": ["description", "mqtt", "activation", "handoff", "update_channel", "result_telemetry"],
+  "required": [
+    "description",
+    "mqtt",
+    "activation",
+    "handoff",
+    "update_channel",
+    "time",
+    "result_telemetry"
+  ],
   "properties": {
     "description": { "type": "string" },
     "mqtt": {
@@ -151,7 +159,14 @@
     "update_channel": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["description", "spool", "carried_statements", "maintenance"],
+      "required": [
+        "description",
+        "spool",
+        "fetch",
+        "carried_statements",
+        "maintenance",
+        "settlement"
+      ],
       "properties": {
         "description": { "type": "string" },
         "spool": {
@@ -196,6 +211,17 @@
             "concluded": { "type": "string" }
           }
         },
+        "fetch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule", "max_release_statement_bytes", "max_site_bundle_bytes", "artifact_bound"],
+          "properties": {
+            "rule": { "type": "string" },
+            "max_release_statement_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 },
+            "max_site_bundle_bytes": { "type": "integer", "minimum": 1024, "maximum": 67108864 },
+            "artifact_bound": { "type": "string" }
+          }
+        },
         "carried_statements": {
           "type": "object",
           "propertyNames": { "$ref": "#/$defs/statement_type" },
@@ -224,10 +250,184 @@
           "required": ["window", "blockers", "local_approval", "outage_budget", "after_failure"],
           "properties": {
             "window": { "type": "string" },
-            "blockers": { "type": "string" },
+            "blockers": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["applies_to", "rule", "agent_unit", "health_view", "recheck", "override"],
+              "properties": {
+                "applies_to": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/statement_type" }
+                },
+                "rule": { "type": "string" },
+                "agent_unit": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["unit", "blocking_active_states"],
+                  "properties": {
+                    "unit": { "type": "string", "pattern": "^[a-z0-9-]+\\.service$" },
+                    "blocking_active_states": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": ["active", "reloading", "inactive", "failed", "activating", "deactivating"]
+                      }
+                    }
+                  }
+                },
+                "health_view": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "schema",
+                    "read_members",
+                    "read_rule",
+                    "refresh_seconds",
+                    "max_age_seconds",
+                    "freshness_rule"
+                  ],
+                  "properties": {
+                    "path": { "type": "string", "pattern": "^/run/suderra/" },
+                    "schema": { "const": "schemas/agent-health.schema.json" },
+                    "read_members": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": { "type": "string" }
+                    },
+                    "read_rule": { "type": "string" },
+                    "refresh_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+                    "max_age_seconds": { "type": "integer", "minimum": 2, "maximum": 86400 },
+                    "freshness_rule": { "type": "string" }
+                  }
+                },
+                "recheck": { "type": "string" },
+                "override": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["member", "applies_to", "rule"],
+                  "properties": {
+                    "member": { "const": "blockers_override" },
+                    "applies_to": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": { "$ref": "#/$defs/statement_type" }
+                    },
+                    "rule": { "type": "string" }
+                  }
+                }
+              }
+            },
             "local_approval": { "type": "string" },
             "outage_budget": { "type": "string" },
             "after_failure": { "type": "string" }
+          }
+        },
+        "settlement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "description",
+            "settled_by",
+            "delivery_window",
+            "reason_classes",
+            "class_rules",
+            "reissue",
+            "approvals_note"
+          ],
+          "properties": {
+            "description": { "type": "string" },
+            "settled_by": { "type": "string" },
+            "delivery_window": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule", "delivery_margin_seconds"],
+              "properties": {
+                "rule": { "type": "string" },
+                "delivery_margin_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+              }
+            },
+            "reason_classes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["retryable", "reschedule", "final"],
+              "properties": {
+                "retryable": { "$ref": "#/$defs/reason_list" },
+                "reschedule": { "$ref": "#/$defs/reason_list" },
+                "final": { "$ref": "#/$defs/reason_list" }
+              }
+            },
+            "class_rules": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["retryable", "reschedule", "final"],
+              "properties": {
+                "retryable": { "type": "string" },
+                "reschedule": { "type": "string" },
+                "final": { "type": "string" }
+              }
+            },
+            "reissue": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule", "min_interval_seconds", "campaign_max_seconds"],
+              "properties": {
+                "rule": { "type": "string" },
+                "min_interval_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+                "campaign_max_seconds": { "type": "integer", "minimum": 3600, "maximum": 31536000 }
+              }
+            },
+            "approvals_note": { "type": "string" }
+          }
+        }
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "document",
+        "refresh_seconds",
+        "max_age_seconds",
+        "stale_rule",
+        "consumers"
+      ],
+      "properties": {
+        "description": { "type": "string" },
+        "document": { "const": "/run/suderra/time-state" },
+        "refresh_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "max_age_seconds": { "type": "integer", "minimum": 2, "maximum": 86400 },
+        "stale_rule": { "type": "string" },
+        "consumers": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/slug" },
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sufficient", "refusal", "rule"],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/statement_type" }
+              },
+              "sufficient": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "enum": ["unsynced", "synced-unauthenticated", "synced-nts"] }
+              },
+              "refusal": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/slug" }] },
+              "rule": { "type": "string" }
+            }
           }
         }
       }
@@ -265,6 +465,12 @@
   },
   "$defs": {
     "slug": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "reason_list": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/slug" }
+    },
     "statement_type": { "type": "string", "pattern": "^suderra\\.[a-z0-9-]+\\.v[1-9][0-9]*$" },
     "topic": {
       "type": "object",

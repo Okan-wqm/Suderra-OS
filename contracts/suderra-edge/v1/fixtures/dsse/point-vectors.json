@@ -1,6 +1,6 @@
 {
   "test_only": true,
-  "description": "Point-decoding vectors for the 'y < p' rule of statements.json dsse.signature_algorithm: every 32-byte encoding with y below 19 that decodes to a curve point, in its canonical form and in the non-canonical form y + p, with either sign bit. A verifier must reject a public key or commitment whose encoding is not canonical; for the points of full order no signature can exist, so these vectors, unlike dsse/signature-vectors.json, test the rule itself.",
+  "description": "Point-decoding vectors for the key-admission rule of statements.json dsse.signature_algorithm: every 32-byte encoding with y below 19 that decodes to a curve point, in its canonical form and in the non-canonical form y + p, with either sign bit. A key store must refuse a public key whose encoding is non-canonical or whose point is small-order. For the points of full order no signature can exist, so these vectors cannot test signature verification (dsse/signature-vectors.json does); they test the admission of a key, and trust-anchors/invalid/anchor-non-canonical-key pins it end to end.",
   "vectors": [
     {
       "id": "y0-canonical-sign0",

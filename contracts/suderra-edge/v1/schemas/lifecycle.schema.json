@@ -4,7 +4,15 @@
   "title": "lifecycle.json device lifecycle",
   "type": "object",
   "additionalProperties": false,
-  "required": ["description", "store", "states", "transitions", "cloud_device_lifecycle"],
+  "required": [
+    "description",
+    "store",
+    "states",
+    "provisioning_surface_states",
+    "provisioning_surface_rule",
+    "transitions",
+    "cloud_device_lifecycle"
+  ],
   "properties": {
     "description": { "type": "string" },
     "store": { "const": "/data/suderra/os/lifecycle" },
@@ -15,6 +23,13 @@
       },
       "additionalProperties": { "type": "string", "minLength": 10 }
     },
+    "provisioning_surface_states": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/lifecycle_state" }
+    },
+    "provisioning_surface_rule": { "type": "string", "minLength": 10 },
     "transitions": {
       "type": "array",
       "minItems": 1,

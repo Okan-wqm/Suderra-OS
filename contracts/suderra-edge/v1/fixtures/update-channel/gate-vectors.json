@@ -1,0 +1,570 @@
+{
+  "test_only": true,
+  "description": "Vectors of the two gates that read documents the agent or the root time helper writes. maintenance: whether root's update worker starts an edge-update, an os-update or a site-config (proceed) or concludes it with maintenance-blocked, given the state of the agent unit (systemd ActiveState), the agent health view root finds (absent, unreadable, oversized, or a document of the fixtures, whose size_bytes, when given, is the size of the file: more than 64 KiB is oversized, whatever it holds; read for schema, update_blockers and updated_at only), root's clock and, for an edge-update or os-update, the statement's blockers_override (channels.json update_channel.maintenance.blockers). clock: whether a consumer's clock requirement is met (sufficient) by the time-state document the reader finds (channels.json time). Paths are relative to fixtures/.",
+  "maintenance": [
+    {
+      "id": "active-clean-view",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "A running agent with nothing blocking: the update starts."
+    },
+    {
+      "id": "active-alarm",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-alarm-blocks-update.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "An active alarm blocks."
+    },
+    {
+      "id": "active-forced-output",
+      "statement_type": "suderra.os-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-forced-output.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A forced output blocks an OS update too."
+    },
+    {
+      "id": "active-alarm-site-config",
+      "statement_type": "suderra.site-config.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-alarm-blocks-update.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A site config is held to the gate as well."
+    },
+    {
+      "id": "reloading-alarm",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "reloading",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-alarm-blocks-update.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A unit that is reloading still runs its control loop."
+    },
+    {
+      "id": "active-view-absent",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A running agent without a view cannot prove that no alarm is active."
+    },
+    {
+      "id": "active-view-unreadable",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "unreadable"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A view root cannot read counts as unavailable."
+    },
+    {
+      "id": "active-view-oversized",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "oversized",
+        "size_bytes": 65537
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A view larger than 64 KiB counts as unavailable."
+    },
+    {
+      "id": "active-view-at-size-limit",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running.json",
+        "size_bytes": 65536
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "A view of exactly 64 KiB is read: only a larger one is unavailable."
+    },
+    {
+      "id": "active-view-over-size-limit",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running.json",
+        "size_bytes": 65537
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "The same view one byte larger than 64 KiB is unavailable, whatever it holds."
+    },
+    {
+      "id": "active-view-missing-blockers",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/invalid/blockers-missing.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "update_blockers is a member root reads: without it the view is unavailable."
+    },
+    {
+      "id": "active-view-duplicate-blocker",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/invalid/duplicate-blocker.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A duplicate in update_blockers makes the view ill-formed."
+    },
+    {
+      "id": "active-view-unknown-blocker",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/invalid/unknown-blocker.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "A blocker outside the vocabulary makes the view ill-formed."
+    },
+    {
+      "id": "active-view-offset-timestamp",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/invalid/offset-timestamp.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "maintenance-blocked",
+      "note": "updated_at in a non-UTC offset makes the view ill-formed."
+    },
+    {
+      "id": "active-view-other-member-invalid",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/invalid/unknown-member.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "A member root does not read never makes the gate refuse: the health gate's business, not this gate's."
+    },
+    {
+      "id": "active-view-degraded-contradiction",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/invalid/degraded-with-control-enabled.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "Another member root does not read."
+    },
+    {
+      "id": "active-view-at-max-age",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-whole-second.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "updated_at 60 seconds before root's clock is exactly max_age_seconds: fresh."
+    },
+    {
+      "id": "active-view-stale",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-whole-second.json"
+      },
+      "now": "2026-10-20T12:00:01Z",
+      "expect": "maintenance-blocked",
+      "note": "One second beyond max_age_seconds: stale."
+    },
+    {
+      "id": "active-view-future-at-max-age",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-whole-second.json"
+      },
+      "now": "2026-10-20T11:58:00Z",
+      "expect": "proceed",
+      "note": "updated_at exactly max_age_seconds ahead of root's clock: fresh."
+    },
+    {
+      "id": "active-view-future-stale",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-whole-second.json"
+      },
+      "now": "2026-10-20T11:57:59Z",
+      "expect": "maintenance-blocked",
+      "note": "updated_at beyond max_age_seconds ahead of root's clock: stale in either direction."
+    },
+    {
+      "id": "inactive-view-absent",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "inactive",
+      "health_view": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "A stopped agent holds no alarm: the update that replaces it starts."
+    },
+    {
+      "id": "failed-view-stale",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "failed",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-whole-second.json"
+      },
+      "now": "2026-10-20T12:30:00Z",
+      "expect": "proceed",
+      "note": "A failed unit with a stale view: nothing to protect."
+    },
+    {
+      "id": "failed-alarm-view",
+      "statement_type": "suderra.os-update.v1",
+      "agent_unit_state": "failed",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-alarm-blocks-update.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "The view of a dead agent is history, not a blocker."
+    },
+    {
+      "id": "activating-alarm-view",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "activating",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-alarm-blocks-update.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "An agent that is restarting has not taken its outputs yet (the boot safe-state runs before READY)."
+    },
+    {
+      "id": "deactivating-view-absent",
+      "statement_type": "suderra.site-config.v1",
+      "agent_unit_state": "deactivating",
+      "health_view": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "An agent that is stopping holds its outputs in the safe state."
+    },
+    {
+      "id": "override-alarm",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-alarm-blocks-update.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "An operator's edge-update with blockers_override ignores an active alarm (it carries local_approval true).",
+      "blockers_override": true
+    },
+    {
+      "id": "override-view-absent",
+      "statement_type": "suderra.os-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "proceed",
+      "note": "An operator's os-update with blockers_override ignores a missing view.",
+      "blockers_override": true
+    },
+    {
+      "id": "override-stale-view",
+      "statement_type": "suderra.edge-update.v1",
+      "agent_unit_state": "active",
+      "health_view": {
+        "kind": "document",
+        "path": "agent-health/valid/running-whole-second.json"
+      },
+      "now": "2026-10-20T12:30:00Z",
+      "expect": "proceed",
+      "note": "An operator's override ignores a stale view.",
+      "blockers_override": true
+    }
+  ],
+  "clock": [
+    {
+      "id": "root-acceptance-nts",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "sufficient",
+      "note": "A clock disciplined against pinned NTS servers."
+    },
+    {
+      "id": "root-acceptance-unauthenticated",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-unauthenticated.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "sufficient",
+      "note": "A clock disciplined by a site NTP server the signed policy marked: sufficient, because only a signed policy produces it and the time floor bounds a rewind."
+    },
+    {
+      "id": "root-acceptance-unsynced",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/unsynced.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "A clock that only passed the time floor."
+    },
+    {
+      "id": "root-acceptance-absent",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "No time-state counts as unsynced."
+    },
+    {
+      "id": "root-acceptance-unreadable",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "unreadable"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "An unreadable time-state counts as unsynced."
+    },
+    {
+      "id": "root-acceptance-non-conforming",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/invalid/unknown-state.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "A time-state outside the closed state set counts as unsynced."
+    },
+    {
+      "id": "root-acceptance-at-max-age",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T12:01:59Z",
+      "expect": "sufficient",
+      "note": "updated_at exactly max_age_seconds before the reader's clock: fresh."
+    },
+    {
+      "id": "root-acceptance-stale",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T12:02:00Z",
+      "expect": "insufficient",
+      "note": "One second beyond max_age_seconds: the state is stale and counts as unsynced."
+    },
+    {
+      "id": "root-acceptance-future-stale",
+      "consumer": "root-acceptance",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T11:57:58Z",
+      "expect": "insufficient",
+      "note": "updated_at beyond max_age_seconds ahead of the reader's clock: stale in either direction."
+    },
+    {
+      "id": "agent-fresh-actuation-nts",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "sufficient",
+      "note": "A clock disciplined against pinned NTS servers."
+    },
+    {
+      "id": "agent-fresh-actuation-unauthenticated",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-unauthenticated.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "sufficient",
+      "note": "A clock disciplined by a site NTP server the signed policy marked: sufficient, because only a signed policy produces it and the time floor bounds a rewind."
+    },
+    {
+      "id": "agent-fresh-actuation-unsynced",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/unsynced.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "A clock that only passed the time floor."
+    },
+    {
+      "id": "agent-fresh-actuation-absent",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "No time-state counts as unsynced."
+    },
+    {
+      "id": "agent-fresh-actuation-unreadable",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "unreadable"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "An unreadable time-state counts as unsynced."
+    },
+    {
+      "id": "agent-fresh-actuation-non-conforming",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/invalid/unknown-state.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "insufficient",
+      "note": "A time-state outside the closed state set counts as unsynced."
+    },
+    {
+      "id": "agent-fresh-actuation-at-max-age",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T12:01:59Z",
+      "expect": "sufficient",
+      "note": "updated_at exactly max_age_seconds before the reader's clock: fresh."
+    },
+    {
+      "id": "agent-fresh-actuation-stale",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T12:02:00Z",
+      "expect": "insufficient",
+      "note": "One second beyond max_age_seconds: the state is stale and counts as unsynced."
+    },
+    {
+      "id": "agent-fresh-actuation-future-stale",
+      "consumer": "agent-fresh-actuation",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-20T11:57:58Z",
+      "expect": "insufficient",
+      "note": "updated_at beyond max_age_seconds ahead of the reader's clock: stale in either direction."
+    },
+    {
+      "id": "local-control-unsynced",
+      "consumer": "agent-local-control",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/unsynced.json"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "sufficient",
+      "note": "Local control, safe-state and alarms run in every state."
+    },
+    {
+      "id": "local-control-absent",
+      "consumer": "agent-local-control",
+      "time_state": {
+        "kind": "absent"
+      },
+      "now": "2026-10-20T12:00:00Z",
+      "expect": "sufficient",
+      "note": "They do not depend on the time-state document at all."
+    },
+    {
+      "id": "local-control-stale",
+      "consumer": "agent-local-control",
+      "time_state": {
+        "kind": "document",
+        "path": "time-state/valid/synced-nts.json"
+      },
+      "now": "2026-10-21T12:00:00Z",
+      "expect": "sufficient",
+      "note": "Nor on its age."
+    }
+  ]
+}

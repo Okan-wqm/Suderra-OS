@@ -15,7 +15,7 @@
 //! pin dev/CI keys (DEC-3.9).
 
 use crate::contracts::encoding::sha256_hex;
-use crate::contracts::keys::{KeyEntry, KeyStore};
+use crate::contracts::keys::{is_admissible_key, KeyEntry, KeyStore};
 use crate::contracts::registry::{is_test_only_keyid, BoardProfile, BoardRole, Purpose};
 use crate::fsutil::read_root_file;
 use crate::paths::Paths;
@@ -87,6 +87,13 @@ impl PinPolicy {
 /// Admits one pinned key under the image's policy.
 pub(crate) fn admit(entry: &KeyEntry, policy: PinPolicy) -> Result<()> {
     let keyid = sha256_hex(&entry.raw);
+    if !is_admissible_key(&entry.raw) {
+        bail!(
+            "{}/{} pins key {keyid}, which no key store admits (non-canonical or small-order point)",
+            entry.purpose,
+            entry.epoch
+        );
+    }
     if is_test_only_keyid(&keyid) {
         bail!(
             "{}/{} pins contract TEST-ONLY key {keyid}; no image may pin it (DEC-3.9)",
@@ -186,6 +193,30 @@ mod tests {
         for policy in [PinPolicy::DevCi, PinPolicy::ProductionAllowlist] {
             let err = admit(&entry, policy).unwrap_err().to_string();
             assert!(err.contains("TEST-ONLY"), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_pin_that_is_no_admissible_key_is_no_pin() {
+        // statements.json dsse.signature_algorithm: no key store admits a key that
+        // is non-canonical or small-order, so the OS image's pin of one is no pin.
+        // The control is an admissible key under the same policy.
+        let admissible = KeyEntry {
+            purpose: Purpose::EdgeRelease,
+            epoch: 1,
+            raw: signing_key("edge-release").verifying_key().to_bytes(),
+        };
+        assert!(admit(&admissible, PinPolicy::DevCi).is_ok());
+        let mut non_canonical_identity = [0xff; 32];
+        non_canonical_identity[0] = 0xed;
+        non_canonical_identity[31] = 0x7f;
+        for raw in [[0u8; 32], non_canonical_identity] {
+            let entry = KeyEntry {
+                raw,
+                ..admissible.clone()
+            };
+            let err = admit(&entry, PinPolicy::DevCi).unwrap_err().to_string();
+            assert!(err.contains("no key store admits"), "{err}");
         }
     }
 

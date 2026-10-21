@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:result",
   "title": "suderra.result.v1 install and update result",
-  "description": "Typed result that root workers write to /data/suderra/os/results/ and expose under /run/suderra/results/ (directory root:suderra 0750, files 0640); the agent publishes it on its result topic and the cloud stores it per device (ADR-048 DEC-27). Unsigned: an observation, never authority. reason is enumerated per kind: the rejection codes of the statements that kind verifies (statements.json unsigned_documents reasons_by_kind) plus its operational codes.",
+  "description": "Typed result that root workers write to /data/suderra/os/results/ and expose under /run/suderra/results/ (directory root:suderra 0750, files 0640); the agent publishes it on its result topic and the cloud stores it per device (ADR-048 DEC-27). Unsigned: an observation, never authority. reason is enumerated per kind: the rejection codes of the statements that kind verifies (statements.json unsigned_documents reasons_by_kind) plus its operational codes. A result of a kind that a request on the update channel causes (edge-update, os-update, site-config, site-netpolicy, trust-anchors) names the statement it concludes in subject.statement_type and subject.statement_digest: that digest is what settles the request (channels.json update_channel.settlement).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -573,6 +573,7 @@
               "envelope-invalid",
               "expired",
               "firewall-load-failed",
+              "interface-mapping-invalid",
               "io-error",
               "key-epoch-below-ratchet",
               "key-purpose-mismatch",
@@ -620,5 +621,25 @@
         }
       }
     }
-  ]
+  ],
+  "if": {
+    "properties": {
+      "kind": {
+        "enum": ["edge-update", "os-update", "site-config", "site-netpolicy", "trust-anchors"]
+      }
+    },
+    "required": ["kind"]
+  },
+  "then": {
+    "required": ["subject"],
+    "properties": {
+      "subject": {
+        "properties": {
+          "statement_type": true,
+          "statement_digest": true
+        },
+        "required": ["statement_type", "statement_digest"]
+      }
+    }
+  }
 }

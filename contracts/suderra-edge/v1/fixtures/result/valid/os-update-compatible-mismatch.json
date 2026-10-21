@@ -10,6 +10,9 @@
   "reason": "compatible-mismatch",
   "subject": {
     "statement_type": "suderra.os-update.v1",
+    "statement_digest": {
+      "sha256": "4204a95d2967d85e74033a85b03a40f2d6e43e82e538e97326de1f298d5f733b"
+    },
     "update_seq": 3
   }
 }

@@ -71,7 +71,7 @@
       "required": ["url", "digest", "size_bytes"],
       "properties": {
         "url": {
-          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/fetch_url"
         },
         "digest": {
           "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
@@ -84,8 +84,12 @@
       }
     },
     "local_approval": {
-      "description": "True when root schedules the reboot only after a local operator approval (DEC-13.4); an active alarm or a forced value blocks the update in both cases (maintenance-blocked).",
+      "description": "True when root schedules the reboot only after a local operator approval (DEC-13.4); an active alarm or a forced value blocks the update in both cases (maintenance-blocked) unless blockers_override is present. Required: a statement without it is schema-invalid, never read as no approval.",
       "type": "boolean"
+    },
+    "blockers_override": {
+      "description": "Present, and then always true, when an operator asked for this update to ignore the maintenance gate's blockers (channels.json update_channel.maintenance.blockers.override): root applies it after the local approval whatever the agent health view says. It requires local_approval true, so a person on site stands behind it. Absent means the gate applies.",
+      "const": true
     },
     "max_outage_seconds": {
       "description": "Outage budget of the update's reboot, from the shutdown safe-state to the first control tick of the new slot (DEC-2.7, DEC-13.4).",
@@ -93,5 +97,22 @@
       "minimum": 1,
       "maximum": 3600
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "blockers_override": true
+        },
+        "required": ["blockers_override"]
+      },
+      "then": {
+        "properties": {
+          "local_approval": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
 }

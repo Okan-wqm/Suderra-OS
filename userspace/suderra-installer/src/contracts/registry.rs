@@ -10,6 +10,8 @@
 //! mirrored here. `tests` compares every table with the vendored contract and
 //! fails the build on any drift (tier 3, "make it detectable").
 
+#[cfg(test)]
+use super::statements::NetRole;
 use serde::{Deserialize, Serialize};
 
 macro_rules! string_enum {
@@ -112,6 +114,7 @@ string_enum!(
         RbacManifestDigestMismatch => "rbac-manifest-digest-mismatch",
         ActorKeyNotAnchored => "actor-key-not-anchored",
         InstalledDigestMismatch => "installed-digest-mismatch",
+        InterfaceMappingInvalid => "interface-mapping-invalid",
         ClockUnsynced => "clock-unsynced",
         FetchFailed => "fetch-failed",
         ArtifactDigestMismatch => "artifact-digest-mismatch",
@@ -174,8 +177,12 @@ pub(crate) const VERIFICATION_ORDER: [Reason; 8] = [
 ];
 
 /// statements.json `reverification`: checks skipped and added on re-verification.
-pub(crate) const REVERIFY_SKIPPED: [Reason; 3] =
-    [Reason::NotYetValid, Reason::Expired, Reason::SequenceReplay];
+pub(crate) const REVERIFY_SKIPPED: [Reason; 4] = [
+    Reason::NotYetValid,
+    Reason::Expired,
+    Reason::SequenceReplay,
+    Reason::InterfaceMappingInvalid,
+];
 /// See [`REVERIFY_SKIPPED`].
 pub(crate) const REVERIFY_ADDED: [Reason; 1] = [Reason::InstalledDigestMismatch];
 
@@ -519,6 +526,7 @@ impl StatementType {
                     R::DeviceIdMismatch,
                     R::TenantMismatch,
                     R::SequenceReplay,
+                    R::InterfaceMappingInvalid,
                 ],
                 #[cfg(test)]
                 reverified: true,
@@ -621,6 +629,10 @@ pub(crate) struct BoardSpec {
     pub rauc_compatible: &'static str,
     /// Device binding method of the board.
     pub device_binding_method: BindingMethod,
+    /// Role of every Ethernet interface until a signed site policy maps it to
+    /// another one (boards.json `default_interface_role`, DEC-11.6).
+    #[cfg(test)]
+    pub default_interface_role: NetRole,
 }
 
 impl BoardProfile {
@@ -635,6 +647,8 @@ impl BoardProfile {
                 cargo_features: &[F::RevpiIo, F::ScadaDisplay, F::SuderraOs],
                 rauc_compatible: "suderra-os-revpi-connect4",
                 device_binding_method: BindingMethod::TpmEkSha256,
+                #[cfg(test)]
+                default_interface_role: NetRole::Wan,
             },
             BoardProfile::Rpi4Cm4 => BoardSpec {
                 role: BoardRole::Secondary,
@@ -643,6 +657,8 @@ impl BoardProfile {
                 cargo_features: &[F::Gpio, F::ScadaDisplay, F::SuderraOs],
                 rauc_compatible: "suderra-os-rpi4-cm4",
                 device_binding_method: BindingMethod::Bcm2711SerialOtpSha256,
+                #[cfg(test)]
+                default_interface_role: NetRole::Wan,
             },
             BoardProfile::QemuX86_64 => BoardSpec {
                 role: BoardRole::Ci,
@@ -651,6 +667,8 @@ impl BoardProfile {
                 cargo_features: &[F::ScadaDisplay, F::SuderraOs],
                 rauc_compatible: "suderra-os-qemu-x86_64",
                 device_binding_method: BindingMethod::TpmEkSha256,
+                #[cfg(test)]
+                default_interface_role: NetRole::Wan,
             },
         }
     }
@@ -752,6 +770,21 @@ string_enum!(
 );
 
 impl ResultKind {
+    /// Whether a result of this kind concludes a request on the update channel
+    /// and so names the statement it concludes in `subject.statement_type` and
+    /// `subject.statement_digest` (result.schema.json; channels.json
+    /// update_channel.settlement): that digest is what settles the request.
+    pub(crate) fn names_its_statement(self) -> bool {
+        matches!(
+            self,
+            ResultKind::EdgeUpdate
+                | ResultKind::OsUpdate
+                | ResultKind::SiteConfig
+                | ResultKind::SiteNetpolicy
+                | ResultKind::TrustAnchors
+        )
+    }
+
     /// statements.json `unsigned_documents.suderra.result.v1.reasons_by_kind`:
     /// (statements verified, re-verification, operational codes).
     fn reason_sources(self) -> (&'static [StatementType], bool, &'static [Reason]) {
@@ -1101,6 +1134,14 @@ mod tests {
                 spec.device_binding_method.as_str(),
                 "{board}"
             );
+            assert_eq!(
+                row["default_interface_role"],
+                match spec.default_interface_role {
+                    NetRole::Wan => "wan",
+                    NetRole::Ot => "ot",
+                },
+                "{board}"
+            );
         }
         let boards_schema = load("schemas/boards.schema.json");
         assert_eq!(
@@ -1199,6 +1240,14 @@ mod tests {
         let by_kind = st["unsigned_documents"]["suderra.result.v1"]["reasons_by_kind"]
             .as_object()
             .unwrap();
+        // The kinds whose results settle a request name their statement.
+        assert_eq!(
+            set(strings(&schema["if"]["properties"]["kind"]["enum"])),
+            set(ResultKind::ALL
+                .iter()
+                .filter(|k| k.names_its_statement())
+                .map(|k| k.as_str())),
+        );
         for rule in schema["allOf"].as_array().unwrap() {
             let kind =
                 ResultKind::parse(rule["if"]["properties"]["kind"]["const"].as_str().unwrap())

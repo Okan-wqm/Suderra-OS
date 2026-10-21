@@ -122,15 +122,32 @@ pub(crate) fn is_semver(s: &str) -> bool {
         })
 }
 
-/// `os_version`: version core only, at most 32 characters.
-pub(crate) fn is_os_version(s: &str) -> bool {
-    s.len() <= 32 && parse_version_core(s).is_some()
+/// `0|[1-9][0-9]{0,8}`: a decimal component of at most nine digits, the bound
+/// of `os_version` and `agent_abi_range` components (common.schema.json), so
+/// that every verifier, whatever its integer width, reads the same number.
+fn bounded_decimal(s: &str) -> Option<u64> {
+    if s.len() > 9 {
+        None
+    } else {
+        decimal(s)
+    }
 }
 
-/// `MIN-MAX` agent ABI range of /etc/os-release and the provisioning request.
+/// `os_version`: version core only, each component at most nine digits.
+pub(crate) fn is_os_version(s: &str) -> bool {
+    let mut parts = s.split('.');
+    let components = [parts.next(), parts.next(), parts.next()];
+    parts.next().is_none()
+        && components
+            .iter()
+            .all(|c| c.and_then(bounded_decimal).is_some())
+}
+
+/// `MIN-MAX` agent ABI range of /etc/os-release and the provisioning request,
+/// each component at most nine digits.
 pub(crate) fn parse_abi_range(s: &str) -> Option<(u64, u64)> {
     let (min, max) = s.split_once('-')?;
-    Some((decimal(min)?, decimal(max)?))
+    Some((bounded_decimal(min)?, bounded_decimal(max)?))
 }
 
 /// `https_url`.
@@ -154,6 +171,52 @@ pub(crate) fn is_https_url(s: &str) -> bool {
             b.is_ascii_alphanumeric() || b == b'.' || b == b'-'
         })
         && port.is_none_or(|p| (1..=5).contains(&p.len()) && all_bytes(p, |b| b.is_ascii_digit()))
+        && path.is_none_or(|p| {
+            all_bytes(p, |b| {
+                b.is_ascii_alphanumeric() || b"._~%!$&'()*+,;=:@/-".contains(&b)
+            })
+        })
+}
+
+/// One DNS label: 1 to 63 characters of `[a-z0-9-]`, starting and ending with
+/// an alphanumeric one; the last label of a name must also start with a
+/// letter, which keeps an IP literal from being a host name.
+fn is_dns_label(label: &str, last: bool) -> bool {
+    let bytes = label.as_bytes();
+    let (Some(first), Some(end)) = (bytes.first(), bytes.last()) else {
+        return false;
+    };
+    let alnum = |b: &u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    bytes.len() <= 63
+        && alnum(first)
+        && alnum(end)
+        && bytes.iter().all(|b| alnum(b) || *b == b'-')
+        && (!last || first.is_ascii_lowercase())
+}
+
+/// `fetch_url`: the form of every URL root fetches on behalf of a signed
+/// statement (channels.json `update_channel.fetch`): https on port 443 (no
+/// port, or `:443`), a lowercase DNS name of at least two labels whose last
+/// label starts with a letter (never an IP literal), no userinfo, and a path of
+/// the schema's character set.
+pub(crate) fn is_fetch_url(s: &str) -> bool {
+    if s.len() > 2048 {
+        return false;
+    }
+    let Some(rest) = s.strip_prefix("https://") else {
+        return false;
+    };
+    let (authority, path) = match rest.find('/') {
+        Some(i) => (rest.get(..i).unwrap_or(""), rest.get(i..)),
+        None => (rest, None),
+    };
+    let host = authority.strip_suffix(":443").unwrap_or(authority);
+    let labels: Vec<&str> = host.split('.').collect();
+    labels.len() >= 2
+        && labels
+            .iter()
+            .enumerate()
+            .all(|(i, label)| is_dns_label(label, i + 1 == labels.len()))
         && path.is_none_or(|p| {
             all_bytes(p, |b| {
                 b.is_ascii_alphanumeric() || b"._~%!$&'()*+,;=:@/-".contains(&b)
@@ -432,5 +495,74 @@ mod tests {
         ));
         assert_eq!(parse_abi_range("1-3"), Some((1, 3)));
         assert_eq!(parse_abi_range("01-3"), None);
+    }
+
+    #[test]
+    fn fetch_urls_are_https_on_443_at_a_dns_name() {
+        for ok in [
+            "https://artifacts.suderra.example/edge/release.dsse.json",
+            "https://artifacts.suderra.example:443/edge/release.dsse.json",
+            "https://a.bc",
+            "https://artifacts-1.example.com/a%20b/c",
+            &format!("https://{}.example.com/x", "a".repeat(63)),
+        ] {
+            assert!(is_fetch_url(ok), "{ok}");
+        }
+        let long_label = format!("https://{}.example.com/x", "a".repeat(64));
+        let long_path = format!("https://example.com/{}", "a".repeat(2048));
+        for bad in [
+            "https://10.0.2.2/x",
+            "https://10.0.2.2:443/x",
+            "https://example.123/x",
+            "https://example.com:8443/x",
+            "https://example.com:0443/x",
+            "https://example.com:/x",
+            "https://user@example.com/x",
+            "https://Example.com/x",
+            "https://example/x",
+            "https://-a.example.com/x",
+            "https://a-.example.com/x",
+            "https://a..example.com/x",
+            "https://example.com./x",
+            "https://example.com/x?y",
+            "https://example.com/x#y",
+            "http://example.com/x",
+            "https://",
+            long_label.as_str(),
+            long_path.as_str(),
+        ] {
+            assert!(!is_fetch_url(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn os_version_and_abi_components_have_at_most_nine_digits() {
+        assert!(is_os_version("999999999.999999999.999999999"));
+        assert!(is_os_version("0.0.0"));
+        for bad in [
+            "1000000000.0.0",
+            "0.1000000000.0",
+            "0.0.1000000000",
+            "99999999999999999999.0.0",
+            "01.0.0",
+            "1.0",
+            "1.0.0.0",
+            "1.0.0-rc1",
+        ] {
+            assert!(!is_os_version(bad), "{bad}");
+        }
+        assert_eq!(parse_abi_range("0-999999999"), Some((0, 999_999_999)));
+        for bad in [
+            "01-2",
+            "1-02",
+            "1-1000000000",
+            "1000000000-1",
+            "1",
+            "1-",
+            "-1",
+            "1-2-3",
+        ] {
+            assert_eq!(parse_abi_range(bad), None, "{bad}");
+        }
     }
 }

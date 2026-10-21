@@ -9,14 +9,16 @@
 use super::delivery::{Delivery, ProvisioningRequest};
 use super::dsse::{pae, verify_strict, Envelope};
 use super::encoding::{decode_base64_array, sha256_hex};
-use super::keys::{KeyEntry, KeyStore};
-use super::registry::{Arch, BoardProfile, Purpose, Reason, SitePath, StatementType};
+use super::keys::{is_admissible_key, KeyEntry, KeyStore};
+use super::registry::{
+    Arch, BoardProfile, Purpose, Reason, SitePath, StatementType, VERIFICATION_ORDER,
+};
 use super::statements::{DeviceBinding, NetRole, Proto};
 use super::verify::{
     verify_edge_update, verify_lifecycle, verify_os_update, verify_provisioning,
     verify_rbac_with_bundle, verify_receipt, verify_release, verify_site_config_with_bundle,
     verify_site_netpolicy_with_bundle, verify_trust_anchors, Accepted, Delivered, DeviceRecord,
-    Identity, Mode, OsCompat, OsFacts, Scope, SiteFiles,
+    Identity, Mode, NetworkInterface, OsCompat, OsFacts, Scope, SiteFiles,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -122,6 +124,19 @@ fn device(index: &Value, name: &str) -> DeviceRecord {
             kernel_config,
         },
     }
+}
+
+/// The Ethernet interfaces of a device context, as root reads them from sysfs.
+fn network_interfaces(index: &Value, name: &str) -> Vec<NetworkInterface> {
+    index["device_contexts"][name]["network_interfaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|nic| NetworkInterface {
+            mac: nic["mac"].as_str().unwrap().to_owned(),
+            pci_path: nic["pci_path"].as_str().map(str::to_owned),
+        })
+        .collect()
 }
 
 /// The site bundle input (update channel): it stands in for the RBAC manifest
@@ -276,17 +291,38 @@ fn run_statement(index: &Value, keys: &KeyStore, entry: &Value) -> BTreeSet<Reas
             verify_os_update(&env, &scope, &os_facts(index, context)).reasons
         }
         StatementType::SiteNetpolicy => {
-            verify_site_netpolicy_with_bundle(&env, &envelope(inputs, "trust_anchors"), &scope)
-                .reasons
+            let interfaces = network_interfaces(index, entry["device_context"].as_str().unwrap());
+            verify_site_netpolicy_with_bundle(
+                &env,
+                &envelope(inputs, "trust_anchors"),
+                &scope,
+                &interfaces,
+            )
+            .reasons
         }
     }
 }
 
+/// The reasons a fixture is labelled with: its one `reason` and the `also`
+/// reasons that follow from the one defect (fixture-index.schema.json).
 fn expected(entry: &Value) -> BTreeSet<Reason> {
+    let parse = |text: &str| {
+        Reason::parse(text).unwrap_or_else(|| panic!("unknown reason {text} in {entry}"))
+    };
     match entry["expect"].as_str().unwrap() {
         "accept" => BTreeSet::new(),
-        "reject" => BTreeSet::from([Reason::parse(entry["reason"].as_str().unwrap())
-            .unwrap_or_else(|| panic!("unknown reason in {entry}"))]),
+        "reject" => {
+            let reason = parse(entry["reason"].as_str().unwrap());
+            let mut reasons = BTreeSet::from([reason]);
+            // A verifier stops at a failed verification_order step (schema-invalid)
+            // and reports that reason alone.
+            if !VERIFICATION_ORDER.contains(&reason) {
+                for also in entry["also"].as_array().into_iter().flatten() {
+                    reasons.insert(parse(also.as_str().unwrap()));
+                }
+            }
+            reasons
+        }
         other => panic!("expect {other}"),
     }
 }
@@ -354,6 +390,15 @@ fn typed_update_and_policy_statements_read_back_their_payloads() {
                     "{}",
                     entry["path"]
                 );
+                assert_eq!(
+                    update
+                        .statement
+                        .blockers_override
+                        .map_or(Value::Null, Value::Bool),
+                    raw["blockers_override"],
+                    "{}",
+                    entry["path"]
+                );
             }
             StatementType::OsUpdate => {
                 let context = entry["device_context"].as_str().unwrap();
@@ -366,12 +411,24 @@ fn typed_update_and_policy_statements_read_back_their_payloads() {
                     "{}",
                     entry["path"]
                 );
+                assert_eq!(
+                    verified
+                        .statement
+                        .blockers_override
+                        .map_or(Value::Null, Value::Bool),
+                    raw["blockers_override"],
+                    "{}",
+                    entry["path"]
+                );
             }
             StatementType::SiteNetpolicy => {
+                let interfaces =
+                    network_interfaces(&index, entry["device_context"].as_str().unwrap());
                 let verified = verify_site_netpolicy_with_bundle(
                     &env,
                     &envelope(inputs, "trust_anchors"),
                     &scope,
+                    &interfaces,
                 )
                 .verified
                 .expect("an accepted site-netpolicy is typed");
@@ -553,6 +610,48 @@ fn signature_vectors_pin_verify_strict() {
         "non-canonical-r",
     ] {
         assert!(ids.contains(required), "vector {required} missing");
+    }
+}
+
+/// fixtures/dsse/point-vectors.json: no signature exists under a non-canonical
+/// encoding of a full-order point, so the rule cannot be tested by verifying
+/// anything; it is the admission of a key, which fails here when either term of
+/// the rule is dropped. trust-anchors/invalid/anchor-non-canonical-key and
+/// anchor-small-order-key pin it through the bundle verifier.
+#[test]
+fn a_key_store_admits_exactly_the_canonical_points_that_are_not_small_order() {
+    let v: Value = serde_json::from_slice(&fixture("dsse/point-vectors.json")).unwrap();
+    let (mut refused_for_form, mut refused_for_order, mut admitted) = (0, 0, 0);
+    for vector in v["vectors"].as_array().unwrap() {
+        let id = vector["id"].as_str().unwrap();
+        let point: [u8; 32] = hex::decode(vector["encoding_hex"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let canonical = vector["canonical"].as_bool().unwrap();
+        let small_order = vector["small_order"].as_bool().unwrap();
+        assert_eq!(is_admissible_key(&point), canonical && !small_order, "{id}");
+        match (canonical, small_order) {
+            (false, _) => refused_for_form += 1,
+            (true, true) => refused_for_order += 1,
+            (true, false) => admitted += 1,
+        }
+    }
+    assert!(
+        refused_for_form >= 10 && refused_for_order >= 3 && admitted >= 10,
+        "vectors cover {refused_for_form} non-canonical, {refused_for_order} small-order and {admitted} admissible encodings"
+    );
+    // The rule must not refuse a key the fixtures sign with.
+    let ring: Value =
+        serde_json::from_slice(&std::fs::read(contract().join("test-keys/keyring.json")).unwrap())
+            .unwrap();
+    for key in ring["keys"].as_array().unwrap() {
+        let raw = decode_base64_array::<32>(key["public_key"].as_str().unwrap()).unwrap();
+        assert!(
+            is_admissible_key(&raw),
+            "test key {} is not admissible",
+            key["keyid"]
+        );
     }
 }
 

@@ -19,7 +19,9 @@
     "signature_vectors",
     "point_vectors",
     "spool_vectors",
-    "usb_layout_vectors"
+    "usb_layout_vectors",
+    "settlement_vectors",
+    "gate_vectors"
   ],
   "properties": {
     "test_only": {
@@ -54,7 +56,8 @@
           "kernel_config",
           "os_rollback_floor",
           "os_compatible",
-          "installed_agent_abi"
+          "installed_agent_abi",
+          "network_interfaces"
         ],
         "properties": {
           "description": {
@@ -165,6 +168,25 @@
               { "type": "null" },
               { "type": "integer", "minimum": 0, "maximum": 4294967295 }
             ]
+          },
+          "network_interfaces": {
+            "description": "The Ethernet interfaces of the device as root reads them (name, MAC, PCI path or null for an interface that is no PCI device): the facts the interface role mapping of a site policy is evaluated against (statements.json suderra.site-netpolicy.v1 notes).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "mac", "pci_path"],
+              "properties": {
+                "name": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,14}$" },
+                "mac": { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/mac" },
+                "pci_path": {
+                  "oneOf": [
+                    { "type": "null" },
+                    { "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/pci_path" }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -199,6 +221,13 @@
           "reason": {
             "type": "string",
             "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "also": {
+            "description": "Reasons that follow from the one defect of the fixture without being a second one: a board or arch that differs from the device also differs from the release statement the device checks it against, so both checks reject it (statements.json rejection_reasons release-mismatch); a malformed RAUC compatible also differs from the device's. A verifier that stops at a failed verification_order step (schema-invalid) reports the primary reason alone; one that keeps evaluating, and every verifier for a reason after that step, reports the primary reason and these.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" }
           },
           "device_context": {
             "oneOf": [
@@ -263,7 +292,8 @@
               "expect": {
                 "const": "accept"
               },
-              "reason": false
+              "reason": false,
+              "also": false
             }
           },
           {
@@ -523,6 +553,12 @@
     },
     "usb_layout_vectors": {
       "const": "delivery-usb/layout-vectors.json"
+    },
+    "settlement_vectors": {
+      "const": "update-channel/settlement-vectors.json"
+    },
+    "gate_vectors": {
+      "const": "update-channel/gate-vectors.json"
     }
   },
   "$defs": {

@@ -216,6 +216,20 @@ impl ResultDocument {
         if let Some(subject) = &self.subject {
             subject.validate()?;
         }
+        // A result that concludes a request names the statement it concludes:
+        // that digest is what settles the request (channels.json settlement).
+        if self.kind.names_its_statement() {
+            let names_statement = self
+                .subject
+                .as_ref()
+                .is_some_and(|s| s.statement_type.is_some() && s.statement_digest.is_some());
+            if !names_statement {
+                return Err(format!(
+                    "a {} result names its statement in subject.statement_type and subject.statement_digest",
+                    self.kind
+                ));
+            }
+        }
         if self
             .detail
             .as_deref()

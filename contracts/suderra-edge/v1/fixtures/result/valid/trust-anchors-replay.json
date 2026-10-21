@@ -9,6 +9,9 @@
   "outcome": "rejected",
   "reason": "sequence-replay",
   "subject": {
-    "statement_type": "suderra.trust-anchors.v1"
+    "statement_type": "suderra.trust-anchors.v1",
+    "statement_digest": {
+      "sha256": "48db9c19a927a1b34f9d5652865ed9ae7a32a9e3b6973b81e2025f0f832c4a1d"
+    }
   }
 }

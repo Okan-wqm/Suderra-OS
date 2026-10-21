@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:suderra:edge-contract:v1:schema:edge-update",
   "title": "suderra.edge-update.v1 device-bound agent update request",
-  "description": "Signed by the edge-provisioning key, pinned in the OS image (ADR-048 DEC-2.4, DEC-2.9, DEC-3.3, DEC-22). It authorizes one device to replace its agent release: it binds a device (device_binding, device_id, tenant_id) to one release statement by statement digest and to the artifact's download location, under a monotonic update_seq. The agent only carries it to the update channel (channels.json update_channel); root verifies it itself and installs through the one installer. The acceptance window is the maintenance window: root accepts the statement only while not_before <= now < expires_at, so an update never applies outside the window the cloud chose (DEC-13.4). Unlike the provisioning manifest it carries no nonce, no site config and no trust-anchors bundle: it changes the agent binary and nothing else, and it carries no token or credential. The release statement is fetched by root from release_statement.url and must have the named digest. This v1 has no approvals member: the two-person approval is enforced server-side in P1; the planned suderra.edge-update.v2 carries a required approvals[] that root verifies against update-approver anchors, and a payload-version ratchet then refuses v1 (statements.json planned_successors).",
+  "description": "Signed by the edge-provisioning key, pinned in the OS image (ADR-048 DEC-2.4, DEC-2.9, DEC-3.3, DEC-22). It authorizes one device to replace its agent release: it binds a device (device_binding, device_id, tenant_id) to one release statement by statement digest and to the artifact's download location, under a monotonic update_seq. The agent only carries it to the update channel (channels.json update_channel); root verifies it itself and installs through the one installer. The acceptance window is the maintenance window: root accepts the statement only while not_before <= now < expires_at, so an update never applies outside the window the cloud chose, and the cloud delivers it only inside that window (DEC-13.4, channels.json update_channel.settlement). Unlike the provisioning manifest it carries no nonce, no site config and no trust-anchors bundle: it changes the agent binary and nothing else, and it carries no token or credential. The release statement is fetched by root from release_statement.url and must have the named digest. This v1 has no approvals member: the two-person approval is enforced server-side in P1; the planned suderra.edge-update.v2 carries a required approvals[] that root verifies against update-approver anchors, and a payload-version ratchet then refuses v1 (statements.json planned_successors).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -73,17 +73,21 @@
           "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/digest"
         },
         "url": {
-          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+          "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/fetch_url"
         }
       }
     },
     "artifact_url": {
       "description": "Download location of the release artifact; integrity comes from the release statement, never from this URL (as in the provisioning manifest).",
-      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/https_url"
+      "$ref": "urn:suderra:edge-contract:v1:schema:common#/$defs/fetch_url"
     },
     "local_approval": {
-      "description": "True when root applies the update only after a local operator approval (DEC-13.4); false when the maintenance window alone authorizes it. An active alarm or a forced value blocks the update in both cases (maintenance-blocked).",
+      "description": "True when root applies the update only after a local operator approval (DEC-13.4); false when the maintenance window alone authorizes it. An active alarm or a forced value blocks the update in both cases (maintenance-blocked) unless blockers_override is present. Required: a statement without it is schema-invalid, never read as no approval.",
       "type": "boolean"
+    },
+    "blockers_override": {
+      "description": "Present, and then always true, when an operator asked for this update to ignore the maintenance gate's blockers (channels.json update_channel.maintenance.blockers.override): root applies it after the local approval whatever the agent health view says. It requires local_approval true, so a person on site stands behind it. Absent means the gate applies.",
+      "const": true
     },
     "max_outage_seconds": {
       "description": "Outage budget: the longest the agent may be down for this update (agent restart, shutdown safe-state to the first control tick). Root and the health window enforce it (DEC-2.7, DEC-13.4).",
@@ -91,5 +95,22 @@
       "minimum": 1,
       "maximum": 3600
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "blockers_override": true
+        },
+        "required": ["blockers_override"]
+      },
+      "then": {
+        "properties": {
+          "local_approval": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
 }

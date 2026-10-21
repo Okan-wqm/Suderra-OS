@@ -5,13 +5,13 @@
     "pae": "DSSEv1 SP LEN(payloadType) SP payloadType SP LEN(payload) SP payload, where SP is one 0x20 byte and LEN is the ASCII decimal byte length with no leading zeros (DSSE v1 protocol). The signature covers exactly these PAE bytes.",
     "payload_encoding": "RFC 4648 section 4 standard base64 with padding, for both payload and sig.",
     "signed_bytes": "The base64-decoded payload bytes are signed, verified and then parsed, in that order. Nothing is re-serialized or canonicalized before verification; a statement is never parsed before its signature verifies.",
-    "signature_algorithm": "Ed25519 with ed25519-dalek verify_strict semantics: S must be canonical (S < L); the public key A and the commitment R must be canonical encodings (y < p, RFC 8032 section 5.1.3) and must not be small-order points; and the cofactorless equation [S]B = R + [k]A must hold. Cofactorless verifiers without these checks (OpenSSL, ed25519-dalek verify()) are not conforming; fixtures/dsse/signature-vectors.json holds vectors they accept.",
+    "signature_algorithm": "Ed25519 with ed25519-dalek verify_strict semantics: S must be canonical (S < L); A and R must not be small-order points; and the cofactorless equation [S]B = R + [k]A must hold, with R compared by its compressed bytes, so a non-canonical R never verifies. verify_strict does not itself reject a non-canonical encoding of A (y >= p, RFC 8032 section 5.1.3); the contract closes that at the key store instead: no store admits a key whose encoding is not canonical or whose point is small-order (a bundle anchor that is one is anchor-invalid, an OS pin that is one is no pin), so a non-canonical A is unreachable, and a non-canonical encoding of a full-order point has no known discrete log, so no signature under one can be constructed. Cofactorless verifiers without the S and small-order checks (OpenSSL, ed25519-dalek verify()) are not conforming; fixtures/dsse/signature-vectors.json holds vectors they accept, and fixtures/dsse/point-vectors.json holds the encodings the key store refuses.",
     "signatures": "Exactly one signature per envelope.",
     "keyid": "Lowercase hex SHA-256 of the 32-byte raw Ed25519 public key.",
     "key_resolution": "The verifier resolves keyid to (purpose, epoch, key) from its own key store, never from the statement. The key store holds the keys pinned in the OS image (/etc/suderra/keys/<purpose>/<epoch>.pub) for the purposes anchored in os-image, plus, for the purposes anchored only in the trust-anchors bundle, the anchors of a bundle that has itself verified against the fleet-root pin: the bundle delivered with the same provisioning manifest, otherwise the installed one. A key outside that store is key-unknown.",
     "json": "UTF-8 without a byte order mark, RFC 8259, a top-level object, duplicate member names rejected, unknown members rejected (every schema sets additionalProperties to false). Numbers are integers written as -?(0|[1-9][0-9]*) with a magnitude of at most 9007199254740991: a fraction, an exponent or a larger magnitude is payload-json-invalid, because serde's u64 refuses 2.0 and 1e0 that JSON Schema accepts as integers and JavaScript loses precision beyond 2^53-1. A \\u escape of a UTF-16 surrogate must be a high surrogate followed by a low surrogate escape; an unpaired surrogate is payload-json-invalid, because serde_json refuses what JSON.parse and Python accept. The same rules apply to every JSON document of this contract.",
     "statement_digest": "SHA-256 over the base64-decoded DSSE payload bytes of the referenced statement, so a digest does not depend on how the envelope JSON is formatted or stored.",
-    "time_window": "A statement is accepted only when not_before <= now < expires_at. There is no skew allowance: installs wait for an authenticated time sync (DEC-7.5). The window bounds acceptance; it does not bound the life of an installed statement (see reverification)."
+    "time_window": "A statement is accepted only when not_before <= now < expires_at. There is no skew allowance: root evaluates the window only against a synchronized clock (channels.json time, DEC-7.5). The window bounds acceptance; it does not bound the life of an installed statement (see reverification)."
   },
   "verification_order": [
     "envelope-invalid",
@@ -26,14 +26,15 @@
   "evaluation": "verification_order is normative: a verifier runs those steps in that order and reports the first that fails. After schema validation it evaluates every entry of the statement's checks and of its nested statements, and rejects the statement if any fails; the order of checks is not normative and a verifier reports every failing check. Every negative fixture carries exactly one defect, so exactly one reason fails even when every check is evaluated.",
   "identity": "tenant-mismatch and device-id-mismatch compare a statement's tenant_id and device_id with the identity root recorded at first provisioning (/data/suderra/os/identity/, DEC-22). Before that identity exists, the provisioning manifest being installed binds it: the manifest itself is not compared, and every statement it delivers (trust-anchors bundle, site config, RBAC manifest) is compared with the manifest's tenant_id and device_id. tenant-scope-mismatch compares the bundle's tenant_scope with the same tenant: the recorded one, or on first provisioning the manifest's. device-binding-mismatch always compares with the device's own hardware binding record (DEC-3.6).",
   "sequences": {
-    "description": "Root keeps, per device and statement type, the last accepted sequence value and that statement's digest (/data/suderra/os/seq/<kind>, DEC-2.4). A value below the last accepted one is sequence-replay. A value equal to it is sequence-replay under equal_seq reject; under equal_seq identical-only it is accepted exactly when the statement digest equals the accepted one, and that re-presentation is a re-verification (the window and the sequence are not applied again, DEC-2.4, DEC-4.10, DEC-9.9).",
+    "description": "Root keeps, per device and statement type, the last accepted (spent) sequence value and that statement's digest (/data/suderra/os/seq/<kind>, DEC-2.4). A value below the last accepted one is sequence-replay. A value equal to it is sequence-replay under equal_seq reject; under equal_seq identical-only it is accepted exactly when the statement digest equals the accepted one, and that re-presentation is a re-verification (the window and the sequence are not applied again, DEC-2.4, DEC-4.10, DEC-9.9).",
+    "spending": "Root writes the sequence value when the statement has passed verification, before the maintenance gate and before it fetches or changes anything: from then on the statement is spent whatever happens next, so it is never applied twice and a statement refused at the gate cannot be replayed by the agent later. A refusal before verification completes (a spool-entry refusal, clock-unsynced, any verification reason) spends nothing. The cloud therefore re-issues a refused intent with a greater update_seq (channels.json update_channel.settlement.reissue).",
     "equal_seq_policies": {
       "reject": "Equal is replay: every statement of the kind causes a transition and is never applied twice.",
       "identical-only": "Equal is accepted only for the identical statement already installed, so an unchanged bundle, site config or RBAC manifest can be re-presented at reprovisioning and re-verified at every boot."
     }
   },
   "reverification": {
-    "description": "Root re-verifies installed statements before every start and reload of the agent (edge verify-current, unit-directives.json hooks) and in the health gate; the agent re-verifies the installed trust-anchors bundle, site config and RBAC manifest when it loads them. Re-verification runs verification_order and every check except not-yet-valid, expired and sequence-replay, and additionally requires the statement digest to equal the one recorded when the statement was accepted; otherwise installed-digest-mismatch. An installed statement therefore never expires out from under a running device. The activation receipt is never re-verified: root records ACTIVE in the lifecycle store when it accepts the receipt and never derives ACTIVE from the receipt again.",
+    "description": "Root re-verifies installed statements before every start and reload of the agent (edge verify-current, unit-directives.json hooks) and in the health gate; the agent re-verifies the installed trust-anchors bundle, site config and RBAC manifest when it loads them. Re-verification runs verification_order and every check except not-yet-valid, expired, sequence-replay and interface-mapping-invalid (the last depends on the interfaces present, which can change after installation: the renderer repeats it at every load and falls back to the last-known-good ruleset with an alarm, DEC-11.7), and additionally requires the statement digest to equal the one recorded when the statement was accepted; otherwise installed-digest-mismatch. An installed statement therefore never expires out from under a running device. The activation receipt is never re-verified: root records ACTIVE in the lifecycle store when it accepts the receipt and never derives ACTIVE from the receipt again.",
     "applies_to": [
       "suderra.edge-release.v1",
       "suderra.trust-anchors.v1",
@@ -41,7 +42,7 @@
       "suderra.site-netpolicy.v1",
       "suderra.rbac-manifest.v1"
     ],
-    "skipped_checks": ["not-yet-valid", "expired", "sequence-replay"],
+    "skipped_checks": ["not-yet-valid", "expired", "sequence-replay", "interface-mapping-invalid"],
     "added_checks": ["installed-digest-mismatch"]
   },
   "verifiers": {
@@ -54,12 +55,12 @@
       "path": "/etc/os-release",
       "keys": {
         "VERSION_ID": {
-          "syntax": "The OS version, unquoted, MAJOR.MINOR.PATCH with decimal integers and no pre-release or build part.",
-          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          "syntax": "The OS version, unquoted, MAJOR.MINOR.PATCH with decimal integers of at most 9 digits and no pre-release or build part.",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
         },
         "SUDERRA_AGENT_ABI": {
-          "syntax": "The inclusive agent ABI range the OS supports, unquoted, MIN-MAX with decimal integers and MIN <= MAX.",
-          "pattern": "^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$"
+          "syntax": "The inclusive agent ABI range the OS supports, unquoted, MIN-MAX with decimal integers of at most 9 digits and MIN <= MAX.",
+          "pattern": "^(0|[1-9][0-9]{0,8})-(0|[1-9][0-9]{0,8})$"
         }
       }
     },
@@ -92,10 +93,11 @@
     "tenant-scope-mismatch": "The device's tenant is not in the bundle's tenant_scope (identity, DEC-22).",
     "nonce-mismatch": "The manifest does not echo the nonce of the device's provisioning request (DEC-5.5).",
     "board-mismatch": "board or board_profile, or arch, differs from what the signed OS image declares in /etc/suderra/board (DEC-8.2).",
+    "interface-mapping-invalid": "The interface roles a site policy yields for this device (the board's default_interface_role, overridden by interfaces[]) leave no wan interface, or two entries of interfaces[] match one interface of the device, one by MAC and one by PCI path (boards.json interface_role_rule, DEC-11.6, DEC-11.7).",
     "rollback-below-floor": "security_version is below the device's rollback floor (DEC-2.5), or the version of an OS update is below the device's OS rollback floor.",
     "sequence-replay": "The sequence value is below the last accepted one, or equal to it when sequences.equal_seq_policies does not accept it (DEC-2.4).",
     "release-digest-mismatch": "The release statement delivered with the manifest, or fetched for an edge-update, does not have the digest the manifest or update names.",
-    "release-mismatch": "version, board, arch, security_version or agent_profile differ between the manifest and its release statement (DEC-3.1).",
+    "release-mismatch": "version, security_version or agent_profile differ between the manifest or update and its release statement, or, because the device checks make them equal in board and arch (board-mismatch on the statement and on its release statement), board or arch differ from either (DEC-3.1). agent_profile has one value in contract 1.x, so it cannot differ today; the comparison stays for the day the vocabulary grows.",
     "release-profile-mismatch": "The release statement's arch, agent_profile or cargo features differ from boards.json for its board_profile, or its artifact name from artifact-naming.json (DEC-8.4, DEC-8.5).",
     "os-version-too-old": "The running OS is older than the release's min_os_version (compatibility, DEC-23), or older than the min_current_version of an OS update.",
     "agent-abi-unsupported": "The running OS does not support the release's agent_abi (compatibility, DEC-23), or the installed agent's agent_abi lies outside the supported_agent_abi of an OS update.",
@@ -105,7 +107,7 @@
     "trust-anchors-digest-mismatch": "The trust-anchors bundle delivered with the manifest does not have the statement digest or bundle_seq the manifest names.",
     "manifest-digest-mismatch": "The receipt names a provisioning manifest other than the one root installed (DEC-5.8).",
     "anchor-not-os-pinned": "An edge-release or edge-provisioning anchor in the bundle is not a keyid pinned in the OS image under the same purpose and epoch (DEC-3.3).",
-    "anchor-invalid": "An anchor's keyid is not the SHA-256 of its public key, or one (purpose, epoch) appears twice.",
+    "anchor-invalid": "An anchor's keyid is not the SHA-256 of its public key, the public key is not a canonical encoding of a point or is a small-order point (dsse.signature_algorithm), or one (purpose, epoch) appears twice.",
     "site-file-digest-mismatch": "A delivered site file differs from the digest or size the site config names, a named file is missing, or a file the site config does not name is delivered (DEC-4.10).",
     "rbac-manifest-digest-mismatch": "The RBAC manifest delivered with the site config does not have the statement digest or policy_version the site config names (DEC-4.12).",
     "actor-key-not-anchored": "An RBAC actor's public key is not a command-purpose anchor of the trust-anchors bundle (DEC-3.3, DEC-9.4).",
@@ -325,7 +327,7 @@
         "release-digest-mismatch",
         "release-mismatch"
       ],
-      "notes": "Carried to root through the update channel (channels.json); root verifies it with the release statement it names, fetched from release_statement.url, which verifies as its own type under the same device record, and rejects the update if either rejects. Like the provisioning manifest it replays neither as another kind (payloadType) nor across devices (device binding) nor backwards (update_seq under /data/suderra/os/seq/edge-update), and carries no token or credential. The acceptance window is the maintenance window (DEC-13.4). Unlike provisioning there is no nonce: nothing is requested by the device. The agent is not a verifier."
+      "notes": "Carried to root through the update channel (channels.json); root verifies it with the release statement it names, fetched from release_statement.url, which verifies as its own type under the same device record, and rejects the update if either rejects. Like the provisioning manifest it replays neither as another kind (payloadType) nor across devices (device binding) nor backwards (update_seq under /data/suderra/os/seq/edge-update), and carries no token or credential. The acceptance window is the maintenance window, so the cloud delivers the update only inside it and re-issues a refused one as a new statement (channels.json update_channel.settlement, DEC-13.4). blockers_override, allowed only with local_approval, lets an operator's update ignore the agent's blockers (channels.json update_channel.maintenance.blockers.override). Unlike provisioning there is no nonce: nothing is requested by the device. The agent is not a verifier."
     },
     "suderra.os-update.v1": {
       "payload_type": "application/vnd.suderra.os-update.v1+json",
@@ -350,7 +352,7 @@
         "agent-abi-unsupported",
         "sequence-replay"
       ],
-      "notes": "Carried to root through the update channel and handed by root to suderra-ota; the RAUC bundle's own signature is verified by RAUC on top (DEC-2.9). The OS version checks compare MAJOR.MINOR.PATCH integer tuples: the running VERSION_ID against min_current_version, the update's version against the device's OS rollback floor. agent-abi-unsupported compares the installed agent's agent_abi (none installed: the check passes) with supported_agent_abi. A constraint JSON Schema cannot state, rollback_floor <= version, is schema-invalid; a supported_agent_abi with MIN > MAX contains no ABI and fails agent-abi-unsupported. The agent is not a verifier."
+      "notes": "Carried to root through the update channel and handed by root to suderra-ota; the RAUC bundle's own signature is verified by RAUC on top (DEC-2.9). The OS version checks compare MAJOR.MINOR.PATCH integer tuples: the running VERSION_ID against min_current_version, the update's version against the device's OS rollback floor. agent-abi-unsupported compares the installed agent's agent_abi (none installed: the check passes) with supported_agent_abi. A constraint JSON Schema cannot state, rollback_floor <= version, is schema-invalid; a supported_agent_abi with MIN > MAX contains no ABI and fails agent-abi-unsupported. The agent is not a verifier. blockers_override works as for the edge-update."
     },
     "suderra.site-netpolicy.v1": {
       "payload_type": "application/vnd.suderra.site-netpolicy.v1+json",
@@ -369,9 +371,10 @@
         "device-binding-mismatch",
         "device-id-mismatch",
         "tenant-mismatch",
-        "sequence-replay"
+        "sequence-replay",
+        "interface-mapping-invalid"
       ],
-      "notes": "Resolved against the verified bundle's config-integrity anchors like the site config, carried on the update channel, installed as site-netpolicy.dsse and re-verified before every start (reverification). It is a statement of its own, with its own update_seq, and is never nested in the provisioning manifest or the site config: a policy change needs no re-provisioning and no site-config change, and a new site config does not reset the policy. Constraints JSON Schema cannot state (CIDR host bits, port ranges, unique rule, source and interface values) are schema-invalid; the wide flag on a prefix shorter than /16 is stated by the schema itself. The policy carries the interface role mapping, the OT allowlist and the site NTP sources (DEC-7.1, DEC-11.6, DEC-11.7); inbound HMI and OPC UA rules are not part of v1 (planned_successors). The agent is not a verifier: root renders the policy into nftables and chrony's source list."
+      "notes": "Resolved against the verified bundle's config-integrity anchors like the site config, carried on the update channel, installed as site-netpolicy.dsse and re-verified before every start (reverification). It is a statement of its own, with its own update_seq, and is never nested in the provisioning manifest or the site config: a policy change needs no re-provisioning and no site-config change, and a new site config does not reset the policy. Constraints JSON Schema cannot state (CIDR host bits, port ranges, unique rule, source and interface values) are schema-invalid; the wide flag on a prefix shorter than /16 is stated by the schema itself. The policy carries the interface role mapping, the OT allowlist and the site NTP sources (DEC-7.1, DEC-11.6, DEC-11.7); inbound HMI and OPC UA rules are not part of v1 (planned_successors). Interface roles: every interface of the device has its board's default_interface_role (boards.json, wan); an entry of interfaces[] overrides the role of the interface it matches by MAC or PCI path. Root refuses the policy as interface-mapping-invalid when no interface of the device keeps the wan role, because broker, API, NTP and DNS rules exist only on the WAN role (DEC-11.6) and the load would otherwise succeed and cut the device off, and when one interface is matched by two entries; an entry that matches no interface is ignored. The device's interfaces are a fact of the device record (name, MAC, PCI path), read by root. The agent is not a verifier: root renders the policy into nftables and chrony's source list."
     }
   },
   "planned_successors": {
@@ -386,7 +389,7 @@
       "successor": "suderra.edge-update.v2",
       "phase": "P2",
       "adds": "A required approvals[] member: one approval per registered human approver, each verified by root against an update-approver anchor of the trust-anchors bundle (DEC-9.4); EDGE-MEDIUM-117.",
-      "ratchet": "A payload-version ratchet per device makes root refuse suderra.edge-update.v1 once it has accepted a v2 statement, so the approvals cannot be dropped by downgrading the payload type.",
+      "ratchet": "A payload-version ratchet per device makes root refuse suderra.edge-update.v1 once it has accepted a v2 statement, so the approvals cannot be dropped by downgrading the payload type. The approvals bind the device and the release, not one statement digest, so that a statement refused for a retryable reason is re-issued with the same approvals (channels.json update_channel.settlement).",
       "v1_rule": "This v1 has no approvals member; in P1 the two-person approval of a release-bundle rollout is enforced server-side by the cloud and audited (DEC-2.4). No v2 schema is defined in contract 1.x."
     }
   },
@@ -566,14 +569,14 @@
         }
       },
       "operational_reasons": {
-        "clock-unsynced": "No authenticated time sync within the bounded wait; installs need one (DEC-5.13, DEC-7.5).",
-        "fetch-failed": "The manifest, release statement or artifact could not be downloaded.",
+        "clock-unsynced": "The clock is not synchronized: the time state is unsynced, or absent, unreadable, non-conforming or stale, within the bounded wait. synced-nts and synced-unauthenticated both suffice for an install or update (channels.json time.consumers.root-acceptance, DEC-5.13, DEC-7.5).",
+        "fetch-failed": "The manifest, release statement, artifact, bundle or site bundle could not be downloaded, or the transfer exceeded its byte bound (channels.json update_channel.fetch).",
         "artifact-digest-mismatch": "The downloaded artifact's size or sha256 differs from the release statement.",
         "binary-digest-mismatch": "The suderra-agent member differs from the release statement's binary_digest (DEC-1.5).",
         "archive-invalid": "The archive members are not exactly artifact-naming.json archive_members (DEC-1.10).",
         "io-error": "A filesystem step failed (write, fsync, rename).",
         "health-window-failed": "The health window after an agent update failed, so the previous release and its config were restored (DEC-2.6).",
-        "maintenance-blocked": "An active alarm or a forced output value blocks the update (the agent health view's update_blockers, DEC-13.4), or that view is absent, unreadable or non-conforming.",
+        "maintenance-blocked": "An active alarm or a forced output value blocks the update while the agent unit is active, or the agent's health view is unavailable while the unit is active (channels.json update_channel.maintenance.blockers, DEC-13.4); with the unit inactive or failed nothing blocks.",
         "approval-missing": "The statement needs a local operator approval (local_approval, or a site config that changes io-config.yaml, site-policy.json or revpi/config.rsc) and the window closed without one (DEC-13.4).",
         "rauc-install-failed": "suderra-ota or RAUC refused or failed the bundle install (RAUC's own signature or compatible check, a slot error); the running slot is untouched (DEC-2.9).",
         "site-bundle-missing": "A site-config statement arrived on the update channel without site_bundle_url, so root has no site files or RBAC manifest to verify against it (DEC-4.12).",

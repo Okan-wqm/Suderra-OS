@@ -119,7 +119,10 @@ pub(crate) fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
 }
 
 /// `verify_strict` of `signature` over `message` under the raw public key.
-/// A key that is not a canonical, decodable point never verifies.
+/// A key that does not decode to a point never verifies, and neither does a
+/// small-order key or a non-canonical S or R. `verify_strict` does not check
+/// that the encoding of A itself is canonical: the key store closes that at
+/// admission (`keys::is_admissible_key`).
 pub(crate) fn verify_strict(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
     VerifyingKey::from_bytes(public_key)
         .and_then(|key| key.verify_strict(message, &Signature::from_bytes(signature)))

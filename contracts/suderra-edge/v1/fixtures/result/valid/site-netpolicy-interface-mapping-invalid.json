@@ -1,0 +1,19 @@
+{
+  "_type": "suderra.result.v1",
+  "occurred_at": "2026-10-20T11:20:00Z",
+  "time_state": "synced-nts",
+  "board_profile": "revpi-connect4",
+  "os_version": "1.0.0",
+  "seq": 25,
+  "kind": "site-netpolicy",
+  "outcome": "rejected",
+  "reason": "interface-mapping-invalid",
+  "subject": {
+    "statement_type": "suderra.site-netpolicy.v1",
+    "statement_digest": {
+      "sha256": "3af49129858a954fb43cf49b721d0f60dc34d08e9fbc0d45487bfcc598b72677"
+    },
+    "update_seq": 2
+  },
+  "detail": "every interface of the device is mapped to the OT role; the ruleset is not rendered"
+}
