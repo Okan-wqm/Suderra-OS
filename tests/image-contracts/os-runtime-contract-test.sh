@@ -3,13 +3,16 @@
 # The runtime a Suderra OS image offers an agent binary matches boards.json
 # os_runtime (ADR-048 DEC-8.5; INFRA-MEDIUM-253).
 #
-# The release pipeline checks a built binary against os_runtime (ELF NEEDED,
-# program interpreter, highest GLIBC symbol version). That is only a gate if
-# the table describes the images. This test compares it with what the images
-# are built from: the Buildroot toolchain C library of every defconfig, the
-# glibc version the pinned Buildroot builds, and the libraries its glibc
-# package installs on the target. Each mutation of the table or of the
-# build inputs, applied to a scratch copy, is rejected.
+# The release pipeline (aquaculture_platform scripts/edge/edge_release.py) checks
+# a built binary against os_runtime (ELF NEEDED, program interpreter, highest
+# GLIBC symbol version). That is only a gate if the table describes the images.
+# This test compares it with what the images are built from: the Buildroot
+# toolchain C library of every defconfig, the glibc version the pinned Buildroot
+# builds, and the libraries its glibc package installs on the target. Each
+# mutation of the table or of the build inputs, applied to a scratch copy, is
+# rejected. It compares build inputs, not a built root filesystem: whether the
+# libraries are in a produced image needs the image build, so INFRA-MEDIUM-253
+# stays open for that part.
 #
 set -euo pipefail
 IFS=$'\n\t'
