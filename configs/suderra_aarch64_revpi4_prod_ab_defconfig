@@ -2,8 +2,11 @@
 # Suderra OS — Revolution Pi Connect 4 defconfig (aarch64)
 #
 # RevPi Connect 4 is a separate supported hardware target, not a generic CM4
-# alias. USB-A self-install depends on device boot configuration; micro-USB
-# rpiboot is the official fallback for eMMC flashing.
+# alias: it builds the KUNBUS RevolutionPi kernel (revpi-6.12 @ v6.12.91-revpi0,
+# revpi-v8_defconfig, PREEMPT_RT) with the piControl driver as a signed module
+# and the revpi-connect4 device tree merged into the CM4 tree (ADR-048 DEC-8,
+# docs/hardware/revpi-connect4.md). USB-A self-install depends on device boot
+# configuration; micro-USB rpiboot is the official fallback for eMMC flashing.
 #
 
 BR2_aarch64=y
@@ -25,15 +28,32 @@ BR2_GCC_VERSION_13_X=y
 BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
 BR2_TOOLCHAIN_BUILDROOT_USE_SSP=y
 
+# Kernel: KUNBUS revpi-6.12 pinned by commit and hash
+# (board/suderra/buildroot-hashes/linux/linux.hash). The tarball is KUNBUS's, the
+# base config is theirs (revpi-v8_defconfig); the Suderra fragments follow in
+# the order they win. The kernel is built with DTC_FLAGS=-@ and builds the
+# revpi-connect4 overlay next to the stock CM4 tree: post-image merges them with
+# fdtoverlay (board-boot.conf).
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
-BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,576cc10e1ed50a9eacffc7a05c796051d7343ea4)/linux-576cc10e1ed50a9eacffc7a05c796051d7343ea4.tar.gz"
-BR2_LINUX_KERNEL_DEFCONFIG="bcm2711"
-BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/linux-rpi4.config $(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/linux-rpi4-hardening.config"
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call gitlab,revolutionpi,linux,756591ec4845ec0114ee7a3a99768f69bcd8bed3)/linux-756591ec4845ec0114ee7a3a99768f69bcd8bed3.tar.gz"
+BR2_LINUX_KERNEL_DEFCONFIG="revpi-v8"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-revpi-connect4/linux-revpi-suderra.config $(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/linux-rpi4-hardening.config $(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-revpi-connect4/linux-revpi-suderra-prod.config"
 BR2_LINUX_KERNEL_IMAGE=y
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 BR2_LINUX_KERNEL_DTS_SUPPORT=y
-BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-cm4 broadcom/bcm2711-rpi-cm4-io"
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-cm4"
+BR2_LINUX_KERNEL_INTREE_DTSO_NAMES="overlays/revpi-connect4"
+BR2_LINUX_KERNEL_DTB_OVERLAY_SUPPORT=y
+
+# KUNBUS's kernel compresses its modules with xz; libkmod reads them only when
+# xz is in the image. fdtoverlay (host-dtc) builds the board's device tree.
+BR2_PACKAGE_XZ=y
+BR2_PACKAGE_HOST_DTC=y
+
+# piControl (/dev/piControl0): an out-of-tree KUNBUS module, signed by the
+# kernel build's module key (package/revpi-picontrol).
+BR2_PACKAGE_REVPI_PICONTROL=y
 
 # U-Boot — signed-FIT root of trust (ADR-0007 G1). BUILD-ONLY until PR-A4
 # flips config.txt to chainload u-boot.bin. RevPi Connect 4 is a BCM2711/CM4
@@ -52,8 +72,8 @@ BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SIGNATURE_SUPPORT=y
 
 BR2_PACKAGE_RPI_FIRMWARE=y
 BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI4=y
-BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/config.txt"
-BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-revpi4/cmdline.txt"
+BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-revpi-connect4/config.txt"
+BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-revpi-connect4/cmdline.txt"
 
 BR2_INIT_SYSTEMD=y
 # systemd with seccomp: without libseccomp it is built -Dseccomp=disabled and
@@ -70,7 +90,10 @@ BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
 BR2_TARGET_ROOTFS_EXT2_GEN=4
 BR2_TARGET_ROOTFS_EXT2_LABEL="suderra-root"
-BR2_TARGET_ROOTFS_EXT2_SIZE="256M"
+# KUNBUS's distribution kernel resolves to some 1800 modules; 384M keeps the
+# headroom inside the 512M rootfs slot (a rootfs that does not fit fails the
+# build, it never ships truncated).
+BR2_TARGET_ROOTFS_EXT2_SIZE="384M"
 BR2_TARGET_ROOTFS_EXT2_INODES=0
 BR2_TARGET_ROOTFS_EXT2_RESBLKS=1
 

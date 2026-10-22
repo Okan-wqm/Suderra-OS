@@ -1,0 +1,27 @@
+# Suderra OS - Revolution Pi Connect 4 firmware configuration (dev image)
+#
+# The Raspberry Pi firmware (start4.elf) reads this file and loads the kernel
+# directly (the dev image has no U-Boot and no signed FIT). Production uses
+# config-uboot.txt next to this file.
+#
+# Device tree: the firmware is told to load the board's final device tree,
+# bcm2711-revpi-connect4.dtb, which post-image.sh builds from the pinned KUNBUS
+# kernel's bcm2711-rpi-cm4.dtb and revpi-connect4.dtbo with fdtoverlay
+# (scripts/production-artifacts.sh arm-board-dtb, board-boot.conf). The
+# production image boots the same file out of the signed FIT. Neither image
+# uses a dtoverlay= or dtparam= line: in production U-Boot hands the kernel the
+# FIT's device tree, so such a line would reach the dev kernel and never the
+# production one (EI-024); every board node comes from the one device tree.
+# tests/image-contracts/revpi-board-contract-test.sh rejects both keys here.
+
+arm_64bit=1
+kernel=Image
+device_tree=bcm2711-revpi-connect4.dtb
+
+# Mini-UART console (the Connect 4's debug UART, TXD1 on GPIO14).
+enable_uart=1
+uart_2ndstage=1
+
+gpu_mem=16
+disable_splash=1
+boot_delay=0

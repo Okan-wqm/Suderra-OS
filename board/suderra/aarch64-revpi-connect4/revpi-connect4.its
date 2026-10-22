@@ -1,0 +1,65 @@
+/*
+ * Suderra OS - signed FIT of the Revolution Pi Connect 4 (ADR-0007, ADR-048 DEC-8.7)
+ *
+ * The template scripts/production-artifacts.sh fills for one RAUC slot
+ * (arm-pre-genimage; board-boot.conf names it). Where the generic ARM producer
+ * emits one signed configuration per stock board tree it finds, the Connect 4
+ * has exactly one: the board's final device tree, the KUNBUS CM4 tree with the
+ * revpi-connect4 overlay merged by fdtoverlay (arm-board-dtb). A raw CM4 tree
+ * is never a configuration of this FIT: booted on a Connect 4 it has no PiBridge,
+ * no TPM, no RTC and no RS485.
+ *
+ * U-Boot verifies the configuration signature (required = "conf") over the
+ * kernel, the device tree and the ramdisk before it boots; the ramdisk is the
+ * dm-verity initramfs and the bootargs carry its root hash.
+ *
+ * Placeholders (all replaced, none may remain in the output):
+ *   @SLOT@      A or B
+ *   @KERNEL@    path of the kernel Image
+ *   @INITRD@    path of the slot's gzip verity initramfs
+ *   @FDT@       path of the board's final device tree
+ *   @BOOTARGS@  the slot's kernel command line
+ *
+ * The configuration's compatible is the final device tree's own root
+ * compatible: arm-board-dtb fails the build if the two differ, so this line
+ * cannot drift from what the overlay sets.
+ */
+
+/dts-v1/;
+/ {
+    description = "Suderra signed FIT, Revolution Pi Connect 4 (slot @SLOT@)";
+    #address-cells = <1>;
+    images {
+        kernel {
+            data = /incbin/("@KERNEL@");
+            type = "kernel"; arch = "arm64"; os = "linux"; compression = "none";
+            load = <0x00080000>; entry = <0x00080000>;
+            hash-1 { algo = "sha256"; };
+        };
+        ramdisk-1 {
+            data = /incbin/("@INITRD@");
+            type = "ramdisk"; arch = "arm64"; os = "linux"; compression = "gzip";
+            hash-1 { algo = "sha256"; };
+        };
+        fdt-revpi-connect4 {
+            data = /incbin/("@FDT@");
+            type = "flat_dt"; arch = "arm64"; compression = "none";
+            hash-1 { algo = "sha256"; };
+        };
+    };
+    configurations {
+        default = "conf-revpi-connect4";
+        conf-revpi-connect4 {
+            description = "Revolution Pi Connect 4 (slot @SLOT@)";
+            compatible = "kunbus,revpi-connect4", "brcm,bcm2711";
+            kernel = "kernel"; fdt = "fdt-revpi-connect4"; ramdisk = "ramdisk-1";
+            bootargs = "@BOOTARGS@";
+            signature-1 {
+                algo = "sha256,rsa2048";
+                key-name-hint = "fit-signing";
+                sign-images = "kernel", "fdt", "ramdisk";
+                required = "conf";
+            };
+        };
+    };
+};

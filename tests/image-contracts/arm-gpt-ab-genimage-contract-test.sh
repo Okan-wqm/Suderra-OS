@@ -12,7 +12,7 @@ IFS=$'\n\t'
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-for board in aarch64-rpi4 aarch64-revpi4; do
+for board in aarch64-rpi4 aarch64-revpi-connect4; do
     prod="${ROOT}/board/suderra/${board}/genimage-prod.cfg"
     [ -f "${prod}" ] || { echo "ERROR: ${board} prod genimage yok" >&2; exit 1; }
     grep -q 'partition-table-type = "gpt"' "${prod}" || { echo "ERROR: ${board} prod GPT değil" >&2; exit 1; }

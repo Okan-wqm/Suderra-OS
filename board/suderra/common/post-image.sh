@@ -257,10 +257,16 @@ case "${DEFCONFIG_NAME}" in
         fi
         ;;
     suderra_aarch64_revpi*)
+        ARM_BOARD_DIR="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi-connect4"
         if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
-            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi4/genimage-prod.cfg"
+            GENIMAGE_CFG="${ARM_BOARD_DIR}/genimage-prod.cfg"
         else
-            GENIMAGE_CFG="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi4/genimage.cfg"
+            GENIMAGE_CFG="${ARM_BOARD_DIR}/genimage.cfg"
+            # The dev image boots the firmware's kernel directly, with the
+            # board's final device tree (config.txt device_tree=). Production
+            # builds the same tree inside arm-pre-genimage, for its FIT.
+            echo "==> RevPi Connect 4 board device tree (fdtoverlay)"
+            "${PRODUCTION_ARTIFACTS}" arm-board-dtb "${BINARIES_DIR}" "${ARM_BOARD_DIR}"
         fi
         IMAGE_OUTPUT_NAME="suderra-revpi4-target.img"
         ;;
@@ -298,15 +304,22 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
             echo "==> ARM production signed-FIT + verity artifact üretimi (ADR-0007)"
             # rootfs.verity + per-slot imzalı FIT (kernel+DTB+initramfs+bootargs)
             # + u-boot.dtb'ye gömülü FIT pubkey.
-            "${PRODUCTION_ARTIFACTS}" arm-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}"
+            # A board directory with a board-boot.conf (RevPi Connect 4) gets
+            # its own FIT: its overlays merged into the device tree that is
+            # signed in, and the nodes checked on what the FIT carries.
+            "${PRODUCTION_ARTIFACTS}" arm-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}" \
+                ${ARM_BOARD_DIR:+"${ARM_BOARD_DIR}"}
             # RAUC slot-seçen boot script'i derle (imzalı FIT bootm).
             mkimage -A arm64 -T script -C none \
                 -d "${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/boot.scr.cmd" \
                 "${BINARIES_DIR}/boot.scr" >/dev/null
-            # Pi firmware'i U-Boot chainload'a çevir (prod config.txt).
-            install -D -m 0644 \
-                "${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/config-uboot.txt" \
-                "${BINARIES_DIR}/rpi-firmware/config.txt"
+            # Pi firmware'i U-Boot chainload'a çevir (prod config.txt): the
+            # board's own when it has one.
+            fw_config="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/config-uboot.txt"
+            if [ -n "${ARM_BOARD_DIR:-}" ] && [ -f "${ARM_BOARD_DIR}/config-uboot.txt" ]; then
+                fw_config="${ARM_BOARD_DIR}/config-uboot.txt"
+            fi
+            install -D -m 0644 "${fw_config}" "${BINARIES_DIR}/rpi-firmware/config.txt"
             ;;
     esac
 fi

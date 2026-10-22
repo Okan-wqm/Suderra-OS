@@ -1,0 +1,23 @@
+# Suderra OS - Revolution Pi Connect 4 firmware configuration (production)
+#
+# The Raspberry Pi firmware chain-loads U-Boot, which boots the signed FIT of
+# the RAUC slot (board/suderra/aarch64-rpi4/boot.scr.cmd). post-image.sh
+# installs this file as rpi-firmware/config.txt of the production image.
+#
+# The kernel never sees anything configured here: it gets the device tree of
+# the signed FIT, which carries the revpi-connect4 overlay merged at build time
+# (board-boot.conf, revpi-connect4.its). The device tree the firmware loads is
+# the stock CM4 one on the boot partition (bcm2711-rpi-cm4.dtb); U-Boot uses it
+# for its own hardware only. So no dtoverlay= or dtparam= line belongs here
+# (EI-024); tests/image-contracts/revpi-board-contract-test.sh rejects both.
+
+arm_64bit=1
+kernel=u-boot.bin
+
+# U-Boot console on the mini-UART (TXD1 on GPIO14).
+enable_uart=1
+uart_2ndstage=1
+
+gpu_mem=16
+disable_splash=1
+boot_delay=0

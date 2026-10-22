@@ -272,7 +272,7 @@ defconfigs:
     partition_table: mbr
     root_partition: rootfs
     root_identity: partuuid-mutated-post-flash
-    genimage: board/suderra/aarch64-revpi4/genimage.cfg
+    genimage: board/suderra/aarch64-revpi-connect4/genimage.cfg
     post_image_arg: suderra_aarch64_revpi4
     signing: production-required
     acceptance: revpi-connect-4-hardware-lab
@@ -348,7 +348,7 @@ defconfigs:
     partition_table: gpt
     root_partition: rootfs-a
     root_identity: verity-signed-fit
-    genimage: board/suderra/aarch64-revpi4/genimage-prod.cfg
+    genimage: board/suderra/aarch64-revpi-connect4/genimage-prod.cfg
     post_image_arg: suderra_aarch64_revpi4_prod_ab
     signing: production-required
     acceptance: revpi-connect-4-hardware-lab

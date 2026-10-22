@@ -30,7 +30,9 @@ done
 # Prod genimage seçimi variant-aware olmalı (dev MBR, prod GPT).
 grep -q 'aarch64-rpi4/genimage-prod.cfg' "${PI}" || {
     echo "ERROR: rpi4 prod genimage-prod.cfg seçilmiyor" >&2; exit 1; }
-grep -q 'aarch64-revpi4/genimage-prod.cfg' "${PI}" || {
+grep -qF 'ARM_BOARD_DIR="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-revpi-connect4"' "${PI}" || {
+    echo "ERROR: revpi4 board dizini (aarch64-revpi-connect4) tanımlı değil" >&2; exit 1; }
+grep -qF 'GENIMAGE_CFG="${ARM_BOARD_DIR}/genimage-prod.cfg"' "${PI}" || {
     echo "ERROR: revpi4 prod genimage-prod.cfg seçilmiyor" >&2; exit 1; }
 
 # enforce_production_contract A/B FIT'i zorunlu tutmalı; tekil suderra.fit DEĞİL.

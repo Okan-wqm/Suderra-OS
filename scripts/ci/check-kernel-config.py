@@ -123,17 +123,85 @@ CAPABILITIES: dict[str, tuple[tuple[str, ...], str]] = {
         "/dev/ttyAMA0 (unit-directives.json board_dropins)",
     ),
     "revpi-field-io": (
-        ("SERIAL_AMBA_PL011",),
-        "the revpi-connect4 agent drop-in grants /dev/ttyAMA5 (RS485)",
+        (
+            "SERIAL_AMBA_PL011",
+            "SERIAL_DEV_BUS",
+            "SERIAL_DEV_MUX_PIBRIDGE",
+            "SPI",
+            "SPI_BCM2835AUX",
+            "I2C",
+            "I2C_BCM2835",
+            "GPIO_PCA953X",
+            "LEDS_CLASS",
+            "LEDS_GPIO",
+            "LEDS_TRIGGERS",
+        ),
+        "the revpi-connect4 agent drop-in grants /dev/ttyAMA5 (RS485, UART5) and "
+        "/dev/piControl0; piControl drives the PiBridge serdev master on UART3 "
+        "(SERIAL_DEV_MUX_PIBRIDGE), the PCAL6416/6524 GPIO expanders on I2C1 "
+        "behind the PiBridge sniff lines and the 15 status LEDs, all of "
+        "board/suderra/aarch64-revpi-connect4's revpi-connect4 overlay (DEC-8.7, DEC-8.8)",
+    ),
+    "revpi-rtc": (
+        ("RTC_CLASS", "RTC_DRV_PCF2127", "RTC_HCTOSYS", "RTC_SYSTOHC"),
+        "the Connect 4's PCF2129 RTC (overlay rtc@51): built in so hctosys sets "
+        "the clock before the first service, systohc so chrony's rtcsync keeps "
+        "it (DEC-7.8; RTC_DRV_DS1307 is the wrong chip)",
+    ),
+    "revpi-console": (
+        ("SERIAL_8250", "SERIAL_8250_CONSOLE", "SERIAL_8250_BCM2835AUX"),
+        "the FIT's bootargs of the revpi-connect4 name console=ttyS0 "
+        "(board-boot.conf BOARD_CONSOLE): the debug UART is the BCM2711 "
+        "mini-UART (serial0 of the merged device tree)",
+    ),
+    "revpi-rt": (
+        ("PREEMPT_RT",),
+        "the KUNBUS revpi-6.12 kernel is the real-time kernel piControl's cyclic "
+        "PiBridge exchange is timed on (DEC-8.6)",
+    ),
+    "arm64-hardening": (
+        (
+            "SECURITY_LOCKDOWN_LSM",
+            "INIT_ON_ALLOC_DEFAULT_ON",
+            "INIT_ON_FREE_DEFAULT_ON",
+            "HARDENED_USERCOPY",
+            "FORTIFY_SOURCE",
+            "STACKPROTECTOR_STRONG",
+            "STRICT_DEVMEM",
+        ),
+        "the arm64 hardening every aarch64 board carries "
+        "(aarch64-rpi4/linux-rpi4-hardening.config and the board's own fragment): "
+        "the lockdown LSM and the memory-initialisation and usercopy defences "
+        "(DEC-8.6, ADR-0007 G4)",
+    ),
+    "module-signing": (
+        (
+            "MODULES",
+            "MODULE_SIG",
+            "MODULE_SIG_FORCE",
+            "MODULE_SIG_ALL",
+            "LOCK_DOWN_KERNEL_FORCE_INTEGRITY",
+        ),
+        "a production kernel that keeps loadable modules refuses any its own build "
+        "did not sign, and runs locked down at integrity level whatever the "
+        "command line says (linux-revpi-suderra-prod.config; ADR-0007 M3, EI-048). "
+        "The out-of-tree piControl is signed by the same build key",
     ),
 }
 
-BOARD_IO = {
-    "qemu-x86_64": "x86-field-io",
-    "x86-ipc": "x86-field-io",
-    "rpi4-cm4": "rpi-field-io",
-    "revpi-connect4": "revpi-field-io",
+# Capabilities of a board's field I/O and boot hardware, by board_profile.
+BOARD_IO: dict[str, tuple[str, ...]] = {
+    "qemu-x86_64": ("x86-field-io",),
+    "x86-ipc": ("x86-field-io",),
+    "rpi4-cm4": ("rpi-field-io",),
+    "revpi-connect4": ("revpi-field-io", "revpi-rtc", "revpi-console", "revpi-rt"),
 }
+
+# Boards whose production image enforces module signatures. rpi4-cm4's
+# production kernel does not yet (its prod-only fragment is the rest of EI-048:
+# docs/assessments/2026-10-19-edge-agent-integration-audit.md#EI-048); it joins
+# this set with that fragment, and the line below is then the whole change.
+MODULE_SIGNING_BOARDS = frozenset({"revpi-connect4"})
 
 # --------------------------------------------------------------------------
 # Tracked overrides: (config file name, symbol) -> reason. Resolved mode
@@ -297,10 +365,14 @@ def capabilities_of(image: Image) -> list[str]:
         caps.append("tpm-x86" if image.arch == "x86_64" else "tpm-spi")
     if image.prod:
         caps.append("verity-initramfs")
+    if image.arch == "aarch64":
+        caps.append("arm64-hardening")
+    if image.prod and image.board in MODULE_SIGNING_BOARDS:
+        caps.append("module-signing")
     io = BOARD_IO.get(image.board)
     if io is None:
         raise ContractError(f"{image.defconfig}: no field I/O requirement for board {image.board!r}")
-    caps.append(io)
+    caps.extend(io)
     return caps
 
 

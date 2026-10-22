@@ -1,0 +1,43 @@
+# Nodes the final device tree of the Revolution Pi Connect 4 must enable.
+#
+# The gate in scripts/production-artifacts.sh (arm-board-dtb on the merged
+# tree, and again on the tree it extracts from every built FIT) reads this file
+# with fdtget; tests/image-contracts/revpi-board-contract-test.sh checks it
+# against a device tree compiled from a stand-in of the overlay.
+#
+# Each line is: <node> <property> <value>
+#   node      label:<name>[/<child>...]   a label of the tree's __symbols__
+#                                         (the kernel builds with dtc -@), or
+#             path:</absolute/path>
+#   property  a property name
+#   value     the expected string (a stringlist entry matches when it is any of
+#             the property's strings), or - when the property only has to exist
+#
+# What each node is for (ADR-048 DEC-8.7, all names from KUNBUS's real
+# arch/arm/boot/dts/overlays/revpi-connect4-overlay.dts at v6.12.91-revpi0):
+#   tpm@0     Infineon SLB9670 on SPI1: the TPM that device binding (EK hash) and
+#             the LUKS2 /data seal need; without it suderra-data-unlock fails closed
+#   rtc@51    NXP PCF2129 on I2C1, reset-source: the RTC and a hardware reset source
+#   pibridge  PiBridge connect/sniff/termination GPIOs and the PiBridge serial
+#             master on UART3: what piControl drives
+#   uart5     the RS485 port (ttyAMA5)
+#   expanders the PCAL6416/6524 GPIO expanders behind the status LEDs and the
+#             PiBridge sniff lines
+label:spi1                      status                           okay
+label:tpm                       compatible                       infineon,slb9670
+label:tpm                       status                           okay
+label:i2c1                      status                           okay
+label:i2c1/rtc@51               compatible                       nxp,pcf2129
+label:i2c1/rtc@51               status                           okay
+label:i2c1/rtc@51               reset-source                     -
+label:i2c1/gpio@21              compatible                       nxp,pcal6416
+label:i2c1/gpio@22              compatible                       nxp,pcal6524
+path:/pibridge                  compatible                       kunbus,pibridge
+path:/pibridge                  connect-gpios                    -
+label:uart3                     status                           okay
+label:uart3/pi_bridge           compatible                       kunbus,pi-bridge
+label:uart5                     status                           okay
+label:uart5                     linux,rs485-enabled-at-boot-time -
+path:/leds/power_red            label                            power:1:fault
+path:/leds/a1_green             label                            a1:green:status
+path:/leds/a5_blue              label                            a5:blue:status

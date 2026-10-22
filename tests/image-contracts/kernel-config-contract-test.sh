@@ -62,6 +62,8 @@ expect_fail() {
 
 QEMU_FRAG="board/suderra/x86_64/linux-qemu.config"
 RPI_FRAG="board/suderra/aarch64-rpi4/linux-rpi4.config"
+REVPI_FRAG="board/suderra/aarch64-revpi-connect4/linux-revpi-suderra.config"
+REVPI_PROD_FRAG="board/suderra/aarch64-revpi-connect4/linux-revpi-suderra-prod.config"
 
 # 2. Static mode rejects each defect class.
 fresh_copy
@@ -90,10 +92,53 @@ sed -i 's/^CONFIG_NFT_LIMIT=y$/CONFIG_NFT_LIMIT=y   # rate limits/' "${WORK}/tre
 expect_fail "trailing comment on a config line" "no trailing" \
     python3 -I "${CHECK}" --root "${WORK}/tree" static
 
+# The SPI TPM driver is declared by the RevPi board fragment and by the shared
+# arm64 hardening fragment: both must lose it for the requirement to be unmet.
 fresh_copy
-sed -i '/^CONFIG_TCG_TIS_SPI=y$/d' "${WORK}/tree/board/suderra/aarch64-rpi4/linux-rpi4-hardening.config"
+sed -i '/^CONFIG_TCG_TIS_SPI=y$/d' \
+    "${WORK}/tree/board/suderra/aarch64-rpi4/linux-rpi4-hardening.config" \
+    "${WORK}/tree/${REVPI_FRAG}"
 expect_fail "RevPi kernel without its SPI TPM driver" "suderra_aarch64_revpi4_defconfig: CONFIG_TCG_TIS_SPI must be =y" \
     python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_RTC_DRV_PCF2127=y$/d' "${WORK}/tree/${REVPI_FRAG}"
+expect_fail "RevPi kernel without its PCF2129 RTC driver" "suderra_aarch64_revpi4_defconfig: CONFIG_RTC_DRV_PCF2127 must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_SERIAL_DEV_MUX_PIBRIDGE=y$/d' "${WORK}/tree/${REVPI_FRAG}"
+expect_fail "RevPi kernel without the PiBridge serdev master" "suderra_aarch64_revpi4_defconfig: CONFIG_SERIAL_DEV_MUX_PIBRIDGE must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_PREEMPT_RT=y$/d' "${WORK}/tree/${REVPI_FRAG}"
+expect_fail "RevPi kernel that is no longer the real-time kernel" "CONFIG_PREEMPT_RT must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+# Module signing is a production requirement of the RevPi (EI-048): losing the
+# forced signature check, or the forced lockdown, from the prod-only fragment
+# fails the production image and no other.
+fresh_copy
+sed -i '/^CONFIG_MODULE_SIG_FORCE=y$/d' "${WORK}/tree/${REVPI_PROD_FRAG}"
+expect_fail "RevPi production kernel that accepts unsigned modules" \
+    "suderra_aarch64_revpi4_prod_ab_defconfig: CONFIG_MODULE_SIG_FORCE must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i 's/^CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY=y$/# CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY is not set/' "${WORK}/tree/${REVPI_PROD_FRAG}"
+expect_fail "RevPi production kernel that is not locked down at build time" \
+    "suderra_aarch64_revpi4_prod_ab_defconfig: CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+python3 -I "${CHECK}" --root "${WORK}/tree" list >"${WORK}/list.txt"
+grep -q '^suderra_aarch64_revpi4_prod_ab_defconfig	.*module-signing' "${WORK}/list.txt" ||
+    fail "the RevPi production image does not require module signing"
+if grep -q '^suderra_aarch64_revpi4_defconfig	.*module-signing' "${WORK}/list.txt"; then
+    fail "the RevPi dev image must not require module signing (a developer loads their own modules)"
+fi
+echo "  requires module signing on the RevPi production image only"
 
 # 3. Resolved mode on a synthetic kernel tree for the dev QEMU defconfig:
 #    a Kconfig defining every symbol its fragment names, and a .config that

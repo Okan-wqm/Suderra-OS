@@ -52,7 +52,7 @@ m = yaml.safe_load(open(f"{root}/ci/build-matrix.yml"))
 byname = {t["name"]: t for t in m["defconfigs"]}
 for dc, tgt, gi in (
     ("suderra_aarch64_rpi4_prod_ab_defconfig", "rpi4-prod-ab", "board/suderra/aarch64-rpi4/genimage-prod.cfg"),
-    ("suderra_aarch64_revpi4_prod_ab_defconfig", "revpi4-prod-ab", "board/suderra/aarch64-revpi4/genimage-prod.cfg"),
+    ("suderra_aarch64_revpi4_prod_ab_defconfig", "revpi4-prod-ab", "board/suderra/aarch64-revpi-connect4/genimage-prod.cfg"),
 ):
     e = byname.get(dc)
     assert e, f"{dc} build-matrix'te yok"
