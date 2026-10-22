@@ -60,6 +60,12 @@ EXPECTED_SCENARIOS = (
     "interrupted-provisioning-is-redone",
     "foreign-signature-refused",
     "unseal-failure-keeps-the-volume",
+    "recovery-restores-access",
+    "wrong-recovery-key-is-rejected",
+    "escrow-failure-formats-nothing",
+    "recovery-seal-failure-keeps-the-old-key",
+    "recovery-refuses-an-open-volume",
+    "recovery-never-formats",
 )
 SEARCH = ("/usr/sbin", "/usr/bin", "/sbin", "/bin")
 # Executables the guest needs, besides BusyBox.
@@ -71,6 +77,7 @@ HOST_TOOLS = (
     "blkid",
     "tpm2_pcrextend",
     "tpm2_pcrread",
+    "openssl",
     # BusyBox of Debian and Ubuntu has no mountpoint applet; the image's has.
     "mountpoint",
 )
@@ -260,8 +267,33 @@ poweroff -f
 """
 
 
+def escrow_key_pair(work: Path) -> tuple[bytes, bytes]:
+    """The offline escrow key of the test: the guest decrypts envelopes with it
+    the way the offline HSM would."""
+    key = work / "escrow.key"
+    subprocess.run(
+        [
+            "openssl",
+            "genpkey",
+            "-algorithm",
+            "RSA",
+            "-pkeyopt",
+            "rsa_keygen_bits:3072",
+            "-out",
+            str(key),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    public = subprocess.run(
+        ["openssl", "pkey", "-in", str(key), "-pubout"], check=True, capture_output=True
+    ).stdout
+    return key.read_bytes(), public
+
+
 def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
     busybox = find_tool("busybox")
+    escrow_private, escrow_public = escrow_key_pair(work)
     cpio = Cpio()
     for link in ("bin", "sbin", "lib", "lib64"):
         cpio.symlink(link, f"usr/{link}")
@@ -320,6 +352,8 @@ def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
         cpio.file(name.lstrip("/"), target.read_bytes(), 0o755)
     cpio.file("usr/sbin/suderra-data-unlock", unlock.read_bytes(), 0o755)
     cpio.file("usr/lib/suderra/data-layout.tmpfiles.conf", LAYOUT.read_bytes())
+    cpio.file("etc/suderra/recovery-escrow.pub.pem", escrow_public)
+    cpio.file("test/escrow.key", escrow_private, 0o600)
     cpio.file("etc/os-release", b'NAME="Suderra OS"\nID=suderra-os\nVARIANT="prod"\n')
     cpio.file("etc/suderra/board", b"BOARD_PROFILE=qemu-x86_64-prod\nARCH=x86_64\n")
     cpio.file(

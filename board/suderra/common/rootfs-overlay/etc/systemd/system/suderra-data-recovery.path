@@ -1,0 +1,15 @@
+# The recovery ingress places the decrypted recovery key of /data here after
+# it verified the signed authority and the physical presence the recovery
+# needs (ADR-048 DEC-14.3, DEC-18.2; docs/security/data-recovery.md). The key
+# is the only trigger: suderra-data-unlock consumes it at once.
+
+[Unit]
+Description=Watch for the recovery key of /data
+Documentation=https://github.com/Okan-wqm/suderra-os
+
+[Path]
+PathExists=/run/suderra-os/data-recovery.key
+Unit=suderra-data-recovery.service
+
+[Install]
+WantedBy=paths.target

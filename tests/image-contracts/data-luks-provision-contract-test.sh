@@ -30,7 +30,7 @@ need "LUKS2 formatlama"                          'cryptsetup luksFormat --type l
 need "TPM2 seal (systemd-cryptenroll)"           'systemd-cryptenroll'
 need "TPM2 device auto"                          '--tpm2-device=auto'
 need "PCR7 binding"                              'tpm2-pcrs=7'
-need "ephemeral passphrase slot'unun silinmesi"  'wipe-slot=password'
+need "ephemeral passphrase slot'unun silinmesi"  'luksKillSlot'
 need "fresh volume'da mkfs.ext4"                 'mkfs.ext4 .* "\$\{mapper_dev\}"'
 
 # 2. Ephemeral anahtar KALICI depoya yazılmamalı — yalnız /run (tmpfs).
@@ -121,6 +121,51 @@ if text.rfind("commit_provisioning") < text.rfind("lifecycle factory"):
 if "trap cleanup_secrets EXIT" not in text:
     errors.append("the ephemeral key file must be removed however the script ends (trap EXIT)")
 
+# The recovery slot (DEC-14.3): provisioning escrows a random key, recovery
+# uses it and replaces it.
+if len(re.findall(r"tpm2-pcrs=", text)) != 1 or not re.search(r'^TPM2_SEAL_OPTIONS="[^"]*--tpm2-pcrs=7', text, re.M):
+    errors.append("the TPM2 policy must be stated once, in TPM2_SEAL_OPTIONS, for the provisioning and the re-seal alike")
+for fragment in ("rsa_padding_mode:oaep", "rsa_oaep_md:sha256", "rsa_mgf1_md:sha256"):
+    if fragment not in function_body("write_escrow"):
+        errors.append(f"write_escrow must encrypt with RSA-OAEP and SHA-256: {fragment} is missing")
+if 'ESCROW_PUBKEY=/etc/suderra/recovery-escrow.pub.pem' not in text:
+    errors.append("the escrow public key must be the image's /etc/suderra/recovery-escrow.pub.pem")
+provision = function_body("provision_luks_data")
+if provision.find("write_escrow") < 0 or provision.find("write_escrow") > provision.find("cryptsetup luksFormat"):
+    errors.append("the recovery key must be escrowed before luksFormat: nothing is formatted unless the escrow works")
+if "/dev/urandom" not in function_body("new_recovery_key"):
+    errors.append("the recovery key must come from /dev/urandom")
+if "--disable-external-tokens" not in function_body("add_recovery_slot"):
+    errors.append("a recovery slot is added with the key file alone, never with a token")
+if text.count("mktemp") != 1 or "mktemp /run/" not in function_body("new_temp"):
+    errors.append("every file that holds key material is made by new_temp under /run")
+if not re.search(r'luksKillSlot[^\n]*--key-file "\$\{recovery_file\}"', provision):
+    errors.append("provisioning must remove the ephemeral slot with the recovery key, which proves the recovery slot")
+recover = function_body("recover_prod_luks_data")
+if not recover:
+    errors.append("suderra-data-unlock has no recover mode")
+else:
+    consume = recover.find('rm -f "${RECOVERY_KEY_INPUT}"')
+    check = recover.find("grep -Eqx '[0-9a-f]{64}'")
+    if consume < 0 or check < 0 or consume > check:
+        errors.append("recover must consume the key file before it judges it, or a path unit retries a rejected key forever")
+    if "--test-passphrase --disable-external-tokens --key-slot" not in recover:
+        errors.append("recover must check the key against the recovery slots alone, with tokens disabled: a volume that still unseals must not accept a wrong key")
+    opened = recover.find("cryptsetup open --disable-external-tokens")
+    flagged = recover.find("RECOVERING=1")
+    if opened < 0 or flagged < opened:
+        errors.append("RECOVERING must be set after recover opened the volume: a refusal must never close a volume the boot opened")
+    wipe = recover.find("--wipe-slot=tpm2")
+    seal = recover.find("seal_to_tpm")
+    if wipe < 0 or seal < wipe:
+        errors.append("recover must wipe the old TPM2 seal before it seals again: systemd-cryptenroll does nothing for a PCR set that is already enrolled")
+    if recover.find("add_recovery_slot") > recover.find("seal_to_tpm") or recover.find("luksKillSlot") < recover.find("seal_to_tpm"):
+        errors.append("recover must add the new recovery slot first and remove the old ones after the seal, so every step leaves a working key")
+    if "mkfs" in recover or "luksFormat" in recover:
+        errors.append("recover must never format")
+if 'recover)' not in text or 'recovery exists for production volumes only' not in text:
+    errors.append("the recover mode must exist for production volumes only")
+
 # Every reason the script records must be one the contract allows for a
 # data-unlock result: suderra-installer refuses the others and the alarm then
 # records nothing.
@@ -135,6 +180,34 @@ for reason in sorted(reasons - allowed):
     errors.append(f"suderra-data-unlock records the reason {reason!r}, which the data-unlock result contract does not allow ({sorted(allowed)})")
 if errors:
     sys.exit("ERROR: " + "; ".join(errors))
+PY
+
+# 6. The recovery units: the path unit watches the very file the script
+# consumes, the service runs the recover mode and reboots only after it
+# succeeded, and only production images enable them.
+UNITS="${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system"
+grep -qx 'PathExists=/run/suderra-os/data-recovery.key' "${UNITS}/suderra-data-recovery.path" ||
+    { echo "ERROR: suderra-data-recovery.path must watch /run/suderra-os/data-recovery.key" >&2; exit 1; }
+grep -qx 'RECOVERY_KEY_INPUT=/run/suderra-os/data-recovery.key' "${UNLOCK}" ||
+    { echo "ERROR: suderra-data-unlock and suderra-data-recovery.path must agree on the key file" >&2; exit 1; }
+grep -qx 'Unit=suderra-data-recovery.service' "${UNITS}/suderra-data-recovery.path" ||
+    { echo "ERROR: the recovery path unit must start suderra-data-recovery.service" >&2; exit 1; }
+grep -qx 'ExecStart=/usr/sbin/suderra-data-unlock recover' "${UNITS}/suderra-data-recovery.service" ||
+    { echo "ERROR: suderra-data-recovery.service must run suderra-data-unlock recover" >&2; exit 1; }
+grep -qx 'ExecStartPost=/usr/bin/systemctl --no-block reboot' "${UNITS}/suderra-data-recovery.service" ||
+    { echo "ERROR: the recovery must reboot after it succeeded (ExecStartPost), which proves the new seal" >&2; exit 1; }
+if grep -qE '^(Restart|ProtectSystem|PrivateTmp|ReadWritePaths|ProtectHome)=' "${UNITS}/suderra-data-recovery.service"; then
+    echo "ERROR: suderra-data-recovery.service must neither restart nor use mount-namespace options: it opens and mounts the volume" >&2
+    exit 1
+fi
+python3 -I - "${ROOT}/board/suderra/common/post-build.sh" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'if \[ "\$\{SUDERRA_OS_VARIANT\}" = "prod" \]; then\n\s*#[^\n]*\n\s*#[^\n]*\n\s*enable_unit suderra-data-recovery\.path paths\.target\n\s*preset_enable suderra-data-recovery\.path', text)
+if not match:
+    sys.exit("ERROR: post-build.sh must enable suderra-data-recovery.path on production images only")
+if 'SUDERRA_OS_VARIANT}" != "prod"' not in text or text.count("suderra-data-recovery.service") < 2:
+    sys.exit("ERROR: post-build.sh must delete the recovery units from images that are not production")
 PY
 
 echo "/data LUKS provisioning contract passed"

@@ -40,6 +40,9 @@ config BR2_PACKAGE_SUDERRA_DATA_TOOLS
 	default y
 	depends on BR2_USE_MMU # e2fsprogs
 	select BR2_PACKAGE_E2FSPROGS
+	# The recovery key of the LUKS /data is escrowed with openssl (DEC-14.3).
+	select BR2_PACKAGE_OPENSSL
+	select BR2_PACKAGE_LIBOPENSSL_BIN
 
 #
 # Profil seçimi — hangi varyant build ediliyor

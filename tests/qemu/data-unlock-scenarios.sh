@@ -78,6 +78,50 @@ expect() {
 
 dump_output() { sed 's/^/    | /' /run/unlock.out; }
 
+ESCROW=/data/suderra/os/recovery-escrow.json
+RECOVERY_KEY_INPUT=/run/suderra-os/data-recovery.key
+
+# The recovery key an escrow envelope carries, opened with the test's escrow
+# key the way the offline HSM would.
+escrow_key() {
+    sed -n 's/.*"ciphertext":"\([^"]*\)".*/\1/p' "$1" | base64 -d > /run/escrow.ct
+    openssl pkeyutl -decrypt -inkey /test/escrow.key -pkeyopt rsa_padding_mode:oaep \
+        -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 -in /run/escrow.ct
+}
+
+# Keyslots with the recovery token, one per line.
+recovery_slots() {
+    cryptsetup luksDump "${DEV}" | awk '
+        /^Tokens:/ { t = 1; next }
+        /^Digests:/ { t = 0 }
+        t && /^  [0-9]+: / { r = ($2 == "suderra-recovery"); next }
+        t && r && /Keyslot:/ { print $2 }'
+}
+
+# Whether a key file opens any keyslot of the volume, tokens excluded.
+key_unlocks() { cryptsetup open --test-passphrase --disable-external-tokens --key-file "$1" "${DEV}" > /dev/null 2>&1; }
+
+# The volume's keyslots and tokens without the salts, to see whether anything changed.
+header_shape() { cryptsetup luksDump "${DEV}" | grep -E '^  [0-9]+: |Keyslot:|^UUID|^Label'; }
+
+provision_and_release() {
+    blank_disk
+    run_unlock
+    [ "${RC}" -eq 0 ] || return 1
+    cp "${ESCROW}" /run/escrow.first.json
+    echo marker > /data/suderra/os/marker
+    release_volume
+    rm -f /run/suderra-os/data-created
+    : > "${INSTALLER_LOG}"
+}
+
+# A firmware update changes PCR 7: the sealed key no longer unseals.
+change_pcr7() {
+    tpm2_pcrextend 7:sha256="$1"
+}
+PCR_A=0000000000000000000000000000000000000000000000000000000000000001
+PCR_B=0000000000000000000000000000000000000000000000000000000000000002
+
 blank_partition() { ! blkid "${DEV}" > /dev/null 2>&1; }
 no_mapper() { [ ! -e "${MAPPER}" ]; }
 no_keyfile() { ! ls /run/suderra-data-key.* > /dev/null 2>&1; }
@@ -106,6 +150,21 @@ s1_fresh_provisioning() {
     expect "${name}" "the lifecycle store is not on /data" test -f /data/suderra/os/lifecycle || return
     expect "${name}" "/data is not nosuid,nodev,noexec" \
         sh -c "grep ' /data ' /proc/mounts | grep -q 'nosuid' && grep ' /data ' /proc/mounts | grep -q 'nodev' && grep ' /data ' /proc/mounts | grep -q 'noexec'" || return
+    expect "${name}" "the escrow envelope is not on /data" test -s "${ESCROW}" || return
+    expect "${name}" "the escrow envelope is not root-only" test "$(stat -c '%a' "${ESCROW}")" = 600 || return
+    expect "${name}" "the volume has no recovery token" test "$(recovery_slots | wc -l)" -eq 1 || return
+    expect "${name}" "the ephemeral slot 0 survived" \
+        sh -c "! cryptsetup luksDump ${DEV} | grep -q '^  0: luks2'" || return
+    escrow_key "${ESCROW}" > /run/recovery.key || { fail "${name}" "the envelope does not open with the escrow key"; return; }
+    expect "${name}" "the escrowed key is not 64 hexadecimal characters" \
+        grep -Eqx '[0-9a-f]{64}' /run/recovery.key || return
+    expect "${name}" "the escrowed key does not unlock the volume" key_unlocks /run/recovery.key || return
+    expect "${name}" "the envelope names another volume" \
+        grep -q "\"volume_uuid\":\"$(luks_uuid)\"" "${ESCROW}" || return
+    expect "${name}" "the envelope names another recipient" \
+        grep -q "\"recipient_spki_sha256\":\"$(openssl pkey -pubin -in /etc/suderra/recovery-escrow.pub.pem -outform DER | sha256sum | cut -d ' ' -f 1)\"" "${ESCROW}" || return
+    expect "${name}" "the recovery key was left in /run" no_keyfile || return
+    rm -f /run/recovery.key
     echo marker > /data/suderra/os/marker
     pass "${name}"
 }
@@ -226,10 +285,173 @@ s7_unseal_failure_keeps_the_volume() {
     pass "${name}"
 }
 
+
+# --- S8: recovery restores access, re-seals and replaces the recovery key -------
+s8_recovery_restores_access() {
+    name=recovery-restores-access
+    provision_and_release || { fail "${name}" "the setup provisioning failed"; return; }
+    first_key="$(escrow_key /run/escrow.first.json)"
+    printf '%s\n' "${first_key}" | grep -Eqx '[0-9a-f]{64}' || { fail "${name}" "the first envelope carries no key"; return; }
+    uuid_before="$(luks_uuid)"
+    change_pcr7 "${PCR_A}" || { fail "${name}" "cannot extend PCR 7"; return; }
+    run_unlock
+    [ "${RC}" -ne 0 ] || { fail "${name}" "the volume unlocked although PCR 7 changed"; return; }
+    expect "${name}" "the unseal failure does not point to the recovery" \
+        grep -q 'data-recovery' /run/unlock.out || return
+    expect "${name}" "the failed unseal touched the volume" test "$(luks_uuid)" = "${uuid_before}" || return
+    # The recovery ingress places the key (any case, with separators and a newline).
+    printf '%s\n' "${first_key}" | tr 'a-f' 'A-F' | sed 's/\(........\)/\1-/g' > "${RECOVERY_KEY_INPUT}"
+    : > "${INSTALLER_LOG}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -eq 0 ] || { fail "${name}" "recover exit ${RC}"; dump_output; return; }
+    expect "${name}" "the recovery key file was not consumed" test ! -e "${RECOVERY_KEY_INPUT}" || return
+    expect "${name}" "no ok result with the recovery detail" \
+        has_record 'result --kind data-unlock --outcome ok --detail recovered' || return
+    expect "${name}" "recovery must release the volume" no_mapper || return
+    expect "${name}" "recovery left key material in /run" no_keyfile || return
+    expect "${name}" "recovery replaced the volume" test "$(luks_uuid)" = "${uuid_before}" || return
+    expect "${name}" "the volume lost its committed label" test "$(luks_label)" = SUDERRA-DATA || return
+    expect "${name}" "the volume has no TPM2 token after the re-seal" \
+        sh -c "cryptsetup luksDump ${DEV} | grep -q 'systemd-tpm2'" || return
+    expect "${name}" "the volume must have exactly one recovery slot" test "$(recovery_slots | wc -l)" -eq 1 || return
+    printf '%s' "${first_key}" > /run/old.key
+    expect "${name}" "the recovery key that was handled still unlocks the volume" \
+        sh -c "! cryptsetup open --test-passphrase --disable-external-tokens --key-file /run/old.key ${DEV} > /dev/null 2>&1" || return
+    # The next boot unseals with the new seal (PCR 7 is still the changed one).
+    : > "${INSTALLER_LOG}"
+    run_unlock
+    [ "${RC}" -eq 0 ] || { fail "${name}" "the boot after the recovery failed (exit ${RC}): the seal was not renewed"; dump_output; return; }
+    expect "${name}" "the data written before the recovery is gone" \
+        test "$(cat /data/suderra/os/marker 2> /dev/null)" = marker || return
+    new_key="$(escrow_key "${ESCROW}")"
+    expect "${name}" "the escrow envelope was not replaced" test "${new_key}" != "${first_key}" || return
+    printf '%s' "${new_key}" > /run/new.key
+    expect "${name}" "the new escrowed key does not unlock the volume" key_unlocks /run/new.key || return
+    rm -f /run/old.key /run/new.key
+    pass "${name}"
+}
+
+# --- S9: a wrong recovery key is rejected and nothing changes ------------------------
+s9_wrong_recovery_key_is_rejected() {
+    name=wrong-recovery-key-is-rejected
+    provision_and_release || { fail "${name}" "the setup provisioning failed"; return; }
+    shape_before="$(header_shape)"
+    # While the TPM still unseals: a token must never accept a wrong key.
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "${RECOVERY_KEY_INPUT}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -ne 0 ] || { fail "${name}" "a wrong key recovered a volume whose TPM still unseals"; return; }
+    expect "${name}" "the rejected key file was not consumed (a path unit would retry it forever)" \
+        test ! -e "${RECOVERY_KEY_INPUT}" || return
+    expect "${name}" "the rejection is not recorded" \
+        has_record 'result --kind data-unlock --outcome alarm --reason tpm-unseal-failed' || return
+    expect "${name}" "a rejected key changed the volume" test "$(header_shape)" = "${shape_before}" || return
+    expect "${name}" "the volume was left open" no_mapper || return
+    # Malformed keys and a missing key.
+    printf 'not-a-key\n' > "${RECOVERY_KEY_INPUT}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1 && { fail "${name}" "a malformed key was accepted"; return; }
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1 && { fail "${name}" "recovery ran without a key"; return; }
+    expect "${name}" "a malformed key changed the volume" test "$(header_shape)" = "${shape_before}" || return
+    # The TPM key of the volume is not a recovery key: it must not be accepted either.
+    expect "${name}" "key material was left in /run" no_keyfile || return
+    pass "${name}"
+}
+
+# --- S10: no escrow, no volume ----------------------------------------------------------
+s10_escrow_failure_formats_nothing() {
+    name=escrow-failure-formats-nothing
+    blank_disk
+    cp /etc/suderra/recovery-escrow.pub.pem /run/escrow.pub.saved
+    printf 'not a public key\n' > /etc/suderra/recovery-escrow.pub.pem
+    run_unlock
+    status="${RC}"
+    cp /run/escrow.pub.saved /etc/suderra/recovery-escrow.pub.pem
+    [ "${status}" -ne 0 ] || { fail "${name}" "the volume was provisioned although its recovery key cannot be escrowed"; return; }
+    expect "${name}" "a partition was formatted without an escrow" blank_partition || return
+    expect "${name}" "the failure names no reason of the contract" \
+        has_record 'result --kind data-unlock --outcome alarm --reason data-unmountable' || return
+    expect "${name}" "the key material was left in /run" no_keyfile || return
+    run_unlock
+    [ "${RC}" -eq 0 ] || { fail "${name}" "the retry with the escrow key restored failed (exit ${RC})"; dump_output; return; }
+    pass "${name}"
+}
+
+# --- S11: a recovery that cannot re-seal leaves the old key working --------------------
+s11_recovery_seal_failure_keeps_the_old_key() {
+    name=recovery-seal-failure-keeps-the-old-key
+    provision_and_release || { fail "${name}" "the setup provisioning failed"; return; }
+    first_key="$(escrow_key /run/escrow.first.json)"
+    change_pcr7 "${PCR_B}" || { fail "${name}" "cannot extend PCR 7"; return; }
+    printf '%s\n' "${first_key}" > "${RECOVERY_KEY_INPUT}"
+    shadow systemd-cryptenroll 1
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -ne 0 ] || { fail "${name}" "recovery succeeded although the re-seal failed"; return; }
+    rm -rf /test-bin
+    mkdir -p /test-bin
+    expect "${name}" "a failed recovery left the volume open" no_mapper || return
+    expect "${name}" "a failed recovery left key material in /run" no_keyfile || return
+    printf '%s' "${first_key}" > /run/old.key
+    expect "${name}" "the old recovery key no longer unlocks the volume" key_unlocks /run/old.key || return
+    # The recovery can be run again with the same key, and it cleans up what the failed one left.
+    printf '%s\n' "${first_key}" > "${RECOVERY_KEY_INPUT}"
+    : > "${INSTALLER_LOG}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -eq 0 ] || { fail "${name}" "the second recovery failed (exit ${RC})"; dump_output; return; }
+    expect "${name}" "the second recovery left more than one recovery slot" test "$(recovery_slots | wc -l)" -eq 1 || return
+    run_unlock
+    [ "${RC}" -eq 0 ] || { fail "${name}" "the boot after the second recovery failed (exit ${RC})"; dump_output; return; }
+    expect "${name}" "the old recovery key still unlocks the volume" \
+        sh -c "! cryptsetup open --test-passphrase --disable-external-tokens --key-file /run/old.key ${DEV} > /dev/null 2>&1" || return
+    rm -f /run/old.key
+    pass "${name}"
+}
+
+# --- S12: an open volume has nothing to recover ---------------------------------------
+s12_recovery_refuses_an_open_volume() {
+    name=recovery-refuses-an-open-volume
+    blank_disk
+    run_unlock
+    [ "${RC}" -eq 0 ] || { fail "${name}" "the setup provisioning failed"; dump_output; return; }
+    shape_before="$(header_shape)"
+    key="$(escrow_key "${ESCROW}")"
+    printf '%s\n' "${key}" > "${RECOVERY_KEY_INPUT}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -ne 0 ] || { fail "${name}" "recovery ran on an open volume"; return; }
+    expect "${name}" "the open volume was closed by a refused recovery" mountpoint -q /data || return
+    expect "${name}" "a refused recovery changed the volume" test "$(header_shape)" = "${shape_before}" || return
+    pass "${name}"
+}
+
+# --- S13: recovery never formats -----------------------------------------------------------
+s13_recovery_never_formats() {
+    name=recovery-never-formats
+    blank_disk
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "${RECOVERY_KEY_INPUT}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -ne 0 ] || { fail "${name}" "recovery succeeded on a blank partition"; return; }
+    expect "${name}" "recovery formatted a blank partition" blank_partition || return
+    blank_disk
+    mkfs.ext4 -q -F -L PRECIOUS "${DEV}" || { fail "${name}" "cannot prepare the foreign filesystem"; return; }
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "${RECOVERY_KEY_INPUT}"
+    PATH="/test-bin:${PATH}" sh "${UNLOCK}" recover > /run/unlock.out 2>&1
+    RC=$?
+    [ "${RC}" -ne 0 ] || { fail "${name}" "recovery succeeded on a foreign filesystem"; return; }
+    expect "${name}" "recovery touched a foreign filesystem" test "$(blkid -s LABEL -o value "${DEV}")" = PRECIOUS || return
+    pass "${name}"
+}
+
 # --- run -------------------------------------------------------------------------
 for scenario in s1_fresh_provisioning s2_existing_unlocks s3_mkfs_failure_rolls_back \
     s4_enrol_failure_rolls_back s5_interrupted_is_redone s6_foreign_signature_refused \
-    s7_unseal_failure_keeps_the_volume; do
+    s7_unseal_failure_keeps_the_volume s8_recovery_restores_access \
+    s9_wrong_recovery_key_is_rejected s10_escrow_failure_formats_nothing \
+    s11_recovery_seal_failure_keeps_the_old_key s12_recovery_refuses_an_open_volume \
+    s13_recovery_never_formats; do
     echo "T-RUN ${scenario}"
     "${scenario}"
 done

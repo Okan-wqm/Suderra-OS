@@ -23,16 +23,27 @@
         },
         {
           "commands": [
+            "awk",
+            "base64",
             "blkid",
+            "cat",
             "chmod",
+            "cp",
             "cryptsetup",
+            "cut",
             "dd",
             "head",
             "mkfs.ext4",
             "mktemp",
+            "mv",
+            "od",
+            "openssl",
             "rm",
             "sed",
+            "sha256sum",
+            "sync",
             "systemd-cryptenroll",
+            "tr",
             "umount"
           ],
           "when": {

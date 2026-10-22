@@ -149,7 +149,7 @@ grep -q 'systemd-tmpfiles --create "${LAYOUT}"' "${UNLOCK}" ||
 grep -q '^LAYOUT=/usr/lib/suderra/data-layout.tmpfiles.conf$' "${UNLOCK}" ||
     { echo "ERROR: suderra-data-unlock must apply /usr/lib/suderra/data-layout.tmpfiles.conf" >&2; exit 1; }
 # shellcheck disable=SC2016 # the literal script text is matched
-if grep -nE '^[^#]*\b(chown|chgrp|chmod)\b' "${UNLOCK}" | grep -v 'chmod 0600 "${KEYFILE}"'; then
+if grep -nE '^[^#]*\b(chown|chgrp|chmod)\b' "${UNLOCK}" | grep -v 'chmod 0600 "${TEMP}"'; then
     echo "ERROR: suderra-data-unlock must leave ownership to data-layout.tmpfiles.conf" >&2
     exit 1
 fi

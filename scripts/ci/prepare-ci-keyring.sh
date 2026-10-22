@@ -192,6 +192,15 @@ generate_cert \
     3072 \
     "/CN=Suderra CI Verity/"
 
+# The escrow key of the /data recovery keys (ADR-048 DEC-14.3): CI images only
+# need the public half; a public-only set loses the private one below.
+if [ ! -s "${KEYS_DIR}/recovery-escrow.key" ]; then
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+        -out "${KEYS_DIR}/recovery-escrow.key" >/dev/null 2>&1
+fi
+openssl pkey -in "${KEYS_DIR}/recovery-escrow.key" -pubout \
+    -out "${KEYS_DIR}/recovery-escrow.pub.pem" >/dev/null 2>&1
+
 case "${INSTALLER_MODE}" in
     ephemeral)
         generate_ed25519 \
@@ -222,7 +231,7 @@ if [ "${INSTALLER_MODE}" = "public-only" ]; then
 elif compgen -G "${KEYS_DIR}/*.key" >/dev/null; then
     chmod 0600 "${KEYS_DIR}"/*.key
 fi
-chmod 0644 "${KEYS_DIR}"/*.crt "${KEYS_DIR}"/*.pub "${profile_file}"
+chmod 0644 "${KEYS_DIR}"/*.crt "${KEYS_DIR}"/*.pub "${KEYS_DIR}/recovery-escrow.pub.pem" "${profile_file}"
 edge_verify=(verify --keys-dir "${KEYS_DIR}")
 [ "${INSTALLER_MODE}" = "public-only" ] && edge_verify+=(--public-only)
 python3 -I "${SCRIPT_DIR}/edge-dev-keys.py" "${edge_verify[@]}"
@@ -232,6 +241,7 @@ for required in \
     verity-signing.crt \
     installer-payload.ed25519.pub \
     os-update-manifest.ed25519.pub \
+    recovery-escrow.pub.pem \
     edge/trust-anchors.dsse.json; do
     if [ ! -s "${KEYS_DIR}/${required}" ]; then
         echo "ERROR: failed to create ${KEYS_DIR}/${required}" >&2

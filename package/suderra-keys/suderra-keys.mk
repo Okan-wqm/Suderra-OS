@@ -37,7 +37,8 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 		rauc-signing.crt \
 		verity-signing.crt \
 		os-update-manifest.ed25519.pub \
-		installer-payload.ed25519.pub; do \
+		installer-payload.ed25519.pub \
+		recovery-escrow.pub.pem; do \
 		if [ ! -s "$(SUDERRA_TRUST_ROOTS_DIR)/$$required" ]; then \
 			echo "ERROR: required Suderra trust root missing: $(SUDERRA_TRUST_ROOTS_DIR)/$$required"; \
 			exit 1; \
@@ -81,6 +82,10 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/etc/suderra/os-installer-payload.ed25519.pub
 	$(INSTALL) -D -m 0644 $(SUDERRA_TRUST_ROOTS_DIR)/os-update-manifest.ed25519.pub \
 		$(TARGET_DIR)/etc/suderra/os-update-manifest.ed25519.pub
+	# The offline escrow key of the /data recovery keys (ADR-048 DEC-14.3): a
+	# public RSA key, the recipient of every device's recovery-key envelope.
+	$(INSTALL) -D -m 0644 $(SUDERRA_TRUST_ROOTS_DIR)/recovery-escrow.pub.pem \
+		$(TARGET_DIR)/etc/suderra/recovery-escrow.pub.pem
 	rm -f $(TARGET_DIR)/etc/suderra/edge-artifact.ed25519.pub
 	# Edge keys pinned per purpose and epoch (ADR-048 DEC-3.4, DEC-3.9):
 	# dev/CI keys (and the dev provisioning-API CA) on dev images and on every

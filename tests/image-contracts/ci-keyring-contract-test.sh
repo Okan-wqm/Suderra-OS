@@ -19,6 +19,8 @@ for required in \
     installer-payload.ed25519.pub \
     os-update-manifest.key \
     os-update-manifest.ed25519.pub \
+    recovery-escrow.key \
+    recovery-escrow.pub.pem \
     edge/trust-anchors.dsse.json \
     edge/mqtt-ca/ca.crt \
     edge/cloud-ca/ca.crt; do
@@ -38,6 +40,11 @@ openssl x509 -in "${KEYS_DIR}/verity-signing.crt" -noout -subject | grep -q 'Sud
 test "$(stat -c '%a' "${KEYS_DIR}/installer-payload.key")" = "600"
 test "$(stat -c '%a' "${KEYS_DIR}/os-update-manifest.key")" = "600"
 grep -Eq '^[0-9a-f]{64}$' "${KEYS_DIR}/os-update-manifest.ed25519.pub"
+# The escrow key of the /data recovery keys: a 3072-bit RSA public key that is
+# the public half of the private key, and a private key that is root-only.
+test "$(stat -c '%a' "${KEYS_DIR}/recovery-escrow.key")" = "600"
+openssl pkey -pubin -in "${KEYS_DIR}/recovery-escrow.pub.pem" -noout -text | grep -qx 'Public-Key: (3072 bit)'
+openssl pkey -in "${KEYS_DIR}/recovery-escrow.key" -pubout | cmp -s - "${KEYS_DIR}/recovery-escrow.pub.pem"
 
 if "${ROOT}/scripts/ci/prepare-ci-keyring.sh" "${TMPDIR}/prod" prod >/dev/null 2>&1; then
     echo "prepare-ci-keyring.sh unexpectedly generated prod keys" >&2
@@ -60,6 +67,7 @@ SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64="${PUBLIC_B64}" \
 "${ROOT}/scripts/ci/validate-trust-roots.sh" "${PUBLIC_ONLY_DIR}" --expected-profile ci --forbid-installer-signing
 test -s "${PUBLIC_ONLY_DIR}/installer-payload.ed25519.pub"
 test -s "${PUBLIC_ONLY_DIR}/os-update-manifest.ed25519.pub"
+test -s "${PUBLIC_ONLY_DIR}/recovery-escrow.pub.pem"
 if find "${PUBLIC_ONLY_DIR}" -maxdepth 1 -type f -name '*.key' | grep -q .; then
     echo "prepare-ci-keyring.sh public-only mode wrote private key material" >&2
     exit 1
@@ -83,6 +91,34 @@ if SUDERRA_CI_INSTALLER_PAYLOAD_PUBLIC_KEY_B64="${PUBLIC_B64}" \
     exit 1
 fi
 grep -q 'does not match private signing key' "${TMPDIR}/mismatch.err"
+
+# --- The recovery escrow key is required, RSA and at least 3072 bits ------------
+ESCROW_VALIDATE=("${ROOT}/scripts/ci/validate-trust-roots.sh")
+for case_name in missing weak-rsa ed25519 garbage; do
+    bad="${TMPDIR}/escrow-${case_name}"
+    cp -r "${KEYS_DIR}" "${bad}"
+    case "${case_name}" in
+        missing) rm -f "${bad}/recovery-escrow.pub.pem" ;;
+        weak-rsa)
+            openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null |
+                openssl pkey -pubout -out "${bad}/recovery-escrow.pub.pem" 2>/dev/null
+            ;;
+        ed25519)
+            openssl genpkey -algorithm ED25519 2>/dev/null |
+                openssl pkey -pubout -out "${bad}/recovery-escrow.pub.pem" 2>/dev/null
+            ;;
+        garbage) printf 'not a key\n' > "${bad}/recovery-escrow.pub.pem" ;;
+    esac
+    if "${ESCROW_VALIDATE[@]}" "${bad}" --expected-profile ci >/dev/null 2>"${bad}.err"; then
+        echo "validate-trust-roots.sh accepted a ${case_name} recovery escrow key" >&2
+        exit 1
+    fi
+    grep -q 'recovery-escrow.pub.pem' "${bad}.err" || {
+        cat "${bad}.err" >&2
+        echo "validate-trust-roots.sh rejected the ${case_name} escrow key for the wrong reason" >&2
+        exit 1
+    }
+done
 
 # --- Edge keys, dev/CI fleet-root and the signed trust-anchor bundle ---------
 EDGE_TOOL="${ROOT}/scripts/ci/edge-dev-keys.py"

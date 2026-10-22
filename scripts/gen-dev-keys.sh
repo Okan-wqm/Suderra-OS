@@ -106,6 +106,13 @@ openssl pkey -in os-update-manifest.key -pubout -outform DER 2>/dev/null |
     od -An -tx1 -v |
     tr -d ' \n' > os-update-manifest.ed25519.pub
 
+# Recovery-key escrow (ADR-048 DEC-14.3): every device encrypts the recovery key
+# of its /data to this public key; the private half is the offline HSM key in
+# production and a file here, for recovery drills.
+echo "==> /data recovery escrow key (RSA-4096)"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out recovery-escrow.key 2>/dev/null
+openssl pkey -in recovery-escrow.key -pubout -out recovery-escrow.pub.pem 2>/dev/null
+
 # Trust-root profile (validate-trust-roots.sh, package/suderra-keys).
 printf 'dev\n' > suderra-keys.profile
 
@@ -120,7 +127,7 @@ python3 -I "${SCRIPT_DIR}/ci/edge-dev-keys.py" "${edge_args[@]}"
 
 # Permissions
 chmod 0600 ./*.key
-chmod 0644 ./*.crt ./*.pub suderra-keys.profile
+chmod 0644 ./*.crt ./*.pub recovery-escrow.pub.pem suderra-keys.profile
 
 echo ""
 echo "==> Tamamlandı:"

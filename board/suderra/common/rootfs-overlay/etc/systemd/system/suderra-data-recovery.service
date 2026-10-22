@@ -1,0 +1,23 @@
+# Recover /data when its TPM policy no longer unseals (ADR-048 DEC-14.3):
+# unlock with the escrowed recovery key, seal the volume to the TPM again and
+# replace the recovery key, then reboot, which also proves the new seal. It
+# never reprovisions; a wrong key leaves the volume untouched and the device
+# in its LOCKED state with an alarm, waiting for the next key.
+#
+# Like suderra-data.service it has no mount-namespace options: it opens and
+# mounts the volume.
+
+[Unit]
+Description=Recover /data with its escrowed recovery key
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+After=suderra-data.service local-fs.target systemd-udev-trigger.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/suderra-data-unlock recover
+# Only after a successful recovery (ExecStartPost does not run otherwise).
+ExecStartPost=/usr/bin/systemctl --no-block reboot
+NoNewPrivileges=true

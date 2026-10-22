@@ -21,6 +21,16 @@
 #   volume that nobody can use. Only a volume carrying the committed label
 #   (or none: written by an earlier image) is an existing volume, and an
 #   existing volume is never provisioned again.
+# * Every production volume has a recovery slot (ADR-048 DEC-14.3): a random
+#   256-bit key, encrypted to the offline escrow key into
+#   /data/suderra/os/recovery-escrow.json, which the cloud keeps. When the TPM
+#   policy no longer unseals (a firmware update changes PCR 7, the TPM was
+#   replaced) the boot fails with an alarm: it never reprovisions and never
+#   loops. `suderra-data-unlock recover` is the way back, run by
+#   suderra-data-recovery.service once the recovery ingress placed the
+#   decrypted key at /run/suderra-os/data-recovery.key: it unlocks with that
+#   key, seals the volume to the TPM again and replaces the recovery key
+#   (docs/security/data-recovery.md).
 set -eu
 
 LAYOUT=/usr/lib/suderra/data-layout.tmpfiles.conf
@@ -41,28 +51,54 @@ FS_LABEL=SUDERRA-DATA
 # defaults; a rollback zeroes at least this much.
 LUKS_HEADER_BYTES=16777216
 DATA_CREATED=/run/suderra-os/data-created
+# The offline escrow key (a public key, a fact of the signed image), the
+# envelope on /data and the file the recovery ingress places.
+ESCROW_PUBKEY=/etc/suderra/recovery-escrow.pub.pem
+ESCROW_FILE=/data/suderra/os/recovery-escrow.json
+RECOVERY_KEY_INPUT=/run/suderra-os/data-recovery.key
+RECOVERY_TOKEN_TYPE=suderra-recovery
+# What the volume key is sealed to: one place for the provisioning and for the
+# seal after a recovery, so the policy of a board family (x86: signed PCR 7 +
+# 11, DEC-14.1) is one change.
+TPM2_SEAL_OPTIONS="--tpm2-device=auto --tpm2-pcrs=7"
 
 variant="prod"
 if grep -qx 'VARIANT="\{0,1\}dev"\{0,1\}' /etc/os-release; then
     variant="dev"
 fi
 
-# The ephemeral volume key lives in a file under /run that must never survive
-# this script, however it ends.
+# Key material lives only in files under /run (tmpfs) that must never survive
+# this script, however it ends: new_temp makes one, cleanup_secrets removes
+# them all.
+TEMP=""
+TEMP_FILES=""
+# The ephemeral volume key.
 KEYFILE=""
 # Set while a freshly formatted volume has not been committed: the device
 # node, so that every failure path rolls it back (alarm does it) and no path
 # can forget to.
 PROVISIONING_DEVICE=""
+# The escrow envelope of the volume being provisioned, until /data holds it.
+ESCROW_PENDING=""
 # Binds made onto the root, so a rollback can release the volume.
 BOUND_TARGETS=""
 ROLLBACK_NOTE=""
+# Set once a recovery opened the volume: a failure then releases it.
+RECOVERING=0
+
+# Sets TEMP to a new root-only file under /run that cleanup_secrets removes.
+new_temp() {
+    TEMP="$(mktemp /run/suderra-data-key.XXXXXX)"
+    TEMP_FILES="${TEMP_FILES} ${TEMP}"
+    chmod 0600 "${TEMP}"
+}
 
 cleanup_secrets() {
-    if [ -n "${KEYFILE}" ]; then
-        rm -f "${KEYFILE}"
-        KEYFILE=""
-    fi
+    for file in ${TEMP_FILES}; do
+        rm -f "${file}"
+    done
+    TEMP_FILES=""
+    KEYFILE=""
 }
 trap cleanup_secrets EXIT
 
@@ -135,6 +171,9 @@ alarm() {
     if [ -n "${PROVISIONING_DEVICE}" ]; then
         rollback_provisioning || :
         detail="${detail}${ROLLBACK_NOTE}"
+    fi
+    if [ "${RECOVERING}" = 1 ]; then
+        release_data_volume
     fi
     if reports_results; then
         "${INSTALLER}" result write --kind data-unlock --outcome alarm \
@@ -218,12 +257,85 @@ classify_data_partition() {
     fi
 }
 
+# --- recovery key, escrow and keyslots -------------------------------------------
+
+# 64 hex characters from the kernel's random pool: a recovery key.
+new_recovery_key() {
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$1"
+}
+
+# The escrow envelope of a recovery key: the key encrypted to the offline
+# escrow key with RSA-OAEP (SHA-256 for the digest and the mask), which only
+# the offline HSM can open. write_escrow <key file> <volume uuid> <out file>.
+write_escrow() {
+    key_file="$1"
+    uuid="$2"
+    out="$3"
+    [ -s "${ESCROW_PUBKEY}" ] || return 1
+    new_temp
+    encrypted="${TEMP}"
+    openssl pkeyutl -encrypt -pubin -inkey "${ESCROW_PUBKEY}" \
+        -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+        -pkeyopt rsa_mgf1_md:sha256 -in "${key_file}" -out "${encrypted}" || return 1
+    [ -s "${encrypted}" ] || return 1
+    ciphertext="$(base64 "${encrypted}" | tr -d '\n')"
+    recipient="$(openssl pkey -pubin -in "${ESCROW_PUBKEY}" -outform DER | sha256sum | cut -d ' ' -f 1)"
+    [ -n "${ciphertext}" ] && [ -n "${recipient}" ] || return 1
+    printf '{"_type":"suderra.data-recovery-escrow.v1","volume_uuid":"%s","algorithm":"RSA-OAEP-SHA256","recipient_spki_sha256":"%s","ciphertext":"%s"}\n' \
+        "${uuid}" "${recipient}" "${ciphertext}" > "${out}"
+}
+
+# "<token id> <keyslot>" of every recovery token of the volume.
+recovery_entries() {
+    cryptsetup luksDump "$1" | awk '
+        /^Tokens:/ { in_tokens = 1; next }
+        /^Digests:/ { in_tokens = 0 }
+        in_tokens && /^  [0-9]+: / { token = $1; sub(":", "", token); recovery = ($2 == "'"${RECOVERY_TOKEN_TYPE}"'"); next }
+        in_tokens && recovery && /Keyslot:/ { print token, $2 }'
+}
+
+# The lowest keyslot number the volume does not use.
+free_keyslot() {
+    used="$(cryptsetup luksDump "$1" | sed -n 's/^  \([0-9][0-9]*\): luks2.*/\1/p')"
+    slot=0
+    while printf '%s\n' "${used}" | grep -qx "${slot}"; do
+        slot=$((slot + 1))
+    done
+    echo "${slot}"
+}
+
+# A recovery key is 256 random bits: no password stretching is needed, and the
+# unlock must not wait for a memory-hard hash. Tokens are never tried for a key
+# file: a volume that still unseals must not accept a wrong recovery key.
+add_recovery_slot() {
+    dev="$1"
+    unlock_file="$2"
+    new_file="$3"
+    slot="$(free_keyslot "${dev}")"
+    cryptsetup luksAddKey --batch-mode --disable-external-tokens --key-file "${unlock_file}" \
+        --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --key-slot "${slot}" "${dev}" "${new_file}" ||
+        return 1
+    new_temp
+    printf '{"type":"%s","keyslots":["%s"]}' "${RECOVERY_TOKEN_TYPE}" "${slot}" > "${TEMP}"
+    cryptsetup token import --json-file "${TEMP}" "${dev}"
+    NEW_RECOVERY_SLOT="${slot}"
+}
+
+# Seal the volume key to the TPM2 (what TPM2_SEAL_OPTIONS says).
+# shellcheck disable=SC2086 # TPM2_SEAL_OPTIONS is a list of options
+seal_to_tpm() {
+    systemd-cryptenroll "$1" --unlock-key-file="$2" ${TPM2_SEAL_OPTIONS}
+}
+
 # First-boot provisioning (RT-1): format a BLANK data partition as LUKS2 and seal
 # its key to the TPM2 (bound to PCR7 / secure-boot state) so /data is encrypted
 # at rest with a key that cannot be extracted from storage. TPM is REQUIRED
 # (fail-closed): a board without a TPM does not get a false sense of security
-# from an on-disk keyfile. Only runs on a partition classified blank. From the
-# luksFormat on, PROVISIONING_DEVICE makes every failure a rollback.
+# from an on-disk keyfile. The volume also gets a recovery slot, whose key is
+# escrowed (DEC-14.3): without that a firmware update would take the device's
+# data with it, so nothing is formatted unless the escrow works. Only runs on a
+# partition classified blank. From the luksFormat on, PROVISIONING_DEVICE makes
+# every failure a rollback.
 provision_luks_data() {
     dev="$1"
     # Fail-closed: production at-rest encryption requires a TPM2 device. The
@@ -233,27 +345,54 @@ provision_luks_data() {
     fi
     command -v systemd-cryptenroll >/dev/null 2>&1 ||
         alarm data-unmountable "systemd-cryptenroll missing; cannot provision TPM-sealed /data"
+    command -v openssl >/dev/null 2>&1 ||
+        alarm data-unmountable "openssl missing; cannot escrow the recovery key of /data"
     # Ephemeral key lives only in /run (tmpfs, RAM); cleanup_secrets removes it
     # however this script ends, and it is never written to persistent storage.
-    KEYFILE="$(mktemp /run/suderra-data-key.XXXXXX)"
-    chmod 0600 "${KEYFILE}"
+    new_temp
+    KEYFILE="${TEMP}"
     dd if=/dev/urandom of="${KEYFILE}" bs=512 count=1 status=none
+    new_temp
+    recovery_file="${TEMP}"
+    new_recovery_key "${recovery_file}"
+    new_temp
+    ESCROW_PENDING="${TEMP}"
+    volume_uuid="$(cat /proc/sys/kernel/random/uuid)"
+    write_escrow "${recovery_file}" "${volume_uuid}" "${ESCROW_PENDING}" ||
+        alarm data-unmountable "cannot encrypt the recovery key to ${ESCROW_PUBKEY}; nothing was formatted"
     PROVISIONING_DEVICE="${dev}"
-    cryptsetup luksFormat --type luks2 --label "${LABEL_PROVISIONING}" --batch-mode \
-        --key-file "${KEYFILE}" "${dev}" ||
+    cryptsetup luksFormat --type luks2 --uuid "${volume_uuid}" --label "${LABEL_PROVISIONING}" \
+        --batch-mode --key-file "${KEYFILE}" "${dev}" ||
         alarm data-unmountable "luksFormat failed on ${dev}"
     # Seal the volume key to the TPM2, bound to PCR7 (UEFI/boot secure-boot policy).
-    systemd-cryptenroll "${dev}" --unlock-key-file="${KEYFILE}" \
-        --tpm2-device=auto --tpm2-pcrs=7 ||
+    seal_to_tpm "${dev}" "${KEYFILE}" ||
         alarm tpm-unseal-failed "TPM2 enrol failed on ${dev}"
-    # Drop the ephemeral passphrase slot so TPM2 becomes the ONLY unlock path.
-    # Its key exists only in ${KEYFILE}, which is removed below either way, so
-    # a failed wipe leaves a slot nobody can open: it is reported, not fatal.
-    if ! systemd-cryptenroll "${dev}" --wipe-slot=password >/dev/null; then
-        echo "WARNING: could not wipe the ephemeral passphrase slot of ${dev}; its key is discarded" >&2
-    fi
-    cleanup_secrets
-    echo "==> provisioned LUKS2 /data on ${dev} (TPM2-sealed, PCR7)"
+    add_recovery_slot "${dev}" "${KEYFILE}" "${recovery_file}" ||
+        alarm data-unmountable "cannot add the recovery slot to ${dev}"
+    # Drop the ephemeral passphrase slot (0) so the TPM2 and the escrowed
+    # recovery key are the ONLY unlock paths. The recovery key unlocks the
+    # removal: the recovery slot is proven before anything depends on it.
+    cryptsetup luksKillSlot --batch-mode --disable-external-tokens --key-file "${recovery_file}" \
+        "${dev}" 0 ||
+        alarm data-unmountable "the recovery key does not unlock ${dev}; its ephemeral slot stays"
+    # The keys are done; the envelope stays in /run until /data holds it.
+    rm -f "${KEYFILE}" "${recovery_file}"
+    KEYFILE=""
+    echo "==> provisioned LUKS2 /data on ${dev} (TPM2-sealed, recovery key escrowed)"
+}
+
+# Store the escrow envelope on /data (mounted): durably, so that the file is
+# whole or absent. The component that delivers it to the cloud takes it from
+# there; until the cloud has it, this is the only copy of the recovery key's
+# escrow.
+install_escrow() {
+    [ -s "${ESCROW_PENDING}" ] || alarm io-error "there is no recovery escrow envelope to store on /data"
+    umask 077
+    cp "${ESCROW_PENDING}" "${ESCROW_FILE}.new" &&
+        sync &&
+        mv -f "${ESCROW_FILE}.new" "${ESCROW_FILE}" &&
+        sync ||
+        alarm io-error "cannot store the recovery escrow envelope ${ESCROW_FILE}"
 }
 
 # The last step of provisioning: the volume stops being a transaction.
@@ -299,7 +438,7 @@ unlock_prod_luks_data() {
     # the proof that the seal works.
     if [ ! -e "${mapper_dev}" ]; then
         cryptsetup open --token-only "${DATA_DEVICE}" "${DATA_MAPPER}" >/dev/null ||
-            alarm tpm-unseal-failed "TPM2 token unlock failed"
+            alarm tpm-unseal-failed "TPM2 token unlock failed; the volume is untouched: recovery needs the escrowed key at ${RECOVERY_KEY_INPUT} (docs/security/data-recovery.md)"
     fi
 
     # A freshly provisioned volume has no filesystem yet — create it once, on the
@@ -313,6 +452,7 @@ unlock_prod_luks_data() {
     apply_layout_and_bind
 
     if [ "${fresh}" = "1" ]; then
+        install_escrow
         if [ -f /etc/suderra/board ]; then
             # Positive evidence that /data was created on this boot (DEC-12); the
             # lifecycle consumes it on this boot to enter PROVISIONING.
@@ -325,14 +465,119 @@ unlock_prod_luks_data() {
     fi
 }
 
-case "${variant}" in
-    dev)
-        mount_dev_data
+# `suderra-data-unlock recover` (suderra-data-recovery.service): the TPM policy of an
+# operational volume no longer unseals and the recovery ingress has placed the
+# decrypted recovery key at RECOVERY_KEY_INPUT. The key is consumed at once, so
+# a rejected one is never tried again by the path unit that saw the file. It
+# is checked against the recovery slots alone, then used to
+#   1. add a new recovery slot and store its escrow envelope: the key that
+#      people just handled is replaced before anything else changes,
+#   2. seal the volume to the TPM again (the old seal is wiped first: a replaced
+#      TPM, or a policy that did not change, would otherwise keep a seal that
+#      cannot open),
+#   3. remove the old recovery slots.
+# Every step leaves the volume openable by the old recovery key, whatever fails
+# later, and the volume is released at the end. The unit reboots afterwards,
+# which also proves the new seal.
+recover_prod_luks_data() {
+    mapper_dev="/dev/mapper/${DATA_MAPPER}"
+    new_temp
+    KEYFILE="${TEMP}"
+    present=0
+    if [ -f "${RECOVERY_KEY_INPUT}" ] && [ ! -L "${RECOVERY_KEY_INPUT}" ]; then
+        tr -d ' \t\r\n-' < "${RECOVERY_KEY_INPUT}" | tr 'A-F' 'a-f' | head -c 128 > "${KEYFILE}"
+        present=1
+    fi
+    rm -f "${RECOVERY_KEY_INPUT}"
+    [ "${present}" = 1 ] ||
+        alarm tpm-unseal-failed "there is no recovery key at ${RECOVERY_KEY_INPUT}"
+    grep -Eqx '[0-9a-f]{64}' "${KEYFILE}" ||
+        alarm tpm-unseal-failed "the recovery key is not 64 hexadecimal characters"
+    for tool in cryptsetup systemd-cryptenroll openssl; do
+        command -v "${tool}" >/dev/null 2>&1 || alarm data-unmountable "${tool} missing; cannot recover /data"
+    done
+    wait_for_device "${DATA_DEVICE}" ||
+        alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
+    [ "$(classify_data_partition "${DATA_DEVICE}")" = luks ] ||
+        alarm data-unmountable "recovery applies to an operational LUKS volume; ${DATA_DEVICE} is not one"
+    [ ! -e "${mapper_dev}" ] ||
+        alarm data-unmountable "the volume is already open; there is nothing to recover"
+    # Only a recovery slot may accept the key, and never a TPM2 token.
+    unlocking_slot=""
+    for slot in $(recovery_entries "${DATA_DEVICE}" | cut -d ' ' -f 2); do
+        if cryptsetup open --test-passphrase --disable-external-tokens --key-slot "${slot}" \
+            --key-file "${KEYFILE}" "${DATA_DEVICE}" >/dev/null 2>&1; then
+            unlocking_slot="${slot}"
+            break
+        fi
+    done
+    [ -n "${unlocking_slot}" ] ||
+        alarm tpm-unseal-failed "the recovery key does not unlock a recovery slot of ${DATA_DEVICE}; the volume is untouched"
+    cryptsetup open --disable-external-tokens --key-slot "${unlocking_slot}" \
+        --key-file "${KEYFILE}" "${DATA_DEVICE}" "${DATA_MAPPER}" >/dev/null ||
+        alarm data-unmountable "cannot open ${DATA_DEVICE} with the recovery key"
+    # From here on a failure releases the volume this run opened (and only this
+    # run's: a refusal above must never close a volume the boot opened).
+    RECOVERING=1
+    mount_data "${mapper_dev}"
+    old_entries="$(recovery_entries "${DATA_DEVICE}")"
+    volume_uuid="$(cryptsetup luksUUID "${DATA_DEVICE}")"
+    # 1. The replacement recovery key and its escrow.
+    new_temp
+    recovery_file="${TEMP}"
+    new_recovery_key "${recovery_file}"
+    new_temp
+    ESCROW_PENDING="${TEMP}"
+    write_escrow "${recovery_file}" "${volume_uuid}" "${ESCROW_PENDING}" ||
+        alarm data-unmountable "cannot encrypt the new recovery key to ${ESCROW_PUBKEY}; the volume is untouched"
+    add_recovery_slot "${DATA_DEVICE}" "${KEYFILE}" "${recovery_file}" ||
+        alarm data-unmountable "cannot add the new recovery slot to ${DATA_DEVICE}"
+    install_escrow
+    # 2. The seal for the policy of today.
+    systemd-cryptenroll "${DATA_DEVICE}" --wipe-slot=tpm2 >/dev/null ||
+        alarm tpm-unseal-failed "cannot remove the old TPM2 seal of ${DATA_DEVICE}; the old recovery key still opens it"
+    seal_to_tpm "${DATA_DEVICE}" "${recovery_file}" ||
+        alarm tpm-unseal-failed "cannot seal ${DATA_DEVICE} to the TPM2; the old and the new recovery key open it"
+    # 3. The recovery key that was handled is dead.
+    for token in $(printf '%s\n' "${old_entries}" | cut -d ' ' -f 1); do
+        cryptsetup token remove --token-id "${token}" "${DATA_DEVICE}" ||
+            alarm io-error "cannot remove the old recovery token ${token}"
+    done
+    for slot in $(printf '%s\n' "${old_entries}" | cut -d ' ' -f 2); do
+        cryptsetup luksKillSlot --batch-mode --disable-external-tokens --key-file "${recovery_file}" \
+            "${DATA_DEVICE}" "${slot}" ||
+            alarm io-error "cannot remove the old recovery slot ${slot}"
+    done
+    release_data_volume
+    cleanup_secrets
+    RECOVERING=0
+    if reports_results; then
+        "${INSTALLER}" result write --kind data-unlock --outcome ok \
+            --detail "recovered with the escrowed key; the TPM seal and the recovery key were renewed (new recovery slot ${NEW_RECOVERY_SLOT})" >/dev/null
+    fi
+}
+
+case "${1:-}" in
+    recover)
+        [ "${variant}" = prod ] ||
+            alarm data-unmountable "recovery exists for production volumes only"
+        recover_prod_luks_data
+        ;;
+    "")
+        case "${variant}" in
+            dev)
+                mount_dev_data
+                ;;
+            *)
+                unlock_prod_luks_data
+                ;;
+        esac
+        if reports_results; then
+            "${INSTALLER}" result write --kind data-unlock --outcome ok >/dev/null
+        fi
         ;;
     *)
-        unlock_prod_luks_data
+        echo "usage: suderra-data-unlock [recover]" >&2
+        exit 2
         ;;
 esac
-if reports_results; then
-    "${INSTALLER}" result write --kind data-unlock --outcome ok >/dev/null
-fi

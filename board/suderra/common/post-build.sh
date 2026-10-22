@@ -407,12 +407,30 @@ case "${DEFCONFIG_NAME}" in
               "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-os-install.service"
         enable_unit suderra-data.service sysinit.target
         preset_enable suderra-data.service
+        if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
+            # The recovery of the LUKS /data (DEC-14.3): waits for the key the
+            # recovery ingress places in /run/suderra-os.
+            enable_unit suderra-data-recovery.path paths.target
+            preset_enable suderra-data-recovery.path
+        fi
         case "${DEFCONFIG_NAME}" in
             suderra_qemu_x86_64*)
                 enable_unit suderra-qemu-semantic-collector.service multi-user.target
                 preset_enable suderra-qemu-semantic-collector.service
                 ;;
         esac
+        ;;
+esac
+
+# Only a production device image has an encrypted /data to recover.
+if [ "${SUDERRA_OS_VARIANT}" != "prod" ]; then
+    rm -f "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.path" \
+          "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.service"
+fi
+case "${DEFCONFIG_NAME}" in
+    *usb_installer*)
+        rm -f "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.path" \
+              "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.service"
         ;;
 esac
 
@@ -590,6 +608,12 @@ fi
     echo "ERROR: BR2_CONFIG is not set; post-build runs from Buildroot, which exports it"
     exit 1
 }
+# A production image encrypts /data and escrows its recovery key to the offline
+# escrow key (DEC-14.3): the public half is part of the signed image.
+if [ "${SUDERRA_OS_VARIANT}" = "prod" ] && [ ! -s "${TARGET_DIR}/etc/suderra/recovery-escrow.pub.pem" ]; then
+    echo "ERROR: a production image needs /etc/suderra/recovery-escrow.pub.pem (package suderra-keys installs it from the trust roots)"
+    exit 1
+fi
 python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-target-commands.py" check \
     --target "${TARGET_DIR}" \
     --manifest "${SUDERRA_EXTERNAL_DIR}/board/suderra/common/runtime-commands.json" \

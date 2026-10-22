@@ -98,7 +98,8 @@ for required in \
     rauc-signing.crt \
     verity-signing.crt \
     installer-payload.ed25519.pub \
-    os-update-manifest.ed25519.pub; do
+    os-update-manifest.ed25519.pub \
+    recovery-escrow.pub.pem; do
     require_file "${KEYS_DIR}/${required}"
 done
 
@@ -120,6 +121,16 @@ if command -v openssl >/dev/null 2>&1; then
         die "invalid Ed25519 public key: ${KEYS_DIR}/installer-payload.ed25519.pub"
 fi
 validate_raw_ed25519_public_key "${KEYS_DIR}/os-update-manifest.ed25519.pub"
+
+# The escrow key encrypts recovery keys with RSA-OAEP: an RSA public key of at
+# least 3072 bits (ADR-048 DEC-14.3). Without openssl nothing can be checked.
+if command -v openssl >/dev/null 2>&1; then
+    escrow_text="$(openssl pkey -pubin -in "${KEYS_DIR}/recovery-escrow.pub.pem" -noout -text 2>/dev/null)" ||
+        die "invalid public key: ${KEYS_DIR}/recovery-escrow.pub.pem"
+    escrow_bits="$(printf '%s\n' "${escrow_text}" | sed -n 's/^Public-Key: (\([0-9]*\) bit)$/\1/p')"
+    [ -n "${escrow_bits}" ] && [ "${escrow_bits}" -ge 3072 ] ||
+        die "the recovery escrow key must be an RSA public key of at least 3072 bits: ${KEYS_DIR}/recovery-escrow.pub.pem"
+fi
 
 case "${profile}" in
     prod)

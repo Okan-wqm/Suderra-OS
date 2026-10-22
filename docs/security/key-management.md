@@ -74,6 +74,15 @@ Seçenekler:
   `/etc/suderra/os-update-manifest.ed25519.pub`; dev key generation writes this
   public key as lowercase raw-key hex because `suderra-ota` verifies raw
   Ed25519 bytes.
+- The `/data` recovery keys (ADR-048 DEC-14.3) are escrowed to one offline RSA
+  key: its public half is installed as `/etc/suderra/recovery-escrow.pub.pem`
+  (an RSA public key of at least 3072 bits, checked by
+  `scripts/ci/validate-trust-roots.sh`), its private half lives only in the
+  offline HSM and decrypts nothing automatically. Dev key generation writes a
+  file key for recovery drills. The production key is generated at the key
+  ceremony (an operator action, ADR-048 question 9); until then a production
+  image cannot be built, which is the intent. See
+  [data-recovery.md](data-recovery.md).
 
 ## Yapılacaklar
 
