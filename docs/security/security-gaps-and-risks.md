@@ -167,11 +167,15 @@ haritası gerçekliğin gerisinde — güncellenmeli (aksi halde olgunluk yanlı
 Bunlar [GATED] — `production_ready:false` ile tutuluyor, [ADR-0007](../architecture/ADR-0007-arm-verity-ab-boot-chain.md)'de
 kesin G4/G5 listesi olarak yazılı. Yeni "hata" değil; donanım gelince kapanacak.
 
-- **HW-1 (G4) — ARM FIT enforcement donanımda kanıtsız.** Build gate anahtarın `u-boot.dtb`'de
-  `required="conf"` olduğunu doğrular ama `rpi_arm64`'te bu DTB runtime control FDT olmayabilir;
-  fragment `CONFIG_OF_CONTROL` set ediyor, `CONFIG_OF_SEPARATE` değil. Gerçek Pi'de doğrulanmalı.
-- **HW-2 (G5) — ARM ilk-aşama imzasız.** GPU firmware → u-boot.bin/boot.scr yol imzasız; yalnız
-  CM4/RevPi OTP secure boot ile korunur (fiziksel/depolama swap riski).
+- **HW-1 (G4) — ARM FIT enforcement: yazılımda kanıtlı, donanımda değil.** Anahtar artık U-Boot'un
+  gerçek control FDT'sine (firmware'in yüklediği device tree'nin keyed kopyası) giriyor ve
+  U-Boot'un kendisi `tests/qemu/arm-fit-signature-boot.sh` ile çalıştırılıyor (imzasız/kurcalanmış/
+  başka anahtarla imzalı FIT ve anahtarsız control FDT reddedilir; ADR-0007). Donanımda kalan:
+  Pi firmware'inin keyed DTB'yi U-Boot'a gerçekten verdiği ve ham env'in güç kesintisinden sağ çıktığı.
+- **HW-2 (G5) — ARM ilk-aşama imzasız.** GPU firmware → u-boot.bin/keyed DTB'ler/FIT yolu imzasız;
+  FIT anahtarı FAT üzerindeki DTB'lerde olduğundan boot bölümüne yazabilen anahtar+FIT'i birlikte
+  değiştirebilir. Yalnız CM4/RevPi OTP secure boot ile korunur (operatör eylemi: bekliyor: operatör).
+  `/boot` yalnız RAUC kurulumunda rw (boot.mount.arm), U-Boot'ta konsol yok.
 - **HW-3 (G4) — ARM verity-cmdline delivery + module signing.** ARM cmdline'da `module.sig_enforce`
   yok (x86'da var); ARM'da `CONFIG_MODULE_SIG_FORCE` yok (paylaşılan kernel config, dev'i kırar).
   **RevPi Connect 4 prod kısmı kapandı:** prod-only `linux-revpi-suderra-prod.config`

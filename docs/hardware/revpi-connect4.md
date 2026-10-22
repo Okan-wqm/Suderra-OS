@@ -118,7 +118,7 @@ KUNBUS's separate `tpm-slb9670-overlay` is **not** used: it describes an add-on 
 while the Connect 4's TPM is on SPI1 and already in the `revpi-connect4` overlay.
 
 The kernel's `Image` is copied by U-Boot out of the FIT's own load area, so it must be smaller than the
-gap between `fitaddr` (`board/suderra/aarch64-rpi4/boot.scr.cmd`) and the load address,
+gap between `fitaddr` (`board/suderra/uboot/suderra.env`) and the load address,
 33,030,144 bytes today. `production-artifacts.sh` checks the real `Image` and refuses to build a
 FIT it would overwrite. This kernel has not been built in the environment this was prepared in
 (see section 5), so its real size is unknown.
@@ -258,8 +258,10 @@ Hardware-only, by hand:
 - The second Ethernet port (a PCIe device behind `pcie0`; KUNBUS's defconfig carries `igb`,
   `lan743x` and `r8169` as modules) enumerates and brings up its driver.
 - Tampered or unsigned FIT is rejected by U-Boot (ADR-0007 G4); U-Boot picks the one FIT
-  configuration and hands the kernel its `bootargs` (H3); `mmc 0:1` in `boot.scr.cmd` is the
-  Connect 4's eMMC boot partition.
+  configuration and hands the kernel the `/chosen/bootargs` of its signed device tree (H3);
+  `mmc 0:1` in `board/suderra/uboot/suderra.env` is the Connect 4's eMMC boot partition, and
+  `fw_printenv` on the device shows the same counters U-Boot saved (the raw environment at
+  0x60000/0x80000 of `/dev/mmcblk0`, `package/suderra-rauc-config/fw_env.config`).
 
 Operator actions (not code): OTP secure boot and the production key ceremony (ADR-0007 H2, ADR-048
 DEC-14), the eMMC SKU (32 GB recommended, DEC-8). Both are pending the operator.

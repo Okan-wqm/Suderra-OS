@@ -55,9 +55,10 @@ BR2_PACKAGE_HOST_DTC=y
 # kernel build's module key (package/revpi-picontrol).
 BR2_PACKAGE_REVPI_PICONTROL=y
 
-# U-Boot — signed-FIT root of trust (ADR-0007 G1). BUILD-ONLY until PR-A4
-# flips config.txt to chainload u-boot.bin. RevPi Connect 4 is a BCM2711/CM4
-# board, so it shares the rpi_arm64 U-Boot defconfig and the shared fragment.
+# U-Boot — signed-FIT root of trust (ADR-0007 G1, ADR-048 DEC-18). The production
+# config.txt chainloads u-boot.bin. RevPi Connect 4 is a BCM2711/CM4 board, so it
+# shares the rpi_arm64 U-Boot defconfig, the hardening fragment and the default
+# environment (board/suderra/uboot).
 BR2_TARGET_UBOOT=y
 BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
 BR2_TARGET_UBOOT_BOARD_DEFCONFIG="rpi_arm64"
@@ -69,7 +70,6 @@ BR2_TARGET_UBOOT_PATCH="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/uboot/patches
 BR2_TARGET_UBOOT_NEEDS_OPENSSL=y
 BR2_TARGET_UBOOT_NEEDS_DTC=y
 BR2_TARGET_UBOOT_FORMAT_BIN=y
-BR2_TARGET_UBOOT_FORMAT_DTB=y
 BR2_PACKAGE_HOST_UBOOT_TOOLS=y
 BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SUPPORT=y
 BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SIGNATURE_SUPPORT=y

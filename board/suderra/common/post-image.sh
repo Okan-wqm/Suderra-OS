@@ -302,17 +302,18 @@ if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
             ;;
         suderra_aarch64_rpi4|suderra_aarch64_rpi4_prod_ab|suderra_aarch64_revpi4|suderra_aarch64_revpi4_prod_ab)
             echo "==> ARM production signed-FIT + verity artifact üretimi (ADR-0007)"
-            # rootfs.verity + per-slot imzalı FIT (kernel+DTB+initramfs+bootargs)
-            # + u-boot.dtb'ye gömülü FIT pubkey.
+            # rootfs.verity + per-slot imzalı FIT (kernel + DTB with the slot's
+            # command line in /chosen/bootargs + initramfs) + the FIT pubkey in
+            # a copy of every device tree the Pi firmware loads (firmware-dtb/).
             # A board directory with a board-boot.conf (RevPi Connect 4) gets
             # its own FIT: its overlays merged into the device tree that is
             # signed in, and the nodes checked on what the FIT carries.
             "${PRODUCTION_ARTIFACTS}" arm-pre-genimage "${BINARIES_DIR}" "${TARGET_DIR:?TARGET_DIR not set}" \
                 ${ARM_BOARD_DIR:+"${ARM_BOARD_DIR}"}
-            # RAUC slot-seçen boot script'i derle (imzalı FIT bootm).
-            mkimage -A arm64 -T script -C none \
-                -d "${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/boot.scr.cmd" \
-                "${BINARIES_DIR}/boot.scr" >/dev/null
+            # No boot script: U-Boot's compiled-in bootcmd chooses the RAUC slot
+            # and boots the signed FIT (board/suderra/uboot/suderra.env), and
+            # the device trees the firmware loads are the keyed copies in
+            # firmware-dtb/ (ADR-048 DEC-18).
             # Pi firmware'i U-Boot chainload'a çevir (prod config.txt): the
             # board's own when it has one.
             fw_config="${BR2_EXTERNAL_SUDERRA_PATH}/board/suderra/aarch64-rpi4/config-uboot.txt"
@@ -445,7 +446,8 @@ enforce_production_contract() {
             ;;
         suderra_aarch64_rpi4*|suderra_aarch64_revpi*)
             if [ "${DEFCONFIG_NAME}" != "suderra_aarch64_rpi4_usb_installer" ]; then
-                # A/B imzalı FIT (+ detached sig/cert), U-Boot ve boot script.
+                # A/B imzalı FIT (+ detached sig/cert), U-Boot and the keyed
+                # firmware device tree every board of the family loads.
                 # Boot zinciri imzalı FIT'e dayanır; tekil suderra.fit değil.
                 for artifact in \
                     "${BINARIES_DIR}/suderra-A.fit" \
@@ -455,7 +457,7 @@ enforce_production_contract() {
                     "${BINARIES_DIR}/suderra-B.fit.sig" \
                     "${BINARIES_DIR}/suderra-B.fit.cert" \
                     "${BINARIES_DIR}/u-boot.bin" \
-                    "${BINARIES_DIR}/boot.scr"
+                    "${BINARIES_DIR}/firmware-dtb/bcm2711-rpi-cm4.dtb"
                 do
                     if [ ! -s "${artifact}" ]; then
                         missing="${missing} ${artifact}"
@@ -650,29 +652,16 @@ enforce_production_contract() {
             fi
             verify_fit_sidecar "suderra-A.fit"
             verify_fit_sidecar "suderra-B.fit"
-            # FAIL-CLOSED root-of-trust gate (ADR-0007): the FIT verification pubkey
-            # must be present AND marked required in the U-Boot control DTB, else
-            # CONFIG_FIT_SIGNATURE enforces nothing at boot (silent fail-open).
-            uboot_dts="$(dtc -I dtb -O dts "${BINARIES_DIR}/u-boot.dtb" 2>/dev/null || true)"
-            # here-string, not `printf | grep -q`: the latter SIGPIPEs printf when
-            # grep -q matches early, and under `set -euo pipefail` the `if !` then
-            # takes the error branch on a legitimate build (false fail-open).
-            if ! grep -q 'key-name-hint = "fit-signing"' <<<"${uboot_dts}"; then
-                echo "ERROR: u-boot.dtb control FDT has no fit-signing key — FIT signatures will NOT be enforced at boot (fail-open)"
-                exit 1
-            fi
-            # required="conf" must be inside the fit-signing key node itself — a
-            # global grep could match a 'required' on some other node while the
-            # fit-signing key stays optional (fail-open). Scope the check to the
-            # key-<hint> node (mkimage -K names it key-fit-signing).
-            if ! printf '%s' "${uboot_dts}" | awk '
-                    /key-fit-signing[[:space:]]*\{/ { innode = 1; next }
-                    innode && /\}/ { innode = 0 }
-                    innode && /required[[:space:]]*=[[:space:]]*"conf"/ { found = 1 }
-                    END { exit found ? 0 : 1 }'; then
-                echo "ERROR: u-boot.dtb fit-signing key node is not marked required=\"conf\" — FIT enforcement is not guaranteed (fail-open)"
-                exit 1
-            fi
+            # FAIL-CLOSED root-of-trust gate (ADR-0007, ADR-048 DEC-18): U-Boot's
+            # control FDT is the device tree the Pi firmware loads, not a
+            # u-boot.dtb, so the key is checked in the trees the boot partition
+            # carries (firmware-dtb/): each must hold the FIT key as required =
+            # "conf" and both slot FITs must verify against it with U-Boot's own
+            # fit_check_sign; every device tree of every FIT must carry the slot's
+            # verity and lockdown command line as /chosen/bootargs, the only place
+            # U-Boot reads a command line from. The executed proof that U-Boot
+            # refuses a tampered or unsigned FIT is tests/qemu/arm-fit-signature-boot.sh.
+            "${PRODUCTION_ARTIFACTS}" arm-boot-gate "${BINARIES_DIR}"
             boot_gate_verified="1"
             ;;
     esac

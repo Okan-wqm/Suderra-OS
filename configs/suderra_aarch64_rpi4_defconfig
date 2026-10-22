@@ -72,8 +72,10 @@ BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-
 # BUILD-ONLY at this stage: config.txt still boots the kernel directly until
 # PR-A4 flips it to chainload u-boot.bin. Enabling it here proves U-Boot +
 # CONFIG_FIT_SIGNATURE compiles for BCM2711 in CI (Image Build job). The FIT
-# verification public key is inserted into u-boot.dtb at signing time by
-# mkimage -K (PR-A3); RAUC's U-Boot env backend arrives in PR-A5.
+# verification public key is inserted, at signing time, into copies of the device
+# trees the Pi firmware loads (scripts/production-artifacts.sh key_firmware_dtbs;
+# U-Boot's control FDT is the firmware's tree, ADR-048 DEC-18); there is no
+# u-boot.dtb.
 BR2_TARGET_UBOOT=y
 BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
 BR2_TARGET_UBOOT_BOARD_DEFCONFIG="rpi_arm64"
@@ -85,7 +87,6 @@ BR2_TARGET_UBOOT_PATCH="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/uboot/patches
 BR2_TARGET_UBOOT_NEEDS_OPENSSL=y
 BR2_TARGET_UBOOT_NEEDS_DTC=y
 BR2_TARGET_UBOOT_FORMAT_BIN=y
-BR2_TARGET_UBOOT_FORMAT_DTB=y
 BR2_PACKAGE_HOST_UBOOT_TOOLS=y
 BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SUPPORT=y
 BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SIGNATURE_SUPPORT=y

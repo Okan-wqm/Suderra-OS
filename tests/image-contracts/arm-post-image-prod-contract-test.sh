@@ -3,9 +3,10 @@
 # ARM prod post-image wiring sözleşmesi (PR-A6, ADR-0007 G1/G2).
 #
 # post-image.sh'in ARM prod variant'ında A3 üreticisini + A4 düzenini
-# birleştirdiğini korur: arm-pre-genimage çağrısı, boot.scr derleme,
-# config-uboot yerleştirme, prod genimage seçimi ve enforce gate'in A/B FIT'i
-# zorunlu tutması. DEV yolu değişmeden kalır (fail-closed sadece prod'da).
+# birleştirdiğini korur: arm-pre-genimage çağrısı, config-uboot yerleştirme, prod
+# genimage seçimi, enforce gate'in A/B FIT'i ve keyed firmware device tree'lerini
+# zorunlu tutması (arm-boot-gate), ve hiçbir imzasız boot script'in olmaması.
+# DEV yolu değişmeden kalır (fail-closed sadece prod'da).
 #
 set -euo pipefail
 IFS=$'\n\t'
@@ -15,17 +16,26 @@ PI="${ROOT}/board/suderra/common/post-image.sh"
 
 bash -n "${PI}"
 
-# Prod variant ARM üreticisini çağırmalı + boot.scr derlemeli + config-uboot koymalı.
+# Prod variant ARM üreticisini çağırmalı + config-uboot koymalı + boot zincirini
+# artifact'ler üzerinde kapıdan geçirmeli (arm-boot-gate).
 for token in \
     'arm-pre-genimage' \
-    'mkimage -A arm64 -T script' \
-    'boot.scr.cmd' \
+    'arm-boot-gate' \
+    'firmware-dtb/bcm2711-rpi-cm4.dtb' \
     'config-uboot.txt' \
     'rpi-firmware/config.txt'
 do
     grep -qF -e "${token}" "${PI}" || {
         echo "ERROR: post-image ARM prod wiring eksik: ${token}" >&2; exit 1; }
 done
+
+# No unsigned boot script and no loose control device tree (EI-013, EI-036): the
+# slot choice is compiled into U-Boot, the key is in the firmware's device trees.
+if grep -qE 'mkimage .*-T script|boot\.scr|"\$\{BINARIES_DIR\}/u-boot\.dtb"' "${PI}"; then
+    grep -nE 'mkimage .*-T script|boot\.scr|u-boot\.dtb' "${PI}" >&2
+    echo "ERROR: post-image still builds or requires a boot script or a loose u-boot.dtb" >&2; exit 1; fi
+[ ! -e "${ROOT}/board/suderra/aarch64-rpi4/boot.scr.cmd" ] || {
+    echo "ERROR: boot.scr.cmd is back: an unsigned legacy script on a writable FAT (EI-036)" >&2; exit 1; }
 
 # Prod genimage seçimi variant-aware olmalı (dev MBR, prod GPT).
 grep -q 'aarch64-rpi4/genimage-prod.cfg' "${PI}" || {

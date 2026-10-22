@@ -15,6 +15,7 @@ Usage:
   production-artifacts.sh arm-board-dtb <BINARIES_DIR> <BOARD_DIR>
   production-artifacts.sh arm-pre-genimage <BINARIES_DIR> <TARGET_DIR> [<BOARD_DIR>]
   production-artifacts.sh arm-fit-gate <FIT> <BINARIES_DIR> <BOARD_DIR>
+  production-artifacts.sh arm-boot-gate <BINARIES_DIR>
   production-artifacts.sh sign-image <BINARIES_DIR> <IMAGE_NAME>
 
 arm-board-dtb merges the board's device-tree overlays into its stock tree
@@ -25,13 +26,21 @@ builds that board's FIT from its template and merged tree and gates the tree it
 extracts from every built FIT; without one (or without the argument) it emits one
 signed configuration per stock board tree in BINARIES_DIR. arm-fit-gate runs that
 FIT gate alone on a FIT already built (BINARIES_DIR holds the board's merged tree
-the FIT must carry byte for byte).
+the FIT must carry, plus its command line).
+
+arm-pre-genimage puts each slot's kernel command line into /chosen/bootargs of the
+device tree its FIT signs (U-Boot reads no bootargs property of a FIT
+configuration), and the FIT verification key into a copy of every stock device tree
+the Pi firmware may load, under BINARIES_DIR/firmware-dtb: those copies are U-Boot's
+control FDT (OF_BOARD). It ends with arm-boot-gate, which checks the built
+artifacts: bootargs in every FIT device tree, the key in every firmware device tree,
+and both slot FITs verified against it by U-Boot's own fit_check_sign.
 
 Required for arm-pre-genimage (ADR-0007 signed FIT, gates G1/G2):
   SUDERRA_FIT_KEYS_DIR or SUDERRA_KEYS_DIR   dir with fit-signing.{key,crt}
   SUDERRA_FIT_SIGNING_KEY                     prod HSM PKCS#11 URI (file key
                                               rejected in production mode)
-  BINARIES_DIR must contain Image, a board *.dtb, u-boot.dtb, rootfs.ext4
+  BINARIES_DIR must contain Image, a board *.dtb, rootfs.ext4
   target rootfs must contain busybox, blkid, dmsetup, mount, sleep, switch_root
 
 Required for x86-pre-genimage:
@@ -606,17 +615,133 @@ resolve_fit_signing_material() {
 }
 
 mkimage_sign_fit() {
-    # Sign the FIT and insert the verification pubkey into the U-Boot control
-    # DTB (-K). Prod uses the HSM PKCS#11 key via the openssl engine; dev uses
-    # the file key in keydir.
-    local its="$1" fit="$2" uboot_dtb="$3" key="$4" cert="$5" keydir="$6"
+    # Sign the FIT and insert the verification pubkey into <keydest>, a scratch
+    # device tree (new_key_dtb). Prod uses the HSM PKCS#11 key via the openssl
+    # engine; dev uses the file key in keydir. The key reaches the device trees
+    # U-Boot runs with through key_firmware_dtbs, never through a loose
+    # u-boot.dtb: U-Boot's control FDT is the firmware's tree (OF_BOARD), and a
+    # file nobody loads proves nothing (EI-013).
+    local its="$1" fit="$2" keydest="$3" key="$4" cert="$5" keydir="$6"
     if is_pkcs11_uri "${key}"; then
         validate_hsm_role "signed-fit" "${key}" "${cert}" "${fit}"
-        mkimage -f "${its}" -k "${keydir}" -N "$(pkcs11_engine)" -K "${uboot_dtb}" -r "${fit}" >/dev/null
+        mkimage -f "${its}" -k "${keydir}" -N "$(pkcs11_engine)" -K "${keydest}" -r "${fit}" >/dev/null
     else
-        mkimage -f "${its}" -k "${keydir}" -K "${uboot_dtb}" -r "${fit}" >/dev/null
+        mkimage -f "${its}" -k "${keydir}" -K "${keydest}" -r "${fit}" >/dev/null
     fi
     need_file "${fit}"
+}
+
+# ARM boot work files that are not boot partition content live here, so the
+# BINARIES_DIR top level keeps only what genimage places by name.
+FIT_WORK_DIR="fit-work"
+# The device trees the Pi firmware loads and hands U-Boot are the keyed copies
+# here (key_firmware_dtbs); genimage maps them onto the boot partition.
+FIRMWARE_DTB_DIR="firmware-dtb"
+FIT_KEY_NODE="/signature/key-fit-signing"
+
+# Where U-Boot copies the generic FIT's kernel to and starts it: the arm64 text
+# offset of the Pi family, whose RAM starts at 0. The QEMU boot test (a virt
+# machine, RAM from 0x40000000) sets SUDERRA_FIT_KERNEL_LOAD; the address is part
+# of what the FIT signs, so no build setting can change it after the fact.
+fit_kernel_load() {
+    local load="${SUDERRA_FIT_KERNEL_LOAD:-0x00080000}"
+    case "${load}" in
+        0x[0-9a-fA-F]*) ;;
+        *) die "SUDERRA_FIT_KERNEL_LOAD must be 0x<hex>: ${load}" ;;
+    esac
+    printf '%s\n' "${load}"
+}
+
+new_key_dtb() {
+    # An empty device tree for mkimage -K to write the public key into.
+    local out="$1"
+    need_cmd dtc
+    mkdir -p "$(dirname -- "${out}")"
+    printf '/dts-v1/;\n/ {\n};\n' | dtc -I dts -O dtb -o "${out}" 2>/dev/null ||
+        die "dtc could not build the empty key device tree ${out}"
+}
+
+# bake_bootargs <src.dtb> <dst.dtb> <cmdline>: the kernel command line of a slot
+# goes into /chosen/bootargs of the device tree the FIT signs. U-Boot reads no
+# bootargs property from a FIT configuration; it keeps the /chosen/bootargs of the
+# device tree image unless the environment has a bootargs variable
+# (boot/fdt_support.c fdt_chosen), and the production environment has none and
+# cannot get one (board/suderra/uboot). The signature over the fdt image
+# therefore covers the verity root hash and the lockdown arguments the kernel
+# receives (EI-013).
+bake_bootargs() {
+    local src="$1" dst="$2" cmdline="$3"
+
+    need_cmd fdtput
+    need_cmd fdtget
+    need_file "${src}"
+    case "${cmdline}" in
+        '' | *'"'* | *\\* | *$'\n'*) die "the kernel command line cannot go into a device tree: ${cmdline}" ;;
+    esac
+    mkdir -p "$(dirname -- "${dst}")"
+    cp "${src}" "${dst}"
+    if ! fdtget -l "${dst}" / | grep -Fxq chosen; then
+        fdtput -c "${dst}" /chosen
+    fi
+    fdtput -t s "${dst}" /chosen bootargs "${cmdline}"
+    [ "$(fdtget -t s "${dst}" /chosen bootargs)" = "${cmdline}" ] ||
+        die "${dst}: /chosen/bootargs does not read back what was written"
+}
+
+# copy_fit_key <key.dtb> <dst.dtb>: copy the node mkimage -K wrote (property by
+# property, as raw bytes: the key is the signing key's own) into another device
+# tree.
+copy_fit_key() {
+    local src="$1" dst="$2" prop bytes
+    local -a props=() words=()
+
+    need_cmd fdtput
+    need_cmd fdtget
+    fdtget -l "${src}" /signature | grep -Fxq key-fit-signing ||
+        die "${src}: no ${FIT_KEY_NODE}; mkimage -K did not write the FIT key"
+    mapfile -t props < <(fdtget -p "${src}" "${FIT_KEY_NODE}")
+    [ "${#props[@]}" -gt 0 ] || die "${src}: ${FIT_KEY_NODE} has no property"
+    if ! fdtget -l "${dst}" / | grep -Fxq signature; then
+        fdtput -c "${dst}" /signature
+    fi
+    fdtput -c "${dst}" "${FIT_KEY_NODE}"
+    for prop in "${props[@]}"; do
+        bytes="$(fdtget -t bx "${src}" "${FIT_KEY_NODE}" "${prop}")"
+        IFS=' ' read -r -a words <<< "${bytes}"
+        fdtput -t bx "${dst}" "${FIT_KEY_NODE}" "${prop}" "${words[@]}"
+    done
+    [ "$(fdtget -t s "${dst}" "${FIT_KEY_NODE}" required)" = conf ] ||
+        die "${dst}: ${FIT_KEY_NODE} is not required = \"conf\" after the copy"
+}
+
+# key_firmware_dtbs <binaries_dir> <dtb name>...: the control FDT of U-Boot on
+# the Pi is the device tree the firmware loads and passes in (OF_BOARD), so the
+# FIT verification key goes into a copy of each stock tree the firmware may load
+# (FIRMWARE_DTB_DIR), and the boot partition carries those copies. A control FDT
+# without the key makes U-Boot accept any FIT; the compiled-in bootcmd also
+# refuses to boot without it (board/suderra/uboot/suderra.env).
+key_firmware_dtbs() {
+    local binaries_dir="$1"
+    shift
+    local work="${binaries_dir}/${FIT_WORK_DIR}"
+    local out="${binaries_dir}/${FIRMWARE_DTB_DIR}"
+    local name keyed_a="${work}/fit-key-A.dtb" keyed_b="${work}/fit-key-B.dtb"
+
+    [ "$#" -gt 0 ] || die "no firmware device tree to key"
+    need_file "${keyed_a}"
+    need_file "${keyed_b}"
+    # Both slots are signed with the one key; two different keys here would
+    # leave one slot unbootable.
+    [ "$(dtc -I dtb -O dts "${keyed_a}" 2>/dev/null)" = "$(dtc -I dtb -O dts "${keyed_b}" 2>/dev/null)" ] ||
+        die "slots A and B were signed with different keys"
+    rm -rf "${out}"
+    mkdir -p "${out}"
+    for name in "$@"; do
+        need_file "${binaries_dir}/${name}"
+        cp "${binaries_dir}/${name}" "${out}/${name}"
+        copy_fit_key "${keyed_a}" "${out}/${name}"
+    done
+    echo "==> FIT key inserted into $# firmware device tree(s): ${out}"
 }
 
 sign_fit_sidecars() {
@@ -631,18 +756,19 @@ build_signed_slot_fit() {
     local binaries_dir="$1"
     local target_dir="$2"
     local slot="$3"
-    local uboot_dtb="${binaries_dir}/u-boot.dtb"
+    local work="${binaries_dir}/${FIT_WORK_DIR}"
+    local keydest="${work}/fit-key-${slot}.dtb"
     local kernel="${binaries_dir}/Image"
     local initrd="${binaries_dir}/suderra-${slot}.initrd"
     local its="${binaries_dir}/suderra-${slot}.its"
     local fit="${binaries_dir}/suderra-${slot}.fit"
-    local keydir cmdline key cert material
+    local keydir cmdline key cert material kernel_load
 
     need_cmd mkimage
     need_cmd dtc
     need_cmd openssl
     need_file "${kernel}"
-    need_file "${uboot_dtb}"
+    kernel_load="$(fit_kernel_load)"
     # mkimage -k needs a directory containing <key-name-hint>.{key,crt}.
     material="$(resolve_fit_signing_material)"
     key="${material%$'\t'*}"
@@ -650,26 +776,30 @@ build_signed_slot_fit() {
     keydir="${SUDERRA_FIT_KEYS_DIR:-${SUDERRA_KEYS_DIR:-}}"
     [ -n "${keydir}" ] || die "SUDERRA_FIT_KEYS_DIR (or SUDERRA_KEYS_DIR) required for mkimage -k"
 
+    mkdir -p "${work}"
     write_arm_verity_cmdline "${binaries_dir}" "${slot}"
     build_verity_initramfs "${binaries_dir}" "${target_dir}" "${slot}" "${initrd}"
     cmdline="$(cat "${binaries_dir}/suderra-${slot}.cmdline")"
 
     # HIGH1: emit ONE signed config per board DTB (not the alphabetically-first
-    # only), so CM4 / CM4-IO / RevPi boot with the correct device tree. boot.scr
-    # selects the config by the board U-Boot reports; the default is the first
-    # (Pi 4 Model B for rpi4). Each config is individually signed (required=conf).
+    # only), so CM4 / CM4-IO / RevPi boot with the correct device tree. U-Boot
+    # selects the configuration whose compatible matches the running board
+    # (CONFIG_FIT_BEST_MATCH); the default is the first (Pi 4 Model B for rpi4).
+    # Each config is individually signed (required=conf), and the device tree it
+    # names carries the slot's kernel command line (bake_bootargs).
     local dtbfile boardname fdt_nodes="" conf_nodes="" default_conf="" idx=0
-    local dtbs
-    dtbs="$(find "${binaries_dir}" -maxdepth 1 -name '*.dtb' ! -name 'u-boot.dtb' | sort)"
+    local dtbs baked
+    dtbs="$(find "${binaries_dir}" -maxdepth 1 -name '*.dtb' | sort)"
     [ -n "${dtbs}" ] || die "no board DTB found in ${binaries_dir}"
     local board_compat
     while IFS= read -r dtbfile; do
         [ -n "${dtbfile}" ] || continue
         idx=$((idx + 1))
         boardname="$(basename "${dtbfile}" .dtb)"
+        baked="${work}/suderra-${slot}.${boardname}.dtb"
+        bake_bootargs "${dtbfile}" "${baked}" "${cmdline}"
         # Extract the board root compatible so U-Boot auto-selects the matching
-        # config against the running board (fit_conf_get_node), instead of a
-        # fragile board-name string match in boot.scr. Falls back to no
+        # config against the running board (fit_conf_get_node). Falls back to no
         # compatible (default config) if extraction fails.
         # NOTE: sed self-terminates on the first match (q) — do NOT pipe into
         # `head`, which closes the pipe early and SIGPIPEs sed; under the
@@ -679,7 +809,7 @@ build_signed_slot_fit() {
             | sed -n '/^[[:space:]]*compatible = /{s/^[[:space:]]*compatible = \(.*\);[[:space:]]*$/\1/p;q;}' || true)"
         fdt_nodes="${fdt_nodes}
         fdt-${idx} {
-            data = /incbin/(\"${dtbfile}\");
+            data = /incbin/(\"${baked}\");
             type = \"flat_dt\"; arch = \"arm64\"; compression = \"none\";
             hash-1 { algo = \"sha256\"; };
         };"
@@ -688,7 +818,6 @@ build_signed_slot_fit() {
             description = \"${boardname} (slot ${slot})\";${board_compat:+
             compatible = ${board_compat};}
             kernel = \"kernel\"; fdt = \"fdt-${idx}\"; ramdisk = \"ramdisk-1\";
-            bootargs = \"${cmdline}\";
             signature-1 {
                 algo = \"sha256,rsa2048\";
                 key-name-hint = \"fit-signing\";
@@ -710,7 +839,7 @@ EOF
         kernel {
             data = /incbin/("${kernel}");
             type = "kernel"; arch = "arm64"; os = "linux"; compression = "none";
-            load = <0x00080000>; entry = <0x00080000>;
+            load = <${kernel_load}>; entry = <${kernel_load}>;
             hash-1 { algo = "sha256"; };
         };
         ramdisk-1 {
@@ -725,7 +854,8 @@ EOF
 };
 ITS
 
-    mkimage_sign_fit "${its}" "${fit}" "${uboot_dtb}" "${key}" "${cert}" "${keydir}"
+    new_key_dtb "${keydest}"
+    mkimage_sign_fit "${its}" "${fit}" "${keydest}" "${key}" "${cert}" "${keydir}"
     sign_fit_sidecars "${fit}" "${key}" "${cert}"
     echo "==> ${slot} slot signed FIT: ${fit}"
 }
@@ -893,56 +1023,167 @@ build_board_dtb() {
     echo "==> board device tree: ${final}"
 }
 
-# U-Boot copies the FIT's kernel from where the boot script loaded the FIT
-# (fitaddr) to the kernel's load address; a kernel larger than the gap between
-# the two would overwrite the rest of the FIT while it is copied. The KUNBUS
-# kernel is a large distribution kernel, so the gap is checked on the real Image.
+# U-Boot copies the FIT's kernel from where the compiled-in bootcmd loaded the FIT
+# (fitaddr in the default environment) to the kernel's load address; a kernel
+# larger than the gap between the two would overwrite the rest of the FIT while
+# it is copied. The KUNBUS kernel is a large distribution kernel, so the gap is
+# checked on the real Image.
 check_fit_kernel_headroom() {
-    local kernel="$1" script="$2"
+    local kernel="$1" envfile="$2"
     local fitaddr size room load=$((0x00080000))
 
-    need_file "${script}"
-    fitaddr="$(sed -n 's/^setenv fitaddr \(0x[0-9a-fA-F]*\)$/\1/p' "${script}")"
-    [ -n "${fitaddr}" ] || die "${script}: no 'setenv fitaddr 0x...' line"
+    need_file "${envfile}"
+    fitaddr="$(sed -n 's/^fitaddr=\(0x[0-9a-fA-F]*\)$/\1/p' "${envfile}")"
+    [ -n "${fitaddr}" ] || die "${envfile}: no 'fitaddr=0x...' line"
     room=$((fitaddr - load))
     size="$(wc -c < "${kernel}")"
     [ "${size}" -lt "${room}" ] ||
-        die "kernel Image is ${size} bytes but only ${room} fit between fitaddr ${fitaddr} (${script}) and the kernel load address: raise fitaddr, or compress the kernel inside the FIT"
+        die "kernel Image is ${size} bytes but only ${room} fit between fitaddr ${fitaddr} (${envfile}) and the kernel load address: raise fitaddr, or compress the kernel inside the FIT"
 }
 
 render_board_its() {
-    local template="$1" out="$2" slot="$3" kernel="$4" initrd="$5" fdt="$6" bootargs="$7"
+    local template="$1" out="$2" slot="$3" kernel="$4" initrd="$5" fdt="$6"
     local v
 
     need_file "${template}"
     need_cmd awk
-    for v in "${slot}" "${kernel}" "${initrd}" "${fdt}" "${bootargs}"; do
+    for v in "${slot}" "${kernel}" "${initrd}" "${fdt}"; do
         case "${v}" in
             *'&'* | *\\* | *'"'*) die "a value cannot go into the FIT template: ${v}" ;;
         esac
     done
-    SLOT="${slot}" KERNEL="${kernel}" INITRD="${initrd}" FDT="${fdt}" BOOTARGS="${bootargs}" \
+    SLOT="${slot}" KERNEL="${kernel}" INITRD="${initrd}" FDT="${fdt}" \
         awk '{
             gsub(/@SLOT@/, ENVIRON["SLOT"])
             gsub(/@KERNEL@/, ENVIRON["KERNEL"])
             gsub(/@INITRD@/, ENVIRON["INITRD"])
             gsub(/@FDT@/, ENVIRON["FDT"])
-            gsub(/@BOOTARGS@/, ENVIRON["BOOTARGS"])
             print
         }' "${template}" > "${out}"
     if grep -Eq '@[A-Z]+@' "${out}"; then
         die "${template}: a placeholder is left in the rendered FIT source"
     fi
+    if grep -Eq '^[[:space:]]*bootargs[[:space:]]*=' "${out}"; then
+        die "${template}: a FIT configuration bootargs property is read by nothing; the command line is the /chosen/bootargs of the signed device tree"
+    fi
+}
+
+# slot_of_fit <fit>: A or B from suderra-<slot>.fit.
+slot_of_fit() {
+    local name
+    name="$(basename -- "$1")"
+    case "${name}" in
+        suderra-A.fit) printf 'A\n' ;;
+        suderra-B.fit) printf 'B\n' ;;
+        *) die "${1}: a slot FIT is named suderra-A.fit or suderra-B.fit" ;;
+    esac
+}
+
+# fit_fdt_images <fit>: "<index> <name>" of every flat_dt image of a FIT, the
+# index dumpimage -p takes (the position among all images).
+fit_fdt_images() {
+    local fit="$1" n idx=0
+
+    need_cmd fdtget
+    while IFS= read -r n; do
+        if [ "$(fdtget -t s "${fit}" "/images/${n}" type)" = flat_dt ]; then
+            printf '%s %s\n' "${idx}" "${n}"
+        fi
+        idx=$((idx + 1))
+    done <<< "$(fdtget -l "${fit}" /images)"
+}
+
+# gate_fit_bootargs <fit> <binaries_dir>: the kernel command line the FIT hands
+# the kernel is the one the slot's verity root hash belongs to. Every device tree
+# of the FIT carries it as /chosen/bootargs (the only place U-Boot takes it from,
+# see bake_bootargs), with the root hash, the slot and lockdown, and carries no
+# verification key: the check runs on the trees extracted from the built FIT.
+gate_fit_bootargs() {
+    local fit="$1" binaries_dir="$2"
+    local slot cmdline args entry idx name extracted root_hash token count=0
+
+    need_cmd dumpimage
+    need_cmd fdtget
+    slot="$(slot_of_fit "${fit}")"
+    need_file "${binaries_dir}/suderra-${slot}.cmdline"
+    need_file "${binaries_dir}/rootfs.verity.roothash"
+    cmdline="$(cat "${binaries_dir}/suderra-${slot}.cmdline")"
+    root_hash="$(cat "${binaries_dir}/rootfs.verity.roothash")"
+    while IFS= read -r entry; do
+        [ -n "${entry}" ] || continue
+        idx="${entry%% *}"
+        name="${entry#* }"
+        extracted="${fit}.${name}.chk.dtb"
+        rm -f "${extracted}"
+        dumpimage -T flat_dt -p "${idx}" -o "${extracted}" "${fit}" >/dev/null ||
+            die "dumpimage could not extract ${name} from ${fit}"
+        args="$(fdtget -t s "${extracted}" /chosen bootargs)" ||
+            die "${fit}: ${name} has no /chosen/bootargs: the kernel would boot without the verity and lockdown arguments"
+        [ "${args}" = "${cmdline}" ] ||
+            die "${fit}: ${name} /chosen/bootargs differs from ${binaries_dir}/suderra-${slot}.cmdline"
+        for token in "suderra.verity.root_hash=${root_hash}" "rauc.slot=${slot}" "lockdown=confidentiality"; do
+            case " ${args} " in
+                *" ${token} "*) ;;
+                *) die "${fit}: ${name} bootargs lack ${token}" ;;
+            esac
+        done
+        if fdtget -l "${extracted}" / | grep -Fxq signature; then
+            die "${fit}: ${name} carries a /signature node; the verification key belongs to the firmware's device trees only"
+        fi
+        rm -f "${extracted}"
+        count=$((count + 1))
+    done <<< "$(fit_fdt_images "${fit}")"
+    [ "${count}" -gt 0 ] || die "${fit} has no device tree image"
+    echo "==> ${fit##*/}: /chosen/bootargs of ${count} device tree(s) carries the slot's verity and lockdown arguments"
+}
+
+# gate_firmware_dtbs <binaries_dir>: U-Boot's control FDT is one of the keyed
+# device trees under FIRMWARE_DTB_DIR, so each must carry the FIT key as a
+# required = "conf" key, and each slot FIT must verify against it. The
+# verification is U-Boot's own code (fit_check_sign is built from the pinned
+# U-Boot sources), not a grep of the tree.
+gate_firmware_dtbs() {
+    local binaries_dir="$1"
+    local dir="${binaries_dir}/${FIRMWARE_DTB_DIR}"
+    local dtb fit count=0
+
+    need_cmd fdtget
+    need_cmd fit_check_sign
+    [ -d "${dir}" ] || die "no ${dir}: the firmware device trees were never keyed"
+    for dtb in "${dir}"/*.dtb; do
+        [ -f "${dtb}" ] || die "${dir} holds no device tree"
+        [ "$(fdtget -t s "${dtb}" "${FIT_KEY_NODE}" required 2>/dev/null)" = conf ] ||
+            die "${dtb}: ${FIT_KEY_NODE} is missing or not required = \"conf\": U-Boot would accept an unsigned FIT"
+        [ "$(fdtget -t s "${dtb}" "${FIT_KEY_NODE}" key-name-hint 2>/dev/null)" = fit-signing ] ||
+            die "${dtb}: ${FIT_KEY_NODE} is not the fit-signing key"
+        for fit in "${binaries_dir}/suderra-A.fit" "${binaries_dir}/suderra-B.fit"; do
+            need_file "${fit}"
+            fit_check_sign -f "${fit}" -k "${dtb}" >/dev/null 2>&1 ||
+                die "${fit##*/} does not verify against the key in ${dtb}"
+        done
+        count=$((count + 1))
+    done
+    echo "==> ${count} keyed firmware device tree(s) verify both slot FITs"
+}
+
+# gate_arm_boot_chain <binaries_dir>: everything that makes the signed FIT the
+# only thing the production U-Boot boots, checked on the built artifacts.
+gate_arm_boot_chain() {
+    local binaries_dir="$1" slot
+    for slot in A B; do
+        gate_fit_bootargs "${binaries_dir}/suderra-${slot}.fit" "${binaries_dir}"
+    done
+    gate_firmware_dtbs "${binaries_dir}"
 }
 
 # gate_fit_dtb <fit> <binaries_dir> <board_dir>: what the board's FIT hands the
 # kernel. The FIT has exactly one configuration, its compatible is the board's,
-# the tree inside is byte-identical to the merged tree, and it enables every
-# required node: the check runs on the tree extracted from the signed FIT, not
-# on the file it was built from.
+# the tree inside is the merged tree with the slot's command line added, and it
+# enables every required node: the check runs on the tree extracted from the
+# signed FIT, not on the file it was built from.
 gate_fit_dtb() {
     local fit="$1" binaries_dir="$2" board_dir="$3"
-    local default conf_count fdt_name compat n idx=0 found=-1 extracted
+    local default conf_count fdt_name compat n idx=0 found=-1 extracted slot expected
 
     need_cmd dumpimage
     need_cmd fdtget
@@ -969,47 +1210,58 @@ gate_fit_dtb() {
     dumpimage -T flat_dt -p "${found}" -o "${extracted}" "${fit}" >/dev/null ||
         die "dumpimage could not extract ${fdt_name} from ${fit}"
     need_file "${extracted}"
-    cmp -s "${extracted}" "${binaries_dir}/${BOARD_FINAL_DTB}" ||
-        die "the device tree inside ${fit} is not ${binaries_dir}/${BOARD_FINAL_DTB}"
+    # The merged tree plus the slot's command line, byte for byte: the tree is
+    # rebuilt here from the merged tree and the cmdline file the same way the
+    # producer builds it (bake_bootargs).
+    slot="$(slot_of_fit "${fit}")"
+    need_file "${binaries_dir}/suderra-${slot}.cmdline"
+    expected="${fit}.expected.dtb"
+    bake_bootargs "${binaries_dir}/${BOARD_FINAL_DTB}" "${expected}" "$(cat "${binaries_dir}/suderra-${slot}.cmdline")"
+    cmp -s "${extracted}" "${expected}" ||
+        die "the device tree inside ${fit} is not ${binaries_dir}/${BOARD_FINAL_DTB} plus its command line"
+    rm -f "${expected}"
     gate_dtb_nodes "${extracted}" "${board_dir}/${BOARD_DT_REQUIRED}" "device tree of ${fit##*/}"
     rm -f "${extracted}"
+    gate_fit_bootargs "${fit}" "${binaries_dir}"
 }
 
 build_board_slot_fit() {
     local binaries_dir="$1" target_dir="$2" slot="$3" board_dir="$4"
-    local uboot_dtb="${binaries_dir}/u-boot.dtb"
+    local work="${binaries_dir}/${FIT_WORK_DIR}"
+    local keydest="${work}/fit-key-${slot}.dtb"
     local kernel="${binaries_dir}/Image"
     local initrd="${binaries_dir}/suderra-${slot}.initrd"
     local its="${binaries_dir}/suderra-${slot}.its"
     local fit="${binaries_dir}/suderra-${slot}.fit"
-    local boot_script
-    local keydir cmdline key cert material
+    local baked boot_env keydir cmdline key cert material
 
-    boot_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/board/suderra/aarch64-rpi4/boot.scr.cmd"
+    boot_env="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/board/suderra/uboot/suderra.env"
     read_board_boot "${board_dir}"
+    baked="${work}/suderra-${slot}.${BOARD_FINAL_DTB}"
     need_cmd mkimage
     need_cmd dtc
     need_cmd openssl
     need_file "${kernel}"
-    need_file "${uboot_dtb}"
     need_file "${binaries_dir}/${BOARD_FINAL_DTB}"
-    check_fit_kernel_headroom "${kernel}" "${boot_script}"
+    check_fit_kernel_headroom "${kernel}" "${boot_env}"
     material="$(resolve_fit_signing_material)"
     key="${material%$'\t'*}"
     cert="${material#*$'\t'}"
     keydir="${SUDERRA_FIT_KEYS_DIR:-${SUDERRA_KEYS_DIR:-}}"
     [ -n "${keydir}" ] || die "SUDERRA_FIT_KEYS_DIR (or SUDERRA_KEYS_DIR) required for mkimage -k"
 
+    mkdir -p "${work}"
     write_arm_verity_cmdline "${binaries_dir}" "${slot}" "${BOARD_CONSOLE}"
     build_verity_initramfs "${binaries_dir}" "${target_dir}" "${slot}" "${initrd}"
     cmdline="$(cat "${binaries_dir}/suderra-${slot}.cmdline")"
+    bake_bootargs "${binaries_dir}/${BOARD_FINAL_DTB}" "${baked}" "${cmdline}"
 
-    render_board_its "${board_dir}/${BOARD_FIT_ITS}" "${its}" "${slot}" "${kernel}" "${initrd}" \
-        "${binaries_dir}/${BOARD_FINAL_DTB}" "${cmdline}"
+    render_board_its "${board_dir}/${BOARD_FIT_ITS}" "${its}" "${slot}" "${kernel}" "${initrd}" "${baked}"
     grep -Fq "compatible = \"${BOARD_COMPATIBLE}\"" "${its}" ||
         die "${board_dir}/${BOARD_FIT_ITS}: the configuration's compatible is not ${BOARD_COMPATIBLE}"
 
-    mkimage_sign_fit "${its}" "${fit}" "${uboot_dtb}" "${key}" "${cert}" "${keydir}"
+    new_key_dtb "${keydest}"
+    mkimage_sign_fit "${its}" "${fit}" "${keydest}" "${key}" "${cert}" "${keydir}"
     gate_fit_dtb "${fit}" "${binaries_dir}" "${board_dir}"
     sign_fit_sidecars "${fit}" "${key}" "${cert}"
     echo "==> ${slot} slot signed FIT (${BOARD_FINAL_DTB}): ${fit}"
@@ -1027,10 +1279,22 @@ case "${command}" in
             build_board_dtb "$2" "$4"
             build_board_slot_fit "$2" "$3" A "$4"
             build_board_slot_fit "$2" "$3" B "$4"
+            read_board_boot "$4"
+            key_firmware_dtbs "$2" "${BOARD_BASE_DTB}"
         else
             build_signed_slot_fit "$2" "$3" A
             build_signed_slot_fit "$2" "$3" B
+            mapfile -t firmware_dtbs < <(find "$2" -maxdepth 1 -name '*.dtb' -printf '%f\n' | sort)
+            key_firmware_dtbs "$2" "${firmware_dtbs[@]}"
         fi
+        gate_arm_boot_chain "$2"
+        ;;
+    arm-boot-gate)
+        [ "$#" -eq 2 ] || {
+            usage >&2
+            exit 2
+        }
+        gate_arm_boot_chain "$2"
         ;;
     arm-board-dtb)
         [ "$#" -eq 3 ] || {

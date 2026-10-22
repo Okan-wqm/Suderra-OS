@@ -138,7 +138,7 @@ output/<defconfig>/
 │   ├── rootfs.ext4           # Root filesystem
 │   ├── bzImage               # Kernel (x86)
 │   ├── Image                 # Kernel (ARM)
-│   └── boot.scr              # U-Boot script (ARM)
+│   └── firmware-dtb/         # Keyed device trees the Pi firmware loads (ARM)
 ├── target/                   # Staged rootfs (debug için)
 ├── legal-info/               # SPDX manifest (SBOM kaynak)
 └── build/                    # Build artifacts (geçici)

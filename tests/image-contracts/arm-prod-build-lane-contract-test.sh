@@ -34,8 +34,14 @@ for b in rpi4 revpi4; do
     for pkg in BR2_PACKAGE_CRYPTSETUP BR2_PACKAGE_TPM2_TOOLS BR2_PACKAGE_TPM2_TSS BR2_PACKAGE_SUDERRA_OTA; do
         grep -q "^${pkg}=y" "${dc}" || { echo "ERROR: ${b} prod_ab eksik: ${pkg}" >&2; exit 1; }
     done
-    # FIT control DTB must be produced (CRIT1) + FORMAT_DTB.
-    grep -q '^BR2_TARGET_UBOOT_FORMAT_DTB=y' "${dc}" || { echo "ERROR: ${b} prod_ab FORMAT_DTB yok (u-boot.dtb üretilmez)" >&2; exit 1; }
+    # U-Boot's control FDT is the firmware's keyed device tree (OF_BOARD), not a
+    # u-boot.dtb: no FORMAT_DTB, the shared hardening fragment and the one
+    # default environment (ADR-048 DEC-18; uboot-config-contract-test.sh holds
+    # their content).
+    if grep -q '^BR2_TARGET_UBOOT_FORMAT_DTB=y' "${dc}"; then
+        echo "ERROR: ${b} prod_ab produces a u-boot.dtb that nothing loads (U-Boot's control FDT is the firmware's tree)" >&2; exit 1; fi
+    grep -q 'board/suderra/uboot/hardening.config' "${dc}" || { echo "ERROR: ${b} prod_ab does not merge the U-Boot hardening fragment" >&2; exit 1; }
+    grep -q '^BR2_TARGET_UBOOT_DEFAULT_ENV_FILE=.*board/suderra/uboot/suderra.env' "${dc}" || { echo "ERROR: ${b} prod_ab has no default environment file" >&2; exit 1; }
     # Dev defconfig kilitlenMEMELİ (her-PR build).
     grep -q '^BR2_PACKAGE_SUDERRA_VARIANT_DEV=y' "${ROOT}/configs/suderra_aarch64_${b}_defconfig" || {
         echo "ERROR: dev ${b} VARIANT_DEV kalmalı" >&2; exit 1; }

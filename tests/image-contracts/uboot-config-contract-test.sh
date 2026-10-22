@@ -177,6 +177,21 @@ sed -i 's#^if run suderra_guard; then \\$#if true; then \\#' "${ENVFILE}"
 expect_fail "bootcmd without the key guard first" "bootcmd must start with 'if run suderra_guard; then'" static
 
 fresh_copy
+python3 -I - "${ENVFILE}" <<'EOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s2 = s.replace("    run suderra_fail; \\\n", "")
+assert s2 != s
+open(p, "w").write(s2)
+EOF
+expect_fail "a slot whose FIT does not verify is not spent (it would boot-loop)" "does not run suderra_fail" static
+
+fresh_copy
+sed -i 's/^bootdelay=-2$/bootdelay=-2\nstdout=serial/' "${ENVFILE}"
+expect_fail "an environment that defines a variable twice" "defined twice" static
+
+fresh_copy
 sed -i 's/^BOOT_B_LEFT=0$/BOOT_B_LEFT=3/' "${ENVFILE}"
 expect_fail "factory slot B counted as bootable" "BOOT_B_LEFT must start at 0" static
 

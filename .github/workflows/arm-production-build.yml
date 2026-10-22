@@ -105,7 +105,8 @@ jobs:
           for f in \
             suderra-A.fit suderra-A.fit.sig suderra-A.fit.cert \
             suderra-B.fit suderra-B.fit.sig suderra-B.fit.cert \
-            rootfs.verity rootfs.verity.roothash u-boot.bin boot.scr; do
+            rootfs.verity rootfs.verity.roothash u-boot.bin \
+            firmware-dtb/bcm2711-rpi-cm4.dtb; do
             test -s "${out}/${f}" || { echo "ERROR: production artifact missing: ${f}" >&2; exit 1; }
           done
           ls -la "${out}"/suderra-os-*.raucb

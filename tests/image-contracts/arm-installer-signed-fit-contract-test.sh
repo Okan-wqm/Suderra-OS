@@ -16,9 +16,14 @@ bash -n "${INST}"
 
 # Prod signed-FIT tespiti + zincir doğrulaması.
 grep -q 'suderra-A.fit' "${INST}" || { echo "ERROR: installer signed-FIT imajı tespit etmiyor" >&2; exit 1; }
-for f in 'suderra-A.fit' 'suderra-B.fit' 'u-boot.bin' 'boot.scr'; do
+for f in 'suderra-A.fit' 'suderra-B.fit' 'u-boot.bin'; do
     grep -qF -e "${f}" "${INST}" || { echo "ERROR: installer FIT zinciri doğrulamıyor: ${f}" >&2; exit 1; }
 done
+
+# Nothing unsigned next to the signed FIT: no boot script, no loose control FDT.
+grep -qF 'for f in boot.scr u-boot.dtb; do' "${INST}" &&
+    grep -qF 'carries ${f}, which nothing signs' "${INST}" || {
+    echo "ERROR: installer must refuse boot.scr and u-boot.dtb on a signed-FIT boot partition" >&2; exit 1; }
 
 # İmzalı-FIT imajı mutable cmdline.txt taşımamalı (bütünlük).
 grep -q 'must not carry a mutable cmdline.txt' "${INST}" || {

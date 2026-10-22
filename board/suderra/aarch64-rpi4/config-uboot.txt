@@ -1,6 +1,8 @@
 # Suderra OS — PRODUCTION config.txt (U-Boot chainload, ADR-0007)
-# kernel=u-boot.bin: Pi firmware U-Boot'u yükler; U-Boot boot.scr ile imzalı
-# FIT'i boot eder. DEV build board/suderra/aarch64-rpi4/config.txt (kernel=Image)
+# kernel=u-boot.bin: Pi firmware U-Boot'u yükler; U-Boot's compiled-in bootcmd
+# (board/suderra/uboot/suderra.env) picks the RAUC slot and boots the signed FIT.
+# The device tree the firmware loads is U-Boot's control FDT: the boot partition
+# carries the keyed copies (firmware-dtb/ of the image build). DEV build board/suderra/aarch64-rpi4/config.txt (kernel=Image)
 # kullanır. Yalnız prod genimage/post-image bu dosyayı config.txt olarak yerleştirir.
 #
 # Suderra OS — Raspberry Pi 4 / CM4 firmware konfigürasyonu
@@ -9,7 +11,7 @@
 # öncesi düşük seviye donanım kurulumu yapar. Boot zinciri:
 #
 #   ROM bootloader -> bootcode.bin (Pi 4 SPI EEPROM) -> start4.elf
-#       -> config.txt -> kernel=u-boot.bin -> U-Boot -> boot.scr -> imzalı FIT
+#       -> config.txt -> kernel=u-boot.bin -> U-Boot (bootcmd) -> imzalı FIT
 #
 # Referans: https://www.raspberrypi.com/documentation/computers/config_txt.html
 

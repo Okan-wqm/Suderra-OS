@@ -5,6 +5,17 @@
 [system]
 compatible=@SUDERRA_RAUC_COMPATIBLE@
 bootloader=uboot
+# The boot counters of the A/B choice in U-Boot's compiled-in bootcmd
+# (board/suderra/uboot/suderra.env). A slot RAUC marked good holds
+# boot-attempts, which is U-Boot's suderra_good_attempts: it boots without a
+# write to the environment. A slot RAUC just installed holds the smaller
+# boot-attempts-primary: every boot spends one try and saves it, so a slot that
+# never reaches mark-good falls back to the other slot. They must differ, and
+# RAUC's defaults (3 and 3) would make a new slot look confirmed from its first
+# boot (tests/image-contracts/arm-rauc-config-contract-test.sh holds them to the
+# environment).
+boot-attempts=3
+boot-attempts-primary=2
 bundle-formats=verity
 statusfile=/data/rauc/status.ini
 
@@ -12,8 +23,9 @@ statusfile=/data/rauc/status.ini
 path=/etc/rauc/keyring.pem
 
 # ARM boot zinciri imzalı FIT'e dayanır: slot-post-install hook (PR-A5)
-# suderra-<bootname>.fit'i /boot FAT bölümüne kopyalar; U-Boot boot.scr
-# BOOT_ORDER/BOOT_<slot>_LEFT (fw_setenv) ile slotu seçer.
+# suderra-<bootname>.fit'i /boot FAT bölümüne kopyalar (rw only for that copy);
+# U-Boot's compiled-in bootcmd chooses the slot from BOOT_ORDER/BOOT_<slot>_LEFT,
+# which fw_setenv writes to the raw environment (fw_env.config).
 [handlers]
 post-install=/usr/lib/rauc/suderra-rauc-arm-slot-hook.sh
 

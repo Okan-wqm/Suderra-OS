@@ -235,7 +235,9 @@ kod yok). Detaylı eksik/risk kaydı: [security-gaps-and-risks.md](security-gaps
 - İmzalama/HSM: `scripts/production-artifacts.sh`, `scripts/create-rauc-bundle.sh`,
   `scripts/evidence/validate-hsm-signing-evidence.py`, `package/suderra-keys/suderra-keys.mk`
 - Fail-closed build gate: `board/suderra/common/post-image.sh` (`enforce_production_contract`)
-- Boot: `board/suderra/aarch64-rpi4/{uboot-fragment.config,boot.scr.cmd}`,
+- Boot: `board/suderra/uboot/{hardening.config,suderra.env,qemu-arm64.config,patches/}`,
+  `board/suderra/aarch64-rpi4/uboot-fragment.config`, `scripts/ci/check-uboot-config.py`,
+  `tests/qemu/arm-fit-signature-boot.sh`,
   `board/suderra/x86_64/grub.cfg`, `scripts/qemu/enroll-secureboot-vars`
 - OTA/anti-rollback: `userspace/suderra-ota/src/main.rs`, `package/suderra-rauc-config/*`
 - /data unlock: `board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock`

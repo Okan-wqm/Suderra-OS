@@ -27,15 +27,33 @@ if grep -q 'grubenv' "${arm_conf}"; then echo "ERROR: ARM system.conf grubenv i�
 # x86 system.conf değişmeden GRUB kalmalı.
 grep -q '^bootloader=grub' "${P}/system.conf" || { echo "ERROR: x86 system.conf grub kalmalı" >&2; exit 1; }
 
-# boot.mount.arm: Pi FAT boot partition (by-partlabel/boot).
+# boot.mount.arm: Pi FAT boot partition (by-partlabel/boot), read-only: only
+# RAUC's slot hook writes it, and it remounts for that copy (DEC-18.4).
 grep -q 'by-partlabel/boot' "${P}/boot.mount.arm" || { echo "ERROR: ARM boot.mount by-partlabel/boot değil" >&2; exit 1; }
+grep -qE '^Options=ro,' "${P}/boot.mount.arm" || { echo "ERROR: ARM /boot must be mounted read-only (DEC-18.4)" >&2; exit 1; }
 
-# fw_env.config: U-Boot env.
-grep -q '/boot/uboot.env' "${P}/fw_env.config" || { echo "ERROR: fw_env.config U-Boot env göstermiyor" >&2; exit 1; }
+# fw_env.config: the raw redundant environment (uboot-env-contract-test.sh holds
+# its offsets to U-Boot's and to genimage's).
+[ "$(grep -cE '^/dev/mmcblk0[[:space:]]+0x' "${P}/fw_env.config")" -eq 2 ] || {
+    echo "ERROR: fw_env.config must name the two raw copies on /dev/mmcblk0" >&2; exit 1; }
+if grep -q 'uboot.env' <(grep -v '^#' "${P}/fw_env.config"); then
+    echo "ERROR: fw_env.config names a uboot.env file" >&2; exit 1; fi
+
+# A slot RAUC marked good holds boot-attempts, which U-Boot's compiled-in bootcmd
+# treats as confirmed (suderra_good_attempts) and boots without a write; a slot
+# RAUC just installed must hold fewer, or it would look confirmed from its first
+# boot and never fall back.
+good="$(sed -n 's/^suderra_good_attempts=//p' "${ROOT}/board/suderra/uboot/suderra.env")"
+attempts="$(sed -n 's/^boot-attempts=//p' "${arm_conf}")"
+primary="$(sed -n 's/^boot-attempts-primary=//p' "${arm_conf}")"
+[ -n "${good}" ] && [ "${attempts}" = "${good}" ] || {
+    echo "ERROR: system.conf.arm boot-attempts (${attempts}) must equal U-Boot's suderra_good_attempts (${good})" >&2; exit 1; }
+[ -n "${primary}" ] && [ "${primary}" -ge 1 ] && [ "${primary}" -lt "${attempts}" ] || {
+    echo "ERROR: system.conf.arm boot-attempts-primary (${primary}) must be at least 1 and below boot-attempts (${attempts})" >&2; exit 1; }
 
 # arm slot hook: imzalı FIT'i boot'a kopyalar.
 hook="${P}/suderra-rauc-arm-slot-hook.sh"
-for t in 'RAUC_SLOT_BOOTNAME' 'suderra-${bootname}.fit' '/boot/suderra-${bootname}.fit'; do
+for t in 'RAUC_SLOT_BOOTNAME' 'suderra-${bootname}.fit' '/boot/suderra-${bootname}.fit' 'mount -o remount,rw /boot' 'mount -o remount,ro /boot'; do
     grep -qF -e "${t}" "${hook}" || { echo "ERROR: arm hook eksik: ${t}" >&2; exit 1; }
 done
 

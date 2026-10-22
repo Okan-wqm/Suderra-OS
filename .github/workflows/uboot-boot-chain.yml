@@ -1,0 +1,72 @@
+name: U-Boot Boot Chain
+
+# The production U-Boot boot chain, executed (ADR-048 DEC-18; EI-013, EI-034,
+# EI-035, EI-036). A real U-Boot built from the sources Buildroot pins, with the
+# fragment and the default environment every production image uses, boots the
+# FITs the production producer builds, on qemu-system-aarch64. The test refuses a
+# control FDT without the FIT key, a tampered, re-signed, unsigned or legacy FIT,
+# every stored-environment attack on bootcmd/bootargs/stdin, and any console
+# prompt; it also shows that the same U-Boot without the key guard boots an
+# unsigned FIT, so the guard is what the test proves. It is the only place the
+# boot chain is executed before hardware: a build-time grep of a file nobody loads
+# (the u-boot.dtb gate it replaces) proved nothing.
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - board/suderra/uboot/**
+      - board/suderra/aarch64-rpi4/**
+      - board/suderra/aarch64-revpi-connect4/**
+      - scripts/production-artifacts.sh
+      - scripts/ci/uboot-build.sh
+      - scripts/ci/check-uboot-config.py
+      - tests/qemu/arm-fit-signature-boot.sh
+      - tests/qemu/uboot/**
+      - buildroot/boot/uboot/**
+      - .github/workflows/uboot-boot-chain.yml
+  pull_request:
+    branches: [main, "claude/**"]
+    paths:
+      - board/suderra/uboot/**
+      - board/suderra/aarch64-rpi4/**
+      - board/suderra/aarch64-revpi-connect4/**
+      - scripts/production-artifacts.sh
+      - scripts/ci/uboot-build.sh
+      - scripts/ci/check-uboot-config.py
+      - tests/qemu/arm-fit-signature-boot.sh
+      - tests/qemu/uboot/**
+      - buildroot/boot/uboot/**
+      - .github/workflows/uboot-boot-chain.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uboot-boot-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot-chain:
+    name: ARM boot chain on QEMU (production U-Boot logic)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Install the tools of the boot-chain test
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-arm gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            build-essential bison flex swig libssl-dev xxd patch curl \
+            device-tree-compiler u-boot-tools dosfstools mtools \
+            cryptsetup-bin e2fsprogs openssl python3
+
+      - name: Run the boot-chain test
+        # The U-Boot tarball is fetched from the site Buildroot uses and checked
+        # against buildroot/boot/uboot/uboot.hash before it is built.
+        run: bash tests/qemu/arm-fit-signature-boot.sh

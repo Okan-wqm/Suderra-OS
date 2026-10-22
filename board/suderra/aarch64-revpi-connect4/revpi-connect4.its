@@ -11,14 +11,16 @@
  *
  * U-Boot verifies the configuration signature (required = "conf") over the
  * kernel, the device tree and the ramdisk before it boots; the ramdisk is the
- * dm-verity initramfs and the bootargs carry its root hash.
+ * dm-verity initramfs, and the device tree carries the kernel command line (its
+ * root hash among it) as /chosen/bootargs: U-Boot reads no bootargs property of a
+ * FIT configuration, so the producer puts the command line into the signed tree.
  *
  * Placeholders (all replaced, none may remain in the output):
  *   @SLOT@      A or B
  *   @KERNEL@    path of the kernel Image
  *   @INITRD@    path of the slot's gzip verity initramfs
- *   @FDT@       path of the board's final device tree
- *   @BOOTARGS@  the slot's kernel command line
+ *   @FDT@       path of the board's final device tree with the slot's kernel
+ *               command line in /chosen/bootargs
  *
  * The configuration's compatible is the final device tree's own root
  * compatible: arm-board-dtb fails the build if the two differ, so this line
@@ -53,7 +55,6 @@
             description = "Revolution Pi Connect 4 (slot @SLOT@)";
             compatible = "kunbus,revpi-connect4", "brcm,bcm2711";
             kernel = "kernel"; fdt = "fdt-revpi-connect4"; ramdisk = "ramdisk-1";
-            bootargs = "@BOOTARGS@";
             signature-1 {
                 algo = "sha256,rsa2048";
                 key-name-hint = "fit-signing";

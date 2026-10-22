@@ -120,35 +120,73 @@ hatta kurulur:
 - `production_ready` tüm prod hedeflerde `false` kalır; gerçek donanım kanıtı
   (G4/G5, A10/A11) release/ingress join'de gelene dek fail-closed.
 
-## FIT signature enforcement — build gate vs hardware gate (audit remediation)
+## FIT signature enforcement and the U-Boot boot chain (ADR-048 DEC-18; EI-013, EI-034, EI-035, EI-036)
 
-The signed-FIT root of trust has two layers. Both must hold; the first is
-CI-provable, the second requires hardware (G4).
+The first version of this chain trusted four assumptions of mainline U-Boot that
+do not hold on `rpi_arm64`, and the audit found each of them (T85-T88, EI-013,
+EI-034, EI-035, EI-036). What replaced them, and what proves it:
 
-**Build-time fail-closed gate (CI-enforced):**
-- `build_signed_slot_fit` marks the config signature `required = "conf"`, so
-  `mkimage -K` writes a **required** `fit-signing` key into the U-Boot control
-  DTB (`u-boot.dtb`). Without `required`, U-Boot's
-  `fit_config_verify_required_sigs()` finds no required key and boots any FIT
-  (silent fail-open).
-- ARM defconfigs set `BR2_TARGET_UBOOT_FORMAT_DTB=y` so `u-boot.dtb` is produced.
-- `enforce_production_contract` (ARM branch) now performs real crypto gates
-  (mirroring x86): `openssl dgst -verify` of each `suderra-{A,B}.fit.sig` vs its
-  cert, `dumpimage -l` proof the FIT carries an embedded rsa2048 signature, and a
-  **fail-closed assertion** that `u-boot.dtb` contains the `fit-signing` key
-  marked `required = "conf"`. A prod build that does not provably configure FIT
-  enforcement now FAILS instead of shipping a "signed" image that enforces nothing.
+1. **The control FDT is the firmware's device tree, so the key goes there.** On
+   `rpi_arm64` U-Boot runs with the device tree the VideoCore firmware loads and
+   passes in (`OF_BOARD`); the keyed `u-boot.dtb` of the first version was a file
+   nothing loaded, and with no `/signature` node in the control FDT U-Boot accepts
+   *any* FIT (`boot/image-fit-sig.c`). `OF_BOARD` stays, because the firmware's tree
+   is the accurate description of the Pi 4B, the CM4 and the CM4 IO board, and the
+   tree compiled into U-Boot is the Pi 4B's alone. The image build
+   (`production-artifacts.sh key_firmware_dtbs`) inserts the `mkimage -K` key
+   into a copy of every stock tree the firmware may load (`firmware-dtb/`), the
+   boot partition carries those copies, and the production default environment's
+   `bootcmd` boots only if the control FDT (`fdtcontroladdr`, which U-Boot sets itself
+   after the environment loads) holds `/signature/key-fit-signing` with
+   `required = "conf"`. There is no `u-boot.dtb` and no `BR2_TARGET_UBOOT_FORMAT_DTB`.
+2. **The command line is the signed device tree's `/chosen/bootargs`.** U-Boot reads
+   no `bootargs` property from a FIT configuration; it keeps the device tree image's
+   `/chosen/bootargs` unless the environment has a `bootargs` variable
+   (`boot/fdt_support.c`). The producer bakes the slot's command line (verity root
+   hash, `rauc.slot`, lockdown) into the device tree the FIT signs, the environment
+   has no `bootargs` and cannot get one, so the signature covers the arguments the
+   kernel receives.
+3. **Nothing but the compiled-in `bootcmd` boots.** `board/suderra/uboot/hardening.config`
+   removes distro boot (BOOTSTD), `booti`/`bootz`/`bootefi`, `sysboot`, PXE, DHCP/TFTP,
+   USB, `source`, the legacy image formats and the serial loaders, sets
+   `BOOTDELAY=-2` (-1 stops AT the prompt in this U-Boot) and makes the console input
+   the null device. The A/B slot choice is the compiled-in `bootcmd`
+   (`board/suderra/uboot/suderra.env`), not an unsigned `boot.scr` on a writable FAT
+   (the file is gone); it reads RAUC's counters, spends a try only for a slot RAUC has
+   not confirmed, and ends in `reset`, never in a prompt. A FIT that does not load or
+   verify costs its slot, so the next boot takes the other one.
+4. **The stored environment can change only the boot counters.**
+   `ENV_WRITEABLE_LIST` makes U-Boot start from the compiled-in environment and take
+   only `BOOT_ORDER`, `BOOT_A_LEFT` and `BOOT_B_LEFT` from the stored one (the flag
+   list is set by `board/suderra/uboot/patches`, U-Boot 2025.04 has no Kconfig symbol
+   for it). The environment is two raw CRC-checked copies in front of the first
+   partition (`SYS_REDUNDAND_ENVIRONMENT`, the symbol earlier text spells
+   `ENV_REDUNDANT`), not a file on the boot FAT, and `fw_env.config` names the same
+   offsets.
 
-**Runtime control-FDT requirement (G4 hardware gate — blocks production_ready):**
-On `rpi_arm64`, U-Boot's control FDT is normally the DTB the VideoCore firmware
-loads (`bcm2711-*.dtb`), NOT the standalone `u-boot.dtb`. For the required key to
-actually enforce at boot, the keyed `u-boot.dtb` must BE U-Boot's runtime control
-FDT — via `CONFIG_OF_SEPARATE` and re-appending the `mkimage -K`-keyed `u-boot.dtb`
-into the shipped U-Boot binary, or by injecting the required-key `/signature` node
-into the firmware-passed board DTB. This is board-specific and **must be validated
-on real Pi/RevPi hardware (G4)**: boot must reject a tampered/unsigned FIT. The
-build-time gate above is necessary but not sufficient; `production_ready` stays
-`false` until the hardware boot test proves enforcement.
+Proofs, none of them a grep of a file nobody loads:
+
+- `scripts/ci/check-uboot-config.py` checks the policy on the fragments of every
+  defconfig and, in `post-build.sh`, on the `.config` Buildroot resolved (Kconfig
+  drops a line whose dependency is gone and keeps a value the base defconfig set
+  first: the resolved `.config` of the first fragment kept `LEGACY_IMAGE_FORMAT=y`).
+- `production-artifacts.sh arm-boot-gate` (run by the producer and by `post-image.sh`)
+  checks the built artifacts: the key in every firmware device tree as a required key,
+  both slot FITs verified against it by U-Boot's own `fit_check_sign`, and the slot's
+  command line in every device tree of every FIT.
+- `tests/qemu/arm-fit-signature-boot.sh` boots a real U-Boot built from the pinned
+  sources with the same fragment and the same default environment on
+  `qemu-system-aarch64` (QEMU's `-dtb` plays the firmware): the signed FIT boots and the
+  kernel gets the signed command line; a control FDT without the key boots nothing,
+  and the same U-Boot built without the guard boots an unsigned FIT, which is the
+  hole; a tampered, re-signed, unsigned or legacy FIT is refused; a stored environment
+  that sets `bootcmd`, `bootargs`, `stdin` or `preboot` changes none of them; no prompt
+  appears under a stream of keystrokes. CI: `.github/workflows/uboot-boot-chain.yml`.
+
+What stays hardware-only: that the Pi firmware really hands U-Boot the keyed tree from
+the boot partition (the `OF_BOARD` path of `rpi.c`), that the raw environment on the
+eMMC/SD card survives a power cut, and the integrity of the boot partition, which is
+the next section (H2).
 
 ## Remaining hardware/kernel gates before ARM production_ready (audit G4/G5)
 
@@ -158,12 +196,15 @@ is closed with on-device evidence. Each is specified so it runs turnkey when
 hardware is attached.
 
 - **H2 — physical root of trust (OTP secure boot).** The FAT boot chain
-  (`u-boot.bin`, `boot.scr`, `u-boot.dtb`, FITs) is loaded by the Pi ROM with no
+  (`u-boot.bin`, the keyed device trees, the FITs) is loaded by the Pi ROM with no
   signature check unless CM4/RevPi **OTP secure boot** is provisioned (signed
-  bootcode + key hash burned into OTP). Until then, storage/physical access can
-  replace the chain. G5 tasks: provision OTP secure boot; mount `/boot` rw only
-  transiently during a RAUC install (not `WantedBy=local-fs.target`); set
-  `CONFIG_BOOTDELAY=-1` / disable the interactive U-Boot console in prod.
+  bootcode + key hash burned into OTP). The FIT key lives in the device trees on that
+  FAT, so until OTP secure boot is on, whoever can write the boot partition can
+  replace the key and the FIT together: the signed FIT protects against a modified
+  FIT or a modified environment, not against that. The OTP step is an operator action
+  (`bekliyor: operatör`, ADR-048 Q-OTP). Done in software already: `/boot` is mounted
+  read-only (`boot.mount.arm`) and written only by RAUC's slot hook for the one FIT it
+  installs; U-Boot has no console, no prompt and `BOOTDELAY=-2`.
 - **M3 — kernel module signing.** `lockdown=confidentiality` only rejects
   unsigned modules when `CONFIG_MODULE_SIG` is built in. Enable
   `CONFIG_MODULE_SIG_FORCE` + `CONFIG_MODULE_SIG_ALL` in a **prod-only** kernel
@@ -171,15 +212,11 @@ hardware is attached.
   signing key) and add `module.sig_enforce=1` to the ARM prod cmdline — then
   confirm the full BCM2711 driver set still boots (G4). Alternative: go
   monolithic (`# CONFIG_MODULES`) once the driver set is validated.
-- **H3 — verity cmdline delivery.** The dm-verity args live in the signed FIT
-  config `bootargs` (tamper-protected). `boot.scr` must NOT `setenv bootargs`
-  (unsigned env would override); confirm on hardware that `/proc/cmdline` carries
-  `suderra.verity.root_hash`. If U-Boot does not apply the FIT config bootargs,
-  inject them into the signed `fdt`'s `/chosen/bootargs`. G4 boot test asserts
-  the verity hash reaches the kernel.
-- **MED2 — executed boot enforcement.** Wire `tests/qemu/arm-fit-signature-boot.sh`
-  into CI with an enrolled virt U-Boot (or a hardware boot gate) so a
-  tampered/unsigned FIT is actually *rejected at boot*, not just asserted at build.
+- **H3 — verity cmdline delivery: closed.** The command line is the `/chosen/bootargs`
+  of the signed device tree (checked on every built FIT by `arm-boot-gate`, and on the
+  command line the kernel receives by the QEMU boot test).
+- **MED2 — executed boot enforcement: closed.** `tests/qemu/arm-fit-signature-boot.sh`
+  runs in `.github/workflows/uboot-boot-chain.yml`; the hardware part is the G4 test.
 - **corr-M3 — cross-flash guard.** rpi4 and revpi4 share `compatible=suderra-os-aarch64`
   (RAUC accepts a cross-board bundle; both are CM4-class). The RAUC config is
   arch-shared today (x86 has the same qemu-vs-hardware gap), so a proper fix needs

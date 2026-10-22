@@ -48,6 +48,15 @@ for tool in dtc fdtoverlay fdtget mkimage dumpimage veritysetup mkfs.ext4 openss
         fail "${tool} is missing (ci/Dockerfile and the contract-test jobs of build.yml and lint.yml install u-boot-tools, device-tree-compiler and cryptsetup-bin)"
 done
 [ -d "${BOARD}" ] || fail "missing ${BOARD}"
+# fit_check_sign is U-Boot's own FIT verifier, which the producer's boot gate runs:
+# Buildroot's host-uboot-tools installs it, a distribution package does not, so it
+# is built from the pinned sources (scripts/ci/uboot-build.sh) when it is missing.
+if ! command -v fit_check_sign >/dev/null 2>&1; then
+    UBOOT_TOOLS="${SUDERRA_UBOOT_BUILD:-$(mktemp -d)}"
+    bash "${ROOT}/scripts/ci/uboot-build.sh" tools "${UBOOT_TOOLS}" >/dev/null ||
+        { echo "SKIP: fit_check_sign is missing and the U-Boot tools could not be built" >&2; exit 77; }
+    export PATH="${UBOOT_TOOLS}/bin:${PATH}"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Pins and wiring
@@ -136,7 +145,9 @@ compat="$(conf_get BOARD_COMPATIBLE)"
 [ "${compat}" = "kunbus,revpi-connect4" ] || fail "BOARD_COMPATIBLE must be kunbus,revpi-connect4 (boards.json identity_cross_check)"
 grep -qx "device_tree=${final}" "${BOARD}/config.txt" || fail "config.txt must load device_tree=${final}"
 grep -qF "\"${final}\"" "${BOARD}/genimage.cfg" || fail "genimage.cfg (dev) must carry ${final}"
-grep -qF "\"$(conf_get BOARD_BASE_DTB)\"" "${BOARD}/genimage-prod.cfg" || fail "genimage-prod.cfg must carry the stock tree for the firmware"
+# The firmware loads the stock tree: the copy with the FIT key in it, U-Boot's control FDT.
+grep -qF "image = \"firmware-dtb/$(conf_get BOARD_BASE_DTB)\"" "${BOARD}/genimage-prod.cfg" || fail "genimage-prod.cfg must carry the keyed stock tree for the firmware (firmware-dtb/)"
+grep -qE "^[[:space:]]*\"$(conf_get BOARD_BASE_DTB)\"" "${BOARD}/genimage-prod.cfg" && fail "genimage-prod.cfg must not carry the unkeyed stock tree"
 grep -qF "\"${final}\"" "${BOARD}/genimage-prod.cfg" && fail "genimage-prod.cfg must not carry ${final}: it lives in the signed FIT only"
 for g in genimage.cfg genimage-prod.cfg; do
     code="$(grep -vE '^[[:space:]]*#' "${BOARD}/${g}")"
@@ -169,7 +180,10 @@ grep -qF "compatible = \"${compat}\"" "${its}" || fail "the FIT template's confi
 grep -qF 'required = "conf"' "${its}" || fail "the FIT configuration signature must be required"
 [ "$(grep -c '^        conf-' "${its}")" = 1 ] || fail "the board FIT has exactly one configuration"
 leftover="$(grep -o '@[A-Z]*@' "${its}" | sort -u | tr '\n' ' ')"
-[ "${leftover}" = "@BOOTARGS@ @FDT@ @INITRD@ @KERNEL@ @SLOT@ " ] || fail "the FIT template's placeholders are '${leftover}'"
+[ "${leftover}" = "@FDT@ @INITRD@ @KERNEL@ @SLOT@ " ] || fail "the FIT template's placeholders are '${leftover}'"
+# U-Boot reads no bootargs property of a FIT configuration: the command line is in the signed device tree.
+if grep -vE '^[[:space:]]*(/?\*|#)' "${its}" | grep -Eq '^[[:space:]]*bootargs[[:space:]]*='; then
+    fail "the FIT template has a configuration bootargs property, which U-Boot never reads"; fi
 req="${BOARD}/$(conf_get BOARD_DT_REQUIRED)"
 for want in 'label:tpm *compatible *infineon,slb9670' 'label:i2c1/rtc@51 *compatible *nxp,pcf2129' \
     'path:/pibridge *compatible *kunbus,pibridge' 'label:uart5 *linux,rs485-enabled-at-boot-time'; do
@@ -343,11 +357,22 @@ done
 printf 'lib' > "${TGT}/lib/placeholder"
 
 stage_fit_inputs() { # <bindir> <image bytes>
-    printf '/dts-v1/; / { };' > "${WORK}/u-boot.dts"
-    dtc -O dtb -o "$1/u-boot.dtb" "${WORK}/u-boot.dts" 2>/dev/null
     head -c "$2" /dev/zero | tr '\0' 'K' > "$1/Image"
     dd if=/dev/zero of="$1/rootfs.ext4" bs=1M count=8 status=none
     mkfs.ext4 -q -F "$1/rootfs.ext4" 2>/dev/null
+}
+
+fit_args() { # <fit>: /chosen/bootargs of its (one) flat_dt image
+    local fit="$1" idx=0 n
+    for n in $(fdtget -l "${fit}" /images); do
+        if [ "$(fdtget -t s "${fit}" "/images/${n}" type)" = flat_dt ]; then
+            dumpimage -T flat_dt -p "${idx}" -o "${WORK}/args.dtb" "${fit}" >/dev/null
+            fdtget -t s "${WORK}/args.dtb" /chosen bootargs
+            return 0
+        fi
+        idx=$((idx + 1))
+    done
+    return 1
 }
 
 run_fit() { # <bindir> <board_dir>
@@ -367,7 +392,11 @@ for slot in A B; do
     grep -qF 'Sign algo:    sha256,rsa2048:fit-signing (required)' <<<"${listing}" || fail "slot ${slot}: the configuration signature is not required"
     grep -qE 'FDT: +fdt-revpi-connect4' <<<"${listing}" || fail "slot ${slot}: the configuration does not boot the board's tree"
     if grep -qi 'cm4' <<<"$(fdtget -l "${fit}" /images)"; then fail "slot ${slot}: a raw CM4 tree is an image of the RevPi FIT"; fi
-    args="$(fdtget -t s "${fit}" /configurations/conf-revpi-connect4 bootargs)"
+    # The command line is the /chosen/bootargs of the signed device tree: U-Boot
+    # reads no bootargs property of a FIT configuration.
+    if fdtget -p "${fit}" /configurations/conf-revpi-connect4 | grep -Fxq bootargs; then
+        fail "slot ${slot}: the configuration has a bootargs property, which nothing reads"; fi
+    args="$(fit_args "${fit}")"
     grep -qF 'console=ttyS0,115200' <<<"${args}" || fail "slot ${slot}: the console is the mini-UART (ttyS0)"
     grep -qF 'console=ttyAMA0' <<<"${args}" && fail "slot ${slot}: ttyAMA0 is not the Connect 4's console"
     grep -qF "rauc.slot=${slot}" <<<"${args}" || fail "slot ${slot}: bootargs lack rauc.slot"
@@ -379,6 +408,19 @@ for slot in A B; do
         fail "the FIT build did not gate the device tree it put into suderra-${slot}.fit"
 done
 echo "  builds a signed one-configuration FIT around the merged tree"
+
+# U-Boot's control FDT on this board is the stock tree the firmware loads: the
+# keyed copy is there, the FIT verifies against it, the merged tree stays unkeyed.
+base="$(conf_get BOARD_BASE_DTB)"
+keyed="${bin_ok}/firmware-dtb/${base}"
+[ -s "${keyed}" ] || fail "no keyed copy of ${base}"
+[ "$(fdtget -t s "${keyed}" /signature/key-fit-signing required)" = conf ] || fail "the keyed ${base} does not require the FIT key"
+for slot in A B; do
+    fit_check_sign -f "${bin_ok}/suderra-${slot}.fit" -k "${keyed}" >/dev/null 2>&1 ||
+        fail "slot ${slot} does not verify against the key in ${base}"
+done
+fdtget -l "${bin_ok}/${final}" / | grep -Fxq signature && fail "the merged tree ${final} carries the verification key"
+echo "  keys the stock tree the firmware loads and verifies both slots against it"
 
 bash "${PA}" arm-fit-gate "${bin_ok}/suderra-A.fit" "${bin_ok}" "${BOARD}" >/dev/null || fail "arm-fit-gate rejected the FIT it built"
 
@@ -422,7 +464,8 @@ grep -qF 'has 2 configurations' <<<"${out}" || fail "the FIT gate failed without
 echo "  rejects: a FIT with a second configuration"
 
 # U-Boot copies the kernel out of the FIT's own load area: a kernel larger than
-# the gap between fitaddr (boot.scr.cmd) and its load address overwrites the FIT.
+# the gap between fitaddr (board/suderra/uboot/suderra.env) and its load address
+# overwrites the FIT.
 bin_big="$(new_bin big "${WORK}/base-sym.dtb" "${WORK}/full.dtbo")"
 stage_fit_inputs "${bin_big}" 34000000
 if out="$(run_fit "${bin_big}" "${BOARD}" 2>&1)"; then

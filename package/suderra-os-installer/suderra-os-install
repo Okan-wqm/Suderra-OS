@@ -402,10 +402,19 @@ verify_target_partitions() {
         # not in cmdline.txt. Mutating boot content would break the FIT/verity
         # integrity chain, so we VERIFY the signed-FIT boot chain and mutate
         # nothing. Slot identity is dm-verity/partlabel, not a post-flash PARTUUID.
-        for f in suderra-A.fit suderra-B.fit u-boot.bin boot.scr; do
+        for f in suderra-A.fit suderra-B.fit u-boot.bin; do
             if [ ! -f "${mount_dir}/${f}" ]; then
                 umount "${mount_dir}" || true
                 die "signed-FIT target boot partition missing ${f}"
+            fi
+        done
+        # The slot choice is compiled into U-Boot; a boot script or a loose
+        # control device tree on the boot partition would be unsigned content
+        # next to the signed FIT (ADR-048 DEC-18).
+        for f in boot.scr u-boot.dtb; do
+            if [ -e "${mount_dir}/${f}" ]; then
+                umount "${mount_dir}" || true
+                die "signed-FIT target boot partition carries ${f}, which nothing signs"
             fi
         done
         if [ -f "${mount_dir}/cmdline.txt" ]; then

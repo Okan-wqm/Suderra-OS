@@ -156,7 +156,7 @@ REQUIRED_VARIABLES = (
     "bootdelay", "stdin", "stdout", "stderr", "fdt_high", "initrd_high",
     "fitaddr", "suderra_bootdev", "suderra_good_attempts", "BOOT_ORDER",
     "BOOT_A_LEFT", "BOOT_B_LEFT", "suderra_guard", "suderra_pick",
-    "suderra_boot", "bootcmd",
+    "suderra_boot", "suderra_fail", "bootcmd",
 )
 # The only variables the stored environment may change: the RAUC U-Boot
 # backend's (bootchooser: BOOT_ORDER and one BOOT_<slot>_LEFT per bootname).
@@ -349,7 +349,7 @@ def check_env(path: Path, patches: Path, label: str, root: Path) -> list[str]:
     if not re.search(r"(^|[;\s])reset\s*$", boot):
         problems.append(f"{label}: bootcmd must end in 'reset': it must never return to a prompt")
     steps = run_closure(env, "bootcmd")
-    for need in ("suderra_guard", "suderra_pick", "suderra_boot"):
+    for need in ("suderra_guard", "suderra_pick", "suderra_boot", "suderra_fail"):
         if need not in steps:
             problems.append(f"{label}: bootcmd does not run {need}")
     for step in steps:

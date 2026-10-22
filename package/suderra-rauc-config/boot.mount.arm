@@ -4,13 +4,15 @@ Documentation=https://rauc.readthedocs.io/en/latest/integration.html
 Before=rauc.service suderra-rauc-mark-good.service
 
 [Mount]
-# ARM: Pi firmware FAT boot bölümü (GPT partlabel "boot"). RAUC U-Boot
-# backend'i /boot'a yazılabilir erişimle fw_setenv (BOOT_ORDER/BOOT_x_LEFT)
-# ve slot-hook FIT kopyalaması yapar.
+# ARM: Pi firmware FAT boot partition (GPT partlabel "boot"), read-only. Nothing
+# writes it at run time: the U-Boot environment is raw on the disk, outside the
+# FAT (fw_env.config). Only RAUC's slot hook writes the FIT of the slot it just
+# installed, and it remounts rw for that copy alone and back to ro afterwards
+# (suderra-rauc-arm-slot-hook.sh; ADR-048 DEC-18.4).
 What=/dev/disk/by-partlabel/boot
 Where=/boot
 Type=vfat
-Options=rw,nosuid,nodev,noexec,umask=0077,shortname=winnt
+Options=ro,nosuid,nodev,noexec,umask=0077,shortname=winnt
 
 [Install]
 WantedBy=local-fs.target
