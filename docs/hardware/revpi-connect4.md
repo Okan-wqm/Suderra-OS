@@ -25,7 +25,7 @@ device tree that has the Connect 4's own hardware merged into the CM4 tree.
 | piControl | upstream tag `v2.6.2`, commit `7acf6e9110dd558b434b57f50ee5d4b5d54b5d91` | `package/revpi-picontrol/` (`.mk`, `.hash`) |
 | Device tree | `bcm2711-rpi-cm4.dtb` + `revpi-connect4.dtbo`, both built by the pinned kernel | `board/suderra/aarch64-revpi-connect4/board-boot.conf` |
 
-Sources (verified identical on both hosts for the tags above):
+Sources (the kernel tag resolves to the same commit on both hosts; piControl was checked on GitLab only):
 
 - Kernel: <https://gitlab.com/revolutionpi/linux> (mirror: <https://github.com/RevolutionPi/linux>), GPL-2.0 (`COPYING`).
   The overlay is `arch/arm/boot/dts/overlays/revpi-connect4-overlay.dts` (GPL-2.0-only, KUNBUS).
@@ -189,6 +189,9 @@ about 2 GB of free disk, too little for the Buildroot toolchain):
   `arm-board-dtb` merged them and all 18 required nodes were present; `arm-pre-genimage` built
   the signed A/B FITs from that tree (with a stand-in kernel `Image` and a stand-in rootfs) and the
   gate passed on the tree extracted from each.
+- Buildroot's `host-dtc` (1.7.2), built from the same defconfig, installs `fdtoverlay`, `fdtget` and
+  `fdtput`, and `fdtoverlay` merged a test overlay with it; `host-uboot-tools` installs `dumpimage`
+  (the tools `arm-board-dtb` and the FIT gate use).
 - piControl 2.6.2 compiled and linked into `piControl.ko` against the pinned tree
   (`modules_prepare`; without a full kernel build there is no `Module.symvers`, so symbol
   resolution was checked by reading the exports of `pibridge.c` instead).
