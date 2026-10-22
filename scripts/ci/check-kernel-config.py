@@ -23,6 +23,13 @@ static
     CONFIG_<NAME>=<value> or "# CONFIG_<NAME> is not set" line: a trailing
     comment hides a typo from every reader.
 
+    The same mode checks the download policy of every defconfig (EI-051:
+    BR2_DOWNLOAD_FORCE_CHECK_HASHES and the global hash directory, so a package
+    without a hash fails the build instead of downloading unchecked) and the pin
+    of every kernel (EI-028: a kernel.org version is of the series its toolchain
+    headers carry, and the pinned archive has its sha256 in
+    board/suderra/buildroot-hashes/linux).
+
 resolved
     Given the kernel tree Buildroot configured for one defconfig (its .config
     after merge, olddefconfig and Buildroot's fixups), require that
@@ -117,6 +124,132 @@ CAPABILITIES: dict[str, tuple[tuple[str, ...], str]] = {
         "8250 UARTs, xHCI and the FTDI/CP210x/CH341/PL2303 and CDC-ACM "
         "RS485/RS232 adapters (DEC-8.10, EI-043)",
     ),
+    "x86-ipc-platform": (
+        (
+            "DMI",
+            "DMIID",
+            "EFI_PARTITION",
+            "EFIVAR_FS",
+            "CPU_SUP_INTEL",
+            "CPU_SUP_AMD",
+            "MICROCODE",
+            "FW_LOADER",
+            "IOMMU_SUPPORT",
+            "INTEL_IOMMU",
+            "INTEL_IOMMU_DEFAULT_ON",
+            "AMD_IOMMU",
+            "IOMMU_DEFAULT_DMA_STRICT",
+        ),
+        "an industrial x86 PC is identified by its DMI vendor and product "
+        "(/sys/class/dmi/id, DEC-8.2), converted through efivarfs (SetupMode, "
+        "SecureBoot, PK/KEK/db enrollment, Boot#### removal, DEC-8.9), updated "
+        "with CPU microcode (DEC-8.10) and protected against DMA from the first "
+        "instruction (IOMMU on and strict, DEC-8.9 step 6)",
+    ),
+    "x86-ipc-network": (
+        ("E1000E", "IGB", "IGC", "R8169", "PTP_1588_CLOCK"),
+        "the NICs of industrial x86 PCs: Intel I217/I219 (e1000e), I210/I211 "
+        "(igb), I225/I226 (igc, the ADR's preferred upstream drivers), Realtek "
+        "(r8169), and the PTP clock linuxptp disciplines (DEC-8.10, Soru 1)",
+    ),
+    "x86-ipc-storage": (
+        (
+            "BLK_DEV_NVME",
+            "SATA_AHCI",
+            "BLK_DEV_SD",
+            "MMC",
+            "MMC_BLOCK",
+            "MMC_SDHCI",
+            "MMC_SDHCI_PCI",
+            "MMC_SDHCI_ACPI",
+            "USB_STORAGE",
+            "USB_UAS",
+            "NLS_CODEPAGE_437",
+            "NLS_ISO8859_1",
+        ),
+        "NVMe, SATA and eMMC system disks (DEC-8.10), and the USB mass storage "
+        "of the installer medium and of the provisioning-bundle ingress, "
+        "mounted FAT with its code page tables (DEC-18.2, "
+        "suderra-usb-ingress@.service); the usbguard policy, not the kernel, "
+        "keeps the storage class unauthorized in ACTIVE",
+    ),
+    "x86-ipc-serial": (
+        (
+            "SERIAL_8250_PCI",
+            "SERIAL_8250_PNP",
+            "SERIAL_8250_EXTENDED",
+            "SERIAL_8250_SHARE_IRQ",
+            "SERIAL_8250_EXAR",
+            "SERIAL_8250_PERICOM",
+            "SERIAL_8250_LPSS",
+            "SERIAL_8250_DW",
+        ),
+        "the RS485/RS232 interfaces of industrial PCs: the ACPI/PNP onboard COM "
+        "ports, Exar and Pericom multi-port PCIe cards and the Intel LPSS and "
+        "DesignWare UARTs (DEC-8.10); the 8250 core registers at most "
+        "SERIAL_8250_NR_UARTS ports, so a multi-port card plus the onboard COM "
+        "ports need at least 16 (CAPABILITY_MINIMUMS)",
+    ),
+    "x86-ipc-watchdog": (
+        (
+            "WATCHDOG",
+            "ITCO_WDT",
+            "ITCO_VENDOR_SUPPORT",
+            "SP5100_TCO",
+            "IT87_WDT",
+            "F71808E_WDT",
+            "W83627HF_WDT",
+            "WDAT_WDT",
+        ),
+        "systemd PID1 owns the hardware watchdog (DEC-6): iTCO, AMD SP5100 TCO, "
+        "the ITE, Fintek and Nuvoton (W83627HF driver, NCT6775 and later) "
+        "Super I/O timers and the ACPI WDAT table; a model's qualification "
+        "picks the one it has (DEC-8 matrix)",
+    ),
+    "x86-ipc-smbus-gpio": (
+        (
+            "I2C",
+            "I2C_CHARDEV",
+            "I2C_SMBUS",
+            "I2C_I801",
+            "I2C_PIIX4",
+            "LPC_ICH",
+            "GPIOLIB",
+            "GPIO_CDEV",
+            "GPIO_ICH",
+            "GPIO_F7188X",
+            "GPIO_IT87",
+        ),
+        "the chipset SMBus (iTCO, board sensors), the LPC bridge and the "
+        "Super I/O digital I/O of industrial boards (DEC-8.10: I2C_I801, "
+        "LPC_ICH)",
+    ),
+    "x86-ipc-can": (
+        (
+            "CAN",
+            "CAN_RAW",
+            "CAN_BCM",
+            "CAN_DEV",
+            "CAN_SJA1000",
+            "CAN_KVASER_PCI",
+            "CAN_PEAK_PCI",
+            "CAN_EMS_PCI",
+            "CAN_PLX_PCI",
+            "CAN_F81601",
+            "CAN_C_CAN",
+            "CAN_C_CAN_PCI",
+            "CAN_M_CAN",
+            "CAN_M_CAN_PCI",
+            "CAN_CTUCANFD",
+            "CAN_CTUCANFD_PCI",
+            "CAN_PEAK_USB",
+            "CAN_GS_USB",
+        ),
+        "the x86 agent drop-in grants RestrictAddressFamilies=AF_CAN "
+        "(unit-directives.json board_dropins): the CAN stack with raw sockets, "
+        "and the PCI and USB controllers of industrial CAN cards (DEC-8 matrix, "
+        "fieldbus: CAN)",
+    ),
     "rpi-field-io": (
         ("I2C_CHARDEV", "SPI_SPIDEV", "SERIAL_AMBA_PL011"),
         "the rpi4-cm4 agent drop-in grants /dev/i2c-1, /dev/spidev0.* and "
@@ -189,10 +322,28 @@ CAPABILITIES: dict[str, tuple[tuple[str, ...], str]] = {
     ),
 }
 
+# Numeric lower bounds, by capability: the symbol is a count (a number of ports,
+# not a feature), so "=y" cannot express the requirement.
+CAPABILITY_MINIMUMS: dict[str, dict[str, int]] = {
+    "x86-ipc-serial": {
+        "SERIAL_8250_NR_UARTS": 16,
+        "SERIAL_8250_RUNTIME_UARTS": 16,
+    },
+}
+
 # Capabilities of a board's field I/O and boot hardware, by board_profile.
 BOARD_IO: dict[str, tuple[str, ...]] = {
     "qemu-x86_64": ("x86-field-io",),
-    "x86-ipc": ("x86-field-io",),
+    "x86-ipc": (
+        "x86-field-io",
+        "x86-ipc-platform",
+        "x86-ipc-network",
+        "x86-ipc-storage",
+        "x86-ipc-serial",
+        "x86-ipc-watchdog",
+        "x86-ipc-smbus-gpio",
+        "x86-ipc-can",
+    ),
     "rpi4-cm4": ("rpi-field-io",),
     "revpi-connect4": ("revpi-field-io", "revpi-rtc", "revpi-console", "revpi-rt"),
 }
@@ -384,6 +535,18 @@ def required(image: Image) -> dict[str, str]:
     return req
 
 
+def required_minimums(image: Image) -> dict[str, tuple[int, str]]:
+    mins: dict[str, tuple[int, str]] = {}
+    for cap in capabilities_of(image):
+        for sym, minimum in CAPABILITY_MINIMUMS.get(cap, {}).items():
+            mins.setdefault(sym, (minimum, cap))
+    return mins
+
+
+def number_at_least(value: str | None, minimum: int) -> bool:
+    return value is not None and re.fullmatch(r"[0-9]+", value) is not None and int(value) >= minimum
+
+
 def effective(image: Image) -> dict[str, Line]:
     eff: dict[str, Line] = {}
     for path in image.files:
@@ -399,8 +562,86 @@ def rel(path: Path, root: Path) -> str:
         return str(path)
 
 
+HASH_FILE = Path("board/suderra/buildroot-hashes/linux/linux.hash")
+HASH_LINE = re.compile(r"^sha256\s+([0-9a-f]{64})\s+(\S+)\s*$")
+CUSTOM_TARBALL_NAME = re.compile(r"/(linux-[0-9a-f]{40}\.tar\.gz)$")
+HEADERS_SERIES = re.compile(r"^BR2_KERNEL_HEADERS_([0-9]+)_([0-9]+)$")
+
+
+def pinned_archives(root: Path) -> set[str]:
+    path = root / HASH_FILE
+    if not path.is_file():
+        raise ContractError(f"kernel hash file missing: {HASH_FILE}")
+    names: set[str] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        text = raw.strip()
+        if not text or text.startswith("#"):
+            continue
+        m = HASH_LINE.match(text)
+        if not m:
+            raise ContractError(f"{HASH_FILE}: not a 'sha256  <64 hex>  <file>' line: {raw!r}")
+        names.add(m.group(2))
+    return names
+
+
+def check_kernel_pins(root: Path) -> list[str]:
+    """Every kernel a defconfig builds is a hash-enforced, series-consistent pin."""
+    problems: list[str] = []
+    archives = pinned_archives(root)
+    for path in sorted((root / "configs").glob("*_defconfig")):
+        values = read_defconfig(path)
+        name = path.name
+        if values.get("BR2_DOWNLOAD_FORCE_CHECK_HASHES") != "y":
+            problems.append(
+                f"{name}: BR2_DOWNLOAD_FORCE_CHECK_HASHES=y is required: without it "
+                f"Buildroot downloads the kernel and every package unchecked (EI-051)"
+            )
+        patch_dir = values.get("BR2_GLOBAL_PATCH_DIR", "").strip('"')
+        if patch_dir != "$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/buildroot-hashes":
+            problems.append(
+                f"{name}: BR2_GLOBAL_PATCH_DIR must be "
+                f'"$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/buildroot-hashes", the '
+                f"directory that holds {HASH_FILE}"
+            )
+        if values.get("BR2_LINUX_KERNEL") != "y":
+            continue
+        if values.get("BR2_LINUX_KERNEL_CUSTOM_VERSION") == "y":
+            version = values.get("BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE", "").strip('"')
+            if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+                problems.append(f"{name}: BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE {version!r} is not X.Y.Z")
+                continue
+            series = [m.groups() for k in values if (m := HEADERS_SERIES.match(k)) and values[k] == "y"]
+            if len(series) != 1:
+                problems.append(f"{name}: exactly one BR2_KERNEL_HEADERS_<major>_<minor>=y is required")
+            elif ".".join(series[0]) != ".".join(version.split(".")[:2]):
+                problems.append(
+                    f"{name}: kernel {version} is built with {'.'.join(series[0])} toolchain "
+                    f"headers; the kernel and its headers are one series (DEC-8.12, EI-028)"
+                )
+            archive = f"linux-{version}.tar.xz"
+        elif values.get("BR2_LINUX_KERNEL_CUSTOM_TARBALL") == "y":
+            location = values.get("BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION", "").strip('"')
+            m = CUSTOM_TARBALL_NAME.search(location)
+            if not m:
+                problems.append(
+                    f"{name}: BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION must name a "
+                    f"linux-<40 hex commit>.tar.gz archive (an immutable commit), got {location!r}"
+                )
+                continue
+            archive = m.group(1)
+        else:
+            problems.append(f"{name}: the kernel must be a pinned custom version or a pinned tarball")
+            continue
+        if archive not in archives:
+            problems.append(
+                f"{name}: {archive} has no 'sha256' line in {HASH_FILE}; the pin must be "
+                f"computed from the downloaded archive (EI-051)"
+            )
+    return problems
+
+
 def check_static(root: Path) -> list[str]:
-    problems = []
+    problems = check_kernel_pins(root)
     for image in images(root):
         try:
             eff = effective(image)
@@ -417,6 +658,17 @@ def check_static(root: Path) -> list[str]:
                 problems.append(
                     f"{image.defconfig}: CONFIG_{sym} must be =y ({cap}: "
                     f"{CAPABILITIES[cap][1]}); {where}"
+                )
+        for sym, (minimum, cap) in required_minimums(image).items():
+            line = eff.get(sym)
+            if line is None or not number_at_least(line.value, minimum):
+                where = (
+                    f"{rel(line.path, root)}:{line.lineno} sets it to {line.value}"
+                    if line else "no config file of the image declares it"
+                )
+                problems.append(
+                    f"{image.defconfig}: CONFIG_{sym} must be at least {minimum} "
+                    f"({cap}: {CAPABILITIES[cap][1]}); {where}"
                 )
     return problems
 
@@ -462,6 +714,12 @@ def check_resolved(
             problems.append(
                 f"{defconfig}: resolved CONFIG_{sym}={cfg.get(sym, 'n')}, must be y "
                 f"({cap}: {CAPABILITIES[cap][1]})"
+            )
+    for sym, (minimum, cap) in required_minimums(image).items():
+        if not number_at_least(cfg.get(sym), minimum):
+            problems.append(
+                f"{defconfig}: resolved CONFIG_{sym}={cfg.get(sym, 'n')}, must be at "
+                f"least {minimum} ({cap}: {CAPABILITIES[cap][1]})"
             )
     named: dict[str, Line] = {}
     for path in image.files:

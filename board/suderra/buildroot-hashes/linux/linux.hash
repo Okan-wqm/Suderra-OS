@@ -9,3 +9,17 @@ sha256  dab3052783c68c46a5bc645b1c38d9705da995ab42823566518b62eb1fa1ef97  linux-
 # The archive of that commit is the pin; a new KUNBUS release is a new commit,
 # a new line here and a new piControl pairing (docs/hardware/revpi-connect4.md).
 sha256  ecf80afe33a1bc4067aaf69265285284a57b44730b1832115252bade426ca55a  linux-756591ec4845ec0114ee7a3a99768f69bcd8bed3.tar.gz
+
+# Linux 6.12.114, the x86_64 and generic-aarch64-template kernels
+# (BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE of configs/suderra_x86_64_defconfig,
+# suderra_qemu_x86_64_defconfig, suderra_qemu_x86_64_prod_ab_defconfig and
+# suderra_aarch64_defconfig). Locally computed from the tarball downloaded from
+# https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.114.tar.xz (the
+# longterm release of 2026-10-21 per https://www.kernel.org/releases.json) and
+# equal to its line in https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc,
+# whose OpenPGP signature by "Kernel.org checksum autosigner"
+# (B886 8C80 BA62 A1FF FAF5  FDA9 632D 3A06 589D A6B1) verifies; the key is not
+# certified by a web of trust here. A new 6.12.y is a new line here and a new
+# version in those four defconfigs (scripts/ci/check-kernel-config.py fails a
+# custom version without its line).
+sha256  7a8589912bd7a8adb07fed074283652cf482a35facef8954554654f0154b4af3  linux-6.12.114.tar.xz

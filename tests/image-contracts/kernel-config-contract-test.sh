@@ -43,6 +43,8 @@ fresh_copy() {
     mkdir -p "${WORK}/tree/contracts/suderra-edge/v1" "${WORK}/tree/configs"
     cp "${ROOT}"/configs/*_defconfig "${WORK}/tree/configs/"
     cp "${ROOT}/contracts/suderra-edge/v1/boards.json" "${WORK}/tree/contracts/suderra-edge/v1/"
+    mkdir -p "${WORK}/tree/board/suderra/buildroot-hashes/linux"
+    cp "${ROOT}/board/suderra/buildroot-hashes/linux/linux.hash" "${WORK}/tree/board/suderra/buildroot-hashes/linux/"
     (cd "${ROOT}" && find board -name '*.config' -exec cp --parents {} "${WORK}/tree" \;)
 }
 
@@ -139,6 +141,77 @@ if grep -q '^suderra_aarch64_revpi4_defconfig	.*module-signing' "${WORK}/list.tx
     fail "the RevPi dev image must not require module signing (a developer loads their own modules)"
 fi
 echo "  requires module signing on the RevPi production image only"
+
+# 2b. The industrial x86 PC driver set (ADR-048 DEC-8.9, DEC-8.10): each
+#     capability of the x86-ipc family fails the family's image, and only it,
+#     when one of its symbols is lost. The qemu-x86_64 images share the file
+#     but are not industrial PCs (no requirement), which the clean run above
+#     already proves.
+X86_CFG="board/suderra/x86_64/linux-x86_64.config"
+x86_ipc_case() {
+    local label="$1" symbol="$2" edit="$3" pattern="$4"
+    fresh_copy
+    sed -i "${edit}" "${WORK}/tree/${X86_CFG}"
+    expect_fail "${label}" "${pattern}" python3 -I "${CHECK}" --root "${WORK}/tree" static
+    grep -q "^CONFIG_${symbol}=" "${ROOT}/${X86_CFG}" ||
+        fail "${label}: ${symbol} is not set in the shipped x86 config (the case tests nothing)"
+}
+x86_ipc_case "x86 PC without the Intel I225/I226 NIC driver" IGC '/^CONFIG_IGC=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_IGC must be =y"
+x86_ipc_case "x86 PC that cannot export its DMI identity" DMIID '/^CONFIG_DMIID=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_DMIID must be =y"
+x86_ipc_case "x86 PC that cannot reach the firmware variables" EFIVAR_FS '/^CONFIG_EFIVAR_FS=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_EFIVAR_FS must be =y"
+x86_ipc_case "x86 PC with lazy IOMMU translation" IOMMU_DEFAULT_DMA_STRICT '/^CONFIG_IOMMU_DEFAULT_DMA_STRICT=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_IOMMU_DEFAULT_DMA_STRICT must be =y"
+x86_ipc_case "x86 PC whose IOMMU is off until the command line says otherwise" INTEL_IOMMU_DEFAULT_ON \
+    '/^CONFIG_INTEL_IOMMU_DEFAULT_ON=y$/d' "suderra_x86_64_defconfig: CONFIG_INTEL_IOMMU_DEFAULT_ON must be =y"
+x86_ipc_case "x86 PC without the Super I/O watchdog of Nuvoton boards" W83627HF_WDT '/^CONFIG_W83627HF_WDT=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_W83627HF_WDT must be =y"
+x86_ipc_case "x86 PC without the Exar multi-port UART driver" SERIAL_8250_EXAR '/^CONFIG_SERIAL_8250_EXAR=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_SERIAL_8250_EXAR must be =y"
+x86_ipc_case "x86 PC that registers too few 8250 ports" SERIAL_8250_NR_UARTS \
+    's/^CONFIG_SERIAL_8250_NR_UARTS=16$/CONFIG_SERIAL_8250_NR_UARTS=4/' \
+    "suderra_x86_64_defconfig: CONFIG_SERIAL_8250_NR_UARTS must be at least 16"
+x86_ipc_case "x86 PC without CAN raw sockets" CAN_RAW '/^CONFIG_CAN_RAW=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_CAN_RAW must be =y"
+x86_ipc_case "x86 PC without USB mass storage for the installer and the ingress" USB_STORAGE '/^CONFIG_USB_STORAGE=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_USB_STORAGE must be =y"
+x86_ipc_case "x86 PC without the chipset SMBus" I2C_I801 '/^CONFIG_I2C_I801=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_I2C_I801 must be =y"
+x86_ipc_case "x86 PC without eMMC support" MMC_SDHCI_PCI '/^CONFIG_MMC_SDHCI_PCI=y$/d' \
+    "suderra_x86_64_defconfig: CONFIG_MMC_SDHCI_PCI must be =y"
+echo "  requires the industrial x86 PC driver set on the x86-ipc image only"
+
+# 2c. Every kernel is a hash-enforced pin of its toolchain headers' series
+#     (EI-028, EI-051).
+X86_DEF="configs/suderra_x86_64_defconfig"
+RPI_DEF="configs/suderra_aarch64_rpi4_defconfig"
+HASHES="board/suderra/buildroot-hashes/linux/linux.hash"
+pin_case() {
+    local label="$1" file="$2" edit="$3" pattern="$4"
+    fresh_copy
+    sed -i "${edit}" "${WORK}/tree/${file}"
+    expect_fail "${label}" "${pattern}" python3 -I "${CHECK}" --root "${WORK}/tree" static
+}
+pin_case "x86 defconfig that downloads unchecked" "${X86_DEF}" '/^BR2_DOWNLOAD_FORCE_CHECK_HASHES=y$/d' \
+    "suderra_x86_64_defconfig: BR2_DOWNLOAD_FORCE_CHECK_HASHES=y is required"
+pin_case "x86 defconfig that looks for hashes nowhere" "${X86_DEF}" '/^BR2_GLOBAL_PATCH_DIR=/d' \
+    "suderra_x86_64_defconfig: BR2_GLOBAL_PATCH_DIR must be"
+pin_case "x86 kernel bumped without its hash" "${X86_DEF}" \
+    's/^BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.114"$/BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.12.115"/' \
+    "suderra_x86_64_defconfig: linux-6.12.115.tar.xz has no 'sha256' line"
+pin_case "x86 kernel of another series than its headers" "${X86_DEF}" \
+    's/^BR2_KERNEL_HEADERS_6_12=y$/BR2_KERNEL_HEADERS_6_6=y/' \
+    "suderra_x86_64_defconfig: kernel 6.12.114 is built with 6.6 toolchain headers"
+pin_case "x86 kernel whose hash line was removed" "${HASHES}" '/ linux-6.12.114.tar.xz$/d' \
+    "suderra_x86_64_defconfig: linux-6.12.114.tar.xz has no 'sha256' line"
+pin_case "malformed kernel hash line" "${HASHES}" 's/^sha256  7a85/sha256  7a8/' \
+    "not a 'sha256  <64 hex>  <file>' line"
+pin_case "tarball kernel moved to an unpinned commit" "${RPI_DEF}" \
+    's/576cc10e1ed50a9eacffc7a05c796051d7343ea4/0000000000000000000000000000000000000000/g' \
+    "suderra_aarch64_rpi4_defconfig: linux-0000000000000000000000000000000000000000.tar.gz has no 'sha256' line"
+echo "  requires every kernel pin to be hash-enforced and series-consistent"
 
 # 3. Resolved mode on a synthetic kernel tree for the dev QEMU defconfig:
 #    a Kconfig defining every symbol its fragment names, and a .config that
