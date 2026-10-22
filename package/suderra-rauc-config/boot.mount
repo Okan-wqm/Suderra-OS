@@ -1,10 +1,15 @@
 [Unit]
 Description=Mount Suderra EFI system partition
 Documentation=https://rauc.readthedocs.io/en/latest/integration.html
+# The partition is named by suderra-disk-layout, which proves that one partition
+# of the disk under the verified root carries the PARTUUID of the build
+# (ADR-048 DEC-18.1): a device a USB stick imitates is refused, not mounted.
+Requires=suderra-disk-layout.service
+After=suderra-disk-layout.service
 Before=rauc.service suderra-rauc-mark-good.service
 
 [Mount]
-What=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_EFI@
+What=/run/suderra-os/disk/efi
 Where=/boot
 Type=vfat
 Options=rw,nosuid,nodev,noexec,umask=0077,shortname=winnt

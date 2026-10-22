@@ -1,6 +1,11 @@
 [Unit]
 Description=Mount Suderra Pi FAT boot partition
 Documentation=https://rauc.readthedocs.io/en/latest/integration.html
+# The partition is named by suderra-disk-layout, which proves that one partition
+# of the disk under the verified root carries the PARTUUID of the build
+# (ADR-048 DEC-18.1): a device a USB stick imitates is refused, not mounted.
+Requires=suderra-disk-layout.service
+After=suderra-disk-layout.service
 Before=rauc.service suderra-rauc-mark-good.service
 
 [Mount]
@@ -9,7 +14,7 @@ Before=rauc.service suderra-rauc-mark-good.service
 # FAT (fw_env.config). Only RAUC's slot hook writes the FIT of the slot it just
 # installed, and it remounts rw for that copy alone and back to ro afterwards
 # (suderra-rauc-arm-slot-hook.sh; ADR-048 DEC-18.4).
-What=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_BOOT@
+What=/run/suderra-os/disk/boot
 Where=/boot
 Type=vfat
 Options=ro,nosuid,nodev,noexec,umask=0077,shortname=winnt

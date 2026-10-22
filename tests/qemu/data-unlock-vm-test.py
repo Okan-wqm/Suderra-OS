@@ -10,7 +10,7 @@ that `mkfs.ext4` did not exist after the volume was already sealed. This test
 runs the real script (board/suderra/common/rootfs-overlay/usr/sbin/
 suderra-data-unlock) with the real cryptsetup, systemd-cryptenroll, mkfs.ext4
 and systemd-tmpfiles in a QEMU guest whose TPM is an swtpm, on a blank virtio
-disk, and drives it through tests/qemu/data-unlock-scenarios.sh.
+disk, and drives it through tests/qemu/guest/data-unlock-scenarios.sh.
 
 The guest is a small initramfs built from the host's tools, booted with the
 kernel of a Suderra OS x86_64 QEMU image (dm-crypt, TPM and virtio built in);
@@ -18,6 +18,24 @@ the script and the layout under test are the repository's own files. Only
 suderra-installer is a test double: it records the results and lifecycle calls
 the script makes, and refuses a result reason the contract does not allow
 (contracts/suderra-edge/v1/schemas/result.schema.json), as the real one does.
+
+The disk is a GPT image (tests/qemu/gpt_disk.py) whose partitions carry the
+production PARTUUIDs, and /data is its data partition, named the way the image
+names it: by the link suderra-disk-layout makes after it proved that the
+partition is the only one with that PARTUUID and is on the disk under the verified
+root (/dev/mapper/suderra-root, here a dm-crypt device over the first partition:
+the kernel of the image has no dm-verity, and the layout only reads which disk is
+below it). Three boots:
+
+  main             the boot disk and a second disk with an unrelated PARTUUID:
+                   the layout ignores the second disk, and the 13 provisioning
+                   and recovery scenarios run on the data partition
+  stick-duplicate  the second disk is a "USB stick" whose blank partition carries
+                   the data PARTUUID too: the layout is refused, the data unlock
+                   alarms, neither partition is written
+  stick-only       the boot disk has no data partition and the stick carries the
+                   PARTUUID: refused as well (the device is not provisioned on
+                   someone else's media)
 
 The kernel is the bzImage of the image build (output/<defconfig>/images/
 bzImage), or --kernel / SUDERRA_DATA_TEST_KERNEL. A missing tool or kernel
@@ -40,13 +58,21 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import gpt_disk  # noqa: E402  (tests/qemu/gpt_disk.py, next to this file)
+
 ROOT = HERE.parents[1]
 UNLOCK = ROOT / "board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock"
 LAYOUT = (
     ROOT
     / "board/suderra/common/rootfs-overlay/usr/lib/suderra/data-layout.tmpfiles.conf"
 )
-SCENARIOS = HERE / "data-unlock-scenarios.sh"
+# The guest scripts are in a directory of their own: scripts/run-tests.sh runs every
+# tests/qemu/*.sh on the host, and these write to /dev/vda3 and /dev/vdb1.
+SCENARIOS = HERE / "guest/data-unlock-scenarios.sh"
+STICK_SCENARIOS = HERE / "guest/data-unlock-stick-scenarios.sh"
+LAYOUT_SCRIPT = ROOT / "board/suderra/common/rootfs-overlay/usr/sbin/suderra-disk-layout"
+LAYOUT_TABLE = ROOT / "board/suderra/common/rootfs-overlay/usr/lib/suderra/partuuids.conf"
 PARTUUIDS = ROOT / "scripts/ci/gpt-partuuids.py"
 
 
@@ -58,19 +84,23 @@ def gpt_partuuid(name: str) -> str:
     ).stdout.strip()
 
 
-def render_partuuids(script: bytes) -> bytes:
-    """post-build.sh names the partitions in the script by their PARTUUID; so does the guest."""
-    rendered = script
-    for name in ("data",):
-        placeholder = f"@SUDERRA_PARTUUID_{name.upper()}@".encode()
-        rendered = rendered.replace(placeholder, gpt_partuuid(name).encode())
-    return rendered
+def render_table() -> bytes:
+    """post-build.sh renders the placeholders of /usr/lib/suderra/partuuids.conf
+    from gpt-partuuids.conf; so does the guest's copy."""
+    rendered = LAYOUT_TABLE.read_text(encoding="utf-8")
+    for match in set(re.findall(r"@SUDERRA_PARTUUID_([A-Z0-9_]+)@", rendered)):
+        name = match.lower().replace("_", "-")
+        rendered = rendered.replace(f"@SUDERRA_PARTUUID_{match}@", gpt_partuuid(name))
+    return rendered.encode()
+
+
 RESULT_SCHEMA = ROOT / "contracts/suderra-edge/v1/schemas/result.schema.json"
 DEFAULT_KERNELS = (
     ROOT / "output/suderra_qemu_x86_64_defconfig/images/bzImage",
     ROOT / "output/suderra_qemu_x86_64_prod_ab_defconfig/images/bzImage",
 )
 EXPECTED_SCENARIOS = (
+    "layout-names-the-boot-disk",
     "fresh-provisioning",
     "existing-volume-unlocks",
     "mkfs-failure-rolls-back",
@@ -85,6 +115,25 @@ EXPECTED_SCENARIOS = (
     "recovery-refuses-an-open-volume",
     "recovery-never-formats",
 )
+# Boot name -> the scenarios that must pass in it.
+EXPECTED_BY_BOOT = {
+    "main": EXPECTED_SCENARIOS,
+    "stick-duplicate": (
+        "duplicate-data-partuuid-is-refused",
+        "refused-layout-provisions-nothing",
+    ),
+    "stick-only": (
+        "data-partuuid-on-another-disk-is-refused",
+        "refused-layout-provisions-nothing-on-the-stick",
+    ),
+}
+MIB = 1024 * 1024
+BOOT_DISK_MIB = 256
+STICK_DISK_MIB = 64
+# The partitions of the boot disk: the verified root's stand-in and the data
+# partition of the production layout (the sizes are the test's).
+BOOT_PARTITIONS = (("rootfs-a", 4), ("rootfs-a-verity", 2), ("data", 200))
+UNRELATED_PARTUUID = "1c5a1f35-6b7e-4f3a-9c2f-3e1d8b6a4f10"
 SEARCH = ("/usr/sbin", "/usr/bin", "/sbin", "/bin")
 # Executables the guest needs, besides BusyBox.
 HOST_TOOLS = (
@@ -271,15 +320,27 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 mount -t tmpfs tmpfs /run
-mkdir -p /run/suderra-os /dev/disk/by-partuuid
+mkdir -p /run/suderra-os
+mode="$(sed -n 's/.*suderra\\.test=\\([^ ]*\\).*/\\1/p' /proc/cmdline)"
+wanted="$(sed -n 's/.*suderra\\.waitfor=\\([^ ]*\\).*/\\1/p' /proc/cmdline | tr ',' ' ')"
 i=0
-while [ ! -b /dev/vda ] || [ ! -e /dev/tpmrm0 ]; do
-    i=$((i + 1))
-    [ "${i}" -gt 100 ] && { echo "T-FAIL boot: /dev/vda or /dev/tpmrm0 missing"; ls /dev; break; }
-    sleep 0.2
+for node in ${wanted} tpmrm0; do
+    while [ ! -e "/dev/${node}" ]; do
+        i=$((i + 1))
+        [ "${i}" -gt 300 ] && { echo "T-FAIL boot: /dev/${node} missing"; ls /dev; break 2; }
+        sleep 0.2
+    done
 done
-ln -sf /dev/vda /dev/disk/by-partuuid/@DATA_PARTUUID@
-sh /test/scenarios.sh
+# The verified root of the guest: a device-mapper device over the first
+# partition of the boot disk, which is all the disk layout looks at.
+cryptsetup open --type plain --cipher aes-xts-plain64 --key-file /dev/zero \\
+    --keyfile-size 64 --batch-mode /dev/vda1 suderra-root ||
+    echo "T-FAIL boot: no verified root stand-in"
+case "${mode}" in
+    main) sh /test/scenarios.sh ;;
+    stick-duplicate | stick-only) sh /test/stick-scenarios.sh "${mode}" ;;
+    *) echo "T-FAIL boot: unknown suderra.test=${mode}" ;;
+esac
 echo "T-POWEROFF"
 poweroff -f
 """
@@ -332,6 +393,7 @@ def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
         "opt/suderra/edge",
         "etc/dropbear",
         "usr/lib/suderra",
+        "run",
     ):
         cpio.directory(mountpoint)
     cpio.file("bin/busybox", busybox.read_bytes(), 0o755)
@@ -368,7 +430,9 @@ def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
         libraries.update(library_closure(located.resolve()))
     for name, target in sorted(libraries.items()):
         cpio.file(name.lstrip("/"), target.read_bytes(), 0o755)
-    cpio.file("usr/sbin/suderra-data-unlock", render_partuuids(unlock.read_bytes()), 0o755)
+    cpio.file("usr/sbin/suderra-data-unlock", unlock.read_bytes(), 0o755)
+    cpio.file("usr/sbin/suderra-disk-layout", LAYOUT_SCRIPT.read_bytes(), 0o755)
+    cpio.file("usr/lib/suderra/partuuids.conf", render_table())
     cpio.file("usr/lib/suderra/data-layout.tmpfiles.conf", LAYOUT.read_bytes())
     cpio.file("etc/suderra/recovery-escrow.pub.pem", escrow_public)
     cpio.file("test/escrow.key", escrow_private, 0o600)
@@ -387,7 +451,8 @@ def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
         0o755,
     )
     cpio.file("test/scenarios.sh", scenarios.read_bytes(), 0o755)
-    cpio.file("init", INIT.replace("@DATA_PARTUUID@", gpt_partuuid("data")).encode(), 0o755)
+    cpio.file("test/stick-scenarios.sh", STICK_SCENARIOS.read_bytes(), 0o755)
+    cpio.file("init", INIT.encode(), 0o755)
     path = work / "initramfs.cpio.gz"
     path.write_bytes(gzip.compress(cpio.finish(), compresslevel=3))
     return path
@@ -407,13 +472,44 @@ def find_kernel(explicit: str | None) -> Path:
     )
 
 
-def boot(work: Path, kernel: Path, initramfs: Path, timeout: int) -> str:
+def make_disks(work: Path, boot_name: str) -> list[Path]:
+    """The disks of a boot: the boot disk, then (a second disk) the stick."""
+    boot_disk = work / f"{boot_name}-boot.img"
+    partitions = [
+        (name, gpt_partuuid(name), size * MIB)
+        for name, size in BOOT_PARTITIONS
+        if not (boot_name == "stick-only" and name == "data")
+    ]
+    gpt_disk.write_gpt(
+        boot_disk,
+        BOOT_DISK_MIB * MIB,
+        partitions,
+        "6b7ad0ff-1a60-4a3e-8f0a-0a5a5a5a5a01",
+    )
+    # main: a second disk the layout must ignore; the others: a stick that
+    # claims the data partition.
+    stick = work / f"{boot_name}-stick.img"
+    claimed = UNRELATED_PARTUUID if boot_name == "main" else gpt_partuuid("data")
+    gpt_disk.write_gpt(
+        stick,
+        STICK_DISK_MIB * MIB,
+        [("stick", claimed, 32 * MIB)],
+        "6b7ad0ff-1a60-4a3e-8f0a-0a5a5a5a5a02",
+    )
+    return [boot_disk, stick]
+
+
+def boot(
+    work: Path, kernel: Path, initramfs: Path, timeout: int, boot_name: str
+) -> str:
     for tool in ("qemu-system-x86_64", "swtpm"):
         find_tool(tool)
-    disk = work / "data.img"
-    with disk.open("wb") as handle:
-        handle.truncate(256 * 1024 * 1024)
-    tpm_state = work / "tpm"
+    disks = make_disks(work, boot_name)
+    waitfor = ["vda1", "vda2"]
+    if boot_name != "stick-only":
+        waitfor.append("vda3")
+    waitfor.append("vdb1")
+    tpm_state = work / f"tpm-{boot_name}"
     tpm_state.mkdir()
     # A unix socket path is limited to about 100 bytes: not under a long TMPDIR.
     socket_dir = Path(tempfile.mkdtemp(prefix="sdu.", dir="/tmp"))
@@ -428,7 +524,7 @@ def boot(work: Path, kernel: Path, initramfs: Path, timeout: int) -> str:
             "--ctrl",
             f"type=unixio,path={ctrl}",
             "--log",
-            f"file={work / 'swtpm.log'},level=1",
+            f"file={work / f'swtpm-{boot_name}.log'},level=1",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -440,7 +536,7 @@ def boot(work: Path, kernel: Path, initramfs: Path, timeout: int) -> str:
             if swtpm.poll() is not None or time.monotonic() > deadline:
                 raise TestError("swtpm did not start")
             time.sleep(0.1)
-        serial = work / "serial.log"
+        serial = work / f"serial-{boot_name}.log"
         accel = (
             ["-accel", "kvm"]
             if os.access("/dev/kvm", os.R_OK | os.W_OK)
@@ -465,9 +561,13 @@ def boot(work: Path, kernel: Path, initramfs: Path, timeout: int) -> str:
             "-initrd",
             str(initramfs),
             "-append",
-            "console=ttyS0 panic=-1 loglevel=4",
-            "-drive",
-            f"file={disk},format=raw,if=virtio",
+            f"console=ttyS0 panic=-1 loglevel=4 suderra.test={boot_name} "
+            f"suderra.waitfor={','.join(waitfor)}",
+            *[
+                argument
+                for disk in disks
+                for argument in ("-drive", f"file={disk},format=raw,if=virtio")
+            ],
             "-chardev",
             f"socket,id=chrtpm,path={ctrl}",
             "-tpmdev",
@@ -500,7 +600,7 @@ def boot(work: Path, kernel: Path, initramfs: Path, timeout: int) -> str:
         shutil.rmtree(socket_dir, ignore_errors=True)
 
 
-def evaluate(console: str) -> int:
+def evaluate(console: str, expected: tuple[str, ...], boot_name: str) -> int:
     passed: list[str] = []
     failed: list[str] = []
     for line in console.splitlines():
@@ -512,20 +612,20 @@ def evaluate(console: str) -> int:
     for line in console.splitlines():
         if line.startswith("    | "):
             print(line)
-    missing = [name for name in EXPECTED_SCENARIOS if name not in passed]
+    missing = [name for name in expected if name not in passed]
     for name in passed:
         log(f"PASS {name}")
     for item in failed:
         log(f"FAIL {item}")
     if "T-DONE" not in console:
-        log("the guest never reached the end of the scenarios; serial log tail:")
+        log(f"the guest ({boot_name}) never reached the end of the scenarios; serial log tail:")
         print(console[-3000:])
         return 1
     if failed or missing:
         if missing:
             log(f"scenarios without a PASS: {', '.join(missing)}")
         return 1
-    log(f"{len(passed)} scenarios passed")
+    log(f"{boot_name}: {len(passed)} scenarios passed")
     return 0
 
 
@@ -556,9 +656,12 @@ def main() -> int:
         log(
             f"initramfs {initramfs.stat().st_size // 1024} KiB; booting (this is slow without KVM)"
         )
-        console = boot(work, kernel, initramfs, args.timeout)
-        (work / "console.log").write_text(console)
-        status = evaluate(console)
+        status = 0
+        for boot_name, expected in EXPECTED_BY_BOOT.items():
+            log(f"boot {boot_name}")
+            console = boot(work, kernel, initramfs, args.timeout, boot_name)
+            (work / f"console-{boot_name}.log").write_text(console)
+            status |= evaluate(console, expected, boot_name)
         if status and args.keep:
             log(f"work directory kept: {work}")
         return status

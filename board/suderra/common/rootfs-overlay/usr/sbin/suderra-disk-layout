@@ -1,0 +1,209 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Suderra OS contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Names the partitions of the disk this device booted from (ADR-048 DEC-18.1;
+# EI-044, EI-050), run once per boot by suderra-disk-layout.service before
+# anything mounts or opens one of them. For every partition of
+# /usr/lib/suderra/partuuids.conf that exists it creates
+# /run/suderra-os/disk/<name>, a link to the partition node, once the whole
+# layout is proven. The /boot mount, RAUC's slots and suderra-data-unlock use
+# those links and no other name for a partition.
+#
+# tests/image-contracts/disk-layout-contract-test.sh sources this file (it stops
+# before main when it is not run under its own name) and runs every function
+# against a stand-in sysfs and blkid.
+#
+# The PARTUUIDs of the production layouts are public (gpt-partuuids.conf is in
+# the repository and in every image), so a name like /dev/disk/by-partuuid/<data>
+# only says that some device claims that identity: udev links it to whichever
+# claimant it saw last, and a USB stick whose partition carries the data PARTUUID
+# plugged in before boot could win it. A blank partition on the stick would then
+# be classified blank and provisioned: the device would enter FACTORY on someone
+# else's media. The initramfs refuses a second device with the root's PARTUUID;
+# this does the same for every other partition the running system names, and
+# binds all of them to the disk of the verified root:
+#
+#   1. The boot disk is the whole disk under the device-mapper device named
+#      suderra-root, the dm-verity device the initramfs created from the
+#      partitions the signed kernel command line names.
+#   2. Every partition of every disk is asked for its PARTUUID (blkid -p reads
+#      the partition table of the parent disk, so a blank partition has one too).
+#   3. A PARTUUID of the layout that is carried by two partitions is refused, and
+#      so is one that is carried by a partition of another disk. Nothing is
+#      preferred and nothing is guessed.
+#   4. Only then the names the system uses (/run/suderra-os/disk/<name>) are
+#      created, one link per partition of the layout that exists, each pointing at
+#      the partition node. Consumers (the /boot mount, RAUC's slots, /data) name
+#      the link and never a by-partuuid path.
+#
+# A PARTUUID of the table that no partition carries is not an error here: the
+# table lists every partition of every layout (x86 has an `efi` partition, the
+# Raspberry Pi boards a `boot` partition), and the consumer that needs a name
+# that is missing says so.
+#
+# The functions print the reasons they refuse to standard error and return
+# non-zero; they never create anything until the whole layout is accepted.
+
+SUDERRA_DEV=/dev
+SUDERRA_SYS_BLOCK=/sys/class/block
+SUDERRA_ROOT_MAPPER=suderra-root
+
+# Tests replace these two (functions, not environment variables: nothing the
+# service's environment holds can change what the image trusts).
+is_block_device() {
+    [ -b "$1" ]
+}
+# The libblkid view of one partition device: KEY=VALUE lines of its probe, with
+# PART_ENTRY_UUID among them. -p is low-level probing, with no cache that could
+# still describe a device that went away.
+layout_probe() {
+    blkid -p -o export "$1"
+}
+
+# layout_disk_of <kernel name>: the kernel name of the whole disk a disk or a
+# partition is on (vda for vda2, mmcblk0 for mmcblk0p3, nvme0n1 for nvme0n1p2).
+layout_disk_of() {
+    _sys="$(readlink -f "${SUDERRA_SYS_BLOCK}/$1")" || return 1
+    [ -d "${_sys}" ] || return 1
+    if [ -e "${_sys}/partition" ]; then
+        basename "$(dirname "${_sys}")"
+    else
+        basename "${_sys}"
+    fi
+}
+
+# layout_boot_disk: the whole disk under the verified root. The device-mapper
+# device is found by the name the kernel gives it (dm/name in sysfs), not by a
+# /dev/mapper node, which is a link when udev made it and a device node when
+# libdevmapper did.
+layout_boot_disk() {
+    _dm=""
+    for _d in "${SUDERRA_SYS_BLOCK}"/dm-*; do
+        [ -f "${_d}/dm/name" ] || continue
+        if [ "$(cat "${_d}/dm/name")" = "${SUDERRA_ROOT_MAPPER}" ]; then
+            _dm="$(basename "${_d}")"
+            break
+        fi
+    done
+    if [ -z "${_dm}" ]; then
+        echo "there is no verified root device (${SUDERRA_ROOT_MAPPER}): this boot did not come from the verity initramfs" >&2
+        return 1
+    fi
+    _disk=""
+    for _slave in "${SUDERRA_SYS_BLOCK}/${_dm}/slaves"/*; do
+        [ -e "${_slave}" ] || continue
+        _this="$(layout_disk_of "$(basename "${_slave}")")" || {
+            echo "cannot tell which disk $(basename "${_slave}") of the verified root is on" >&2
+            return 1
+        }
+        if [ -z "${_disk}" ]; then
+            _disk="${_this}"
+        elif [ "${_disk}" != "${_this}" ]; then
+            echo "the verified root spans two disks (${_disk} and ${_this})" >&2
+            return 1
+        fi
+    done
+    if [ -z "${_disk}" ]; then
+        echo "the verified root device ${SUDERRA_ROOT_MAPPER} (${_dm}) has no underlying partition" >&2
+        return 1
+    fi
+    printf '%s\n' "${_disk}"
+}
+
+# layout_partitions: "<kernel name> <PARTUUID>" for every partition of every
+# disk that has one.
+layout_partitions() {
+    for _p in "${SUDERRA_SYS_BLOCK}"/*; do
+        [ -e "${_p}/partition" ] || continue
+        _name="$(basename "${_p}")"
+        is_block_device "${SUDERRA_DEV}/${_name}" || continue
+        _uuid="$(layout_probe "${SUDERRA_DEV}/${_name}" 2>/dev/null | sed -n 's/^PART_ENTRY_UUID=//p')"
+        if [ -n "${_uuid}" ]; then
+            printf '%s %s\n' "${_name}" "${_uuid}"
+        fi
+    done
+}
+
+# layout_resolve <table> <out dir>: the table is "<name> <PARTUUID>" per line
+# (# comments). On success <out dir>/<name> is a link to the partition node of
+# every partition of the table that exists, and nothing else is in <out dir>.
+# On any refusal the reasons are on standard error, <out dir> is left empty and
+# the status is 1.
+layout_resolve() {
+    _table="$1"
+    _out="$2"
+    _bad=0
+    _links=""
+    _disk="$(layout_boot_disk)" || return 1
+    _found="$(layout_partitions)"
+    while read -r _name _uuid; do
+        case "${_name}" in
+            "" | "#"*) continue ;;
+        esac
+        _matches="$(printf '%s\n' "${_found}" | sed -n "s/^\\([^ ]*\\) ${_uuid}\$/\\1/p")"
+        _count=0
+        _node=""
+        for _m in ${_matches}; do
+            _count=$((_count + 1))
+            _node="${_m}"
+        done
+        case "${_count}" in
+            0) continue ;;
+            1) ;;
+            *)
+                echo "the PARTUUID of ${_name} (${_uuid}) is carried by ${_count} partitions: $(printf '%s' "${_matches}" | tr '\n' ' ')" >&2
+                _bad=1
+                continue
+                ;;
+        esac
+        _on="$(layout_disk_of "${_node}")" || {
+            echo "cannot tell which disk ${_node} (${_name}) is on" >&2
+            _bad=1
+            continue
+        }
+        if [ "${_on}" != "${_disk}" ]; then
+            echo "${_name} (${_uuid}) is ${_node} on ${_on}, not on ${_disk}, the disk of the verified root" >&2
+            _bad=1
+            continue
+        fi
+        _links="${_links} ${_name}:${_node}"
+    done < "${_table}"
+    rm -f "${_out}"/*
+    [ "${_bad}" -eq 0 ] || return 1
+    for _item in ${_links}; do
+        ln -sfn "${SUDERRA_DEV}/${_item#*:}" "${_out}/${_item%%:*}"
+    done
+    printf '%s\n' "${_disk}"
+}
+
+LAYOUT_TABLE=/usr/lib/suderra/partuuids.conf
+LAYOUT_OUT=/run/suderra-os/disk
+
+main() {
+    umask 022
+    mkdir -p "${LAYOUT_OUT}"
+    rm -f "${LAYOUT_OUT}/refusal"
+    reasons="$(mktemp "${LAYOUT_OUT}/.reasons.XXXXXX")"
+    trap 'rm -f "${reasons}"' EXIT
+    # On a refusal nothing is linked, the reasons are in the journal and in
+    # ${LAYOUT_OUT}/refusal (suderra-data-unlock reports them as its alarm), and
+    # the unit fails so that nothing that needs a partition starts.
+    if disk="$(layout_resolve "${LAYOUT_TABLE}" "${LAYOUT_OUT}" 2> "${reasons}")"; then
+        echo "suderra-disk-layout: the partitions of ${disk}, the disk of the verified root, are named in ${LAYOUT_OUT}: $(ls "${LAYOUT_OUT}" | tr '\n' ' ')"
+        return 0
+    fi
+    cat "${reasons}" >&2
+    cp "${reasons}" "${LAYOUT_OUT}/refusal"
+    echo "suderra-disk-layout: refused; no partition is named" >&2
+    return 1
+}
+
+# Sourced by a test: define the functions and stop.
+case "${0##*/}" in
+    suderra-disk-layout) ;;
+    *) return 0 ;;
+esac
+
+set -eu
+main

@@ -6,8 +6,8 @@
 [Unit]
 Description=Mark current Suderra OS RAUC slot good
 Documentation=https://rauc.readthedocs.io/
-After=multi-user.target boot.mount suderra-data.service rauc.service nftables.service suderra-lifecycle.service suderra-agent.service
-Requires=boot.mount suderra-data.service
+After=multi-user.target boot.mount suderra-data.service suderra-disk-layout.service rauc.service nftables.service suderra-lifecycle.service suderra-agent.service
+Requires=boot.mount suderra-data.service suderra-disk-layout.service
 RequiresMountsFor=/data /boot
 ConditionPathExists=/etc/rauc/system.conf
 ConditionPathExists=/usr/sbin/suderra-rauc-health-gate

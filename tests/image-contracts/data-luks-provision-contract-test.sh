@@ -24,7 +24,7 @@ need() {
 
 # 1. Provisioning mantığı mevcut ve fail-closed.
 need "provision_luks_data fonksiyonu"            'provision_luks_data\(\)'
-need "blank-only güvenlik guard'ı (blkid reddi)" 'blkid .* >/dev/null'
+need "blank-only güvenlik guard'ı (bölümün kendi imzası: blkid -p TYPE/PTTYPE)" 'blkid -p -s TYPE -s PTTYPE -o value'
 need "TPM2 zorunlu (fail-closed) kontrolü"       '/dev/tpmrm0|/dev/tpm0'
 need "LUKS2 formatlama"                          'cryptsetup luksFormat --type luks2'
 need "TPM2 seal (systemd-cryptenroll)"           'systemd-cryptenroll'
@@ -107,8 +107,18 @@ if provision.find('PROVISIONING_DEVICE="${dev}"') < 0 or provision.find('PROVISI
 if "--label \"${LABEL_PROVISIONING}\"" not in provision:
     errors.append("luksFormat must label the volume with the provisioning marker, so an interrupted provisioning is recognised at the next boot")
 blank = function_body("blank_data_partition")
-if "cryptsetup erase" not in blank or "dd if=/dev/zero" not in blank or "blkid" not in blank:
-    errors.append("blank_data_partition must erase the keyslots, zero the header and verify with blkid that the partition is blank")
+if "cryptsetup erase" not in blank or "dd if=/dev/zero" not in blank or "has_signature" not in blank:
+    errors.append("blank_data_partition must erase the keyslots, zero the header and verify with has_signature that the partition is blank")
+# A partition of a GPT disk is never "blank" to plain `blkid <dev>`: it reports the
+# partition entry (PARTLABEL, PARTUUID) of every partition, so classifying by it
+# refuses to provision the blank data partition of the production disk. The
+# signature test asks for the tags of what is written in the partition only.
+if re.search(r'blkid "\$', text) or re.search(r'\bblkid "\$\{?dev', text):
+    errors.append("a plain blkid on the data partition reports its partition entry as a signature: use has_signature")
+if not re.search(r'blkid -p -s TYPE -s PTTYPE -o value', function_body("has_signature")):
+    errors.append("has_signature must probe the partition for TYPE and PTTYPE only (low-level, no cache)")
+if "has_signature" not in function_body("classify_data_partition"):
+    errors.append("classify_data_partition must use has_signature to tell a blank partition from a foreign one")
 if len(re.findall(r"cryptsetup erase", text)) != 1:
     errors.append("cryptsetup erase appears outside blank_data_partition: it leaves a LUKS header behind (isLuks and blkid still see it)")
 if not re.search(r'mkfs\.ext4 [^\n]*"\$\{mapper_dev\}"\s*\|\|\s*\n\s*alarm ', text):
@@ -133,6 +143,13 @@ if 'ESCROW_PUBKEY=/etc/suderra/recovery-escrow.pub.pem' not in text:
 provision = function_body("provision_luks_data")
 if provision.find("write_escrow") < 0 or provision.find("write_escrow") > provision.find("cryptsetup luksFormat"):
     errors.append("the recovery key must be escrowed before luksFormat: nothing is formatted unless the escrow works")
+# A failed escrow is an alarm, on the statement itself: `write_escrow ... || true`
+# (or any other way to carry on) would format a volume whose recovery key nobody
+# holds. The order check above passes such a script; the VM test catches it only
+# through a second guard.
+for name in ("provision_luks_data", "recover_prod_luks_data"):
+    if not re.search(r'write_escrow [^\n]*\|\|\s*\n\s*alarm [a-z-]+ "', function_body(name)):
+        errors.append(f"{name}: a failed write_escrow must be an alarm on that statement, before anything is formatted or changed")
 if "/dev/urandom" not in function_body("new_recovery_key"):
     errors.append("the recovery key must come from /dev/urandom")
 if "--disable-external-tokens" not in function_body("add_recovery_slot"):

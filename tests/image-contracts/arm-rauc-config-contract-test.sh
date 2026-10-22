@@ -21,19 +21,20 @@ arm_conf="${P}/system.conf.arm"
 grep -q '^bootloader=uboot' "${arm_conf}" || { echo "ERROR: ARM bootloader=uboot değil" >&2; exit 1; }
 grep -qx 'compatible=@SUDERRA_RAUC_COMPATIBLE@' "${arm_conf}" || { echo "ERROR: ARM compatible kart başına placeholder değil (DEC-8.3)" >&2; exit 1; }
 grep -q 'suderra-rauc-arm-slot-hook.sh' "${arm_conf}" || { echo "ERROR: ARM system.conf slot hook bağlamıyor" >&2; exit 1; }
-# Slots are named by the PARTUUID the build writes (a placeholder post-build.sh
-# renders from board/suderra/common/gpt-partuuids.conf), never by a label a
-# removable disk can carry (ADR-048 DEC-18.1; gpt-partuuid-contract-test.sh).
-grep -qx 'device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_A@' "${arm_conf}" || { echo "ERROR: ARM slotlar by-partuuid değil" >&2; exit 1; }
-if grep -q 'by-partlabel\|by-label' "${arm_conf}"; then echo "ERROR: ARM slot a label ile adlandırılmış" >&2; exit 1; fi
+# Slots are named by suderra-disk-layout's links, which prove that each partition
+# is carried once and is on the disk of the verified root; never by a label or a
+# bare PARTUUID that a removable disk can carry (ADR-048 DEC-18.1;
+# disk-layout-contract-test.sh holds every consumer to it).
+grep -qx 'device=/run/suderra-os/disk/rootfs-a' "${arm_conf}" || { echo "ERROR: ARM slotlar suderra-disk-layout adlarıyla değil" >&2; exit 1; }
+if grep -q 'by-partlabel\|by-label\|by-partuuid' "${arm_conf}"; then echo "ERROR: ARM slot bir etiket ya da PARTUUID ile adlandırılmış" >&2; exit 1; fi
 if grep -q 'grubenv' "${arm_conf}"; then echo "ERROR: ARM system.conf grubenv içermemeli" >&2; exit 1; fi
 
 # x86 system.conf değişmeden GRUB kalmalı.
 grep -q '^bootloader=grub' "${P}/system.conf" || { echo "ERROR: x86 system.conf grub kalmalı" >&2; exit 1; }
 
-# boot.mount.arm: Pi FAT boot partition (by PARTUUID), read-only: only RAUC's
+# boot.mount.arm: Pi FAT boot partition (the verified name), read-only: only RAUC's
 # slot hook writes it, and it remounts for that copy (DEC-18.4).
-grep -qx 'What=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_BOOT@' "${P}/boot.mount.arm" || { echo "ERROR: ARM boot.mount by-partuuid değil" >&2; exit 1; }
+grep -qx 'What=/run/suderra-os/disk/boot' "${P}/boot.mount.arm" || { echo "ERROR: ARM boot.mount suderra-disk-layout adıyla değil" >&2; exit 1; }
 grep -qE '^Options=ro,' "${P}/boot.mount.arm" || { echo "ERROR: ARM /boot must be mounted read-only (DEC-18.4)" >&2; exit 1; }
 
 # fw_env.config: the raw redundant environment (uboot-env-contract-test.sh holds

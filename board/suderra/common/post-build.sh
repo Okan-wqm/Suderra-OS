@@ -251,20 +251,19 @@ if [ -f "${RAUC_SYSTEM_CONF}" ]; then
     echo "==> RAUC compatible ${rauc_compatible}"
 fi
 
-# GPT partition identity (ADR-048 DEC-18.1): RAUC's slots, the boot mount and
-# the /data device are named by the PARTUUID the image build writes on the boot
-# disk (board/suderra/common/gpt-partuuids.conf, the genimage-prod configs and the
+# GPT partition identity (ADR-048 DEC-18.1): the partitions are identified by the
+# PARTUUID the image build writes on the boot disk
+# (board/suderra/common/gpt-partuuids.conf, the genimage-prod configs and the
 # signed kernel command line use the same list), not by a partition or file-system
-# label, which a removable disk can carry too. The files hold placeholders; the
-# build fails if one is left.
+# label, which a removable disk can carry too. The image carries the list once,
+# in /usr/lib/suderra/partuuids.conf, which suderra-disk-layout reads; RAUC's
+# slots, the boot mount and /data name the links it makes under
+# /run/suderra-os/disk and never a by-partuuid path (a public PARTUUID is only a
+# claim). The file holds placeholders; the build fails if one is left.
 partuuid_files=()
-for f in "${TARGET_DIR}/etc/rauc/system.conf" \
-         "${TARGET_DIR}/usr/lib/systemd/system/boot.mount" \
-         "${TARGET_DIR}/usr/sbin/suderra-data-unlock"; do
-    if [ -f "${f}" ]; then
-        partuuid_files+=("${f}")
-    fi
-done
+if [ -f "${TARGET_DIR}/usr/lib/suderra/partuuids.conf" ]; then
+    partuuid_files+=("${TARGET_DIR}/usr/lib/suderra/partuuids.conf")
+fi
 if [ "${#partuuid_files[@]}" -gt 0 ]; then
     python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/gpt-partuuids.py" render "${partuuid_files[@]}"
     python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/gpt-partuuids.py" unrendered "${partuuid_files[@]}"
@@ -442,6 +441,12 @@ case "${DEFCONFIG_NAME}" in
         rm -f "${TARGET_DIR}/usr/sbin/suderra-os-install" \
               "${TARGET_DIR}/usr/lib/systemd/system/suderra-os-install.service" \
               "${TARGET_DIR}/etc/systemd/system/multi-user.target.wants/suderra-os-install.service"
+        # The partitions of the verified root's disk are named (and a
+        # duplicate or foreign PARTUUID refused) before anything mounts or
+        # opens one (DEC-18.1); the unit is skipped on an image whose root is
+        # not the verity device.
+        enable_unit suderra-disk-layout.service sysinit.target
+        preset_enable suderra-disk-layout.service
         enable_unit suderra-data.service sysinit.target
         preset_enable suderra-data.service
         if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then

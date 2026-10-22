@@ -34,10 +34,15 @@
 set -eu
 
 LAYOUT=/usr/lib/suderra/data-layout.tmpfiles.conf
-# The data partition of the boot disk, by the PARTUUID the build gave it
-# (board/suderra/common/gpt-partuuids.conf; post-build.sh renders the placeholder).
-# A partition label is whatever a removable disk says it is (ADR-048 DEC-18.1).
-DATA_DEVICE=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_DATA@
+# The data partition of the boot disk. suderra-disk-layout names it after it
+# proved that exactly one partition carries the PARTUUID the build gave it
+# (board/suderra/common/gpt-partuuids.conf) and that the partition is on the disk
+# under the verified root. A partition label is whatever a removable disk says it
+# is, and the PARTUUID is public: a /dev/disk/by-partuuid link is whichever
+# claimant udev saw last, so a USB stick with a blank partition of that PARTUUID
+# would be classified blank and provisioned (ADR-048 DEC-18.1; EI-044, EI-050).
+DATA_DEVICE=/run/suderra-os/disk/data
+DISK_LAYOUT_REFUSAL=/run/suderra-os/disk/refusal
 DATA_MAPPER=suderra-data
 DATA_OPTIONS=nosuid,nodev,noexec
 INSTALLER=/usr/bin/suderra-installer
@@ -125,6 +130,16 @@ release_data_volume() {
     fi
 }
 
+# Whether a device carries a signature of its own: a file system, or a partition
+# table inside it. Plain `blkid <partition>` also reports the partition entry the
+# device is (PARTLABEL, PARTUUID), which every partition of a GPT disk has and
+# which says nothing about what was written into it: a blank data partition of the
+# production disk would be "foreign" and never provisioned. Only the tags of what
+# is written in the partition are asked for, by low-level probing (no cache).
+has_signature() {
+    [ -n "$(blkid -p -s TYPE -s PTTYPE -o value "$1" 2>/dev/null)" ]
+}
+
 # Return a partition to the state in which nothing signs it, so that
 # provisioning can start again. The keyslots go first: a key that opened this
 # volume then never opens it again, even if the zeroing is cut short. Fails
@@ -139,10 +154,10 @@ blank_data_partition() {
         bytes="${LUKS_HEADER_BYTES}"
     fi
     # A partition shorter than the header makes dd fail at its end; the
-    # blkid below is what decides.
+    # signature check below is what decides.
     dd if=/dev/zero of="${dev}" bs=1M count="$(((bytes + 1048575) / 1048576))" \
         conv=fsync status=none 2>/dev/null || true
-    ! blkid "${dev}" >/dev/null 2>&1
+    ! has_signature "${dev}"
 }
 
 # Roll an uncommitted volume back to a blank partition (alarm calls it); fails
@@ -231,6 +246,19 @@ wait_for_device() {
     udevadm wait --timeout="${DEVICE_WAIT_SECONDS}" "$1" 2>/dev/null || [ -e "$1" ]
 }
 
+# The production data partition, as suderra-disk-layout named it. There is no
+# waiting: the layout service ran before this one and its answer is final. A
+# missing name is either a refusal (its reasons are in DISK_LAYOUT_REFUSAL: a
+# second device with the data PARTUUID, or one on another disk) or a disk that has
+# no data partition; neither is provisioned.
+require_data_device() {
+    [ -b "${DATA_DEVICE}" ] && return 0
+    if [ -s "${DISK_LAYOUT_REFUSAL}" ]; then
+        alarm data-unmountable "the disk layout was refused, so nothing is provisioned or opened: $(tr '\n' ';' < "${DISK_LAYOUT_REFUSAL}")"
+    fi
+    alarm data-unmountable "the disk of the verified root has no data partition (${DATA_DEVICE}); suderra-disk-layout.service did not name one"
+}
+
 mount_dev_data() {
     # Dev images mount a plain ext4 partition by label (EI-044: PARTUUID in P1).
     wait_for_device /dev/disk/by-label/SUDERRA-DATA ||
@@ -253,7 +281,7 @@ classify_data_partition() {
         else
             echo luks
         fi
-    elif blkid "${dev}" >/dev/null 2>&1; then
+    elif has_signature "${dev}"; then
         echo foreign
     else
         echo blank
@@ -411,8 +439,7 @@ unlock_prod_luks_data() {
 
     command -v cryptsetup >/dev/null 2>&1 ||
         alarm data-unmountable "cryptsetup missing; production /data cannot unlock"
-    wait_for_device "${DATA_DEVICE}" ||
-        alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
+    require_data_device
     case "$(classify_data_partition "${DATA_DEVICE}")" in
         blank)
             provision_luks_data "${DATA_DEVICE}"
@@ -499,8 +526,7 @@ recover_prod_luks_data() {
     for tool in cryptsetup systemd-cryptenroll openssl; do
         command -v "${tool}" >/dev/null 2>&1 || alarm data-unmountable "${tool} missing; cannot recover /data"
     done
-    wait_for_device "${DATA_DEVICE}" ||
-        alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
+    require_data_device
     [ "$(classify_data_partition "${DATA_DEVICE}")" = luks ] ||
         alarm data-unmountable "recovery applies to an operational LUKS volume; ${DATA_DEVICE} is not one"
     [ ! -e "${mapper_dev}" ] ||

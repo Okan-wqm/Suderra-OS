@@ -145,7 +145,7 @@ Nothing here is guessed; each item has an owner outside this package.
 ## Tests
 
 `tests/qemu/data-unlock-vm-test.py` runs the real script in a QEMU guest with
-an swtpm, and `tests/qemu/data-unlock-scenarios.sh` drives it:
+an swtpm, and `tests/qemu/guest/data-unlock-scenarios.sh` drives it:
 
 * provisioning, with the recovery slot, the envelope opened by the test's
   escrow key and the key proven to unlock the volume;

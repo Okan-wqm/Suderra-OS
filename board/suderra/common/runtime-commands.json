@@ -60,6 +60,35 @@
         }
       ]
     },
+    "usr/sbin/suderra-disk-layout": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-disk-layout",
+      "groups": [
+        {
+          "commands": [
+            "basename",
+            "cat",
+            "cp",
+            "dirname",
+            "ln",
+            "ls",
+            "mkdir",
+            "mktemp",
+            "readlink",
+            "rm",
+            "sed",
+            "tr"
+          ]
+        },
+        {
+          "commands": [
+            "blkid"
+          ],
+          "when": {
+            "variant": "prod"
+          }
+        }
+      ]
+    },
     "usr/sbin/suderra-e2e-probe": {
       "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-e2e-probe",
       "allow_dynamic": {

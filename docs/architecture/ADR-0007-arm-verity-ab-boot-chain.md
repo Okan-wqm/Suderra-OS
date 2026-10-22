@@ -198,17 +198,42 @@ the next section (H2).
 
 ### Partition identity, the verity policy and the USB policy (ADR-048 DEC-18; EI-049, EI-050)
 
-- **Partitions are named by PARTUUID, never by a label.** `board/suderra/common/
+- **Partitions are identified by PARTUUID, never by a label, and the running system
+  names only the ones on the disk of the verified root.** `board/suderra/common/
   gpt-partuuids.conf` lists the GPT PARTUUID of every partition of the production
-  layouts; the genimage-prod configs (and the A/B x86 config) write them, the signed
-  command line carries `suderra.verity.root_partuuid` / `hash_partuuid`, and RAUC's
-  slots, the boot mount and the `/data` device are placeholders `post-build.sh` renders
-  from the same list (`scripts/ci/gpt-partuuids.py`). The verity initramfs resolves
-  the two partitions by PARTUUID and refuses to continue when a second device
-  carries the same one (the old `blkid -t PARTLABEL=... | head -n 1` took whichever
-  disk answered first). The list is public in every image, so this makes confusion
-  by a label impossible, not an attacker with a copy of the image; against that the
-  control is the USB policy below.
+  layouts; the genimage-prod configs (and the A/B x86 config) write them, and the
+  signed command line carries `suderra.verity.root_partuuid` / `hash_partuuid`. The
+  verity initramfs resolves the two partitions by PARTUUID and refuses to continue
+  when a second device carries the same one (the old `blkid -t PARTLABEL=... | head
+  -n 1` took whichever disk answered first).
+
+  The list is public, so a PARTUUID is only a claim, and a `/dev/disk/by-partuuid`
+  link goes to whichever claimant udev saw last: the first version named RAUC's
+  slots, the boot mount and `/data` by such links, so a USB stick whose blank
+  partition carried the data PARTUUID, plugged in before boot, could be classified
+  blank and provisioned (luksFormat, TPM seal, mkfs, FACTORY) on someone else's
+  media; the QEMU test reproduces exactly that with a second virtio disk. Now
+  `suderra-disk-layout.service` (`usr/sbin/suderra-disk-layout`) runs before
+  anything mounts, opens or writes a partition: the boot disk is the whole disk under
+  the device-mapper device `suderra-root` (read from sysfs), every partition of every
+  disk is asked for its PARTUUID with `blkid -p` (which reads the parent disk's
+  partition table, so a blank partition has one), and a PARTUUID of the layout that
+  two partitions carry, or that a partition of another disk carries, refuses the
+  whole layout: nothing is named, the reasons are in the journal and in
+  `/run/suderra-os/disk/refusal`, `suderra-data-unlock` reports them as its
+  `data-unmountable` alarm and touches nothing, and the `/boot` mount, RAUC and
+  mark-good do not start (`Requires=`). Only an accepted layout gets its links,
+  `/run/suderra-os/disk/<partition>`, which are the one name the `/boot` mount
+  (`boot.mount*`), RAUC's slots (`system.conf*`) and `/data` use; the table
+  (`usr/lib/suderra/partuuids.conf`) is rendered from `gpt-partuuids.conf` by
+  `post-build.sh`. `tests/image-contracts/disk-layout-contract-test.sh` runs the
+  script on a stand-in sysfs (one disk, a second disk with a copied PARTUUID, a root
+  that spans disks, mutations of each rule) and `tests/qemu/data-unlock-vm-test.py`
+  runs it in a guest with a real kernel and blkid and a second disk. What this does
+  not bind: `fw_env.config` names `/dev/mmcblk0`, the node of the board's boot
+  card or eMMC, not a partition identity (a USB device cannot take an `mmcblk` name);
+  a board with both an SD slot and an eMMC would need the environment located from
+  the boot disk as well (hardware check 7).
 - **The verity table carries `restart_on_corruption`.** A block that fails its hash
   restarts the machine, and because every boot spends one of the slot's tries (and
   mark-good restores them once the health gate passed), a slot whose root file system
@@ -268,7 +293,13 @@ a production image:
 6. Flip one byte of the active root file system on disk, read the file: the device
    restarts, and after the slot's three tries it takes the other slot.
 7. A second disk with the same PARTUUIDs attached at boot: the initramfs refuses
-   (`PARTUUID ... is on 2 devices`) instead of choosing one.
+   (`PARTUUID ... is on 2 devices`) instead of choosing one; with only the data
+   PARTUUID copied to a USB stick (a partition of any size) the device boots, the
+   journal of `suderra-disk-layout.service` says the PARTUUID is carried twice,
+   `/data` is not provisioned or opened, the stick is untouched (`blkid` shows no
+   signature) and the unit's `refusal` file is the data alarm; unplugging the stick
+   and rebooting restores the normal boot. On a board that has both an SD slot and an
+   eMMC, check which one `/dev/mmcblk0` is against the boot disk.
 
 Not code: the Raspberry Pi OTP secure boot that authenticates the boot partition
 (H2 below), `bekliyor: operatör`.

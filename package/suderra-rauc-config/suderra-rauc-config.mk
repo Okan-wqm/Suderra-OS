@@ -48,6 +48,8 @@ define SUDERRA_RAUC_CONFIG_INSTALL_INIT_SYSTEMD
 		$(TARGET_DIR)/usr/lib/systemd/system/boot.mount
 	$(INSTALL) -D -m 0644 $(@D)/suderra-rauc-mark-good.service \
 		$(TARGET_DIR)/usr/lib/systemd/system/suderra-rauc-mark-good.service
+	$(INSTALL) -D -m 0644 $(@D)/rauc-disk-layout.conf \
+		$(TARGET_DIR)/etc/systemd/system/rauc.service.d/10-suderra-disk-layout.conf
 	mkdir -p $(TARGET_DIR)/etc/systemd/system/local-fs.target.wants
 	ln -fs ../../../../usr/lib/systemd/system/boot.mount \
 		$(TARGET_DIR)/etc/systemd/system/local-fs.target.wants/boot.mount

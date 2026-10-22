@@ -103,8 +103,14 @@ Her imzalama, bir variant/signing-mode sözleşmesinden geçer:
   (`system.conf:8-9`) — bu keyring dm-verity altındaki rootfs'te olduğundan, RAUC her bundle'ın
   CMS imzasını **kurcalanamaz** bir güven köküne karşı doğrular.
 - A/B slot modeli GPT PARTUUID ile (`board/suderra/common/gpt-partuuids.conf`; etiket yok: bir USB
-  bellek `rootfs-a` ya da `data` etiketini taşıyabilir, ADR-048 DEC-18.1); slot-hook imzalı UKI/FIT'i
-  `/boot`'a kopyalar. ARM'da `/boot` salt-okunur bağlanır ve hook yalnız o kopya için rw'ye çevirir.
+  bellek `rootfs-a` ya da `data` etiketini taşıyabilir, ADR-048 DEC-18.1). PARTUUID herkese açıktır,
+  yani yalnız bir iddiadır: RAUC slotları, `/boot` bağlama noktası ve `/data` bir `by-partuuid`
+  bağlantısıyla değil, `suderra-disk-layout.service`'in yarattığı `/run/suderra-os/disk/<bölüm>`
+  adlarıyla anılır. Birim, doğrulanmış rootfs'in diskindeki her bölümün PARTUUID'inin tek bir bölümde
+  olduğunu ve başka bir diskte olmadığını kanıtlar; kanıtlayamazsa hiçbir ad verilmez, `/data`
+  açılmaz ve biçimlendirilmez (cihaz bir USB belleğin medyasında provision edilemez). Slot-hook
+  imzalı UKI/FIT'i `/boot`'a kopyalar. ARM'da `/boot` salt-okunur bağlanır ve hook yalnız o kopya için
+  rw'ye çevirir.
 - **USB:** `usbguard` (`etc/usbguard/rules.conf`): USB depolama engellidir; hub, USB-serial adaptörleri
   ve HID dar kurallarla (`equals`) izinlidir; provisioning/kurtarma bundle'ı yalnız PROVISIONING veya
   MAINTENANCE'ta root ingress biriminde okunur (DEC-18.2).

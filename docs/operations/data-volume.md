@@ -43,6 +43,28 @@ environment) and the root-disk discovery on a real dm-verity root.
 The minimum eMMC size of a RevPi production unit is an operator decision
 (ADR-048 question 6, default 32 GB): bekliyor: operatör.
 
+## Which partition is /data
+
+`/data` is the partition of the disk under the verified root that carries the data
+PARTUUID of `board/suderra/common/gpt-partuuids.conf`, and only that one.
+The PARTUUIDs are public, so `suderra-disk-layout.service` proves it before
+`suderra-data-unlock` runs: exactly one partition of any disk carries the PARTUUID,
+and it is on the same disk as the dm-verity root. `suderra-data-unlock` reaches it
+through `/run/suderra-os/disk/data` and never through a `/dev/disk/by-partuuid`
+link.
+
+If the proof fails (a USB stick, a second disk or a copy of the image carries a
+PARTUUID of the layout), nothing is named, nothing is provisioned or opened, and
+`suderra-data-unlock` reports a `data-unmountable` alarm whose detail names the
+partitions (`journalctl -u suderra-disk-layout.service`, and
+`/run/suderra-os/disk/refusal`). The device stays LOCKED until the other disk is
+unplugged and the device rebooted; nothing on either disk was written. A disk that
+has no data partition at all gets the same alarm (it is not given a new partition).
+
+A blank partition is told from a foreign one by its own signature only (a file
+system or a partition table inside it): the partition entry that every GPT
+partition has (PARTLABEL, PARTUUID) says nothing about what was written to it.
+
 ## Wear telemetry
 
 `suderra-emmc-wear` (timer: three minutes after boot, then daily) reads the

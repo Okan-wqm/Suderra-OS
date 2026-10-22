@@ -48,7 +48,7 @@ the agent's side of this work), so the two repositories read one register.
     "extend_sites": [
       {"file": "scripts/evidence/revpi-connect4-board-checks.sh", "pcrs": [16],
        "purpose": "hardware check on the board: PCR 16 only, reset afterwards"},
-      {"file": "tests/qemu/data-unlock-scenarios.sh", "pcrs": [7],
+      {"file": "tests/qemu/guest/data-unlock-scenarios.sh", "pcrs": [7],
        "purpose": "QEMU test with a software TPM: a firmware update that changes PCR 7"}
     ]
   },

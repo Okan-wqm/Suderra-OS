@@ -57,42 +57,47 @@ if python3 -I "${TOOL}" check-genimage "${mut_cfg}" >/dev/null 2>&1; then
     fail "check-genimage accepted a layout with no PARTUUID at all"; fi
 echo "  rejects: a genimage layout without PARTUUIDs"
 
-# --- the consumers name partitions by PARTUUID, rendered at build time --------
+# --- the image carries the list once; consumers use the verified names --------
+# The PARTUUIDs are rendered into /usr/lib/suderra/partuuids.conf, which
+# suderra-disk-layout reads; RAUC's slots, the boot mount and /data name the links
+# it makes, and no consumer names a by-partuuid path (a public PARTUUID is only a
+# claim: disk-layout-contract-test.sh holds every consumer to that and runs the
+# script).
 echo "consumers"
-RAUC="${ROOT}/package/suderra-rauc-config"
-consumers=(
-    "${RAUC}/system.conf" "${RAUC}/system.conf.arm" "${RAUC}/boot.mount" "${RAUC}/boot.mount.arm"
-    "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock"
-)
-for f in "${consumers[@]}"; do
-    grep -q '@SUDERRA_PARTUUID_[A-Z_]*@' "${f}" || fail "${f} names no partition by PARTUUID placeholder"
-    # The dev image mounts its MBR data partition by the SUDERRA-DATA file-system
-    # label (EI-044's dev half: an MBR disk has no GPT PARTUUID, its names are the
-    # disk signature, which the three dev layouts do not set yet); every other line
-    # names partitions by PARTUUID.
-    if grep -vE '^[[:space:]]*#' "${f}" | grep -v 'SUDERRA-DATA' | grep -qE 'by-partlabel|by-label'; then
-        fail "${f} still names a partition by a label"; fi
-done
-grep -q 'ROOTFS_A_VERITY' "${RAUC}/system.conf.arm" || fail "the verity slot is not named by PARTUUID"
-for f in "${consumers[@]}"; do cp "${f}" "${WORK}/$(basename -- "${f}")"; done
-python3 -I "${TOOL}" render "${WORK}/system.conf.arm" "${WORK}/boot.mount.arm" "${WORK}/suderra-data-unlock"
-python3 -I "${TOOL}" unrendered "${WORK}/system.conf.arm" "${WORK}/boot.mount.arm" "${WORK}/suderra-data-unlock"
-grep -qF "device=/dev/disk/by-partuuid/$(python3 -I "${TOOL}" get rootfs-b-verity)" "${WORK}/system.conf.arm" ||
+TABLE="${ROOT}/board/suderra/common/rootfs-overlay/usr/lib/suderra/partuuids.conf"
+grep -q '@SUDERRA_PARTUUID_[A-Z_]*@' "${TABLE}" || fail "${TABLE} names no partition by PARTUUID placeholder"
+cp "${TABLE}" "${WORK}/partuuids.conf"
+python3 -I "${TOOL}" render "${WORK}/partuuids.conf"
+python3 -I "${TOOL}" unrendered "${WORK}/partuuids.conf"
+grep -qxF "rootfs-b-verity $(python3 -I "${TOOL}" get rootfs-b-verity)" "${WORK}/partuuids.conf" ||
     fail "render did not name slot B's verity partition"
-grep -qF "What=/dev/disk/by-partuuid/$(python3 -I "${TOOL}" get boot)" "${WORK}/boot.mount.arm" || fail "render did not name the boot partition"
-grep -qF "DATA_DEVICE=/dev/disk/by-partuuid/$(python3 -I "${TOOL}" get data)" "${WORK}/suderra-data-unlock" || fail "render did not name the data partition"
+grep -qxF "data $(python3 -I "${TOOL}" get data)" "${WORK}/partuuids.conf" || fail "render did not name the data partition"
+grep -qxF "boot $(python3 -I "${TOOL}" get boot)" "${WORK}/partuuids.conf" || fail "render did not name the boot partition"
 # Idempotent (Buildroot reruns post-build on a filled target).
-cp "${WORK}/system.conf.arm" "${WORK}/again"
+cp "${WORK}/partuuids.conf" "${WORK}/again"
 python3 -I "${TOOL}" render "${WORK}/again"
-cmp -s "${WORK}/system.conf.arm" "${WORK}/again" || fail "render is not idempotent"
+cmp -s "${WORK}/partuuids.conf" "${WORK}/again" || fail "render is not idempotent"
 echo "  renders every placeholder, idempotently"
 printf 'device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_C@\n' > "${WORK}/unknown"
 if python3 -I "${TOOL}" render "${WORK}/unknown" >/dev/null 2>&1; then fail "render accepted a placeholder that names no partition"; fi
 echo "  rejects: a placeholder that names no partition"
-python3 -I "${TOOL}" unrendered "${consumers[0]}" >/dev/null 2>&1 && fail "unrendered passed a file that still has placeholders"
+python3 -I "${TOOL}" unrendered "${TABLE}" >/dev/null 2>&1 && fail "unrendered passed a file that still has placeholders"
 echo "  rejects: a placeholder left in a target file"
 grep -q 'gpt-partuuids.py" render' "${ROOT}/board/suderra/common/post-build.sh" || fail "post-build.sh does not render the partition PARTUUIDs"
 grep -q 'gpt-partuuids.py" unrendered' "${ROOT}/board/suderra/common/post-build.sh" || fail "post-build.sh does not fail on a left placeholder"
+RAUC="${ROOT}/package/suderra-rauc-config"
+grep -q 'rootfs-a-verity' "${RAUC}/system.conf.arm" || fail "the verity slot is not named"
+for f in "${RAUC}/system.conf" "${RAUC}/system.conf.arm" "${RAUC}/boot.mount" "${RAUC}/boot.mount.arm" \
+    "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock"; do
+    if grep -vE '^[[:space:]]*#' "${f}" | grep -qE 'by-partuuid|by-partlabel|SUDERRA_PARTUUID'; then
+        fail "${f} names a partition by PARTUUID or label"; fi
+    # The dev image mounts its MBR data partition by the SUDERRA-DATA file-system
+    # label (EI-044's dev half: an MBR disk has no GPT PARTUUID, its names are the
+    # disk signature, which the three dev layouts do not set yet).
+    if grep -vE '^[[:space:]]*#' "${f}" | grep -v 'SUDERRA-DATA' | grep -qE 'by-label'; then
+        fail "${f} still names a partition by a label"; fi
+done
+echo "  no consumer names a partition by a PARTUUID or a label"
 
 # --- the verity initramfs: the signed command line, the resolver, the table ----
 echo "verity initramfs"

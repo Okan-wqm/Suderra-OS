@@ -4,16 +4,30 @@
 #
 # Scenarios of tests/qemu/data-unlock-vm-test.py, run as root in the guest it
 # builds: the real board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock
-# on a blank virtio disk (/dev/vda, linked as /dev/disk/by-partuuid/<the data PARTUUID of gpt-partuuids.conf>) with
-# a software TPM, the real cryptsetup, systemd-cryptenroll and mkfs.ext4, and a
-# test double of suderra-installer that records what the script asks of it.
+# on the blank data partition of a GPT virtio disk (/dev/vda3, which carries the
+# data PARTUUID of gpt-partuuids.conf and which the script reaches through the
+# link suderra-disk-layout makes: the verified root of the guest is /dev/vda1)
+# with a second disk beside it (/dev/vdb, an unrelated PARTUUID), a software TPM,
+# the real cryptsetup, systemd-cryptenroll and mkfs.ext4, and a test double of
+# suderra-installer that records what the script asks of it.
 #
 # Every scenario prints `T-PASS <name>` or `T-FAIL <name>: <why>`; the host
 # reads them from the serial console.
 set -u
 
+# These scenarios write to /dev/vda3 and /dev/vdb1 and run as root in the guest of
+# tests/qemu/data-unlock-vm-test.py (as /test/...): never on the host, whose
+# /dev/vda is its own disk.
+case "$0" in
+    /test/*) ;;
+    *)
+        echo "ERROR: $0 runs in the guest of tests/qemu/data-unlock-vm-test.py only" >&2
+        exit 2
+        ;;
+esac
+
 UNLOCK=/usr/sbin/suderra-data-unlock
-DEV=/dev/vda
+DEV=/dev/vda3
 MAPPER=/dev/mapper/suderra-data
 INSTALLER_LOG=/run/installer.log
 FAILED=0
@@ -122,10 +136,35 @@ change_pcr7() {
 PCR_A=0000000000000000000000000000000000000000000000000000000000000001
 PCR_B=0000000000000000000000000000000000000000000000000000000000000002
 
-blank_partition() { ! blkid "${DEV}" > /dev/null 2>&1; }
+# No signature of its own: neither a file system nor a partition table inside it
+# (plain blkid also lists the PARTUUID of the partition entry, which every
+# partition of the GPT disk has).
+blank_partition() { [ -z "$(blkid -p -s TYPE -s PTTYPE -o value "${DEV}" 2> /dev/null)" ]; }
 no_mapper() { [ ! -e "${MAPPER}" ]; }
 no_keyfile() { ! ls /run/suderra-data-key.* > /dev/null 2>&1; }
 no_data_created() { [ ! -e /run/suderra-os/data-created ]; }
+
+# --- S0: the layout names the partitions of the boot disk ---------------------
+# The script under test reaches /data through /run/suderra-os/disk/data. The
+# layout service makes the link only for the partition of the boot disk, and
+# the second disk of the guest (a partition with an unrelated PARTUUID) changes
+# nothing.
+s0_layout_names_the_boot_disk() {
+    name=layout-names-the-boot-disk
+    expect "${name}" "the second disk's partition is missing, so this proves nothing" test -b /dev/vdb1 || return
+    sh /usr/sbin/suderra-disk-layout > /run/layout.out 2>&1 ||
+        { fail "${name}" "the layout was refused: $(cat /run/layout.out)"; return; }
+    expect "${name}" "the data name is not the data partition of the boot disk" \
+        test "$(readlink /run/suderra-os/disk/data)" = /dev/vda3 || return
+    expect "${name}" "rootfs-a is not the first partition of the boot disk" \
+        test "$(readlink /run/suderra-os/disk/rootfs-a)" = /dev/vda1 || return
+    expect "${name}" "rootfs-a-verity is not the second partition of the boot disk" \
+        test "$(readlink /run/suderra-os/disk/rootfs-a-verity)" = /dev/vda2 || return
+    expect "${name}" "a partition the disk does not have was named" \
+        sh -c '[ ! -e /run/suderra-os/disk/boot ] && [ ! -e /run/suderra-os/disk/efi ] && [ ! -e /run/suderra-os/disk/rootfs-b ]' || return
+    expect "${name}" "the data partition is not blank before the first boot" blank_partition || return
+    pass "${name}"
+}
 
 # --- S1: a blank partition is provisioned ------------------------------------
 s1_fresh_provisioning() {
@@ -446,7 +485,7 @@ s13_recovery_never_formats() {
 }
 
 # --- run -------------------------------------------------------------------------
-for scenario in s1_fresh_provisioning s2_existing_unlocks s3_mkfs_failure_rolls_back \
+for scenario in s0_layout_names_the_boot_disk s1_fresh_provisioning s2_existing_unlocks s3_mkfs_failure_rolls_back \
     s4_enrol_failure_rolls_back s5_interrupted_is_redone s6_foreign_signature_refused \
     s7_unseal_failure_keeps_the_volume s8_recovery_restores_access \
     s9_wrong_recovery_key_is_rejected s10_escrow_failure_formats_nothing \

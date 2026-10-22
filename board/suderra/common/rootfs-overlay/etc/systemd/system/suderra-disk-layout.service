@@ -1,0 +1,35 @@
+# The partitions of the disk this device booted from (ADR-048 DEC-18.1; EI-044,
+# EI-050): suderra-disk-layout proves that every partition of the layout is
+# carried once and lives on the disk under the verified root, then names it
+# under /run/suderra-os/disk. The /boot mount, RAUC and /data use those names,
+# so a device that a USB stick imitates is refused before anything is mounted,
+# opened or formatted.
+#
+# Only a boot through the verity initramfs has a verified root: without
+# /dev/mapper/suderra-root (a development image) the unit is skipped, and a
+# production image whose root is not verified has nothing to name (its /boot
+# mount and /data then fail instead of guessing).
+#
+# The unit has no mount-namespace options: it creates links under /run that the
+# rest of the system must see (the same reason suderra-data.service has none).
+
+[Unit]
+Description=Suderra partitions of the verified root's disk
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+ConditionPathExists=/dev/mapper/suderra-root
+# Partitions are named after the final partition table: systemd-repart grows
+# /data on the first boot of a flashed image (DEC-24) and re-reads the table.
+After=systemd-udevd.service systemd-udev-trigger.service systemd-repart.service
+Before=boot.mount rauc.service suderra-data.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/suderra-disk-layout
+NoNewPrivileges=true
+
+[Install]
+WantedBy=sysinit.target

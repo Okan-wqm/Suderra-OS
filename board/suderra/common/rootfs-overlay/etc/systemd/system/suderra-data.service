@@ -9,8 +9,8 @@
 Description=Suderra mutable data partition
 Documentation=https://github.com/Okan-wqm/suderra-os
 DefaultDependencies=no
-Wants=local-fs.target
-After=local-fs.target systemd-tmpfiles-setup.service systemd-udev-trigger.service
+Wants=local-fs.target suderra-disk-layout.service
+After=local-fs.target systemd-tmpfiles-setup.service systemd-udev-trigger.service suderra-disk-layout.service
 Before=suderra-identity.service suderra-lifecycle.service nftables.service suderra-agent.service
 Conflicts=shutdown.target
 Before=shutdown.target
