@@ -1,0 +1,36 @@
+name: Kernel Freshness
+
+# EI-028: a defconfig that pins a kernel.org version takes its security fixes
+# only when someone bumps the pin. This compares every such pin with
+# kernel.org's own list of maintained series (releases.json). It needs the live
+# list, so it runs on a schedule and on demand, not on pull requests (an
+# unrelated change must not fail because kernel.org published a release); the
+# logic is proven on fixed data on every pull request by
+# tests/image-contracts/kernel-freshness-contract-test.sh.
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-freshness
+  cancel-in-progress: false
+
+jobs:
+  freshness:
+    name: Pinned kernels are within the stable-release limit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+
+      - name: Compare the pins with kernel.org
+        run: |
+          set -euo pipefail
+          python3 -I scripts/ci/check-kernel-freshness.py

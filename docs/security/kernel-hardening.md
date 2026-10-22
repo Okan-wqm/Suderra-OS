@@ -28,6 +28,24 @@ bir modüldür ve KUNBUS kernel'i modüler bir dağıtım kernel'idir:
 - `CONFIG_LOCK_DOWN_KERNEL_FORCE_*` — Pi firmware zincirinde imzalı kernel
   zorlaması yokken firmware arayüzlerini kırma riski; signed-FIT fazına bağlı.
 
+### Kernel sürümü ve tazelik (EI-028, EI-051)
+
+kernel.org sürümü sabitleyen defconfig'ler (`BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE`:
+x86 üçlüsü ve `suderra_aarch64` şablonu) güvenlik düzeltmelerini yalnız sabitleme
+yükseltilince alır. Sabitleme `board/suderra/buildroot-hashes/linux/linux.hash`
+içinde sha256 satırına sahip olmak zorundadır ve her defconfig
+`BR2_DOWNLOAD_FORCE_CHECK_HASHES=y` taşır (`check-kernel-config.py static`).
+
+`scripts/ci/check-kernel-freshness.py`, her sabitlemeyi kernel.org'un bakımdaki
+seri listesiyle (`releases.json`) karşılaştırır ve sabitleme serisinin son
+sürümünden `MAX_RELEASES_BEHIND` (12) stable sürümden fazla geride ise, seri
+listeden düşmüş veya EOL ise başarısız olur. Canlı liste gerektirdiği için
+haftalık koşar (`.github/workflows/kernel-freshness.yml`); mantığı sabit veriyle
+her PR'da `tests/image-contracts/kernel-freshness-contract-test.sh` kanıtlar.
+Satıcı ağaçları (Raspberry Pi, KUNBUS) commit ile sabitlenir ve kernel.org
+sürümü olmadıkları için bu kontrole girmez. Sınır (12) bir sahip kararıdır;
+yükseltme adımları betiğin başındaki açıklamadadır.
+
 ## Felsefe
 
 Suderra OS sadece **bilinen** bir uygulamayı host eder. Bu yüzden uyumluluk için açık tutulan kernel özelliklerinin çoğunu KAPATABİLİRİZ. Her kapama bir attack vector eksilir.
