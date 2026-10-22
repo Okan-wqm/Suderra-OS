@@ -77,7 +77,11 @@ BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-
 BR2_TARGET_UBOOT=y
 BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
 BR2_TARGET_UBOOT_BOARD_DEFCONFIG="rpi_arm64"
-BR2_TARGET_UBOOT_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/uboot-fragment.config"
+BR2_TARGET_UBOOT_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/uboot/hardening.config $(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/aarch64-rpi4/uboot-fragment.config"
+# The whole default environment is one reviewed file, and the patch directory holds the
+# environment flag list CONFIG_ENV_WRITEABLE_LIST needs (ADR-048 DEC-18; board/suderra/uboot).
+BR2_TARGET_UBOOT_DEFAULT_ENV_FILE="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/uboot/suderra.env"
+BR2_TARGET_UBOOT_PATCH="$(BR2_EXTERNAL_SUDERRA_PATH)/board/suderra/uboot/patches"
 BR2_TARGET_UBOOT_NEEDS_OPENSSL=y
 BR2_TARGET_UBOOT_NEEDS_DTC=y
 BR2_TARGET_UBOOT_FORMAT_BIN=y

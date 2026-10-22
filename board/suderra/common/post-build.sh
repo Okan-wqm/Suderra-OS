@@ -270,6 +270,23 @@ if [ -n "${BUILD_DIR:-}" ]; then
     python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-kernel-config.py" --root "${SUDERRA_EXTERNAL_DIR}" resolved \
         --defconfig "${DEFCONFIG_NAME}_defconfig" \
         --kernel-tree "$(dirname -- "${kernel_configs[0]}")"
+
+    # U-Boot contract (ADR-048 DEC-18): no image is built whose resolved U-Boot
+    # kept a legacy image format, boots without the signature check, lets the
+    # stored environment rewrite bootcmd, or lost a line of its fragments. An
+    # image without a board U-Boot has nothing to check.
+    if grep -q '^BR2_TARGET_UBOOT_BOARD_DEFCONFIG=' \
+        "${SUDERRA_EXTERNAL_DIR}/configs/${DEFCONFIG_NAME}_defconfig"; then
+        mapfile -t uboot_configs < <(find "${BUILD_DIR}" -mindepth 2 -maxdepth 2 -name .config \
+            -path '*/uboot-*' ! -path '*/uboot-tools-*' | sort)
+        if [ "${#uboot_configs[@]}" -ne 1 ]; then
+            echo "ERROR: expected exactly one U-Boot .config under ${BUILD_DIR}, found ${#uboot_configs[@]}"
+            exit 1
+        fi
+        python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-uboot-config.py" --root "${SUDERRA_EXTERNAL_DIR}" resolved \
+            --defconfig "${DEFCONFIG_NAME}_defconfig" \
+            --uboot-tree "$(dirname -- "${uboot_configs[0]}")"
+    fi
 else
     echo "ERROR: BUILD_DIR is not set; post-build runs from Buildroot, which exports it"
     exit 1

@@ -11,17 +11,21 @@ IFS=$'\n\t'
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 FRAGMENT="${ROOT}/board/suderra/aarch64-rpi4/uboot-fragment.config"
+# The signature policy is board independent: the shared hardening fragment holds
+# it, and uboot-config-contract-test.sh proves it on every image (ADR-048 DEC-18).
+HARDENING="${ROOT}/board/suderra/uboot/hardening.config"
 GEN_KEYS="${ROOT}/scripts/gen-dev-keys.sh"
 CONFIG_TXT="${ROOT}/board/suderra/aarch64-rpi4/config.txt"
 
 [ -f "${FRAGMENT}" ] || { echo "ERROR: U-Boot fragment eksik" >&2; exit 1; }
+[ -f "${HARDENING}" ] || { echo "ERROR: U-Boot hardening fragment eksik" >&2; exit 1; }
 
 # CONFIG_FIT_BEST_MATCH: 'bootm ${fitaddr}' (#conf'suz) çok-kartlı FIT'te doğru
 # config'i çalışan-kartın compatible'ıyla YALNIZ bu açıkken seçer; olmadan default
 # (alfabetik ilk) boot edilir ve multi-board üretici boot'ta etkisiz kalır (HIGH1).
 for token in 'CONFIG_FIT=y' 'CONFIG_FIT_SIGNATURE=y' 'CONFIG_RSA=y' 'CONFIG_OF_CONTROL=y' 'CONFIG_FIT_BEST_MATCH=y'; do
-    grep -qF -e "${token}" "${FRAGMENT}" || {
-        echo "ERROR: U-Boot fragment eksik: ${token}" >&2; exit 1; }
+    grep -qF -e "${token}" "${HARDENING}" || {
+        echo "ERROR: U-Boot hardening fragment eksik: ${token}" >&2; exit 1; }
 done
 
 for defconfig in suderra_aarch64_rpi4_defconfig suderra_aarch64_revpi4_defconfig; do

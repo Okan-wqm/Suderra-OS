@@ -1,0 +1,32 @@
+From: Suderra OS contributors
+Subject: [PATCH] env: flag the RAUC boot counters as the writeable variables
+
+U-Boot 2025.04 has no Kconfig symbol for the static environment flag list
+that CONFIG_ENV_WRITEABLE_LIST needs; boards set CFG_ENV_FLAGS_LIST_STATIC in
+their config header (include/configs/hmibsc.h does the same for these three
+variables). The list lives in the one header every board includes through
+env_flags.h so the production Raspberry Pi U-Boot and the QEMU U-Boot that
+tests its boot chain share it (ADR-048 DEC-18, EI-034).
+
+Applies to U-Boot v2025.04 (sha256 of the tarball in buildroot/boot/uboot).
+---
+ include/env_flags.h | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/include/env_flags.h
++++ b/include/env_flags.h
+@@ -38,7 +38,13 @@
+ #define ENV_FLAGS_VARACCESS_LOC 1
+ 
+ #ifndef CFG_ENV_FLAGS_LIST_STATIC
+-#define CFG_ENV_FLAGS_LIST_STATIC ""
++/*
++ * Suderra OS: with CONFIG_ENV_WRITEABLE_LIST the stored environment may change
++ * only the variables flagged "w" here (U-Boot 2025.04 has no Kconfig symbol for
++ * this list). They are the RAUC boot counters; every other variable, bootcmd
++ * and bootargs among them, comes from the compiled-in default environment.
++ */
++#define CFG_ENV_FLAGS_LIST_STATIC "BOOT_ORDER:sw,BOOT_A_LEFT:dw,BOOT_B_LEFT:dw"
+ #endif
+ 
+ #ifdef CONFIG_NET
