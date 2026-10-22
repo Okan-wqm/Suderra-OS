@@ -55,7 +55,8 @@ targets:
 
 - `suderra_aarch64_rpi4_defconfig`
 - `suderra_aarch64_rpi4_usb_installer_defconfig`
-- `suderra_aarch64_revpi4_defconfig`
+- `suderra_aarch64_revpi4_defconfig` (KUNBUS kernel + piControl + `revpi-connect4` device
+  tree; ayrıntı [revpi-connect4.md](revpi-connect4.md))
 
 Custom carrier'lar device tree overlay gerektirir (Faz 2-B).
 
@@ -261,7 +262,7 @@ dtc -@ -I dts -O dtb -o custom-carrier.dtbo custom-carrier.dts
 | 1 | Pi 4 Model B 4GB + 32GB Samsung A2 SD | ✅ Boot | Faz 2-A doğrulandı |
 | 2 | CM4002032 + CM4 IO Board | ⏳ Beklemede | Faz 2-A test sırasında |
 | 3 | CM4002032 + Waveshare CM4-IO-BASE-B | ⏳ Beklemede | DTB overlay olmadan |
-| 4 | CM4002032 + Revolution Pi Connect 4 | ❌ Faz 2-B | RevPi-spesifik defconfig gerekli |
+| 4 | CM4002032 + Revolution Pi Connect 4 | ⏳ Donanım doğrulaması bekliyor | RevPi'ye özel imaj hazır ([revpi-connect4.md](revpi-connect4.md)): KUNBUS kernel, piControl, `revpi-connect4` DT |
 
 ## 8. Referanslar
 

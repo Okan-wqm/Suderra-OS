@@ -51,6 +51,7 @@ docs/
 - [Assessment Index](assessments/INDEX.md) — assessment durumları ve supersede/archive takibi
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
+- [revpi-connect4.md](hardware/revpi-connect4.md) — Revolution Pi Connect 4: KUNBUS kernel + piControl pin'leri, device tree, kernel yükseltme ve donanım kontrol listesi
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
 - [x86-hardware-lab.md](operations/x86-hardware-lab.md) — industrial-x86_64 donanım lab station registry + kontroller + kanıt akışı
 - [operator-lifecycle.md](operations/operator-lifecycle.md) — freeze, ingress, preflight, signing, publish, abort ve retention RACI

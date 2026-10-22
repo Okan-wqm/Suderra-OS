@@ -151,6 +151,12 @@ USB-A self-install is supported when the device boot order allows USB boot.
 The official fallback remains micro-USB/rpiboot, where RevPi eMMC appears as
 `/dev/sdX` on the host and is flashed with the same target image.
 
+The image is the KUNBUS-kernel build with piControl and the `revpi-connect4`
+device tree, not the generic Pi 4 / CM4 image: do not flash the rpi4 image onto a
+Connect 4 (it has no PiBridge, TPM, RTC or RS485). Its dev layout is MBR with the
+root named by `root=PARTUUID=5d3e0a11-02`; the production layout is GPT A/B. Pins and
+the hardware checklist: [docs/hardware/revpi-connect4.md](../hardware/revpi-connect4.md).
+
 ### 2.5. Endüstriyel x86 PC — USB Stick
 
 ```bash

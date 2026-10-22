@@ -113,7 +113,9 @@ tablo onun okunabilir özetidir:
 |---|---|---|---|---|---|
 | `qemu_x86_64` (dev/CI) | yok (dev kernel) | yok | yok | yok | dev/lab imajı — production iddiası yok |
 | `x86_64`, `qemu_x86_64_prod_ab` | ortak fragment (lockdown zorunlu, modules-off) | partition layout hazır | UEFI UKI hedefli | RAUC hedefli | HSM, runtime-v2 ve donanım kanıtı |
-| `rpi4`, `revpi4` | boot-güvenli arm64 fragmenti (lockdown derli/zorlamasız, **modules açık**) | kernel hazır, imaj **kullanmıyor** | yok (signed-FIT bekliyor) | yok | signed-FIT + dm-verity + RAUC + donanım kanıtı |
+| `rpi4` | boot-güvenli arm64 fragmenti (lockdown derli/zorlamasız, **modules açık**) | kernel hazır, imaj **kullanmıyor** | yok (signed-FIT bekliyor) | yok | signed-FIT + dm-verity + RAUC + donanım kanıtı |
+| `revpi4` (dev) | KUNBUS `revpi-6.12` + boot-güvenli arm64 fragmenti (modules açık, imza zorunlu değil) | yok | yok | yok | donanım kanıtı ([docs/hardware/revpi-connect4.md](docs/hardware/revpi-connect4.md)) |
+| `revpi4_prod_ab` | KUNBUS `revpi-6.12` + arm64 fragmenti + **prod-only**: `MODULE_SIG_FORCE`, lockdown integrity (derleme zamanında) | imaj layout'u + verity initramfs | imzalı FIT (HSM), U-Boot FIT doğrulaması | RAUC hedefli | donanım kanıtı, OTP secure boot ve anahtar töreni (operatör) |
 | `usb_installer` | boot-güvenli arm64 fragmenti | yok | payload Ed25519 imzalı | — | prod key policy + flash kanıtı |
 
 Detaylar: [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md), [docs/architecture/boot-chain.md](docs/architecture/boot-chain.md)

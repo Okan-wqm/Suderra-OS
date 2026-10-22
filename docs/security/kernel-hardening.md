@@ -9,13 +9,19 @@
 | Varyant | Uygulanan fragment(ler) | Notlar |
 |---|---|---|
 | `suderra_x86_64`, `suderra_qemu_x86_64_prod_ab` | `board/suderra/common/kernel-fragment.config` | Hedef matrisin x86 karşılığı: lockdown zorunlu (confidentiality), modules-off, KEXEC/HIBERNATION kapalı |
-| `suderra_aarch64_rpi4`, `suderra_aarch64_revpi4`, `..._usb_installer` | `linux-rpi4.config` + `linux-rpi4-hardening.config` | Boot-güvenli alt küme: lockdown **derli ama zorlamasız**, `CONFIG_MODULES` **açık**, SW_TTBR0_PAN, rodata=full, unpriv BPF kapalı, kexec/hibernation/USER_NS kapalı |
+| `suderra_aarch64_rpi4`, `..._usb_installer` | `linux-rpi4.config` + `linux-rpi4-hardening.config` | Boot-güvenli alt küme: lockdown **derli ama zorlamasız**, `CONFIG_MODULES` **açık**, SW_TTBR0_PAN, rodata=full, unpriv BPF kapalı, kexec/hibernation/USER_NS kapalı |
+| `suderra_aarch64_revpi4` (dev) | KUNBUS `revpi-v8_defconfig` + `aarch64-revpi-connect4/linux-revpi-suderra.config` + `linux-rpi4-hardening.config` | Aynı paylaşılan arm64 sertleştirmesi; modüller imzalanır ama imza **zorunlu değil**. Kernel config'i KUNBUS'un dağıtım config'idir (≈1800 modül, `PREEMPT_RT`) |
+| `suderra_aarch64_revpi4_prod_ab` | yukarıdakiler + `aarch64-revpi-connect4/linux-revpi-suderra-prod.config` | **Prod-only**: `MODULE_SIG_FORCE`, `MODULE_SIG_ALL`, `MODULE_SIG_SHA512`, `LOCK_DOWN_KERNEL_FORCE_INTEGRITY` derleme zamanında (ADR-0007 M3, EI-048). Out-of-tree `piControl` aynı build anahtarıyla imzalanır. `check-kernel-config.py resolved` her imaj build'inde son `.config`'i doğrular |
 | `suderra_qemu_x86_64` (dev), `suderra_aarch64` (template) | yok | Dev/lab; sertleştirme iddiası yok |
 
 ### ARM'da bilinçli ertelenenler (donanım kanıtı gate'i)
 
-Şunlar Pi/RevPi donanım lab'ında boot kanıtı alınmadan ARM fragmentine
-**giremez** (contract test bunu zorlar):
+Şunlar Pi/RevPi donanım lab'ında boot kanıtı alınmadan **paylaşılan** ARM
+fragmentine **giremez** (contract test bunu zorlar). Kart başına prod-only
+fragment bunun dışındadır: RevPi Connect 4'ün prod fragmenti lockdown'ı
+derleme zamanında integrity seviyesinde zorlar (imzalı-FIT zinciri artık var,
+`MODULE_SIG_FORCE` ile birlikte); `CONFIG_MODULES` açık kalır çünkü piControl
+bir modüldür ve KUNBUS kernel'i modüler bir dağıtım kernel'idir:
 
 - `CONFIG_MODULES=n` — bcm2711 sürücü seti modül bağımlı; monolitik kernel
   yanlış kombinasyonda cihazı boot edemez hale getirebilir.

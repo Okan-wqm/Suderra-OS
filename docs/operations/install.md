@@ -290,9 +290,41 @@ sudo dd if=/dev/sdb of=/dev/nvme0n1 bs=4M status=progress
 
 ## 4. Revolution Pi
 
-> **Status:** Faz 2-B (yakında). Şu an Pi 4 / CM4 image'i Revolution Pi üzerinde de çalışır ama RevPi-spesifik GPIO/IO modülleri henüz aktif değil.
+> **Status:** image'ın yazılımı hazır, **donanım doğrulaması bekliyor** (RevPi Connect 4 üzerinde
+> boot edilmedi; kontrol listesi: [revpi-connect4.md](../hardware/revpi-connect4.md) §6).
 
-Bu bölüm Faz 2-B tamamlandığında doldurulacak.
+RevPi Connect 4 genel bir CM4 image'i değildir: KUNBUS RevolutionPi kernel'i (`revpi-6.12`,
+PREEMPT_RT), `piControl` sürücüsü (`/dev/piControl0`) ve `revpi-connect4` device tree'si
+(SPI TPM, PCF2129 RTC, PiBridge, RS485 `/dev/ttyAMA5`, durum LED'leri) ile gelir. Pin'ler, sürüm
+eşleşmesi ve kernel yükseltme prosedürü: [docs/hardware/revpi-connect4.md](../hardware/revpi-connect4.md).
+
+```bash
+# Build (dev: MBR + düz ext4; prod: imzalı FIT + A/B + dm-verity + LUKS2 /data)
+./scripts/build-in-docker.sh suderra_aarch64_revpi4_defconfig
+./scripts/build-in-docker.sh suderra_aarch64_revpi4_prod_ab_defconfig   # HSM imzalama gerekir
+
+# eMMC'ye yaz: micro-USB + rpiboot (resmi yol) veya USB-A self-install (boot sırası izin veriyorsa)
+sudo ./scripts/flash-sd.sh /dev/sdX \
+  output/suderra_aarch64_revpi4_defconfig/images/suderra-revpi4-target.img.xz
+```
+
+İlk boot'ta beklenen (donanımda doğrulanacak):
+
+```bash
+cat /proc/device-tree/compatible | tr '\0' ' '   # kunbus,revpi-connect4 brcm,bcm2711
+ls -l /dev/piControl0 /dev/tpmrm0 /dev/ttyAMA5     # PiBridge, SPI TPM, RS485
+hwclock -r                                         # PCF2129 RTC
+```
+
+Notlar:
+
+- `/proc/device-tree/model` "Raspberry Pi Compute Module 4" kalır (overlay yalnız `compatible`'ı
+  değiştirir); kart kimliği imzalı imajdaki `/etc/suderra/board`'dır.
+- piTest ve PiCtory imajda yoktur. PiCtory `config.rsc` imzalı site config'iyle gelir
+  (`/etc/revpi/config.rsc` → `/var/lib/suderra-site/revpi/config.rsc`).
+- Prod imajda kernel yalnız build'in kendi imzaladığı modülleri yükler (`MODULE_SIG_FORCE`) ve
+  lockdown integrity seviyesindedir.
+- OTP secure boot ve üretim anahtar töreni operatör işidir (bekliyor: operatör).
 
 ---
 

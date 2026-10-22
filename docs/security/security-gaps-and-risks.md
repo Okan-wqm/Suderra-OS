@@ -161,6 +161,10 @@ kesin G4/G5 listesi olarak yazılı. Yeni "hata" değil; donanım gelince kapana
   CM4/RevPi OTP secure boot ile korunur (fiziksel/depolama swap riski).
 - **HW-3 (G4) — ARM verity-cmdline delivery + module signing.** ARM cmdline'da `module.sig_enforce`
   yok (x86'da var); ARM'da `CONFIG_MODULE_SIG_FORCE` yok (paylaşılan kernel config, dev'i kırar).
+  **RevPi Connect 4 prod kısmı kapandı:** prod-only `linux-revpi-suderra-prod.config`
+  `MODULE_SIG_FORCE`/`MODULE_SIG_ALL` ve `LOCK_DOWN_KERNEL_FORCE_INTEGRITY` taşır, son `.config`
+  `check-kernel-config.py resolved` ile doğrulanır; cihazda `insmod` reddi ve lockdown durumu
+  donanım kanıtı bekler. rpi4/CM4 prod'unun prod-only fragmenti hâlâ yok (EI-048'in kalanı).
 - **HW-4 — x86 cihaz-tarafı SB enrollment out-of-band.** İmzasız-UKI reddi kriptografik kanıtı
   yalnız QEMU/OVMF yolunda; sevk edilen donanımda db enrollment'ı hiçbir şey zorlamaz.
 - **HW-5 — Anti-rollback userspace-only.** Monotonluk yalnız `suderra-ota`'da; ham `rauc install`
