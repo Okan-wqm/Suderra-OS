@@ -48,6 +48,29 @@ config BR2_PACKAGE_SUDERRA_DATA_TOOLS
 	select BR2_PACKAGE_SYSTEMD_REPART if BR2_PACKAGE_SUDERRA_VARIANT_PROD
 
 #
+# USB policy of every production image (ADR-048 DEC-18.2). The production
+# kernels build USB mass storage in (the provisioning bundle is read from a stick
+# in PROVISIONING and MAINTENANCE), and the policy that keeps that class
+# unauthorized in every other state is usbguard's. A production image without the
+# daemon is therefore a USB storage port with no policy, and an image nobody
+# listed in a test would not have it: the option is selected here for every
+# production variant, so the way to build a production image without it is gone,
+# and post-build.sh fails a production image that still has no usbguard.service.
+# The dependencies are usbguard's own (buildroot/package/usbguard/Config.in): a
+# toolchain that cannot build it drops the option, and the build gate says so.
+#
+config BR2_PACKAGE_SUDERRA_USB_POLICY
+	bool
+	default y if BR2_PACKAGE_SUDERRA_VARIANT_PROD
+	depends on BR2_PACKAGE_PROTOBUF_ARCH_SUPPORTS
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_8
+	depends on !BR2_STATIC_LIBS
+	depends on !BR2_TOOLCHAIN_HAS_GCC_BUG_64735
+	select BR2_PACKAGE_USBGUARD
+
+#
 # Profil seçimi — hangi varyant build ediliyor
 #
 choice

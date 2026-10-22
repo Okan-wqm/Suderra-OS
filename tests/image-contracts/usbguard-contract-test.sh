@@ -116,16 +116,36 @@ grep -qx 'RuntimeDirectory=usbguard' "${DROPIN}" || fail "the audit log director
 grep -q "^AuditFilePath=/run/" "${CONF}" || fail "the audit log must live in /run: the root file system is read-only"
 
 echo "the images"
-for d in suderra_aarch64_rpi4_prod_ab suderra_aarch64_revpi4_prod_ab suderra_qemu_x86_64_prod_ab; do
-    grep -qx 'BR2_PACKAGE_USBGUARD=y' "${ROOT}/configs/${d}_defconfig" || fail "${d} does not build usbguard"
+# Every defconfig is resolved by Buildroot, and every one whose resolved .config is
+# a production variant must build usbguard: the production kernels build USB mass
+# storage in (the provisioning bundle is read from a stick), and the daemon is what
+# keeps that class blocked. The list is not written here: a production image added
+# later is held to it without anyone remembering to add it (the x86 industrial PC
+# image had USB storage and no policy because the first version named three images).
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK}"' EXIT
+production=0
+for defconfig in "${ROOT}"/configs/*_defconfig; do
+    name="$(basename "${defconfig}" _defconfig)"
+    make -s -C "${ROOT}/buildroot" BR2_EXTERNAL="${ROOT}" O="${WORK}/r-${name}" "${name}_defconfig" > "${WORK}/r-${name}.log" 2>&1 ||
+        fail "Buildroot could not resolve ${name}_defconfig (see ${WORK}/r-${name}.log)"
+    if grep -qx 'BR2_PACKAGE_SUDERRA_VARIANT_PROD=y' "${WORK}/r-${name}/.config"; then
+        production=$((production + 1))
+        grep -qx 'BR2_PACKAGE_USBGUARD=y' "${WORK}/r-${name}/.config" ||
+            fail "${name} is a production image and its resolved .config does not build usbguard (Config.in BR2_PACKAGE_SUDERRA_USB_POLICY)"
+        echo "  ${name}: production, builds usbguard"
+    elif grep -qx 'BR2_PACKAGE_USBGUARD=y' "${WORK}/r-${name}/.config" && ! grep -qx 'BR2_PACKAGE_SUDERRA_VARIANT_DEV=y' "${WORK}/r-${name}/.config"; then
+        fail "${name}: neither a production nor a development variant"
+    fi
 done
+[ "${production}" -ge 4 ] || fail "found ${production} production defconfigs, expected at least 4 (rpi4, revpi4, qemu x86 prod_ab, x86 industrial PC)"
+grep -qx 'config BR2_PACKAGE_SUDERRA_USB_POLICY' "${ROOT}/Config.in" || fail "Config.in does not define BR2_PACKAGE_SUDERRA_USB_POLICY"
+grep -q 'a production image must run usbguard' "${POST_BUILD}" || fail "post-build.sh does not fail a production image without usbguard.service"
 grep -q 'enable_unit usbguard.service multi-user.target' "${POST_BUILD}" || fail "post-build.sh does not enable usbguard.service"
 grep -q 'preset_enable usbguard.service' "${POST_BUILD}" || fail "post-build.sh does not preset-enable usbguard.service"
 grep -q 'chmod 0600 .*etc/usbguard/rules.conf' "${POST_BUILD}" || fail "post-build.sh does not restrict the rule file"
 
 echo "mutations"
-WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
 mutate() { # <label> <sed expression>
     sed "$2" "${RULES}" > "${WORK}/rules"
     if check_rules "${WORK}/rules" >/dev/null 2>&1; then fail "the policy test accepted: $1"; fi

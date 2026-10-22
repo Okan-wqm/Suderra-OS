@@ -554,11 +554,20 @@ fi
 
 # USB device policy (ADR-048 DEC-18.2): an image with the usbguard package runs
 # its daemon with the policy of the overlay (no USB storage, serial adapters and HID
-# by narrow rules); an image without the package carries none of its files.
+# by narrow rules). A production image has the package by construction (Config.in
+# BR2_PACKAGE_SUDERRA_USB_POLICY) and fails here when it does not: its kernel
+# mounts USB storage, and without the daemon nothing keeps that class unauthorized.
+# A development image without the package carries none of its files.
 if [ -e "${TARGET_DIR}/usr/lib/systemd/system/usbguard.service" ]; then
     enable_unit usbguard.service multi-user.target
     preset_enable usbguard.service
     chmod 0600 "${TARGET_DIR}/etc/usbguard/rules.conf" "${TARGET_DIR}/etc/usbguard/usbguard-daemon.conf"
+elif [ "${SUDERRA_OS_VARIANT}" = prod ]; then
+    echo "ERROR: a production image must run usbguard (ADR-048 DEC-18.2) and ${DEFCONFIG_NAME} has no usbguard.service:" >&2
+    echo "       its kernel mounts USB storage, and the daemon's policy is what keeps that class blocked." >&2
+    echo "       Config.in selects the package for every production variant; the toolchain must build it" >&2
+    echo "       (C++, threads, gcc >= 8, dynamic libraries)." >&2
+    exit 1
 else
     rm -rf "${TARGET_DIR}/etc/usbguard" "${TARGET_DIR}/etc/systemd/system/usbguard.service.d"
 fi
