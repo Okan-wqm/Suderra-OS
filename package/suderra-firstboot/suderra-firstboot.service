@@ -16,7 +16,6 @@ ReadWritePaths=/data /etc/machine-id
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=false
-DeviceAllow=/dev/tpm0 rw
 DeviceAllow=/dev/tpmrm0 rw
 
 [Install]
