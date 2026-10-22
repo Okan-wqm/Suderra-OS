@@ -238,6 +238,23 @@ printf 'prod\n' > "${T}/suderra-keys.profile"
 expect_fail "prod trust-root set carrying edge keys" "P1 key ceremony" \
     "${ROOT}/scripts/ci/validate-trust-roots.sh" "${T}" --expected-profile prod
 
+# A production set is never accepted unchecked: the escrow key's strength, the
+# certificates and the Ed25519 key are checked with openssl, and a build host
+# without it must fail the validation, not skip it.
+T="${TMPDIR}/prod-set"
+cp -a "${KEYS_DIR}" "${T}"
+rm -rf "${T}/edge"
+printf 'prod\n' > "${T}/suderra-keys.profile"
+"${ROOT}/scripts/ci/validate-trust-roots.sh" "${T}" --expected-profile prod
+NO_OPENSSL="${TMPDIR}/no-openssl-bin"
+mkdir -p "${NO_OPENSSL}"
+for tool in bash sh cat sed grep head cut tr dirname basename python3 od xxd stat wc sha256sum readlink mkdir rm mktemp tail awk cp ls date env; do
+    if path="$(command -v "${tool}" 2>/dev/null)"; then ln -s "${path}" "${NO_OPENSSL}/${tool}"; fi
+done
+[ ! -e "${NO_OPENSSL}/openssl" ] || { echo "the no-openssl PATH has openssl" >&2; exit 1; }
+expect_fail "a prod trust-root set validated on a host without openssl" "openssl is not installed" \
+    env PATH="${NO_OPENSSL}" "$(command -v bash)" "${ROOT}/scripts/ci/validate-trust-roots.sh" "${T}" --expected-profile prod
+
 # package/suderra-keys pins exactly the os-image purposes, plus the dev
 # provisioning-API CA, on dev images and on every image of a ci-role board
 # (the QEMU targets, production variant included: the installer's PinPolicy

@@ -42,10 +42,15 @@ if python3 "${EVID}" "${common_args[@]}" --mutation-inputs-file "${WORK}/bad.jso
 fi
 
 # 3) derive extracts real ESP/rootfs offsets from a synthetic GPT image.
-command -v sfdisk >/dev/null 2>&1 && command -v parted >/dev/null 2>&1 || { echo "SKIP: sfdisk/parted yok"; exit 0; }
+# A missing tool is a skipped gate, not a pass: exit 77, which CI (SUDERRA_FAIL_ON_SKIP)
+# turns into a failure. sfdisk (apt: fdisk) both writes this image's table and is what
+# derive-mutation-inputs.py reads it with.
+command -v sfdisk >/dev/null 2>&1 || { echo "SKIP: sfdisk is missing (apt: fdisk)" >&2; exit 77; }
 img="${WORK}/disk.img"
 dd if=/dev/zero of="${img}" bs=1M count=80 status=none
-parted -s "${img}" mklabel gpt mkpart efi fat32 1MiB 33MiB mkpart rootfs-a ext4 33MiB 75MiB >/dev/null 2>&1
+# efi: 1 MiB..33 MiB, rootfs-a: 33 MiB..75 MiB (512-byte sectors).
+printf 'label: gpt\nunit: sectors\n\nstart=2048, size=65536, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=efi\nstart=67584, size=86016, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name=rootfs-a\n' |
+    sfdisk "${img}" >/dev/null 2>&1 || { echo "ERROR: sfdisk could not write the synthetic GPT image" >&2; exit 1; }
 mkdir -p "${WORK}/bin" "${WORK}/keys" "${WORK}/swtpm"
 for f in suderra-A.efi linuxx64.efi.stub bzImage suderra-A.initrd os-release; do printf 'x' > "${WORK}/bin/${f}"; done
 printf 'root=/dev/mapper/suderra-root suderra.verity.root_hash=abc ro\n' > "${WORK}/bin/suderra-A.cmdline"

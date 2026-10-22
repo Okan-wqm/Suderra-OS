@@ -112,6 +112,12 @@ if [ -n "${EXPECTED_PROFILE}" ] && [ "${profile}" != "${EXPECTED_PROFILE}" ]; th
     die "suderra-keys.profile contains '${profile}', expected '${EXPECTED_PROFILE}'"
 fi
 
+# The checks below need openssl. Without it a development or CI set is checked as far
+# as the remaining checks go, but a production set protects every device (the
+# recovery escrow key, the signing certificates): it is not accepted unchecked.
+if ! command -v openssl >/dev/null 2>&1 && [ "${profile}" = prod ]; then
+    die "a prod trust-root set is validated with openssl (certificates, Ed25519 key, the recovery escrow key's RSA strength) and openssl is not installed"
+fi
 if command -v openssl >/dev/null 2>&1; then
     openssl x509 -in "${KEYS_DIR}/rauc-signing.crt" -noout >/dev/null 2>&1 ||
         die "invalid X.509 certificate: ${KEYS_DIR}/rauc-signing.crt"
@@ -123,7 +129,8 @@ fi
 validate_raw_ed25519_public_key "${KEYS_DIR}/os-update-manifest.ed25519.pub"
 
 # The escrow key encrypts recovery keys with RSA-OAEP: an RSA public key of at
-# least 3072 bits (ADR-048 DEC-14.3). Without openssl nothing can be checked.
+# least 3072 bits (ADR-048 DEC-14.3). Without openssl nothing can be checked, which
+# only a development or CI set tolerates (above).
 if command -v openssl >/dev/null 2>&1; then
     escrow_text="$(openssl pkey -pubin -in "${KEYS_DIR}/recovery-escrow.pub.pem" -noout -text 2>/dev/null)" ||
         die "invalid public key: ${KEYS_DIR}/recovery-escrow.pub.pem"

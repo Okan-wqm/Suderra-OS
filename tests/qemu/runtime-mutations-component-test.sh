@@ -16,7 +16,9 @@ MUT="${ROOT}/tests/qemu/runtime_mutations.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "SKIP: $1 yok"; exit 0; }; }
+# A missing tool is a skipped gate, not a pass: exit 77, which CI turns into a failure
+# (.github/workflows/runtime-mutations.yml installs every tool named here).
+need() { command -v "$1" >/dev/null 2>&1 || { echo "SKIP: $1 yok" >&2; exit 77; }; }
 need sbsign; need sbverify; need sbattach; need objcopy; need mkfs.ext4; need openssl
 
 python3 -m py_compile "${MUT}"
@@ -31,7 +33,7 @@ elif command -v grub-mkimage >/dev/null 2>&1; then
 elif command -v grub2-mkimage >/dev/null 2>&1; then
     grub2-mkimage -O x86_64-efi -o "${WORK}/base.efi" -p /EFI/BOOT normal 2>/dev/null
 fi
-[ -s "${WORK}/base.efi" ] || { echo "SKIP: imzalanacak PE üretilemedi"; exit 0; }
+[ -s "${WORK}/base.efi" ] || { echo "SKIP: imzalanacak PE üretilemedi (grub-efi-amd64-bin)" >&2; exit 77; }
 sbsign --key "${WORK}/db.key" --cert "${WORK}/db.crt" --output "${WORK}/signed-uki.efi" "${WORK}/base.efi" 2>/dev/null
 
 # 1) unsigned-boot-rejection: imza sökülmeli, cert'e karşı doğrulanmamalı.
