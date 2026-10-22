@@ -205,22 +205,49 @@ Not done here, because it needs more disk, a full image build, or the board:
 
 ## 6. Hardware checklist (needs a Revolution Pi Connect 4)
 
-These are hardware-in-the-loop criteria; the QEMU and mock-backed variants cannot stand in for them.
+These are hardware-in-the-loop criteria; QEMU cannot stand in for them. Run the collector on the
+board as root, then do the rest by hand:
 
-- Boots; `/proc/cmdline` carries `suderra.verity.root_hash=` and `console=ttyS0`; the console shows boot.
-- `cat /proc/device-tree/compatible` is `kunbus,revpi-connect4`; `/dev/tpmrm0` exists; `hwclock -r`
-  reads the PCF2129; `dmesg` shows the PiBridge master probing.
-- `/dev/piControl0` exists after `systemd-modules-load`; `KB_GET_DEVICE_INFO_LIST` lists the DIO/AIO
-  modules on the PiBridge.
-- RS485 loopback on `/dev/ttyAMA5`.
-- The status LEDs follow piControl's triggers.
+```sh
+scripts/evidence/revpi-connect4-board-checks.sh --out /tmp/revpi-checks --variant prod --try-unsigned-insmod
+```
+
+It reads the kernel's views of the hardware, prints `PASS`/`FAIL` per check, and writes
+`<check>.txt` plus `checks.json` in the per-check record shape `scripts/evidence/suderra-lab.py`
+takes (`board-identity`, `watchdog` and `revpi-io` are lab-required checks; the rest are additional
+RevPi evidence). `--variant dev` judges a dev image (no forced signatures). Its logic runs in CI
+against fixture roots (`tests/image-contracts/revpi-board-checks-contract-test.sh`); only a board
+can show that the real kernel produces what it reads.
+
+Covered by the collector:
+
+- `board-identity`: `/etc/suderra/board` is `revpi-connect4` and the device-tree compatible is
+  `kunbus,revpi-connect4`.
+- `kernel`: a `6.12.<n>-v8` `PREEMPT_RT` kernel.
+- `revpi-io`: `/dev/piControl0` exists and the `piControl` module is loaded.
+- `tpm`: `/dev/tpmrm0` exists and `tpm0` is a TPM 2.0.
+- `rtc`: `rtc0` is the PCF2127 driver.
+- `rs485`: `/dev/ttyAMA5` exists.
+- `leds`: the 15 status LEDs and `power:1:fault`.
+- `watchdog`: the BCM2835 watchdog is registered.
+- `module-signing`: `sig_enforce=Y` and lockdown at integrity or confidentiality (production).
+- `boot-chain`: the FIT's bootargs carry `suderra.verity.root_hash=` and `console=ttyS0,115200`
+  (production), or the dev root `root=PARTUUID=5d3e0a11-02`.
+- `unsigned-module-rejected` (`--try-unsigned-insmod`): the smallest installed module, with its
+  appended signature stripped, is refused by `insmod` with `Key was rejected by service`.
+
+Hardware-only, by hand:
+
+- Boots; the console shows the boot; `dmesg` shows the PiBridge master probing.
+- `KB_GET_DEVICE_INFO_LIST` lists the DIO/AIO modules on the PiBridge.
+- RS485 loopback on `/dev/ttyAMA5`; the status LEDs follow piControl's triggers.
 - Which watchdog resets the board and what it resets (BCM2711 PM watchdog or the PCF2129).
-- `insmod` of an unsigned module fails with `EKEYREJECTED`; `/sys/kernel/security/lockdown` shows
-  `[integrity]` or `[confidentiality]`.
 - The kernel `Image` is below the FIT load window; rootfs headroom with the real module set.
 - The second Ethernet port (a PCIe device behind `pcie0`; KUNBUS's defconfig carries `igb`,
   `lan743x` and `r8169` as modules) enumerates and brings up its driver.
-- Tampered or unsigned FIT is rejected by U-Boot (ADR-0007 G4).
+- Tampered or unsigned FIT is rejected by U-Boot (ADR-0007 G4); U-Boot picks the one FIT
+  configuration and hands the kernel its `bootargs` (H3); `mmc 0:1` in `boot.scr.cmd` is the
+  Connect 4's eMMC boot partition.
 
 Operator actions (not code): OTP secure boot and the production key ceremony (ADR-0007 H2, ADR-048
 DEC-14), the eMMC SKU (32 GB recommended, DEC-8). Both are pending the operator.
