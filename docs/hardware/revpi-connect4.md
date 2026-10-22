@@ -216,8 +216,9 @@ It reads the kernel's views of the hardware, prints `PASS`/`FAIL` per check, and
 `<check>.txt` plus `checks.json` in the per-check record shape `scripts/evidence/suderra-lab.py`
 takes (`board-identity`, `watchdog` and `revpi-io` are lab-required checks; the rest are additional
 RevPi evidence). `--variant dev` judges a dev image (no forced signatures). Its logic runs in CI
-against fixture roots (`tests/image-contracts/revpi-board-checks-contract-test.sh`); only a board
-can show that the real kernel produces what it reads.
+against fixture roots, and its `tpm-seal` check runs its real `tpm2-tools` sequence against a
+software TPM (`tests/image-contracts/revpi-board-checks-contract-test.sh`, with `swtpm`); only a
+board can show that the real kernel and the real SLB9670 produce what it reads and does.
 
 Covered by the collector:
 
@@ -226,7 +227,18 @@ Covered by the collector:
 - `kernel`: a `6.12.<n>-v8` `PREEMPT_RT` kernel.
 - `revpi-io`: `/dev/piControl0` exists and the `piControl` module is loaded.
 - `tpm`: `/dev/tpmrm0` exists and `tpm0` is a TPM 2.0.
-- `rtc`: `rtc0` is the PCF2127 driver.
+- `tpm-seal`: the TPM seals and releases a secret the way `/data` does. It seals a throw-away secret
+  to PCR 7 and PCR 16 under the TPM's null hierarchy (no owner or endorsement authorisation is used
+  or set, the objects vanish at the next TPM reset), unseals it and compares, extends PCR 16 and
+  requires the policy to refuse the unseal (`a policy check failed`), then resets PCR 16. PCR 7 is
+  never written: the `/data` seal binds it. PCR 16 is the debug PCR, so the check leaves the board
+  as it found it unless the TPM refuses the reset, which the evidence then says. `--tcti` names
+  another TPM (default `device:/dev/tpmrm0`).
+- `rtc`: `rtc0` is the PCF2127 driver (`rtc-rpi`, the firmware RTC, binds only to a
+  `raspberrypi,rpi-rtc` node that none of the CM4 trees has, so the PCF2129 is `rtc0`).
+- `rtc-hctosys`: `/sys/class/rtc/rtc0/hctosys` is `1`, i.e. the kernel set the system clock from
+  the PCF2129 at boot, which it does only when it read a valid time from it. A flat CR2032 or a
+  never-set RTC reads `0`: set it (`hwclock --systohc` once the clock is right) and reboot.
 - `rs485`: `/dev/ttyAMA5` exists.
 - `leds`: the 15 status LEDs and `power:1:fault`.
 - `watchdog`: the BCM2835 watchdog is registered.

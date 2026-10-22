@@ -68,6 +68,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ARM signed-FIT (ADR-0007): mkimage builds/signs FITs, dtc compiles the .its
     u-boot-tools \
     device-tree-compiler \
+    # TPM contract tests: the RevPi board checks run their tpm2-tools sequence
+    # against a software TPM (tests/image-contracts/revpi-board-checks-contract-test.sh)
+    swtpm \
+    swtpm-tools \
+    tpm2-tools \
+    libtss2-tcti-swtpm0 \
     # PKCS#11 engine for HSM-backed FIT/image/RAUC signing in the gated
     # arm-production-build.yml lane (openssl -engine pkcs11, mkimage -N pkcs11)
     libengine-pkcs11-openssl \

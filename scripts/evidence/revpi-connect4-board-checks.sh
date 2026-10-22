@@ -4,20 +4,25 @@
 #
 # Hardware checks of a Revolution Pi Connect 4 running a Suderra OS revpi4 image
 # (docs/hardware/revpi-connect4.md section 6). Run it on the device as root; it
-# only reads the kernel's views of the hardware (and, with --try-unsigned-insmod,
-# tries one module load that must be refused). For every check it writes an
-# evidence file and a record of the shape scripts/evidence/suderra-lab.py takes
-# (devices[].checks.<name>: path, status, command, expected, observed), so an
-# operator copies the results into the lab input instead of retyping them.
+# reads the kernel's views of the hardware and does two things to the board: the
+# tpm-seal check seals a throw-away secret under the TPM's null hierarchy and
+# extends the debug PCR 16 (never PCR 7: the /data seal binds it; PCR 16 is reset
+# afterwards), and --try-unsigned-insmod tries one module load that must be
+# refused. For every check it writes an evidence file and a record of the shape
+# scripts/evidence/suderra-lab.py takes (devices[].checks.<name>: path, status,
+# command, expected, observed), so an operator copies the results into the lab
+# input instead of retyping them.
 #
 #   revpi-connect4-board-checks.sh --out DIR [--variant prod|dev]
-#       [--try-unsigned-insmod] [--root DIR] [--insmod PROGRAM]
+#       [--try-unsigned-insmod] [--root DIR] [--insmod PROGRAM] [--tcti TCTI]
 #
 # --root runs the same checks on a directory laid out like the device's /proc,
 # /sys, /dev and /etc, which is how tests/image-contracts/
 # revpi-board-checks-contract-test.sh runs them without hardware. Outside a
 # --root, /dev/piControl0 must be a character device; inside one it only has to
-# exist (a test directory cannot mknod).
+# exist (a test directory cannot mknod). --tcti names the TPM the tpm-seal check
+# talks to (default device:/dev/tpmrm0, the kernel's resource manager); the test
+# points it at a software TPM.
 #
 # Not covered here, because they need wiring or a person at the board: the RS485
 # loopback, the LEDs' look, the board reset by each watchdog, which Ethernet driver
@@ -30,7 +35,7 @@
 set -eu
 
 usage() {
-    echo "usage: $0 --out DIR [--variant prod|dev] [--try-unsigned-insmod] [--root DIR] [--insmod PROGRAM]" >&2
+    echo "usage: $0 --out DIR [--variant prod|dev] [--try-unsigned-insmod] [--root DIR] [--insmod PROGRAM] [--tcti TCTI]" >&2
 }
 
 ROOT=""
@@ -38,6 +43,7 @@ OUT=""
 VARIANT="prod"
 TRY_INSMOD=0
 INSMOD="insmod"
+TCTI="device:/dev/tpmrm0"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -46,6 +52,7 @@ while [ $# -gt 0 ]; do
         --variant) VARIANT="${2:?--variant needs prod or dev}"; shift 2 ;;
         --try-unsigned-insmod) TRY_INSMOD=1; shift ;;
         --insmod) INSMOD="${2:?--insmod needs a program}"; shift 2 ;;
+        --tcti) TCTI="${2:?--tcti needs a TCTI string}"; shift 2 ;;
         -h | --help) usage; exit 0 ;;
         *) usage; exit 2 ;;
     esac
@@ -160,6 +167,120 @@ check_tpm() {
         "tpmrm0=$([ -e "${ROOT}/dev/tpmrm0" ] && echo yes || echo no); tpm_version_major=${major:-none}"
 }
 
+# --- tpm-seal: the TPM seals a secret to PCR 7 and releases it only to that state
+# The /data key is sealed to PCR 7 (suderra-data-unlock: systemd-cryptenroll
+# --tpm2-pcrs=7). This runs that primitive with a throw-away secret under the
+# null hierarchy (it needs no owner or endorsement authorisation, sets none, and
+# is gone at the next TPM reset): seal to PCR 7 and PCR 16, unseal and compare,
+# then extend PCR 16 - the debug PCR; PCR 7 is never touched, the real /data seal
+# binds it - and require the policy to refuse the unseal, then reset PCR 16.
+# tpm2-tools only. The transient objects and sessions are flushed between steps:
+# a raw TCTI (the test's software TPM) has no resource manager to do it, and on
+# /dev/tpmrm0 it is harmless.
+TPM_DETAIL=""
+TPM_WORK=""
+TPM_PCR16_EXTENDED=0
+
+tpm_flush() {
+    tpm2_flushcontext -T "${TCTI}" -t >/dev/null 2>&1 || true
+    tpm2_flushcontext -T "${TCTI}" -l >/dev/null 2>&1 || true
+}
+
+# tpm_error: the ERROR lines of the last tool run, on one line.
+tpm_error() {
+    grep -h 'ERROR' "${TPM_WORK}/step.err" 2>/dev/null | head -n 3 | tr '\n' ' '
+}
+
+# tpm_step <label> <command...>: run it; on failure TPM_DETAIL names the step and its error.
+tpm_step() {
+    label="$1"
+    shift
+    if "$@" > "${TPM_WORK}/step.out" 2> "${TPM_WORK}/step.err"; then
+        return 0
+    fi
+    TPM_DETAIL="${label} failed: $(tpm_error)"
+    return 1
+}
+
+# tpm_seal_roundtrip <workdir>: 0 when the secret survives seal and unseal and
+# a changed PCR 16 blocks the release; TPM_DETAIL says what happened.
+tpm_seal_roundtrip() {
+    w="$1"
+    TPM_WORK="${w}"
+    for t in tpm2_createprimary tpm2_pcrread tpm2_createpolicy tpm2_create tpm2_load \
+        tpm2_unseal tpm2_pcrextend tpm2_pcrreset tpm2_flushcontext; do
+        if ! command -v "${t}" >/dev/null 2>&1; then
+            TPM_DETAIL="${t} is not installed (tpm2-tools)"
+            return 1
+        fi
+    done
+    if ! head -c 32 /dev/urandom > "${w}/secret.bin" 2>/dev/null; then
+        TPM_DETAIL="no random bytes to seal"
+        return 1
+    fi
+    tpm_flush
+    tpm_step "tpm2_createprimary (null hierarchy)" \
+        tpm2_createprimary -T "${TCTI}" -C n -G ecc -c "${w}/primary.ctx" || return 1
+    tpm_flush
+    tpm_step "tpm2_pcrread sha256:7,16" \
+        tpm2_pcrread -T "${TCTI}" -o "${w}/pcrs.bin" sha256:7,16 || return 1
+    tpm_step "tpm2_createpolicy (PCR 7,16)" \
+        tpm2_createpolicy -T "${TCTI}" --policy-pcr -l sha256:7,16 -f "${w}/pcrs.bin" -L "${w}/policy.digest" || return 1
+    tpm_step "tpm2_create (seal)" \
+        tpm2_create -T "${TCTI}" -C "${w}/primary.ctx" -i "${w}/secret.bin" -L "${w}/policy.digest" \
+        -u "${w}/seal.pub" -r "${w}/seal.priv" || return 1
+    tpm_flush
+    tpm_step "tpm2_load" \
+        tpm2_load -T "${TCTI}" -C "${w}/primary.ctx" -u "${w}/seal.pub" -r "${w}/seal.priv" -c "${w}/seal.ctx" || return 1
+    tpm_flush
+    tpm_step "tpm2_unseal" \
+        tpm2_unseal -T "${TCTI}" -c "${w}/seal.ctx" -p pcr:sha256:7,16 -o "${w}/unsealed.bin" || return 1
+    tpm_flush
+    if ! cmp -s "${w}/secret.bin" "${w}/unsealed.bin"; then
+        TPM_DETAIL="the unsealed bytes differ from the sealed secret"
+        return 1
+    fi
+    # The state the secret was sealed to changes: the policy must refuse the release.
+    tpm_step "tpm2_pcrextend 16" \
+        tpm2_pcrextend -T "${TCTI}" "16:sha256=0000000000000000000000000000000000000000000000000000000000000001" || return 1
+    TPM_PCR16_EXTENDED=1
+    if tpm2_unseal -T "${TCTI}" -c "${w}/seal.ctx" -p pcr:sha256:7,16 -o "${w}/unsealed-2.bin" \
+        > "${w}/step.out" 2> "${w}/step.err"; then
+        TPM_DETAIL="unseal succeeded after PCR 16 changed: the PCR policy is not enforced"
+        return 1
+    fi
+    case "$(cat "${w}/step.err")" in
+        *"policy check failed"*) ;;
+        *)
+            TPM_DETAIL="unseal was refused after PCR 16 changed, but not by the policy: $(tpm_error)"
+            return 1
+            ;;
+    esac
+    TPM_DETAIL="sealed 32 bytes to PCR 7 and 16 under the null hierarchy; the unseal returned them; after a PCR 16 extend the policy refused the unseal"
+    return 0
+}
+
+check_tpm_seal() {
+    work="${OUT}/tpm-seal.work"
+    mkdir -p "${work}"
+    status=failed
+    TPM_PCR16_EXTENDED=0
+    if tpm_seal_roundtrip "${work}"; then status=passed; fi
+    if [ "${TPM_PCR16_EXTENDED}" = 1 ]; then
+        if tpm2_pcrreset -T "${TCTI}" 16 >/dev/null 2>&1; then
+            TPM_DETAIL="${TPM_DETAIL}; PCR 16 reset"
+        else
+            TPM_DETAIL="${TPM_DETAIL}; PCR 16 could not be reset and holds the check's extend value until the next boot"
+        fi
+    fi
+    tpm_flush
+    rm -rf "${work}"
+    record tpm-seal "${status}" \
+        "tpm2_createprimary -C n; tpm2_createpolicy --policy-pcr -l sha256:7,16; tpm2_create; tpm2_load; tpm2_unseal; tpm2_pcrextend 16; tpm2_unseal" \
+        "a secret sealed to PCR 7 and 16 is released to that state and refused after PCR 16 changes" \
+        "${TPM_DETAIL}"
+}
+
 # --- rtc: the PCF2129 is the system's RTC ----------------------------------
 check_rtc() {
     name="$(read_first "${ROOT}/sys/class/rtc/rtc0/name")"
@@ -167,6 +288,20 @@ check_rtc() {
     case "${name}" in *pcf2127*) [ -e "${ROOT}/dev/rtc0" ] && status=passed ;; esac
     record rtc "${status}" "cat /sys/class/rtc/rtc0/name; test -e /dev/rtc0" \
         "rtc0 is the PCF2127/PCF2129 driver" "rtc0 name=${name:-none}"
+}
+
+# --- rtc-hctosys: the kernel set the system clock from the RTC at boot -----
+# hctosys is 1 only on the RTC the kernel used for CONFIG_RTC_HCTOSYS_DEVICE
+# (rtc0) and only when it read a valid time from it: 0 means the PCF2129 lost
+# its CR2032 or was never set, or another RTC is rtc0.
+check_rtc_hctosys() {
+    hctosys="$(read_first "${ROOT}/sys/class/rtc/rtc0/hctosys")"
+    since="$(read_first "${ROOT}/sys/class/rtc/rtc0/since_epoch")"
+    status=failed
+    if [ "${hctosys}" = 1 ]; then status=passed; fi
+    record rtc-hctosys "${status}" "cat /sys/class/rtc/rtc0/hctosys /sys/class/rtc/rtc0/since_epoch" \
+        "rtc0 set the system clock at boot (hctosys=1): the RTC held a valid time" \
+        "hctosys=${hctosys:-none}; since_epoch=${since:-none}"
 }
 
 # --- rs485: UART5 is there; the loopback itself needs wiring -----------------
@@ -293,7 +428,9 @@ check_board_identity
 check_kernel
 check_revpi_io
 check_tpm
+check_tpm_seal
 check_rtc
+check_rtc_hctosys
 check_rs485
 check_leds
 check_watchdog

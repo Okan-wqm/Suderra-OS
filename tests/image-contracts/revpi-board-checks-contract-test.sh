@@ -10,8 +10,11 @@
 # Connect 4 image would show, proves every check passes on it, and proves that
 # damaging each thing a check looks at fails that check and no other. The
 # signature-stripping of the unsigned-module check is run on a synthetic module
-# in the documented appended-signature format. The collector runs under dash, the
-# strict POSIX shell standing in for the image's busybox sh.
+# in the documented appended-signature format. The tpm-seal check runs its real
+# tpm2-tools sequence against a software TPM (swtpm) that the collector's --tcti
+# option points at, as it points at /dev/tpmrm0 on the board; the TPM's failure
+# modes are tpm2-tools wrappers that break one step. The collector runs under
+# dash, the strict POSIX shell standing in for the image's busybox sh.
 #
 set -euo pipefail
 IFS=$'\n\t'
@@ -27,9 +30,36 @@ fail() {
 
 [ -f "${CHECKS}" ] || fail "missing ${CHECKS}"
 command -v python3 >/dev/null 2>&1 || fail "python3 is missing"
+for tool in swtpm swtpm_setup tpm2_createprimary tpm2_pcrread tpm2_createpolicy tpm2_create tpm2_load \
+    tpm2_unseal tpm2_pcrextend tpm2_pcrreset tpm2_flushcontext; do
+    command -v "${tool}" >/dev/null 2>&1 ||
+        fail "${tool} is missing (swtpm, swtpm-tools, tpm2-tools and libtss2-tcti-swtpm0: ci/Dockerfile and the contract-test jobs of build.yml and lint.yml install them)"
+done
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+# The software TPM's sockets live under a short path: a unix socket path is
+# limited to about 100 characters and TMPDIR may be longer than that.
+TPMDIR="$(mktemp -d /tmp/revpi-swtpm.XXXXXX)"
+cleanup() {
+    if [ -f "${TPMDIR}/swtpm.pid" ]; then kill "$(cat "${TPMDIR}/swtpm.pid")" 2>/dev/null || true; fi
+    rm -rf "${WORK}" "${TPMDIR}"
+}
+trap cleanup EXIT
+
+# A software TPM 2.0 with the SHA-256 PCR bank the SLB9670 runs, started clean.
+mkdir -p "${TPMDIR}/state"
+swtpm_setup --tpm2 --tpmstate "${TPMDIR}/state" --pcr-banks sha256 --overwrite >"${TPMDIR}/setup.log" 2>&1 ||
+    { cat "${TPMDIR}/setup.log" >&2; fail "swtpm_setup failed"; }
+swtpm socket --tpm2 --tpmstate "dir=${TPMDIR}/state" \
+    --server "type=unixio,path=${TPMDIR}/tpm.sock" --ctrl "type=unixio,path=${TPMDIR}/tpm.sock.ctrl" \
+    --flags startup-clear,not-need-init --daemon --pid "file=${TPMDIR}/swtpm.pid" ||
+    fail "swtpm did not start"
+TCTI="swtpm:path=${TPMDIR}/tpm.sock"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    tpm2_pcrread -T "${TCTI}" sha256:16 >/dev/null 2>&1 && break
+    sleep 0.5
+done
+tpm2_pcrread -T "${TCTI}" sha256:16 >/dev/null 2>&1 || fail "the software TPM does not answer"
 
 # A directory a correct Connect 4 image would show.
 mkroot() { # <dir> <variant>
@@ -49,6 +79,8 @@ mkroot() { # <dir> <variant>
     : > "${d}/dev/ttyAMA5"
     printf '2\n' > "${d}/sys/class/tpm/tpm0/tpm_version_major"
     printf 'rtc-pcf2127 1-0051\n' > "${d}/sys/class/rtc/rtc0/name"
+    printf '1\n' > "${d}/sys/class/rtc/rtc0/hctosys"
+    printf '1790000000\n' > "${d}/sys/class/rtc/rtc0/since_epoch"
     for a in a1 a2 a3 a4 a5; do
         for c in red green blue; do mkdir -p "${d}/sys/class/leds/${a}:${c}:status"; done
     done
@@ -65,11 +97,12 @@ mkroot() { # <dir> <variant>
     fi
 }
 
+# COLLECTOR_PATH, when set, is the PATH of the collector alone.
 run_checks() { # <root> <out> <args...>: the collector's exit status; output in <out>.log
     local r="$1" o="$2"
     shift 2
     rm -rf "${o}"
-    "${SH}" "${CHECKS}" --root "${r}" --out "${o}" "$@" >"${o}.log" 2>&1 || return $?
+    PATH="${COLLECTOR_PATH:-${PATH}}" "${SH}" "${CHECKS}" --root "${r}" --out "${o}" --tcti "${TCTI}" "$@" >"${o}.log" 2>&1 || return $?
 }
 
 status_of() { # <out> <check>
@@ -117,8 +150,8 @@ python3 -I - "${WORK}/out-prod" <<'PY' || fail "checks.json is not the record sh
 import json, os, sys
 out = sys.argv[1]
 checks = json.load(open(out + "/checks.json"))
-want = {"board-identity", "kernel", "revpi-io", "tpm", "rtc", "rs485", "leds", "watchdog",
-        "module-signing", "boot-chain"}
+want = {"board-identity", "kernel", "revpi-io", "tpm", "tpm-seal", "rtc", "rtc-hctosys", "rs485",
+        "leds", "watchdog", "module-signing", "boot-chain"}
 assert set(checks) == want, sorted(set(checks) ^ want)
 for name, rec in checks.items():
     assert set(rec) == {"path", "status", "command", "expected", "observed"}, name
@@ -145,6 +178,8 @@ damage "piControl not loaded" revpi-io prod 'rmdir sys/module/piControl'
 damage "no TPM resource-manager node" tpm prod 'rm dev/tpmrm0'
 damage "a TPM 1.2" tpm prod 'printf "1\n" > sys/class/tpm/tpm0/tpm_version_major'
 damage "the DS1307 as RTC" rtc prod 'printf "rtc-ds1307 1-0068\n" > sys/class/rtc/rtc0/name'
+damage "an RTC the kernel could not read at boot (hctosys 0)" rtc-hctosys prod 'printf "0\n" > sys/class/rtc/rtc0/hctosys'
+damage "a kernel without CONFIG_RTC_HCTOSYS" rtc-hctosys prod 'rm sys/class/rtc/rtc0/hctosys'
 damage "no RS485 UART" rs485 prod 'rm dev/ttyAMA5'
 damage "a missing status LED" leds prod 'rmdir sys/class/leds/a3:blue:status'
 damage "a missing power LED" leds prod 'rmdir sys/class/leds/power:1:fault'
@@ -154,6 +189,123 @@ damage "a production kernel that accepts unsigned modules" module-signing prod '
 damage "a production kernel that is not locked down" module-signing prod 'printf "[none] integrity confidentiality\n" > sys/kernel/security/lockdown'
 damage "a production command line without the verity root hash" boot-chain prod 'printf "console=ttyS0,115200 ro\n" > proc/cmdline'
 damage "a production console on the PL011" boot-chain prod 'printf "console=ttyAMA0,115200 suderra.verity.root_hash=00ff\n" > proc/cmdline'
+
+# --- the tpm-seal check against the software TPM -------------------------------
+echo "tpm seal"
+ZERO="0x0000000000000000000000000000000000000000000000000000000000000000"
+pcr_value() { # <index>: the PCR's value in the software TPM
+    tpm2_pcrread -T "${TCTI}" "sha256:$1" 2>/dev/null | sed -n "s/^ *$1 *: *\\(0x[0-9a-f]*\\)\$/\\1/p"
+}
+[ "$(pcr_value 16)" = "${ZERO}" ] || fail "PCR 16 is not zero after the runs above: the check leaves it extended"
+[ "$(pcr_value 7)" = "${ZERO}" ] || fail "PCR 7 is not zero: a check extended the PCR the /data seal binds"
+grep -q 'sealed 32 bytes to PCR 7 and 16 under the null hierarchy' "${WORK}/out-prod/tpm-seal.txt" ||
+    fail "the evidence does not say what was sealed"
+grep -q 'PCR 16 reset' "${WORK}/out-prod/tpm-seal.txt" || fail "the evidence does not say PCR 16 was reset"
+[ ! -e "${WORK}/out-prod/tpm-seal.work" ] || fail "the check left its work directory, and the secret it sealed, behind"
+echo "  seals, unseals, is refused after a PCR 16 change, and leaves every PCR as it found it"
+
+# Wrappers of single tpm2-tools programs: a directory searched first by the collector.
+SHIMS="${WORK}/shims"
+new_shims() { rm -rf "${SHIMS}"; mkdir -p "${SHIMS}"; rm -f "${WORK}/unseal-count" "${WORK}/tool-calls"; }
+add_shim() { # <tool>, the wrapper's body on stdin; REAL is the real program
+    local real
+    real="$(command -v "$1")"
+    { printf '#!/bin/sh\nREAL=%s\n' "${real}"; cat; } > "${SHIMS}/$1"
+    chmod +x "${SHIMS}/$1"
+}
+shimmed() { PATH="${SHIMS}:${PATH}" "$@"; }
+
+# What the collector asks the TPM for: a null-hierarchy primary (never the owner's), a
+# policy over PCR 7 (the PCR the /data seal binds) and PCR 16, the unseal under that
+# policy twice, and the only PCR writes: one extend and one reset, both of PCR 16.
+new_shims
+for tool in tpm2_createprimary tpm2_createpolicy tpm2_unseal tpm2_pcrextend tpm2_pcrreset; do
+    add_shim "${tool}" <<EOF
+echo "${tool} \$@" >> "${WORK}/tool-calls"
+exec "\${REAL}" "\$@"
+EOF
+done
+shimmed expect_pass "a correct board with the TPM calls recorded" "${WORK}/prod" "${WORK}/out-pcr" --variant prod
+calls() { grep -Ec -- "$1" "${WORK}/tool-calls" || true; }
+[ "$(calls '^tpm2_createprimary -T [^ ]+ -C n -G ecc -c ')" = 1 ] || fail "the primary is not made under the null hierarchy: $(grep '^tpm2_createprimary' "${WORK}/tool-calls")"
+[ "$(calls '^tpm2_createpolicy ')" = 1 ] && [ "$(calls '^tpm2_createpolicy -T [^ ]+ --policy-pcr -l sha256:7,16 ')" = 1 ] ||
+    fail "the policy is not over PCR 7 and 16: $(grep '^tpm2_createpolicy' "${WORK}/tool-calls")"
+[ "$(calls '^tpm2_unseal ')" = 2 ] && [ "$(calls '^tpm2_unseal -T [^ ]+ -c [^ ]+ -p pcr:sha256:7,16 -o ')" = 2 ] ||
+    fail "the unseals do not present PCR 7 and 16: $(grep '^tpm2_unseal' "${WORK}/tool-calls")"
+[ "$(calls '^tpm2_pcrextend ')" = 1 ] && [ "$(calls '^tpm2_pcrextend -T [^ ]+ 16:sha256=[0-9a-f]{64}$')" = 1 ] ||
+    fail "the PCR extend is not one extend of PCR 16: $(grep '^tpm2_pcrextend' "${WORK}/tool-calls")"
+[ "$(calls '^tpm2_pcrreset ')" = 1 ] && [ "$(calls '^tpm2_pcrreset -T [^ ]+ 16$')" = 1 ] ||
+    fail "the PCR reset is not one reset of PCR 16: $(grep '^tpm2_pcrreset' "${WORK}/tool-calls")"
+[ "$(pcr_value 7)" = "${ZERO}" ] || fail "PCR 7 changed"
+echo "  asks for a null-hierarchy seal to PCR 7 and 16 and writes PCR 16 only"
+
+new_shims
+add_shim tpm2_unseal <<'EOF'
+out=""
+while [ $# -gt 0 ]; do
+    [ "$1" = -o ] && out="$2"
+    shift
+done
+printf 'not the secret' > "${out}"
+EOF
+shimmed expect_fail "a TPM whose unseal returns other bytes" tpm-seal "${WORK}/prod" "${WORK}/out-t" --variant prod
+grep -q 'differ from the sealed secret' "${WORK}/out-t/tpm-seal.txt" || fail "the failure does not say the bytes differ"
+
+new_shims
+add_shim tpm2_pcrextend <<'EOF'
+exit 0
+EOF
+shimmed expect_fail "a TPM that releases the secret after the PCR changed" tpm-seal "${WORK}/prod" "${WORK}/out-t" --variant prod
+grep -q 'policy is not enforced' "${WORK}/out-t/tpm-seal.txt" || fail "the failure does not say the policy is not enforced"
+
+new_shims
+add_shim tpm2_unseal <<EOF
+n=\$(cat "${WORK}/unseal-count" 2>/dev/null || echo 0)
+echo \$((n + 1)) > "${WORK}/unseal-count"
+if [ "\${n}" -ge 1 ]; then
+    echo "ERROR: Esys_Unseal(0x902) - tpm:warn(2.0): out of memory for object contexts" >&2
+    exit 1
+fi
+exec "\${REAL}" "\$@"
+EOF
+shimmed expect_fail "a refusal after the PCR change that is not the policy's" tpm-seal "${WORK}/prod" "${WORK}/out-t" --variant prod
+grep -q 'not by the policy' "${WORK}/out-t/tpm-seal.txt" || fail "the failure does not say the refusal was not the policy's"
+
+for step in tpm2_createprimary tpm2_create tpm2_load tpm2_unseal tpm2_pcrread tpm2_createpolicy tpm2_pcrextend; do
+    new_shims
+    add_shim "${step}" <<'EOF'
+echo "ERROR: simulated failure" >&2
+exit 1
+EOF
+    shimmed expect_fail "a TPM whose ${step} fails" tpm-seal "${WORK}/prod" "${WORK}/out-t" --variant prod
+    grep -q "${step}.* failed: ERROR: simulated failure" "${WORK}/out-t/tpm-seal.txt" ||
+        fail "the failure of ${step} is not named in the evidence"
+done
+[ "$(pcr_value 16)" = "${ZERO}" ] || fail "PCR 16 is not zero after a failure that followed the extend"
+
+new_shims
+add_shim tpm2_pcrreset <<'EOF'
+echo "ERROR: simulated failure" >&2
+exit 1
+EOF
+shimmed expect_pass "a TPM that refuses to reset PCR 16 (the debug PCR; noted, not a seal failure)" "${WORK}/prod" "${WORK}/out-t" --variant prod
+grep -q 'PCR 16 could not be reset' "${WORK}/out-t/tpm-seal.txt" || fail "the evidence does not say PCR 16 stayed extended"
+tpm2_pcrreset -T "${TCTI}" 16 >/dev/null 2>&1 || fail "could not reset PCR 16 of the software TPM"
+
+expect_fail "no TPM behind the TCTI" tpm-seal "${WORK}/prod" "${WORK}/out-t" --variant prod --tcti "swtpm:path=${WORK}/nothing-listens"
+
+# tpm2-tools without one program: a PATH holding the collector's tools and all but that one.
+for missing in tpm2_pcrread tpm2_unseal tpm2_pcrreset; do
+    rm -rf "${WORK:?}/bin"
+    mkdir -p "${WORK}/bin"
+    for t in head tail tr sed wc od cat cmp grep mkdir rm basename \
+        tpm2_createprimary tpm2_pcrread tpm2_createpolicy tpm2_create tpm2_load tpm2_unseal \
+        tpm2_pcrextend tpm2_pcrreset tpm2_flushcontext; do
+        [ "${t}" = "${missing}" ] || ln -s "$(command -v "${t}")" "${WORK}/bin/${t}"
+    done
+    COLLECTOR_PATH="${WORK}/bin" expect_fail "tpm2-tools without ${missing}" tpm-seal "${WORK}/prod" "${WORK}/out-t" --variant prod
+    grep -q "${missing} is not installed" "${WORK}/out-t/tpm-seal.txt" || fail "the failure does not name ${missing}"
+done
 
 # --- the dev board ------------------------------------------------------------
 echo "dev board"
@@ -252,7 +404,7 @@ CAPTURE="${WORK}/capture.ko" expect_fail "no module under /lib/modules" unsigned
 # The same collector run by bash must agree (the device runs busybox sh, a
 # developer's host may run bash).
 BASH_OUT="${WORK}/out-bash"
-bash "${CHECKS}" --root "${WORK}/prod" --out "${BASH_OUT}" --variant prod >/dev/null 2>&1 || fail "the collector fails under bash"
+bash "${CHECKS}" --root "${WORK}/prod" --out "${BASH_OUT}" --tcti "${TCTI}" --variant prod >/dev/null 2>&1 || fail "the collector fails under bash"
 cmp -s "${WORK}/out-prod/checks.json" "${BASH_OUT}/checks.json" || fail "bash and dash disagree on checks.json"
 echo "  agrees under bash and dash"
 
