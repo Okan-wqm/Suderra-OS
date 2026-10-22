@@ -54,13 +54,25 @@ kernel it was built against:
   `_req_gate_datagram`, `_req_gate_tmt`, `_req_send_gate`).
 - 2.6.2 compiles against the pinned kernel tree with the aarch64 gcc 13 toolchain.
 
-**Userspace ABI consequence.** `SDeviceInfo` (the `KB_GET_DEVICE_INFO_LIST` element) is 72 bytes in
-piControl 2.6.2 and 76 bytes in 2.8.2, because 2.8.2 inserts `__u16 i16uFeatures` before the reserved
-bytes without shrinking them. A userspace built against the 2.8.2 header reads the 2.6.2 driver's
-array with the wrong stride. Anything that talks to `/dev/piControl0` (the agent's `revpi-io`
-backend) must use the structure layout of the piControl release pinned here. The other
-`piControl.h` differences between the two releases (removed `KB_CONFIG_STOP/SEND/START`, renamed
-constants) do not touch the ioctls the agent's allowlist uses.
+**Userspace ABI.** Code written against the piControl 2.8.2 header works with this 2.6.2 driver for
+everything the agent's ioctl allowlist uses (checked by compiling both headers and reading both
+driver sources):
+
+- `SDeviceInfo` is 72 bytes in both releases (`i8uActive` at offset 39). 2.8.2's `i16uFeatures`
+  sits at offset 40, in what 2.6.2 calls the first two reserved bytes, and the 2.6.2 driver allocates
+  the device list zeroed (`kcalloc`) and never writes the reserve, so `features` reads 0 on this
+  driver.
+- `KB_PI_LEN` (2.6.2) and `PICONTROL_PROCESS_IMAGE_LEN` (2.8.2) are both 4096;
+  `REV_PI_DEV_CNT_MAX` and `PICONTROL_MAX_DEVICES` are both 64.
+- The handlers of `KB_GET_DEVICE_INFO_LIST`, `KB_GET_VALUE`, `KB_SET_VALUE`, `KB_FIND_VARIABLE`,
+  `KB_SET_OUTPUT_WATCHDOG` and `KB_WAIT_FOR_EVENT` differ between the releases only by refactoring
+  (`scoped_guard`, helper functions, renamed constants), except that 2.6.2's
+  `KB_GET_DEVICE_INFO_LIST` also prints a firmware-update hint to the user message buffer.
+- The 2.8.2 header drops `KB_CONFIG_STOP`, `KB_CONFIG_SEND` and `KB_CONFIG_START` (ioctls 23 to 25) and
+  deprecates `KB_GET_LAST_MESSAGE` and `KB_SET_POS`; none is allowlisted.
+
+The release that defines the driver's behaviour on the board is 2.6.2: a behaviour question is
+answered by `src/piControlMain.c` of that tag, not of a newer one.
 
 ## 2. Boot chain and the device tree
 
