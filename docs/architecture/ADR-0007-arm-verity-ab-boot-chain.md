@@ -152,9 +152,17 @@ EI-034, EI-035, EI-036). What replaced them, and what proves it:
    `BOOTDELAY=-2` (-1 stops AT the prompt in this U-Boot) and makes the console input
    the null device. The A/B slot choice is the compiled-in `bootcmd`
    (`board/suderra/uboot/suderra.env`), not an unsigned `boot.scr` on a writable FAT
-   (the file is gone); it reads RAUC's counters, spends a try only for a slot RAUC has
-   not confirmed, and ends in `reset`, never in a prompt. A FIT that does not load or
-   verify costs its slot, so the next boot takes the other one.
+   (the file is gone); it reads RAUC's counters, spends one try of the slot it chooses
+   and saves it before the kernel starts (the behaviour of RAUC's own U-Boot reference
+   script, `contrib/uboot.sh`), and ends in `reset`, never in a prompt. A FIT that does
+   not load or verify costs that one try, never the slot: the first version zeroed the
+   slot's counter on any failure, so one failed `load` (a read error, a supply that
+   sags at power-up) left a factory board, which has no slot B, with no slot to boot and
+   no console to say so. A slot out of tries yields to the other, and when no slot has
+   a try left both are armed again with RAUC's `boot-attempts`, so a cause that was
+   transient never leaves a board down; a slot that is genuinely broken keeps failing,
+   which is the same as stopping. RAUC's mark-good, after the health gate, arms the
+   booted slot again.
 4. **The stored environment can change only the boot counters.**
    `ENV_WRITEABLE_LIST` makes U-Boot start from the compiled-in environment and take
    only `BOOT_ORDER`, `BOOT_A_LEFT` and `BOOT_B_LEFT` from the stored one (the flag
@@ -202,11 +210,21 @@ the next section (H2).
   by a label impossible, not an attacker with a copy of the image; against that the
   control is the USB policy below.
 - **The verity table carries `restart_on_corruption`.** A block that fails its hash
-  restarts the machine; the A/B counters turn that into the other slot while the
-  slot is a freshly installed one. A slot RAUC marked good boots without a counter
-  write (DEC-18.5), so a confirmed slot whose root file system corrupts later
-  restarts into the same slot until RAUC's health logic acts on it: that is the
-  trade-off DEC-18.5 chose against writing the environment on every boot.
+  restarts the machine, and because every boot spends one of the slot's tries (and
+  mark-good restores them once the health gate passed), a slot whose root file system
+  is corrupt runs out of tries and the other slot boots, confirmed or not. The first
+  version counted only freshly installed slots ("a confirmed boot writes nothing"), so
+  a confirmed slot restarted into itself for ever; the premise was also wrong end to
+  end, because RAUC's mark-good runs `fw_setenv` on every boot anyway
+  (`src/bootloaders/uboot.c`, `r_uboot_set_state`). Two environment writes per boot (the
+  spend before the kernel, the mark-good after the health gate) go to the redundant raw
+  copies, whose writer fills the copy that is not current (`env/mmc.c`, `env_mmc_save`),
+  so a power cut leaves the old or the new counters. What the restart-to-fallback chain
+  has run: U-Boot's side (a slot that boots and never confirms yields after its tries,
+  `tests/qemu/arm-fit-signature-boot.sh` S7) and the choice table (`tests/image-contracts/
+  uboot-env-exec-contract-test.sh`). Not run: the kernel's `restart_on_corruption` reset
+  on a real root file system with a flipped byte (EI-050 stays open until the hardware
+  check 6 below, or a VM with the production initramfs, shows it).
 - **The ARM command line has `debugfs=off` and `module.sig_enforce=1`** like the x86
   one. `module.sig_enforce` is a kernel parameter only where the kernel has
   `CONFIG_MODULE_SIG` (the RevPi production kernel does; the Pi 4 production kernel
@@ -238,8 +256,9 @@ a production image:
    resets again; it never starts the kernel.
 3. `fw_printenv` shows the counters U-Boot saved (the raw environment at 0x60000 and
    0x80000 of `/dev/mmcblk0`); install an update and look at `BOOT_ORDER` and
-   `BOOT_<slot>_LEFT` change; cut the power while `fw_setenv` runs, a thousand times,
-   and the device still boots with a valid environment.
+   `BOOT_<slot>_LEFT` change (a boot spends one try before the kernel starts, mark-good
+   restores it); cut the power while `fw_setenv` or U-Boot's `saveenv` runs, a thousand
+   times, and the device still boots with a valid environment.
 4. A USB stick inserted while the device runs is blocked (`usbguard list-devices`),
    a serial adapter of the hardware list is allowed.
 5. A Modbus master flooding the RS485 port during a power cycle does not stop the
@@ -247,7 +266,7 @@ a production image:
    (U-Boot's output uses the `enable_uart` UART of the firmware: whether it may stay
    on a HAT that must be silent at power-up is decided on the hardware).
 6. Flip one byte of the active root file system on disk, read the file: the device
-   restarts, and after the tries of a freshly installed slot it takes the other one.
+   restarts, and after the slot's three tries it takes the other slot.
 7. A second disk with the same PARTUUIDs attached at boot: the initramfs refuses
    (`PARTUUID ... is on 2 devices`) instead of choosing one.
 

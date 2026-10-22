@@ -154,9 +154,9 @@ FORBIDDEN_VARIABLES = (
 )
 REQUIRED_VARIABLES = (
     "bootdelay", "stdin", "stdout", "stderr", "fdt_high", "initrd_high",
-    "fitaddr", "suderra_bootdev", "suderra_good_attempts", "BOOT_ORDER",
+    "fitaddr", "suderra_bootdev", "suderra_attempts", "BOOT_ORDER",
     "BOOT_A_LEFT", "BOOT_B_LEFT", "suderra_guard", "suderra_pick",
-    "suderra_boot", "suderra_fail", "bootcmd",
+    "suderra_boot", "suderra_rearm", "bootcmd",
 )
 # The only variables the stored environment may change: the RAUC U-Boot
 # backend's (bootchooser: BOOT_ORDER and one BOOT_<slot>_LEFT per bootname).
@@ -349,11 +349,26 @@ def check_env(path: Path, patches: Path, label: str, root: Path) -> list[str]:
     if not re.search(r"(^|[;\s])reset\s*$", boot):
         problems.append(f"{label}: bootcmd must end in 'reset': it must never return to a prompt")
     steps = run_closure(env, "bootcmd")
-    for need in ("suderra_guard", "suderra_pick", "suderra_boot", "suderra_fail"):
+    for need in ("suderra_guard", "suderra_pick", "suderra_boot", "suderra_rearm"):
         if need not in steps:
             problems.append(f"{label}: bootcmd does not run {need}")
+    # The try a boot spends is saved BEFORE the slot boots: a boot that never
+    # returns (a kernel that panics, a dm-verity restart) has then counted.
+    # tests/image-contracts/uboot-env-exec-contract-test.sh executes the choice.
+    boot_text = env.get("bootcmd", "")
+    if not re.search(r"\bsaveenv\b[^;]*;\s*run suderra_boot\b", boot_text):
+        problems.append(f"{label}: bootcmd must saveenv immediately before 'run suderra_boot': the try is spent before the kernel starts")
     for step in steps:
         for command, args in commands_of(env[step]):
+            # A counter changes by one try or is armed with suderra_attempts. A
+            # step that zeroes it turns one failed load into a slot that never
+            # boots again (a factory board has no other slot).
+            if command == "setenv" and args and re.fullmatch(r"BOOT_[A-Z]_LEFT", args[0]) and \
+                    args[1:2] != ["${suderra_attempts}"]:
+                problems.append(f"{label}: {step} sets {args[0]} to {' '.join(args[1:2]) or 'nothing'}: only suderra_attempts may arm a slot")
+            if command == "setexpr" and args and re.fullmatch(r"BOOT_[A-Z]_LEFT", args[0]) and \
+                    args[1:] != ["${" + args[0] + "}", "-", "1"]:
+                problems.append(f"{label}: {step} changes {args[0]} other than by spending one try")
             if command in FORBIDDEN_COMMANDS:
                 problems.append(f"{label}: {step} runs '{command}': a boot path the FIT check does not cover")
             if command == "env" and args[:1] in (["import"], ["run"]):
@@ -369,12 +384,14 @@ def check_env(path: Path, patches: Path, label: str, root: Path) -> list[str]:
         problems.append(f"{label}: suderra_guard must end by requiring required = conf")
     if "bootm ${fitaddr}" not in env.get("suderra_boot", ""):
         problems.append(f"{label}: suderra_boot must bootm ${{fitaddr}} (the FIT is the only boot)")
-    for name in ("BOOT_A_LEFT", "BOOT_B_LEFT", "suderra_good_attempts"):
+    for name in ("BOOT_A_LEFT", "BOOT_B_LEFT", "suderra_attempts"):
         if name in env and not re.fullmatch(r"[0-9]", env[name]):
             problems.append(f"{label}: {name}={env[name]!r} must be one digit (setexpr works in hex)")
-    good = env.get("suderra_good_attempts", "")
-    if env.get("BOOT_A_LEFT") != good:
-        problems.append(f"{label}: BOOT_A_LEFT must start at suderra_good_attempts ({good}): the factory slot is confirmed")
+    if env.get("suderra_attempts") == "0":
+        problems.append(f"{label}: suderra_attempts must be at least 1: an armed slot needs a try")
+    armed = env.get("suderra_attempts", "")
+    if env.get("BOOT_A_LEFT") != armed:
+        problems.append(f"{label}: BOOT_A_LEFT must start at suderra_attempts ({armed}): the factory slot is armed")
     if env.get("BOOT_B_LEFT") != "0":
         problems.append(f"{label}: BOOT_B_LEFT must start at 0: the factory image has no slot B")
     flags = flag_list(patches)

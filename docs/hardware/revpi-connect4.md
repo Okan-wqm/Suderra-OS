@@ -200,8 +200,11 @@ Not done here, because it needs more disk, a full image build, or the board:
 
 - A full kernel and image build, so the real `Image` size, the real module size and the rootfs fit
   are unmeasured. CI's image build runs the resolved-config check, the module link and both gates.
-- Whether U-Boot passes the FIT configuration's `bootargs` to the kernel (ADR-0007 H3) and
-  selects the single configuration, on the board.
+- Whether the firmware hands U-Boot the keyed device tree from the boot partition (the control
+  FDT), and U-Boot then selects the single FIT configuration and starts the kernel with the
+  `/chosen/bootargs` of the device tree that configuration signs. U-Boot never reads a
+  configuration's own `bootargs` property (ADR-0007); the command line is part of the signed device
+  tree, so what the board has to show is that `/proc/cmdline` carries it (section 6).
 
 ## 6. Hardware checklist (needs a Revolution Pi Connect 4)
 

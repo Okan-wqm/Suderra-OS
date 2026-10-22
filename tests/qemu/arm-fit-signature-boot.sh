@@ -23,8 +23,13 @@
 #     boots an unsigned FIT in exactly that case;
 #   - a FIT with one flipped kernel byte, one flipped byte of the signed command
 #     line, a signature by another key, no signature, or a legacy image format is
-#     refused, and a FIT that does not verify costs its slot (the next boot takes
-#     the other slot);
+#     refused;
+#   - every boot of a slot spends one try and saves it before the kernel starts:
+#     a FIT that does not verify or does not load costs that one try, never the
+#     slot (a factory board has no other slot), a slot that boots but never
+#     reaches RAUC's mark-good (a kernel panic, a dm-verity restart) falls back
+#     to the other slot after its tries, and a board with no try left is armed
+#     again instead of staying down;
 #   - a stored environment that sets bootcmd, bootargs, stdin or preboot changes
 #     none of them, while BOOT_ORDER and the boot counters it carries apply, and
 #     what U-Boot writes back holds the compiled-in values;
@@ -244,13 +249,13 @@ mkimage -A arm64 -O linux -T kernel -C none -a "${KERNEL_LOAD}" -e "${KERNEL_LOA
 # ---------------------------------------------------------------------------
 # Boot helpers
 # ---------------------------------------------------------------------------
-make_disk() { # <out> <fit-A> <fit-B>
+make_disk() { # <out> <fit-A|-> <fit-B|->: "-" leaves that FIT off the boot partition
     local out="$1" fat="${WORK}/fat.$$.img"
     rm -f "${fat}"
     truncate -s 20M "${fat}"
     mkfs.vfat -F 16 "${fat}" >/dev/null
-    mcopy -i "${fat}" "$2" ::suderra-A.fit
-    mcopy -i "${fat}" "$3" ::suderra-B.fit
+    [ "$2" = - ] || mcopy -i "${fat}" "$2" ::suderra-A.fit
+    [ "$3" = - ] || mcopy -i "${fat}" "$3" ::suderra-B.fit
     python3 -I "${STUB_DIR}/mbr-disk.py" "${out}" "${fat}"
     rm -f "${fat}"
 }
@@ -329,7 +334,6 @@ env_make() { # <out> NAME=VALUE...
     shift
     python3 -I "${STUB_DIR}/envimage.py" make "${out}" "${ENV_SIZE}" "${ENV_SECOND}" "$@"
 }
-sha() { sha256sum "$1" | cut -d' ' -f1; }
 
 DISK="${WORK}/disk.img"
 ENVIMG="${FAST}/env.img"
@@ -340,10 +344,9 @@ scenario() { CURRENT="$1"; SCENARIOS=$((SCENARIOS + 1)); step "$1"; }
 # ---------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------
-scenario "S1 the signed FIT of slot A boots; the kernel gets the signed command line, and nothing is written"
+scenario "S1 the signed FIT of slot A boots; the kernel gets the signed command line; the boot spent one try and saved it"
 make_disk "${DISK}" "${FIT_A}" "${FIT_B}"
 blank_env "${ENVIMG}"
-before="$(sha "${ENVIMG}")"
 run_qemu s1 "${UBOOT}" "${FIRMWARE_ARGS_DTB}" "${DISK}" "${ENVIMG}"
 expect_booted A "${CMDLINE_A}"
 refuse_log "firmware.evil"
@@ -352,8 +355,10 @@ case "$(kernel_args)" in
     *) fail "the signed command line lacks the verity root hash or lockdown" ;;
 esac
 ok "the command line of the firmware's own /chosen/bootargs never reaches the kernel"
-[ "$(sha "${ENVIMG}")" = "${before}" ] || fail "a boot of a confirmed slot wrote the environment"
-ok "a boot of a confirmed slot writes no environment (no saveenv, no flash wear)"
+saved="$(env_dump "${ENVIMG}")"
+grep -qx 'BOOT_A_LEFT=2' <<<"${saved}" || fail "the boot did not spend and save a try of slot A: $(grep BOOT_ <<<"${saved}")"
+grep -qx 'BOOT_B_LEFT=0' <<<"${saved}" || fail "slot B (not in the factory image) has tries: $(grep BOOT_ <<<"${saved}")"
+ok "the factory counters (A 3, B 0) became A 2 before the kernel started: a boot that never returns has counted"
 
 scenario "S2 a control FDT without the FIT key boots nothing (T88)"
 run_qemu s2 "${UBOOT}" "${UNKEYED_DTB}" "${DISK}" "${ENVIMG}"
@@ -382,6 +387,8 @@ reject_fit() { # <label> <fit> <why>
     expect_log "Suderra: booting slot A"
     expect_log "Suderra: slot A did not boot"
     expect_refused
+    grep -qx 'BOOT_A_LEFT=2' <<<"$(env_dump "${ENVIMG}")" ||
+        fail "${label}: the refused boot did not cost exactly one try of slot A: $(env_dump "${ENVIMG}" | grep BOOT_)"
     ok "${why}"
 }
 
@@ -392,7 +399,7 @@ reject_fit s4c "${RESIGNED}" "a FIT signed by another key under the same key nam
 reject_fit s4d "${UNSIGNED}" "a FIT with no signature (required = \"conf\"): refused"
 reject_fit s4e "${LEGACY}" "a legacy uImage in the FIT's place (no legacy image format in this U-Boot): refused"
 
-scenario "S5 a FIT that does not verify costs its slot: the next boot takes the other slot"
+scenario "S5 a FIT that does not verify costs one try per boot; when its tries are gone the other slot boots"
 make_disk "${DISK}" "${FIT_A}" "${TAMPER_KERNEL}"
 env_make "${ENVIMG}" "BOOT_ORDER=B A" "BOOT_A_LEFT=3" "BOOT_B_LEFT=2"
 run_qemu s5a "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
@@ -400,14 +407,52 @@ expect_log "Suderra: booting slot B"
 expect_log "Suderra: slot B did not boot"
 expect_refused
 saved="$(env_dump "${ENVIMG}")"
-grep -qx 'BOOT_B_LEFT=0' <<<"${saved}" || fail "the failed slot kept its tries: $(grep BOOT_ <<<"${saved}")"
+grep -qx 'BOOT_B_LEFT=1' <<<"${saved}" || fail "the failed boot of slot B did not cost exactly one try: $(grep BOOT_ <<<"${saved}")"
+grep -qx 'BOOT_A_LEFT=3' <<<"${saved}" || fail "the failed boot of slot B touched slot A: $(grep BOOT_ <<<"${saved}")"
 grep -qx 'BOOT_ORDER=B A' <<<"${saved}" || fail "BOOT_ORDER changed"
-ok "slot B (a freshly installed slot, 2 tries) did not verify: its tries are now 0, saved"
+ok "slot B (2 tries) did not verify: it has 1 left, slot A is untouched"
 run_qemu s5b "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+expect_log "Suderra: booting slot B"
+expect_refused
+grep -qx 'BOOT_B_LEFT=0' <<<"$(env_dump "${ENVIMG}")" || fail "the second failed boot of slot B left tries: $(env_dump "${ENVIMG}" | grep BOOT_)"
+ok "the next boot tried slot B again (its last try) and refused it again"
+run_qemu s5c "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
 expect_booted A "${CMDLINE_A}"
-ok "the next boot took slot A and booted it"
+grep -qx 'BOOT_A_LEFT=2' <<<"$(env_dump "${ENVIMG}")" || fail "the fallback boot of slot A did not spend a try: $(env_dump "${ENVIMG}" | grep BOOT_)"
+ok "with slot B out of tries the next boot took slot A and booted it"
 
-scenario "S6 a stored environment cannot set bootcmd, bootargs, stdin or preboot; the boot counters it carries apply"
+scenario "S6 the factory counters: one failed boot of the only slot is followed by a good boot (a transient load failure must not end the board)"
+make_disk "${DISK}" - "${FIT_B}"
+blank_env "${ENVIMG}"
+run_qemu s6a "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+expect_log "Suderra: booting slot A"
+expect_log "Suderra: slot A did not boot"
+expect_refused
+saved="$(env_dump "${ENVIMG}")"
+grep -qx 'BOOT_A_LEFT=2' <<<"${saved}" || fail "the unloadable FIT did not cost exactly one try: $(grep BOOT_ <<<"${saved}")"
+ok "boot 1: the FIT of slot A could not be loaded; slot A kept 2 of its 3 tries (the board was not ended)"
+make_disk "${DISK}" "${FIT_A}" "${FIT_B}"
+run_qemu s6b "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+refuse_log "no slot with tries left"
+expect_booted A "${CMDLINE_A}"
+ok "boot 2, healthy disk: slot A booted (the review's reproduction: it used to be 'no slot with tries left' for ever)"
+
+scenario "S7 a slot that boots but never reaches mark-good (a panic, a dm-verity restart) falls back after its tries"
+make_disk "${DISK}" "${FIT_A}" "${FIT_B}"
+env_make "${ENVIMG}" "BOOT_ORDER=A B" "BOOT_A_LEFT=3" "BOOT_B_LEFT=3"
+for n in 1 2 3; do
+    run_qemu "s7a${n}" "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+    expect_booted A "${CMDLINE_A}"
+    grep -qx "BOOT_A_LEFT=$((3 - n))" <<<"$(env_dump "${ENVIMG}")" ||
+        fail "boot ${n} of slot A did not leave $((3 - n)) tries: $(env_dump "${ENVIMG}" | grep BOOT_)"
+done
+ok "slot A, confirmed (3 tries), booted three times without mark-good: its tries are 0"
+run_qemu s7b "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+expect_booted B "${CMDLINE_B}"
+grep -qx 'BOOT_B_LEFT=2' <<<"$(env_dump "${ENVIMG}")" || fail "the fallback boot of slot B did not spend a try: $(env_dump "${ENVIMG}" | grep BOOT_)"
+ok "the fourth boot took slot B: a confirmed slot that keeps restarting no longer loops for ever"
+
+scenario "S8 a stored environment cannot set bootcmd, bootargs, stdin or preboot; the boot counters it carries apply"
 make_disk "${DISK}" "${FIT_A}" "${FIT_B}"
 env_make "${ENVIMG}" \
     "bootcmd=echo ENV-BOOTCMD-RAN; setenv stdin serial; sleep 1; reset" \
@@ -432,11 +477,18 @@ grep -qx 'stdin=nulldev' <<<"${saved}" || fail "the saved environment's stdin is
 grep -qx 'bootdelay=-2' <<<"${saved}" || fail "the saved environment's bootdelay is not the compiled-in -2"
 ok "what U-Boot wrote back holds the compiled-in bootcmd and none of the stored attacker variables"
 
-scenario "S7 both slots exhausted: reset, no prompt"
+scenario "S9 no slot has a try left: both are armed again and the board resets, never a prompt, never down for good"
 env_make "${ENVIMG}" "BOOT_ORDER=A B" "BOOT_A_LEFT=0" "BOOT_B_LEFT=0"
-run_qemu s7 "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+run_qemu s9a "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
 expect_log "Suderra: no slot with tries left in BOOT_ORDER"
 expect_refused
-ok "no slot with tries left: reset, never a prompt"
+saved="$(env_dump "${ENVIMG}")"
+grep -qx 'BOOT_A_LEFT=3' <<<"${saved}" || fail "slot A was not armed again: $(grep BOOT_ <<<"${saved}")"
+grep -qx 'BOOT_B_LEFT=3' <<<"${saved}" || fail "slot B was not armed again: $(grep BOOT_ <<<"${saved}")"
+grep -qx 'BOOT_ORDER=A B' <<<"${saved}" || fail "BOOT_ORDER changed"
+ok "no slot with tries left: both armed with 3, saved, reset, no prompt"
+run_qemu s9b "${UBOOT}" "${KEYED_DTB}" "${DISK}" "${ENVIMG}"
+expect_booted A "${CMDLINE_A}"
+ok "the next boot took slot A"
 
 echo "ARM boot-chain test passed (${SCENARIOS} scenarios; set SUDERRA_QEMU_WORK to keep the QEMU logs)"

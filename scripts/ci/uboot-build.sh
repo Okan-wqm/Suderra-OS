@@ -21,6 +21,14 @@
 #       the environment is not checked and the build goes to <out-dir>/qemu-control:
 #       the boot test uses it to show what the production environment's guard
 #       prevents (an environment without it), never as a U-Boot to ship.
+#   uboot-build.sh sandbox <out-dir> <default-env-file>
+#       U-Boot's sandbox (a U-Boot that runs as a host process) with
+#       <default-env-file> as its default environment: <out-dir>/sandbox/u-boot
+#       and <out-dir>/sandbox/arch/sandbox/dts/sandbox.dtb. The image-contract
+#       tests execute the production environment's scripts with it (the key
+#       guard against fixture device trees, the A/B slot choice against a table
+#       of counters), so what they prove is what U-Boot runs, not what a regex
+#       reads. It has none of the production fragments: it is a test tool.
 #
 # The source is the tarball buildroot/boot/uboot names, fetched from
 # SUDERRA_UBOOT_MIRROR (default: the site Buildroot uses), checked against the
@@ -144,6 +152,32 @@ build_qemu() {
     echo "==> QEMU U-Boot: ${cfg}/u-boot.bin"
 }
 
+build_sandbox() {
+    local out="$1" envfile="$2" cfg="$1/sandbox"
+    local envfrag="${out}/sandbox-env.config" frag="${out}/sandbox-test.config"
+
+    need gcc "builds the U-Boot sandbox"
+    need make "builds the U-Boot sandbox"
+    need bison "U-Boot's Kconfig and dtc"
+    need flex "U-Boot's Kconfig and dtc"
+    need swig "U-Boot's pylibfdt"
+    [ -f "${envfile}" ] || die "no default environment file: ${envfile}"
+    prepare_source "${out}"
+    rm -rf "${cfg}"
+    mkdir -p "${cfg}"
+    printf 'CONFIG_USE_DEFAULT_ENV_FILE=y\nCONFIG_DEFAULT_ENV_FILE="%s"\n' "$(readlink -f "${envfile}")" > "${envfrag}"
+    # No SDL (a display the tests never use) and no EFI capsule tool (it needs
+    # gnutls headers the build host may not have).
+    printf '# CONFIG_VIDEO_SANDBOX_SDL is not set\n# CONFIG_EFI_CAPSULE_AUTHENTICATE is not set\n# CONFIG_TOOLS_MKEFICAPSULE is not set\n' > "${frag}"
+    make -s -C "${out}/src" O="${cfg}" sandbox_defconfig >/dev/null
+    "${out}/src/scripts/kconfig/merge_config.sh" -m -O "${cfg}" "${cfg}/.config" "${frag}" "${envfrag}" >/dev/null 2>&1
+    make -s -C "${out}/src" O="${cfg}" olddefconfig >/dev/null
+    make -s -C "${out}/src" O="${cfg}" -j"$(nproc)" >/dev/null
+    [ -x "${cfg}/u-boot" ] || die "the sandbox build left no u-boot"
+    [ -s "${cfg}/arch/sandbox/dts/sandbox.dtb" ] || die "the sandbox build left no sandbox.dtb"
+    echo "==> U-Boot sandbox: ${cfg}/u-boot"
+}
+
 case "${1:-}" in
     tools)
         [ "$#" -eq 2 ] || die "usage: uboot-build.sh tools <out-dir>"
@@ -155,7 +189,12 @@ case "${1:-}" in
         mkdir -p "$2"
         build_qemu "$(cd -- "$2" && pwd)" "$3" "${4:-production}"
         ;;
+    sandbox)
+        [ "$#" -eq 3 ] || die "usage: uboot-build.sh sandbox <out-dir> <default-env-file>"
+        mkdir -p "$2"
+        build_sandbox "$(cd -- "$2" && pwd)" "$3"
+        ;;
     *)
-        die "usage: uboot-build.sh tools <out-dir> | qemu <out-dir> <default-env-file> [control]"
+        die "usage: uboot-build.sh tools <out-dir> | qemu <out-dir> <default-env-file> [control] | sandbox <out-dir> <default-env-file>"
         ;;
 esac

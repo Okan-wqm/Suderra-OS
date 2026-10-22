@@ -6,16 +6,18 @@
 compatible=@SUDERRA_RAUC_COMPATIBLE@
 bootloader=uboot
 # The boot counters of the A/B choice in U-Boot's compiled-in bootcmd
-# (board/suderra/uboot/suderra.env). A slot RAUC marked good holds
-# boot-attempts, which is U-Boot's suderra_good_attempts: it boots without a
-# write to the environment. A slot RAUC just installed holds the smaller
-# boot-attempts-primary: every boot spends one try and saves it, so a slot that
-# never reaches mark-good falls back to the other slot. They must differ, and
-# RAUC's defaults (3 and 3) would make a new slot look confirmed from its first
-# boot (tests/image-contracts/arm-rauc-config-contract-test.sh holds them to the
-# environment).
+# (board/suderra/uboot/suderra.env). Every boot of a slot spends one try and
+# saves it before the kernel starts; RAUC's mark-good arms the booted slot again
+# with boot-attempts tries, and a freshly installed slot starts with
+# boot-attempts-primary. A slot that never reaches mark-good therefore runs out
+# of tries and the other slot boots - a new slot that panics, or one whose
+# dm-verity restarts the machine (restart_on_corruption) - and a board whose
+# slots are all out arms them again. boot-attempts is U-Boot's
+# suderra_attempts, the tries that re-arm gives; boot-attempts-primary may not
+# exceed it (tests/image-contracts/arm-rauc-config-contract-test.sh holds both
+# to the environment).
 boot-attempts=3
-boot-attempts-primary=2
+boot-attempts-primary=3
 bundle-formats=verity
 statusfile=/data/rauc/status.ini
 

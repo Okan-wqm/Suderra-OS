@@ -43,17 +43,17 @@ grep -qE '^Options=ro,' "${P}/boot.mount.arm" || { echo "ERROR: ARM /boot must b
 if grep -q 'uboot.env' <(grep -v '^#' "${P}/fw_env.config"); then
     echo "ERROR: fw_env.config names a uboot.env file" >&2; exit 1; fi
 
-# A slot RAUC marked good holds boot-attempts, which U-Boot's compiled-in bootcmd
-# treats as confirmed (suderra_good_attempts) and boots without a write; a slot
-# RAUC just installed must hold fewer, or it would look confirmed from its first
-# boot and never fall back.
-good="$(sed -n 's/^suderra_good_attempts=//p' "${ROOT}/board/suderra/uboot/suderra.env")"
+# Every boot spends one try (U-Boot's compiled-in bootcmd) and RAUC's mark-good
+# arms the slot again with boot-attempts, which must be the tries U-Boot gives
+# when it arms both slots itself (suderra_attempts); a freshly installed slot
+# holds boot-attempts-primary, which may not exceed that.
+armed="$(sed -n 's/^suderra_attempts=//p' "${ROOT}/board/suderra/uboot/suderra.env")"
 attempts="$(sed -n 's/^boot-attempts=//p' "${arm_conf}")"
 primary="$(sed -n 's/^boot-attempts-primary=//p' "${arm_conf}")"
-[ -n "${good}" ] && [ "${attempts}" = "${good}" ] || {
-    echo "ERROR: system.conf.arm boot-attempts (${attempts}) must equal U-Boot's suderra_good_attempts (${good})" >&2; exit 1; }
-[ -n "${primary}" ] && [ "${primary}" -ge 1 ] && [ "${primary}" -lt "${attempts}" ] || {
-    echo "ERROR: system.conf.arm boot-attempts-primary (${primary}) must be at least 1 and below boot-attempts (${attempts})" >&2; exit 1; }
+[ -n "${armed}" ] && [ "${attempts}" = "${armed}" ] || {
+    echo "ERROR: system.conf.arm boot-attempts (${attempts}) must equal U-Boot's suderra_attempts (${armed})" >&2; exit 1; }
+[ -n "${primary}" ] && [ "${primary}" -ge 1 ] && [ "${primary}" -le "${attempts}" ] || {
+    echo "ERROR: system.conf.arm boot-attempts-primary (${primary}) must be at least 1 and at most boot-attempts (${attempts})" >&2; exit 1; }
 
 # arm slot hook: imzalı FIT'i boot'a kopyalar.
 hook="${P}/suderra-rauc-arm-slot-hook.sh"

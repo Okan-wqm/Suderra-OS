@@ -110,7 +110,9 @@ Her imzalama, bir variant/signing-mode sözleşmesinden geçer:
   MAINTENANCE'ta root ingress biriminde okunur (DEC-18.2).
 - **verity initramfs:** root ve hash bölümleri imzalı cmdline'daki `suderra.verity.root_partuuid` /
   `hash_partuuid` ile bulunur, aynı PARTUUID'i taşıyan ikinci cihaz reddedilir; tablo
-  `restart_on_corruption` taşır (EI-050).
+  `restart_on_corruption` taşır, her açılış slotun bir hakkını harcadığı için bozuk bir slot
+  haklarını bitirir ve diğer slot açılır (EI-050; kernel'in restart'ının kendisi donanımda
+  doğrulanmayı bekler).
 - **Anti-rollback:** `userspace/suderra-ota` — monotonik `rollback_floor`, `min_current_version`,
   key-epoch floor, expiry (`main.rs:412-461`); prod'da dev override'lar yok sayılır ve trusted
   floor kaynağı `/data` dışında olmalı (`:701-731`).

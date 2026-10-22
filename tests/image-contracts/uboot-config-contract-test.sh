@@ -8,10 +8,16 @@
 # bootcmd included) may contain, and that the stored environment may write only
 # the RAUC boot counters. This test runs its static mode on every PR and proves,
 # on a scratch copy of the tree, that it fails for each class of defect it
-# exists to catch. Its resolved mode (post-build.sh runs it on the U-Boot that
-# Buildroot built; tests/qemu/arm-fit-signature-boot.sh runs it on the one it
-# boots) is exercised here on a synthetic tree, so a checker that stopped
-# looking at the resolved .config would fail this test, not pass a build.
+# exists to catch. Static mode reads text: it is not the proof that the key guard
+# refuses an unkeyed control FDT or that the slot choice counts as it should (a
+# line that sets suderra_required before the guard's final test passes every
+# pattern here). uboot-env-exec-contract-test.sh has U-Boot execute both, and
+# tests/qemu/arm-fit-signature-boot.sh boots the whole chain.
+#
+# The checker's resolved mode (post-build.sh runs it on the U-Boot that Buildroot
+# built; tests/qemu/arm-fit-signature-boot.sh runs it on the one it boots) is
+# exercised here on a synthetic tree, so a checker that stopped looking at the
+# resolved .config would fail this test, not pass a build.
 #
 set -euo pipefail
 IFS=$'\n\t'
@@ -161,7 +167,7 @@ EOF
 expect_fail "bootcmd that can return to the prompt" "bootcmd must end in 'reset'" static
 
 fresh_copy
-sed -i 's/^load \${suderra_bootdev} \${fitaddr} suderra-\${suderra_slot}.fit && bootm \${fitaddr}$/load ${suderra_bootdev} ${fitaddr} suderra-${suderra_slot}.fit \&\& booti ${fitaddr}/' "${ENVFILE}"
+sed -i 's/^load \${suderra_bootdev} \${fitaddr} suderra-\${suderra_slot}.fit && bootm \${fitaddr}; \\$/load ${suderra_bootdev} ${fitaddr} suderra-${suderra_slot}.fit \&\& booti ${fitaddr}; \\/' "${ENVFILE}"
 expect_fail "bootcmd that boots the raw image (EI-035)" "runs 'booti'" static
 
 fresh_copy
@@ -181,11 +187,30 @@ python3 -I - "${ENVFILE}" <<'EOF'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-s2 = s.replace("    run suderra_fail; \\\n", "")
+s2 = s.replace("    run suderra_rearm; \\\n", "    echo Suderra: nothing left; \\\n")
 assert s2 != s
 open(p, "w").write(s2)
 EOF
-expect_fail "a slot whose FIT does not verify is not spent (it would boot-loop)" "does not run suderra_fail" static
+expect_fail "no re-arm when no slot has tries left (a board that stays down)" "does not run suderra_rearm" static
+
+fresh_copy
+python3 -I - "${ENVFILE}" <<'EOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s2 = s.replace("    saveenv; \\\n    run suderra_boot; \\\n", "    run suderra_boot; \\\n")
+assert s2 != s
+open(p, "w").write(s2)
+EOF
+expect_fail "the try is not saved before the slot boots (a kernel that never returns would not count)" "must saveenv immediately before 'run suderra_boot'" static
+
+fresh_copy
+sed -i 's/^  setexpr BOOT_B_LEFT \${BOOT_B_LEFT} - 1; \\$/  setenv BOOT_B_LEFT 0; \\/' "${ENVFILE}"
+expect_fail "a slot that loses all its tries at once (one failed load would end it)" "only suderra_attempts may arm a slot" static
+
+fresh_copy
+sed -i 's/^  setexpr BOOT_A_LEFT \${BOOT_A_LEFT} - 1; \\$/  setexpr BOOT_A_LEFT ${BOOT_A_LEFT} - 2; \\/' "${ENVFILE}"
+expect_fail "a counter that changes by more than the one try a boot spends" "other than by spending one try" static
 
 fresh_copy
 sed -i 's/^bootdelay=-2$/bootdelay=-2\nstdout=serial/' "${ENVFILE}"
@@ -197,7 +222,7 @@ expect_fail "factory slot B counted as bootable" "BOOT_B_LEFT must start at 0" s
 
 fresh_copy
 sed -i 's/^BOOT_A_LEFT=3$/BOOT_A_LEFT=2/' "${ENVFILE}"
-expect_fail "factory slot A not confirmed" "BOOT_A_LEFT must start at suderra_good_attempts" static
+expect_fail "factory slot A not armed" "BOOT_A_LEFT must start at suderra_attempts" static
 
 fresh_copy
 sed -i 's/BOOT_B_LEFT:dw"/BOOT_B_LEFT:dw,bootcmd:sw"/' "${PATCH}"
@@ -208,8 +233,12 @@ sed -i 's/BOOT_ORDER:sw,//' "${PATCH}"
 expect_fail "BOOT_ORDER dropped from the writeable list" "the writeable variables are" static
 
 fresh_copy
-sed -i 's/^suderra_good_attempts=3$/suderra_good_attempts=12/' "${ENVFILE}"
-expect_fail "a good-attempts value setexpr cannot count down" "one digit" static
+sed -i 's/^suderra_attempts=3$/suderra_attempts=12/' "${ENVFILE}"
+expect_fail "an attempts value setexpr cannot count down" "one digit" static
+
+fresh_copy
+sed -i 's/^suderra_attempts=3$/suderra_attempts=0/' "${ENVFILE}"
+expect_fail "an armed slot with no try" "suderra_attempts must be at least 1" static
 
 # 3. Resolved mode, on a synthetic tree: a Kconfig that defines every symbol the
 # fragments name, and a .config that honours them. The checker must accept it

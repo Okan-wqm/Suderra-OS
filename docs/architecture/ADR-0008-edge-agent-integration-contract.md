@@ -42,7 +42,7 @@ gerekçe parantez içindeki ADR-048 maddesindedir.
 | DEC-14 | P1: x86 PCR 7 + imzalı PCR 11 politikası, SBAT/dbx, recovery key yolu (14.1, 14.3); bu commit'ler EI-037'yi `Refs:` ile anar. P3: RevPi OTP secure boot (operatör kararı), U-Boot measured boot, imzalı PolicyAuthorize, `userspace/suderra-attestation` (14.2, 14.4); EI-037 bu ARM işiyle kapanır. |
 | DEC-15 | P2: `key-epoch-advance` doğrulayıcısı, OS anahtarları için ihlal runbook'ları, QEMU tatbikatı. |
 | DEC-16, DEC-17 | P0: yeniden provisioning akışı (17 a). P3: break-glass bakım birimi; `userspace/suderra-factory-reset` ve birimi (16, 17 b–c). |
-| DEC-18 | P1: PARTUUID bağlama, usbguard ve USB ingress, konsolsuz prod, U-Boot `bootdelay=-1` ve redundant env, `/boot` yalnız kurulumda rw (18.1–18.5). |
+| DEC-18 | P1: PARTUUID bağlama, usbguard ve USB ingress, konsolsuz prod, U-Boot `bootdelay=-2` (`-1` bu U-Boot'ta prompt'ta durur) ve redundant env, `/boot` yalnız kurulumda rw (18.1–18.5). |
 | DEC-19 | P0: env tabanlı üretim modu ve güvenlik override'ları kaldırılır; env-okuma invariant testi. |
 | DEC-21 | P0: agent unit'i TPM cihazı almaz (`/dev/tpm0` ve `/dev/tpmrm0` kaldırılır). P1: TPM kaynak kaydı ve contract testi. P2: rastgele owner/lockout auth; ardından `/dev/tpmrm0` yalnız TPM keystore etkin `tpm` profilinin kart drop-in'inde (EDGE-MEDIUM-099). `/dev/tpm0` hiçbir fazda verilmez. |
 | DEC-22 | P0: imza altındaki `tenant_id` ve bundle'ın tenant kapsamı doğrulanır. |
@@ -72,7 +72,7 @@ DEC-20 ve DEC-28 bu repoya iş yüklemez.
   RevPi BSP kontrollerini içerir. corr-M3 kart başına compatible ile kapanır (DEC-8.3). H2 (OTP
   secure boot) operatör kararına ve KUNBUS'un yazılı görüşüne bağlanır ve U-Boot measured boot +
   imzalı PolicyAuthorize ile tamamlanır (DEC-14.2). RPi4/CM4'ün üretim kullanımı ADR-048'deki açık
-  operatör sorusudur. U-Boot env redundant olur, `bootdelay=-1` (DEC-18). Kernel hattı tek 6.12 LTS
+  operatör sorusudur. U-Boot env redundant olur, `bootdelay=-2` (DEC-18; `-1` bu U-Boot'ta prompt'ta durur, ADR-0007). Kernel hattı tek 6.12 LTS
   majörüdür (DEC-8.12).
 
 Bu üç ADR'ın başlıklarına değişiklik notu eklemek ADR-048 P0 kapsamındadır.
