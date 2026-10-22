@@ -25,6 +25,23 @@ source "$BR2_EXTERNAL_SUDERRA_PATH/package/suderra-ota/Config.in"
 source "$BR2_EXTERNAL_SUDERRA_PATH/package/revpi-picontrol/Config.in"
 
 #
+# /data volume tools. suderra-data-unlock ships in every image's rootfs
+# overlay (board/suderra/common/rootfs-overlay/usr/sbin) and creates the ext4
+# filesystem of a freshly provisioned /data with mkfs.ext4; an ext4 /data and
+# the ext4 root also need e2fsck. No image selected e2fsprogs, so the first
+# boot died at mkfs.ext4 after the LUKS volume was formatted and TPM-sealed
+# (EI-078). The overlay is common to all images, so its tools are selected
+# here once, by an option nobody can switch off, instead of by each defconfig.
+# scripts/ci/check-target-commands.py proves at build time that every command
+# the shipped scripts run exists in the image.
+#
+config BR2_PACKAGE_SUDERRA_DATA_TOOLS
+	bool
+	default y
+	depends on BR2_USE_MMU # e2fsprogs
+	select BR2_PACKAGE_E2FSPROGS
+
+#
 # Profil seçimi — hangi varyant build ediliyor
 #
 choice

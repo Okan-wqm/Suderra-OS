@@ -52,7 +52,7 @@ grep -q '/usr/sbin/suderra-data-unlock' "${DATA_UNIT}" || {
     exit 1
 }
 grep -q 'cryptsetup isLuks' "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock" &&
-    grep -q 'systemd-cryptsetup attach' "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock" || {
+    grep -q 'cryptsetup open --token-only' "${ROOT}/board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock" || {
     echo "ERROR: production /data path must require LUKS2 and TPM2-backed unlock" >&2
     exit 1
 }

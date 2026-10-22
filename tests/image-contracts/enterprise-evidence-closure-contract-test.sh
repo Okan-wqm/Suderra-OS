@@ -237,6 +237,7 @@ guest_facts = {
     "rauc": {"available": True, "status": "active slot A"},
     "data_encryption": {
         "encrypted": True,
+        "fstype": "ext4",
         "luks_mapper_state": {"mapper": "suderra-data", "open": True},
     },
     "anti_rollback": {"rollback_floor": "v9.9.9"},

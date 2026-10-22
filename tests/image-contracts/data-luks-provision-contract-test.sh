@@ -79,4 +79,62 @@ if problems:
     sys.exit("ERROR: " + "; ".join(problems))
 PY
 
+# 5. Provisioning is a transaction (EI-078). From the luksFormat on, every
+# failure is a rollback to a blank partition: alarm is the one exit and it rolls
+# back, the volume carries the provisioning label until the last step, and the
+# only place that erases keyslots also zeroes the header (`cryptsetup erase`
+# alone leaves a LUKS header that blkid and isLuks still see, so a "clean retry"
+# never happened). A failed mkfs.ext4 is an alarm, not a bare command under set -e.
+python3 -I - "${UNLOCK}" "${ROOT}/contracts/suderra-edge/v1/schemas/result.schema.json" <<'PY'
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+schema = json.load(open(sys.argv[2], encoding="utf-8"))
+errors = []
+
+def function_body(name):
+    match = re.search(r"^" + name + r"\(\) \{\n(.*?)^\}", text, re.S | re.M)
+    if not match:
+        errors.append(f"suderra-data-unlock has no function {name}")
+        return ""
+    return match.group(1)
+
+alarm = function_body("alarm")
+if "rollback_provisioning" not in alarm:
+    errors.append("alarm must roll back an uncommitted volume: it is the one exit of every failure path")
+provision = function_body("provision_luks_data")
+if provision.find('PROVISIONING_DEVICE="${dev}"') < 0 or provision.find('PROVISIONING_DEVICE="${dev}"') > provision.find("cryptsetup luksFormat"):
+    errors.append("provision_luks_data must mark the volume as uncommitted before luksFormat, so no failure after it can skip the rollback")
+if "--label \"${LABEL_PROVISIONING}\"" not in provision:
+    errors.append("luksFormat must label the volume with the provisioning marker, so an interrupted provisioning is recognised at the next boot")
+blank = function_body("blank_data_partition")
+if "cryptsetup erase" not in blank or "dd if=/dev/zero" not in blank or "blkid" not in blank:
+    errors.append("blank_data_partition must erase the keyslots, zero the header and verify with blkid that the partition is blank")
+if len(re.findall(r"cryptsetup erase", text)) != 1:
+    errors.append("cryptsetup erase appears outside blank_data_partition: it leaves a LUKS header behind (isLuks and blkid still see it)")
+if not re.search(r'mkfs\.ext4 [^\n]*"\$\{mapper_dev\}"\s*\|\|\s*\n\s*alarm ', text):
+    errors.append("a failed mkfs.ext4 must be an alarm, which rolls the fresh volume back")
+commit = function_body("commit_provisioning")
+if "LABEL_COMMITTED" not in commit or 'PROVISIONING_DEVICE=""' not in commit:
+    errors.append("commit_provisioning must label the volume committed and end the transaction")
+if text.rfind("commit_provisioning") < text.rfind("lifecycle factory"):
+    errors.append("the transaction must commit after the lifecycle store was created: nothing may follow the commit that can fail")
+if "trap cleanup_secrets EXIT" not in text:
+    errors.append("the ephemeral key file must be removed however the script ends (trap EXIT)")
+
+# Every reason the script records must be one the contract allows for a
+# data-unlock result: suderra-installer refuses the others and the alarm then
+# records nothing.
+allowed = None
+for clause in schema["allOf"]:
+    if clause["if"]["properties"]["kind"].get("const") == "data-unlock":
+        allowed = set(clause["then"]["properties"]["reason"]["enum"])
+reasons = set(re.findall(r'\balarm ([a-z0-9]+(?:-[a-z0-9]+)*) +"', text))
+if not reasons:
+    errors.append("no alarm reason found in suderra-data-unlock")
+for reason in sorted(reasons - allowed):
+    errors.append(f"suderra-data-unlock records the reason {reason!r}, which the data-unlock result contract does not allow ({sorted(allowed)})")
+if errors:
+    sys.exit("ERROR: " + "; ".join(errors))
+PY
+
 echo "/data LUKS provisioning contract passed"

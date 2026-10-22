@@ -14,6 +14,13 @@
 #   as FACTORY (DEC-12).
 # * When /data cannot be mounted, it records a data-unlock alarm and fails;
 #   the lifecycle then reads LOCKED (DEC-12, DEC-27).
+# * Provisioning a blank production /data is a transaction (EI-078): from the
+#   luksFormat to the last step of this script the volume carries the
+#   provisioning label, and any failure, or a power cut, returns the partition
+#   to blank, so the next boot provisions it again instead of finding a sealed
+#   volume that nobody can use. Only a volume carrying the committed label
+#   (or none: written by an earlier image) is an existing volume, and an
+#   existing volume is never provisioned again.
 set -eu
 
 LAYOUT=/usr/lib/suderra/data-layout.tmpfiles.conf
@@ -22,11 +29,42 @@ DATA_MAPPER=suderra-data
 DATA_OPTIONS=nosuid,nodev,noexec
 INSTALLER=/usr/bin/suderra-installer
 DEVICE_WAIT_SECONDS=90
+# LUKS2 label of the volume: the provisioning label marks a volume whose
+# provisioning has not finished (nothing but this script has touched it), the
+# committed label an operational one. A volume written by an earlier image has
+# no label and is operational.
+LABEL_PROVISIONING=suderra-provisioning
+LABEL_COMMITTED=SUDERRA-DATA
+# Label of the ext4 filesystem inside the volume.
+FS_LABEL=SUDERRA-DATA
+# The LUKS2 header and keyslot area of `cryptsetup luksFormat` with its
+# defaults; a rollback zeroes at least this much.
+LUKS_HEADER_BYTES=16777216
+DATA_CREATED=/run/suderra-os/data-created
 
 variant="prod"
 if grep -qx 'VARIANT="\{0,1\}dev"\{0,1\}' /etc/os-release; then
     variant="dev"
 fi
+
+# The ephemeral volume key lives in a file under /run that must never survive
+# this script, however it ends.
+KEYFILE=""
+# Set while a freshly formatted volume has not been committed: the device
+# node, so that every failure path rolls it back (alarm does it) and no path
+# can forget to.
+PROVISIONING_DEVICE=""
+# Binds made onto the root, so a rollback can release the volume.
+BOUND_TARGETS=""
+ROLLBACK_NOTE=""
+
+cleanup_secrets() {
+    if [ -n "${KEYFILE}" ]; then
+        rm -f "${KEYFILE}"
+        KEYFILE=""
+    fi
+}
+trap cleanup_secrets EXIT
 
 # Data-unlock results exist on images that run the root installer (the
 # images that declare a board_profile).
@@ -34,13 +72,74 @@ reports_results() {
     [ -x "${INSTALLER}" ] && [ -f /etc/suderra/board ]
 }
 
+# Let go of the volume: its binds, /data and the mapper.
+release_data_volume() {
+    for target in ${BOUND_TARGETS}; do
+        umount "${target}" >/dev/null 2>&1 || true
+    done
+    BOUND_TARGETS=""
+    if mountpoint -q /data; then
+        umount /data >/dev/null 2>&1 || true
+    fi
+    if [ -e "/dev/mapper/${DATA_MAPPER}" ]; then
+        cryptsetup close "${DATA_MAPPER}" >/dev/null 2>&1 || true
+    fi
+}
+
+# Return a partition to the state in which nothing signs it, so that
+# provisioning can start again. The keyslots go first: a key that opened this
+# volume then never opens it again, even if the zeroing is cut short. Fails
+# when a signature is still there.
+blank_data_partition() {
+    dev="$1"
+    cryptsetup erase --batch-mode "${dev}" >/dev/null 2>&1 || true
+    offset="$(cryptsetup luksDump "${dev}" 2>/dev/null |
+        sed -n 's/^[[:space:]]*offset:[[:space:]]*\([0-9][0-9]*\) \[bytes\]$/\1/p' | head -n 1)"
+    bytes="${offset:-0}"
+    if [ "${bytes}" -lt "${LUKS_HEADER_BYTES}" ]; then
+        bytes="${LUKS_HEADER_BYTES}"
+    fi
+    # A partition shorter than the header makes dd fail at its end; the
+    # blkid below is what decides.
+    dd if=/dev/zero of="${dev}" bs=1M count="$(((bytes + 1048575) / 1048576))" \
+        conv=fsync status=none 2>/dev/null || true
+    ! blkid "${dev}" >/dev/null 2>&1
+}
+
+# Roll an uncommitted volume back to a blank partition (alarm calls it); fails
+# when the partition could not be blanked.
+rollback_provisioning() {
+    dev="${PROVISIONING_DEVICE}"
+    [ -n "${dev}" ] || return 0
+    PROVISIONING_DEVICE=""
+    rm -f "${DATA_CREATED}"
+    release_data_volume
+    if blank_data_partition "${dev}"; then
+        ROLLBACK_NOTE="; the volume was rolled back and the next boot provisions ${dev} again"
+        echo "WARNING: provisioning of ${dev} failed${ROLLBACK_NOTE}" >&2
+        return 0
+    fi
+    ROLLBACK_NOTE="; the rollback could NOT blank ${dev}: manual intervention is required"
+    echo "WARNING: provisioning of ${dev} failed${ROLLBACK_NOTE}" >&2
+    return 1
+}
+
+# The one exit of every failure path: roll back an uncommitted volume, record
+# the alarm, fail.
 alarm() {
     reason="$1"
     shift
-    echo "ERROR: $*" >&2
+    detail="$*"
+    echo "ERROR: ${detail}" >&2
+    cleanup_secrets
+    if [ -n "${PROVISIONING_DEVICE}" ]; then
+        rollback_provisioning || :
+        detail="${detail}${ROLLBACK_NOTE}"
+    fi
     if reports_results; then
         "${INSTALLER}" result write --kind data-unlock --outcome alarm \
-            --reason "${reason}" --detail "$*" >/dev/null
+            --reason "${reason}" --detail "${detail}" >/dev/null ||
+            echo "WARNING: the data-unlock alarm could not be recorded" >&2
     fi
     exit 1
 }
@@ -57,6 +156,7 @@ bind_tree() {
         return 0
     fi
     mount --bind "${source}" "${target}"
+    BOUND_TARGETS="${target} ${BOUND_TARGETS}"
     mount -o "remount,bind,${options}" "${target}"
 }
 
@@ -97,51 +197,70 @@ mount_dev_data() {
     apply_layout_and_bind
 }
 
+# What the data partition holds, from its signatures alone:
+#   blank        no signature: nothing was ever written to it
+#   interrupted  a LUKS volume whose provisioning never finished
+#   luks         an operational LUKS volume (committed label, or none)
+#   foreign      any other signature: not ours to format
+classify_data_partition() {
+    dev="$1"
+    if cryptsetup isLuks "${dev}" >/dev/null 2>&1; then
+        label="$(cryptsetup luksDump "${dev}" | sed -n 's/^Label:[[:space:]]*//p' | head -n 1)"
+        if [ "${label}" = "${LABEL_PROVISIONING}" ]; then
+            echo interrupted
+        else
+            echo luks
+        fi
+    elif blkid "${dev}" >/dev/null 2>&1; then
+        echo foreign
+    else
+        echo blank
+    fi
+}
+
 # First-boot provisioning (RT-1): format a BLANK data partition as LUKS2 and seal
 # its key to the TPM2 (bound to PCR7 / secure-boot state) so /data is encrypted
 # at rest with a key that cannot be extracted from storage. TPM is REQUIRED
 # (fail-closed): a board without a TPM does not get a false sense of security
-# from an on-disk keyfile. Idempotent: only runs when the partition is blank.
+# from an on-disk keyfile. Only runs on a partition classified blank. From the
+# luksFormat on, PROVISIONING_DEVICE makes every failure a rollback.
 provision_luks_data() {
     dev="$1"
-    # SAFETY: never format a partition that already carries data. isLuks was
-    # already false here; if blkid still sees ANY signature (ext4, etc.) this is
-    # not our fresh partition — refuse and require manual intervention.
-    if blkid "${dev}" >/dev/null 2>&1; then
-        alarm data-unmountable "refusing to auto-format ${dev}: it has a non-LUKS filesystem/signature (manual step required)"
-    fi
-    # Fail-closed: production at-rest encryption requires a TPM2 device.
+    # Fail-closed: production at-rest encryption requires a TPM2 device. The
+    # prerequisites are checked before the partition is touched.
     if [ ! -e /dev/tpmrm0 ] && [ ! -e /dev/tpm0 ]; then
-        alarm tpm-unavailable "production /data encryption requires a TPM2 device; none found (/dev/tpm*)"
+        alarm tpm-unseal-failed "production /data encryption requires a TPM2 device; none found (/dev/tpm*)"
     fi
     command -v systemd-cryptenroll >/dev/null 2>&1 ||
         alarm data-unmountable "systemd-cryptenroll missing; cannot provision TPM-sealed /data"
-    # Ephemeral key lives only in /run (tmpfs, RAM) and is removed below; it is
-    # never written to persistent storage.
-    keyfile="$(mktemp /run/suderra-data-key.XXXXXX)"
-    chmod 0600 "${keyfile}"
-    dd if=/dev/urandom of="${keyfile}" bs=512 count=1 status=none
-    if ! cryptsetup luksFormat --type luks2 --batch-mode --key-file "${keyfile}" "${dev}"; then
-        rm -f "${keyfile}"
+    # Ephemeral key lives only in /run (tmpfs, RAM); cleanup_secrets removes it
+    # however this script ends, and it is never written to persistent storage.
+    KEYFILE="$(mktemp /run/suderra-data-key.XXXXXX)"
+    chmod 0600 "${KEYFILE}"
+    dd if=/dev/urandom of="${KEYFILE}" bs=512 count=1 status=none
+    PROVISIONING_DEVICE="${dev}"
+    cryptsetup luksFormat --type luks2 --label "${LABEL_PROVISIONING}" --batch-mode \
+        --key-file "${KEYFILE}" "${dev}" ||
         alarm data-unmountable "luksFormat failed on ${dev}"
-    fi
     # Seal the volume key to the TPM2, bound to PCR7 (UEFI/boot secure-boot policy).
-    if ! systemd-cryptenroll "${dev}" --unlock-key-file="${keyfile}" \
-            --tpm2-device=auto --tpm2-pcrs=7; then
-        # The header is brand new over a blank partition — erase it so the next
-        # boot re-provisions cleanly instead of leaving an unopenable volume.
-        cryptsetup erase --batch-mode "${dev}" >/dev/null 2>&1 || true
-        rm -f "${keyfile}"
-        alarm tpm-unseal-failed "TPM2 enroll failed; erased fresh LUKS header for clean retry"
-    fi
+    systemd-cryptenroll "${dev}" --unlock-key-file="${KEYFILE}" \
+        --tpm2-device=auto --tpm2-pcrs=7 ||
+        alarm tpm-unseal-failed "TPM2 enrol failed on ${dev}"
     # Drop the ephemeral passphrase slot so TPM2 becomes the ONLY unlock path.
-    # Its key exists only in ${keyfile}, which is removed below either way, so
+    # Its key exists only in ${KEYFILE}, which is removed below either way, so
     # a failed wipe leaves a slot nobody can open: it is reported, not fatal.
     if ! systemd-cryptenroll "${dev}" --wipe-slot=password >/dev/null; then
         echo "WARNING: could not wipe the ephemeral passphrase slot of ${dev}; its key is discarded" >&2
     fi
-    rm -f "${keyfile}"
+    cleanup_secrets
     echo "==> provisioned LUKS2 /data on ${dev} (TPM2-sealed, PCR7)"
+}
+
+# The last step of provisioning: the volume stops being a transaction.
+commit_provisioning() {
+    cryptsetup config "${DATA_DEVICE}" --label "${LABEL_COMMITTED}" ||
+        alarm data-unmountable "cannot label the provisioned volume ${LABEL_COMMITTED}"
+    PROVISIONING_DEVICE=""
 }
 
 unlock_prod_luks_data() {
@@ -152,40 +271,57 @@ unlock_prod_luks_data() {
         alarm data-unmountable "cryptsetup missing; production /data cannot unlock"
     wait_for_device "${DATA_DEVICE}" ||
         alarm data-unmountable "production data partition missing: ${DATA_DEVICE}"
-    if ! cryptsetup isLuks "${DATA_DEVICE}"; then
-        provision_luks_data "${DATA_DEVICE}"
-        fresh=1
-    fi
+    case "$(classify_data_partition "${DATA_DEVICE}")" in
+        blank)
+            provision_luks_data "${DATA_DEVICE}"
+            fresh=1
+            ;;
+        interrupted)
+            # A provisioning that never finished left this volume; nothing but
+            # this script ever touched it, so it is blanked and provisioned again.
+            echo "WARNING: ${DATA_DEVICE} holds an unfinished provisioning; starting it again" >&2
+            PROVISIONING_DEVICE="${DATA_DEVICE}"
+            rollback_provisioning ||
+                alarm data-unmountable "cannot blank the unfinished volume on ${DATA_DEVICE}${ROLLBACK_NOTE}"
+            provision_luks_data "${DATA_DEVICE}"
+            fresh=1
+            ;;
+        luks) ;;
+        *)
+            # SAFETY: never format a partition that already carries data.
+            alarm data-unmountable "refusing to auto-format ${DATA_DEVICE}: it has a non-LUKS filesystem/signature (manual step required)"
+            ;;
+    esac
     luks_type="$(cryptsetup luksDump "${DATA_DEVICE}" | sed -n 's/^Version:[[:space:]]*//p' | head -n 1)"
     [ "${luks_type}" = "2" ] || alarm data-unmountable "production data partition must be LUKS2"
 
+    # The TPM2 token of the volume: the first unlock of a fresh volume is also
+    # the proof that the seal works.
     if [ ! -e "${mapper_dev}" ]; then
-        if command -v systemd-cryptsetup >/dev/null 2>&1; then
-            systemd-cryptsetup attach "${DATA_MAPPER}" "${DATA_DEVICE}" - \
-                tpm2-device=auto,headless=yes >/dev/null ||
-                alarm tpm-unseal-failed "TPM2-backed systemd-cryptsetup unlock failed"
-        else
-            cryptsetup open --token-only "${DATA_DEVICE}" "${DATA_MAPPER}" >/dev/null ||
-                alarm tpm-unseal-failed "TPM2 token unlock failed"
-        fi
+        cryptsetup open --token-only "${DATA_DEVICE}" "${DATA_MAPPER}" >/dev/null ||
+            alarm tpm-unseal-failed "TPM2 token unlock failed"
     fi
 
     # A freshly provisioned volume has no filesystem yet — create it once, on the
     # decrypted mapper (so the plaintext filesystem never touches the raw device).
     if [ "${fresh}" = "1" ]; then
-        mkfs.ext4 -q -L SUDERRA-DATA "${mapper_dev}"
+        mkfs.ext4 -q -L "${FS_LABEL}" "${mapper_dev}" ||
+            alarm data-unmountable "mkfs.ext4 failed on ${mapper_dev}"
     fi
 
     mount_data "${mapper_dev}"
     apply_layout_and_bind
 
-    if [ "${fresh}" = "1" ] && [ -f /etc/suderra/board ]; then
-        # Positive evidence that /data was created on this boot (DEC-12); the
-        # lifecycle consumes it on this boot to enter PROVISIONING.
-        umask 077
-        printf '%s\n' "${DATA_DEVICE}" > /run/suderra-os/data-created
-        "${INSTALLER}" lifecycle factory >/dev/null ||
-            alarm state-corrupt "cannot create the lifecycle store as FACTORY"
+    if [ "${fresh}" = "1" ]; then
+        if [ -f /etc/suderra/board ]; then
+            # Positive evidence that /data was created on this boot (DEC-12); the
+            # lifecycle consumes it on this boot to enter PROVISIONING.
+            umask 077
+            printf '%s\n' "${DATA_DEVICE}" > "${DATA_CREATED}"
+            "${INSTALLER}" lifecycle factory >/dev/null ||
+                alarm io-error "cannot create the lifecycle store as FACTORY"
+        fi
+        commit_provisioning
     fi
 }
 

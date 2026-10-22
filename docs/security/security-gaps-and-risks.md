@@ -52,6 +52,19 @@
 > dolu-partition reddi) loopback ile doğrulandı; `data-luks-provision-contract-test.sh` statik
 > olarak zorlar; enforce_production_contract paketleri gate'ler. **KALAN:** gerçek TPM2
 > seal/unseal donanım/swtpm ister → G5 (`data-luks-swtpm` QEMU senaryosu + hardware lab).
+>
+> **İlk boot bir işlemdir (EI-078, ADR-048 DEC-24):** `luksFormat`'tan son adıma kadar
+> hacim `suderra-provisioning` etiketini taşır; herhangi bir hata (veya güç kesintisi)
+> bölümü boşa döndürür, bir sonraki boot yeniden provision eder. Önceki sürüm
+> `cryptsetup erase` ile "temiz yeniden deneme" sağlıyordu, ama o komut LUKS başlığını
+> bırakır (`isLuks` hâlâ doğru): bölüm kalıcı olarak LOCKED kalıyordu. `mkfs.ext4`'ü hiçbir
+> imaj taşımıyordu; artık `Config.in` e2fsprogs'u seçer ve `post-build.sh` her imajda
+> betiklerin çalıştırdığı her komutun hedefte bulunduğunu doğrular
+> (`scripts/ci/check-target-commands.py`, `board/suderra/common/runtime-commands.json`).
+> Gerçek `suderra-data-unlock`, gerçek cryptsetup/systemd-cryptenroll/mkfs.ext4 ve bir
+> swtpm ile bir QEMU konuğunda koşar: `tests/qemu/data-unlock-vm-test.py` (ilk boot,
+> yeniden açma, mkfs ve enrol hatasında geri alma, yarım kalan provisioning, yabancı
+> imza, PCR 7 değişimi: var olan hacim asla yeniden provision edilmez).
 
 **Kanıt (düzeltme öncesi durum):** Repo-geneli grep `luksFormat|cryptenroll|luksAddKey|tpm2_create` → sadece placeholder
 doküman/yorum. `firstboot` (amaçlanan provisioner) no-op ve her defconfig'te kapalı

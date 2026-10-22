@@ -1,0 +1,411 @@
+{
+  "description": "Every external command each shell script of the image runs, per script and per image condition (ADR-048 DEC-24, EI-078). scripts/ci/check-target-commands.py extracts the commands from the scripts a Buildroot target ships and requires this file to declare exactly that set; it then requires every command whose condition holds for the image (variant, arch, a BR2 symbol) to exist in the target's PATH. A group marked optional names commands the script probes with `command -v` and copes with when they are absent. post-build.sh runs the check for every defconfig.",
+  "search_path": [
+    "/usr/local/sbin",
+    "/usr/local/bin",
+    "/usr/sbin",
+    "/usr/bin",
+    "/sbin",
+    "/bin"
+  ],
+  "scripts": {
+    "usr/sbin/suderra-data-unlock": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock",
+      "groups": [
+        {
+          "commands": [
+            "grep",
+            "mount",
+            "mountpoint",
+            "systemd-tmpfiles",
+            "udevadm"
+          ]
+        },
+        {
+          "commands": [
+            "blkid",
+            "chmod",
+            "cryptsetup",
+            "dd",
+            "head",
+            "mkfs.ext4",
+            "mktemp",
+            "rm",
+            "sed",
+            "systemd-cryptenroll",
+            "umount"
+          ],
+          "when": {
+            "variant": "prod"
+          }
+        },
+        {
+          "commands": [
+            "/usr/bin/suderra-installer"
+          ],
+          "when": {
+            "config": "BR2_PACKAGE_SUDERRA_OS_INSTALLER"
+          }
+        }
+      ]
+    },
+    "usr/sbin/suderra-e2e-probe": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-e2e-probe",
+      "allow_dynamic": {
+        "\"$@\"": "emit_cmd runs the command its caller names; the probe is shipped on the dev QEMU image only, where post-build.sh keeps it, and the edge e2e test exercises every caller"
+      },
+      "groups": [
+        {
+          "commands": [
+            "awk",
+            "base64",
+            "cat",
+            "chmod",
+            "chown",
+            "cp",
+            "cut",
+            "diff",
+            "find",
+            "grep",
+            "id",
+            "mkdir",
+            "nft",
+            "readlink",
+            "rm",
+            "sha256sum",
+            "sleep",
+            "sort",
+            "systemctl",
+            "systemd-run",
+            "tail",
+            "tr"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-identity": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-identity",
+      "groups": [
+        {
+          "commands": [
+            "cat",
+            "chgrp",
+            "chmod",
+            "cut",
+            "mkdir",
+            "mktemp",
+            "mv",
+            "rm",
+            "sed",
+            "sha256sum",
+            "sync",
+            "tr"
+          ]
+        },
+        {
+          "commands": [
+            "tpm2_createek",
+            "tpm2_flushcontext"
+          ],
+          "optional": true
+        }
+      ]
+    },
+    "usr/sbin/suderra-lockdown": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-lockdown",
+      "groups": [
+        {
+          "commands": [
+            "awk",
+            "sleep",
+            "systemctl"
+          ]
+        },
+        {
+          "when": {
+            "config": "BR2_PACKAGE_SUDERRA_OS_INSTALLER"
+          },
+          "commands": [
+            "/usr/bin/suderra-installer"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-lockdown-status": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-lockdown-status",
+      "groups": [
+        {
+          "commands": [
+            "awk",
+            "grep",
+            "nft",
+            "systemctl"
+          ]
+        },
+        {
+          "when": {
+            "config": "BR2_PACKAGE_SUDERRA_OS_INSTALLER"
+          },
+          "commands": [
+            "/usr/bin/suderra-installer"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-provision": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-provision",
+      "groups": [
+        {
+          "commands": [
+            "cat",
+            "grep",
+            "mv",
+            "od",
+            "sleep",
+            "tr"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-provision-mode": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-provision-mode",
+      "groups": [
+        {
+          "commands": [
+            "awk",
+            "cat",
+            "cut",
+            "dropbearkey",
+            "grep",
+            "journalctl",
+            "mkpasswd",
+            "mount",
+            "mv",
+            "od",
+            "rm",
+            "sed",
+            "sleep",
+            "systemctl",
+            "umount"
+          ]
+        },
+        {
+          "when": {
+            "config": "BR2_PACKAGE_SUDERRA_OS_INSTALLER"
+          },
+          "commands": [
+            "/usr/bin/suderra-installer"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-provision-worker": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-provision-worker",
+      "groups": [
+        {
+          "commands": [
+            "/usr/sbin/suderra-identity",
+            "chgrp",
+            "chmod",
+            "cut",
+            "mv",
+            "rm",
+            "sed",
+            "systemctl",
+            "tail",
+            "tr",
+            "wc"
+          ]
+        },
+        {
+          "when": {
+            "config": "BR2_PACKAGE_SUDERRA_OS_INSTALLER"
+          },
+          "commands": [
+            "/usr/bin/suderra-installer"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-qemu-semantic-collector": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-qemu-semantic-collector",
+      "groups": [
+        {
+          "commands": [
+            "/usr/sbin/suderra-lockdown-status",
+            "cat",
+            "grep",
+            "head",
+            "mkdir",
+            "od",
+            "sed",
+            "tr",
+            "uname"
+          ]
+        },
+        {
+          "commands": [
+            "dmsetup",
+            "ip",
+            "networkctl",
+            "nft",
+            "rauc",
+            "sha256sum",
+            "ss",
+            "suderra-installer",
+            "systemctl"
+          ],
+          "optional": true
+        }
+      ]
+    },
+    "usr/sbin/suderra-runtime-scenario": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-runtime-scenario",
+      "groups": [
+        {
+          "commands": [
+            "/usr/sbin/suderra-qemu-semantic-collector",
+            "mkdir",
+            "mount",
+            "sleep",
+            "tr"
+          ]
+        },
+        {
+          "commands": [
+            "rauc"
+          ],
+          "when": {
+            "config": "BR2_PACKAGE_RAUC"
+          }
+        },
+        {
+          "commands": [
+            "suderra-ota"
+          ],
+          "when": {
+            "config": "BR2_PACKAGE_SUDERRA_OTA"
+          }
+        }
+      ]
+    },
+    "usr/sbin/suderra-os-install": {
+      "source": "package/suderra-os-installer/suderra-os-install",
+      "groups": [
+        {
+          "commands": [
+            "/usr/bin/suderra-installer",
+            "awk",
+            "basename",
+            "blkid",
+            "cat",
+            "dd",
+            "findmnt",
+            "grep",
+            "head",
+            "lsblk",
+            "mkdir",
+            "mount",
+            "poweroff",
+            "readlink",
+            "sed",
+            "sha256sum",
+            "sleep",
+            "sort",
+            "sync",
+            "tr",
+            "umount",
+            "uname",
+            "xz"
+          ]
+        },
+        {
+          "commands": [
+            "blockdev",
+            "partprobe",
+            "udevadm"
+          ],
+          "optional": true
+        }
+      ]
+    },
+    "usr/sbin/suderra-rauc-health-gate": {
+      "source": "package/suderra-rauc-config/suderra-rauc-health-gate",
+      "groups": [
+        {
+          "commands": [
+            "/usr/bin/rauc",
+            "/usr/bin/suderra-installer",
+            "/usr/sbin/suderra-rauc-boot-state",
+            "head",
+            "mountpoint",
+            "sed"
+          ]
+        }
+      ]
+    },
+    "usr/sbin/suderra-rauc-boot-state": {
+      "source": "package/suderra-rauc-config/suderra-rauc-boot-state",
+      "groups": [
+        {
+          "commands": [
+            "cat",
+            "grep",
+            "head",
+            "mkdir",
+            "mv",
+            "sed"
+          ]
+        },
+        {
+          "commands": [
+            "rauc"
+          ],
+          "when": {
+            "config": "BR2_PACKAGE_RAUC"
+          }
+        },
+        {
+          "commands": [
+            "grub-editenv"
+          ],
+          "when": {
+            "arch": "x86_64"
+          }
+        },
+        {
+          "commands": [
+            "fw_printenv"
+          ],
+          "when": {
+            "arch": "aarch64"
+          }
+        }
+      ]
+    },
+    "usr/sbin/suderra-rauc-mark-good": {
+      "source": "package/suderra-rauc-config/suderra-rauc-mark-good",
+      "groups": [
+        {
+          "commands": [
+            "/usr/bin/suderra-ota",
+            "/usr/sbin/suderra-rauc-boot-state",
+            "/usr/sbin/suderra-rauc-health-gate"
+          ]
+        }
+      ]
+    },
+    "usr/lib/rauc/suderra-rauc-arm-slot-hook.sh": {
+      "source": "package/suderra-rauc-config/suderra-rauc-arm-slot-hook.sh",
+      "groups": [
+        {
+          "commands": [
+            "cp",
+            "mv",
+            "sync"
+          ]
+        }
+      ]
+    }
+  }
+}

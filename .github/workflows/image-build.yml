@@ -1200,7 +1200,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 ovmf swtpm swtpm-tools mosquitto mosquitto-clients \
-            openssh-client python3-cryptography tpm2-tools libtss2-tcti-swtpm0
+            openssh-client python3-cryptography tpm2-tools libtss2-tcti-swtpm0 \
+            cryptsetup-bin busybox-static e2fsprogs
           sudo systemctl stop mosquitto.service 2>/dev/null || true
           # The fake cloud serves the QEMU image's endpoint, https://10.0.2.2
           # (the host's 127.0.0.1 under QEMU user networking), on 443: the
@@ -1264,6 +1265,17 @@ jobs:
         run: |
           python3 tests/qemu/nft-ruleset-smoke-test.py --work-dir "${E2E_WORK}/nft" \
             --image "output/${DEFCONFIG}/images/disk.img"
+
+      # EI-078: the first boot provisions /data (luksFormat, TPM2 seal, mkfs.ext4,
+      # layout, binds) and a failure rolls the volume back. The real
+      # suderra-data-unlock runs with the real cryptsetup, systemd-cryptenroll
+      # and mkfs.ext4 in a guest with an swtpm, on the kernel of the image this
+      # workflow built (dm-crypt, TPM and virtio-blk built in).
+      - name: /data provisioning and rollback in a VM (suderra-data-unlock, swtpm)
+        if: success() || failure()
+        run: |
+          python3 tests/qemu/data-unlock-vm-test.py \
+            --kernel "output/${DEFCONFIG}/images/bzImage" --timeout 3000
 
       - name: Upload edge e2e logs
         if: always()

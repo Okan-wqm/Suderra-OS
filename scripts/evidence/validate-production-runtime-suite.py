@@ -267,6 +267,11 @@ def validate_guest_facts_v2(errors: list[str], scenario_path: str, name: Any, fa
                 error(errors, f"{scenario_path}.guest_facts.data_encryption.luks_mapper_state.open", "must be true")
         if name == "data-luks-swtpm" and data_encryption.get("encrypted") is not True:
             error(errors, f"{scenario_path}.guest_facts.data_encryption.encrypted", "must be true")
+        # The first boot provisions a blank /data: luksFormat, the TPM2 seal and the
+        # ext4 filesystem mkfs.ext4 creates on the opened volume (EI-078). A mapper
+        # that is open and a /data that is mounted prove the filesystem exists.
+        if name == "data-luks-swtpm" and data_encryption.get("fstype") != "ext4":
+            error(errors, f"{scenario_path}.guest_facts.data_encryption.fstype", "must be ext4: the first boot creates the filesystem of the freshly sealed volume")
     elif "data_encryption" in facts_obj:
         error(errors, f"{scenario_path}.guest_facts.data_encryption", "must be an object")
 

@@ -580,4 +580,21 @@ if [ -f "${TARGET_DIR}/etc/shadow" ]; then
     esac
 fi
 
+# 11. Commands of the shipped scripts (EI-078). Every external command a shell
+# script of this image runs is declared in runtime-commands.json, and every
+# command the image's variant, architecture and packages require resolves in
+# this target. Last, after every script was kept, removed or rewritten above,
+# so it checks what the image really ships: a script that needs mkfs.ext4 on
+# an image without e2fsprogs fails the build instead of the first boot.
+[ -n "${BR2_CONFIG:-}" ] || {
+    echo "ERROR: BR2_CONFIG is not set; post-build runs from Buildroot, which exports it"
+    exit 1
+}
+python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-target-commands.py" check \
+    --target "${TARGET_DIR}" \
+    --manifest "${SUDERRA_EXTERNAL_DIR}/board/suderra/common/runtime-commands.json" \
+    --variant "${SUDERRA_OS_VARIANT}" \
+    --arch "${image_arch}" \
+    --config "${BR2_CONFIG}"
+
 echo "==> post-build tamamlandı"

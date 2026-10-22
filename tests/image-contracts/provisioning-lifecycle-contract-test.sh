@@ -167,7 +167,8 @@ for unit in suderra-lifecycle.path suderra-activation.path; do
 done
 grep -q '"${INSTALLER}" lifecycle factory' "${SBIN}/suderra-data-unlock" ||
     fail "suderra-data-unlock must create the lifecycle store as FACTORY on the boot that formats /data"
-grep -q 'printf .*> /run/suderra-os/data-created' "${SBIN}/suderra-data-unlock" ||
+grep -q '^DATA_CREATED=/run/suderra-os/data-created$' "${SBIN}/suderra-data-unlock" &&
+    grep -q 'printf .*> "${DATA_CREATED}"' "${SBIN}/suderra-data-unlock" ||
     fail "suderra-data-unlock must leave the data-created evidence (DEC-12)"
 
 LOCKDOWN="${SBIN}/suderra-lockdown"
