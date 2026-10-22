@@ -65,9 +65,21 @@ driver sources):
 - `KB_PI_LEN` (2.6.2) and `PICONTROL_PROCESS_IMAGE_LEN` (2.8.2) are both 4096;
   `REV_PI_DEV_CNT_MAX` and `PICONTROL_MAX_DEVICES` are both 64.
 - The handlers of `KB_GET_DEVICE_INFO_LIST`, `KB_GET_VALUE`, `KB_SET_VALUE`, `KB_FIND_VARIABLE`,
-  `KB_SET_OUTPUT_WATCHDOG` and `KB_WAIT_FOR_EVENT` differ between the releases only by refactoring
-  (`scoped_guard`, helper functions, renamed constants), except that 2.6.2's
-  `KB_GET_DEVICE_INFO_LIST` also prints a firmware-update hint to the user message buffer.
+  `KB_SET_OUTPUT_WATCHDOG` and `KB_WAIT_FOR_EVENT` differ between the releases by refactoring
+  (`scoped_guard`, helper functions, renamed constants) and by three behaviours a caller must
+  allow for (read from `src/piControlMain.c` of both tags; the agent's `abi.rs` header carries the
+  same table):
+  - `KB_SET_OUTPUT_WATCHDOG` reads a C `unsigned long` from its argument in 2.6.2
+    (`get_user(priv->tTimeoutDurationMs, (unsigned long __user *) usr_addr)`: 8 bytes on aarch64,
+    4 on 32-bit ARM) and an `unsigned int` in 2.8.2. A caller passes an `unsigned long`-wide
+    buffer with the period in its low four bytes and the rest zero; a 4-byte buffer makes 2.6.2
+    arm whatever lies beside it, or fail to disarm, and `piControlRelease()` then zeroes every
+    output when the descriptor closes.
+  - `KB_FIND_VARIABLE` of an unknown name returns `EFAULT` in 2.6.2 (the status is never set) and
+    `ENOENT` in 2.8.2; both copy the "not found" defaults (`0xFFFF`, `0xFF`, `0xFFFF`) back.
+  - `KB_WAIT_FOR_EVENT` interrupted by a signal returns `EFAULT` in 2.6.2 (the status is never set)
+    and the interrupted wait's error (`EINTR`) in 2.8.2.
+  - 2.6.2's `KB_GET_DEVICE_INFO_LIST` also prints a firmware-update hint to the user message buffer.
 - The 2.8.2 header drops `KB_CONFIG_STOP`, `KB_CONFIG_SEND` and `KB_CONFIG_START` (ioctls 23 to 25) and
   deprecates `KB_GET_LAST_MESSAGE` and `KB_SET_POS`; none is allowlisted.
 
