@@ -439,4 +439,4 @@ expect_log "Suderra: no slot with tries left in BOOT_ORDER"
 expect_refused
 ok "no slot with tries left: reset, never a prompt"
 
-echo "ARM boot-chain test passed (${SCENARIOS} scenarios; logs in ${WORK} when SUDERRA_QEMU_WORK is set)"
+echo "ARM boot-chain test passed (${SCENARIOS} scenarios; set SUDERRA_QEMU_WORK to keep the QEMU logs)"
