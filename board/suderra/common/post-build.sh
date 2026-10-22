@@ -412,7 +412,18 @@ case "${DEFCONFIG_NAME}" in
             # recovery ingress places in /run/suderra-os.
             enable_unit suderra-data-recovery.path paths.target
             preset_enable suderra-data-recovery.path
+            # /data grows to fill the disk before it is formatted (DEC-24).
+            [ -x "${TARGET_DIR}/usr/bin/systemd-repart" ] || {
+                echo "ERROR: a production image grows /data with systemd-repart, which this image does not have (BR2_PACKAGE_SYSTEMD_REPART)"
+                exit 1
+            }
+            enable_unit systemd-repart.service sysinit.target
+            preset_enable systemd-repart.service
         fi
+        # The wear of the one flash disk (DEC-24): a device without an eMMC
+        # records an empty list.
+        enable_unit suderra-emmc-wear.timer timers.target
+        preset_enable suderra-emmc-wear.timer
         case "${DEFCONFIG_NAME}" in
             suderra_qemu_x86_64*)
                 enable_unit suderra-qemu-semantic-collector.service multi-user.target
@@ -422,15 +433,25 @@ case "${DEFCONFIG_NAME}" in
         ;;
 esac
 
-# Only a production device image has an encrypted /data to recover.
+# Only a production device image has an encrypted /data to recover and to grow
+# (repart would create the /data partition in any free space of another image).
+production_device_image=1
 if [ "${SUDERRA_OS_VARIANT}" != "prod" ]; then
-    rm -f "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.path" \
-          "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.service"
+    production_device_image=0
 fi
 case "${DEFCONFIG_NAME}" in
+    *usb_installer*) production_device_image=0 ;;
+esac
+if [ "${production_device_image}" = "0" ]; then
+    rm -f "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.path" \
+          "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.service"
+    rm -f "${TARGET_DIR}/usr/lib/repart.d/50-data.conf"
+fi
+# The USB self-installer image runs neither the data service nor the wear timer.
+case "${DEFCONFIG_NAME}" in
     *usb_installer*)
-        rm -f "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.path" \
-              "${TARGET_DIR}/etc/systemd/system/suderra-data-recovery.service"
+        rm -f "${TARGET_DIR}/etc/systemd/system/suderra-emmc-wear.service" \
+              "${TARGET_DIR}/etc/systemd/system/suderra-emmc-wear.timer"
         ;;
 esac
 

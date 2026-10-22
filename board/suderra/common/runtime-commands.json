@@ -417,6 +417,16 @@
           ]
         }
       ]
+    },
+    "usr/sbin/suderra-emmc-wear": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-emmc-wear",
+      "groups": [
+        {
+          "commands": [
+            "mv"
+          ]
+        }
+      ]
     }
   }
 }

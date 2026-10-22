@@ -1,0 +1,123 @@
+#!/bin/sh
+# eMMC wear telemetry (ADR-048 DEC-24): write /run/suderra-os/emmc-wear.json.
+#
+# An eMMC reports how much of its life it has used in two EXT_CSD registers
+# the kernel exposes per card (Linux drivers/mmc/core/mmc.c, v6.12):
+#   life_time     "0x<A> 0x<B>": EXT_CSD[268] and [269], DEVICE_LIFE_TIME_EST_TYP_A/B,
+#                 the estimated life used of the two memory types (JEDEC
+#                 JESD84-B51): 0x01 .. 0x0A = 0-10 % .. 90-100 % used,
+#                 0x0B = exceeded, 0x00 = not defined;
+#   pre_eol_info  "0x<N>": EXT_CSD[267], PRE_EOL_INFO: 0x01 normal, 0x02
+#                 warning (80 % of the reserved blocks consumed), 0x03 urgent
+#                 (90 %), 0x00 = not defined.
+# A device on 24 V field power is cut off without warning, so the wear of its
+# one disk is the maintenance signal that decides when it is replaced. A board
+# without an eMMC (SD card, NVMe, a virtio disk) has no such attribute: its
+# document has an empty device list, which says "nothing to report", not "all
+# is well" (supported is false).
+#
+# State per card: urgent when pre_eol_info is 0x03 or a life_time value is
+# exceeded (0x0B); warning when pre_eol_info is 0x02 or a life_time value is
+# 0x09 or more (80 % used or beyond); normal otherwise; unknown when the card
+# defines neither. worst_state is the worst of the cards.
+#
+# The document is root-only (/run/suderra-os is root:root 0700). Exposing it to
+# the agent and publishing it is the telemetry's job (ADR-048 DEC-27); the
+# runtime document needs a place in contracts/suderra-edge mutable-state.json
+# first. Paths are image facts; the two optional arguments exist for the
+# contract test, which runs this script against a fake sysfs tree:
+#   suderra-emmc-wear [MMC_HOST_DIR [OUTPUT_FILE]]
+set -eu
+
+MMC_HOST_DIR="${1:-/sys/class/mmc_host}"
+OUTPUT="${2:-/run/suderra-os/emmc-wear.json}"
+
+# 0x.. -> decimal; empty when the value is not a 0x hexadecimal number.
+hex_value() {
+    case "$1" in
+        0x[0-9a-fA-F] | 0x[0-9a-fA-F][0-9a-fA-F]) echo "$((${1}))" ;;
+        *) echo "" ;;
+    esac
+}
+
+worst="unknown"
+supported=false
+devices=""
+count=0
+
+rank() {
+    case "$1" in
+        urgent) echo 3 ;;
+        warning) echo 2 ;;
+        normal) echo 1 ;;
+        *) echo 0 ;;
+    esac
+}
+
+for card in "${MMC_HOST_DIR}"/mmc*/mmc*:*; do
+    [ -r "${card}/life_time" ] || continue
+    [ -r "${card}/pre_eol_info" ] || continue
+    name="${card##*/}"
+    read -r raw_a raw_b < "${card}/life_time" || true
+    read -r raw_eol < "${card}/pre_eol_info" || true
+    life_a="$(hex_value "${raw_a:-}")"
+    life_b="$(hex_value "${raw_b:-}")"
+    eol="$(hex_value "${raw_eol:-}")"
+
+    state="unknown"
+    for life in "${life_a}" "${life_b}"; do
+        [ -n "${life}" ] || continue
+        [ "${life}" -ge 1 ] || continue
+        if [ "${state}" = "unknown" ]; then
+            state="normal"
+        fi
+        if [ "${life}" -ge 11 ]; then
+            state="urgent"
+        elif [ "${life}" -ge 9 ] && [ "$(rank "${state}")" -lt 2 ]; then
+            state="warning"
+        fi
+    done
+    case "${eol}" in
+        1)
+            [ "${state}" != "unknown" ] || state="normal"
+            ;;
+        2)
+            [ "$(rank "${state}")" -ge 2 ] || state="warning"
+            ;;
+        3)
+            state="urgent"
+            ;;
+    esac
+
+    # Upper bound of the life used, in percent: the worse of the two types
+    # (10 % steps; an exceeded card is reported as 100).
+    used="null"
+    for life in "${life_a}" "${life_b}"; do
+        [ -n "${life}" ] && [ "${life}" -ge 1 ] || continue
+        percent=$((life * 10))
+        [ "${percent}" -le 100 ] || percent=100
+        if [ "${used}" = "null" ] || [ "${percent}" -gt "${used}" ]; then
+            used="${percent}"
+        fi
+    done
+
+    supported=true
+    count=$((count + 1))
+    [ -z "${devices}" ] || devices="${devices},"
+    devices="${devices}{\"device\":\"${name}\",\"life_time_est_typ_a\":${life_a:-null},\"life_time_est_typ_b\":${life_b:-null},\"pre_eol_info\":${eol:-null},\"life_used_percent_upper_bound\":${used},\"state\":\"${state}\"}"
+    if [ "$(rank "${state}")" -gt "$(rank "${worst}")" ]; then
+        worst="${state}"
+    fi
+    case "${state}" in
+        urgent | warning)
+            echo "WARNING: eMMC ${name} wear is ${state} (life_time ${raw_a:-?} ${raw_b:-?}, pre_eol_info ${raw_eol:-?}): plan its replacement" >&2
+            ;;
+    esac
+done
+
+umask 077
+temporary="${OUTPUT}.new"
+printf '{"_type":"suderra.emmc-wear.v1","supported":%s,"worst_state":"%s","devices":[%s]}\n' \
+    "${supported}" "${worst}" "${devices}" > "${temporary}"
+mv -f "${temporary}" "${OUTPUT}"
+echo "==> ${count} eMMC card(s), worst state ${worst}"

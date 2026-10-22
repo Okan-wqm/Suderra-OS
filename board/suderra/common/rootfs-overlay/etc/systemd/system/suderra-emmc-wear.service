@@ -1,0 +1,17 @@
+# eMMC wear telemetry (ADR-048 DEC-24): reads the life-time and pre-EOL
+# registers the kernel exposes for each eMMC and writes
+# /run/suderra-os/emmc-wear.json. A device without an eMMC gets an empty list.
+
+[Unit]
+Description=Record the eMMC wear of this device
+Documentation=https://github.com/Okan-wqm/suderra-os
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/suderra-emmc-wear
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ReadWritePaths=/run/suderra-os

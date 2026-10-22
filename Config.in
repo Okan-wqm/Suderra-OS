@@ -43,6 +43,9 @@ config BR2_PACKAGE_SUDERRA_DATA_TOOLS
 	# The recovery key of the LUKS /data is escrowed with openssl (DEC-14.3).
 	select BR2_PACKAGE_OPENSSL
 	select BR2_PACKAGE_LIBOPENSSL_BIN
+	# A production image grows /data to the disk before it formats it
+	# (DEC-24; usr/lib/repart.d/50-data.conf).
+	select BR2_PACKAGE_SYSTEMD_REPART if BR2_PACKAGE_SUDERRA_VARIANT_PROD
 
 #
 # Profil seçimi — hangi varyant build ediliyor

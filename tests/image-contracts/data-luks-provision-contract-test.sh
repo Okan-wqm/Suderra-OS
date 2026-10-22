@@ -206,8 +206,9 @@ text = open(sys.argv[1], encoding="utf-8").read()
 match = re.search(r'if \[ "\$\{SUDERRA_OS_VARIANT\}" = "prod" \]; then\n\s*#[^\n]*\n\s*#[^\n]*\n\s*enable_unit suderra-data-recovery\.path paths\.target\n\s*preset_enable suderra-data-recovery\.path', text)
 if not match:
     sys.exit("ERROR: post-build.sh must enable suderra-data-recovery.path on production images only")
-if 'SUDERRA_OS_VARIANT}" != "prod"' not in text or text.count("suderra-data-recovery.service") < 2:
-    sys.exit("ERROR: post-build.sh must delete the recovery units from images that are not production")
+block = re.search(r'production_device_image=1\nif \[ "\$\{SUDERRA_OS_VARIANT\}" != "prod" \]; then\n\s*production_device_image=0\nfi\ncase "\$\{DEFCONFIG_NAME\}" in\n\s*\*usb_installer\*\) production_device_image=0 ;;\nesac\nif \[ "\$\{production_device_image\}" = "0" \]; then(.*?)\nfi\n', text, re.S)
+if not block or "suderra-data-recovery.path" not in block.group(1) or "suderra-data-recovery.service" not in block.group(1):
+    sys.exit("ERROR: post-build.sh must delete the recovery units from images that are not production device images")
 PY
 
 echo "/data LUKS provisioning contract passed"

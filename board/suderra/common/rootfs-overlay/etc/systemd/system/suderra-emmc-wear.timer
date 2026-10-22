@@ -1,0 +1,11 @@
+# The wear of a flash disk moves in days, not seconds: once after boot, then daily.
+
+[Unit]
+Description=Record the eMMC wear of this device daily
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1d
+
+[Install]
+WantedBy=timers.target
