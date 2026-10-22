@@ -9,7 +9,7 @@ Before=rauc.service suderra-rauc-mark-good.service
 # FAT (fw_env.config). Only RAUC's slot hook writes the FIT of the slot it just
 # installed, and it remounts rw for that copy alone and back to ro afterwards
 # (suderra-rauc-arm-slot-hook.sh; ADR-048 DEC-18.4).
-What=/dev/disk/by-partlabel/boot
+What=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_BOOT@
 Where=/boot
 Type=vfat
 Options=ro,nosuid,nodev,noexec,umask=0077,shortname=winnt

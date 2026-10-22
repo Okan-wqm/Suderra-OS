@@ -30,21 +30,21 @@ path=/etc/rauc/keyring.pem
 post-install=/usr/lib/rauc/suderra-rauc-arm-slot-hook.sh
 
 [slot.rootfs.0]
-device=/dev/disk/by-partlabel/rootfs-a
+device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_A@
 type=raw
 bootname=A
 
 [slot.rootfs-verity.0]
-device=/dev/disk/by-partlabel/rootfs-a-verity
+device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_A_VERITY@
 type=raw
 parent=rootfs.0
 
 [slot.rootfs.1]
-device=/dev/disk/by-partlabel/rootfs-b
+device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_B@
 type=raw
 bootname=B
 
 [slot.rootfs-verity.1]
-device=/dev/disk/by-partlabel/rootfs-b-verity
+device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_B_VERITY@
 type=raw
 parent=rootfs.1

@@ -99,13 +99,28 @@ for slot in A B; do
         <(openssl x509 -in "${fit}.cert" -pubkey -noout 2>/dev/null) \
         -signature "${fit}.sig" "${fit}" >/dev/null 2>&1 || {
         echo "ERROR: ${slot} FIT sidecar imzası doğrulanmadı" >&2; exit 1; }
-    # bootargs ARM konsolu + verity taşımalı, module.sig_enforce TAŞIMAMALI.
+    # bootargs: the signed command line names the slot's partitions by PARTUUID
+    # (gpt-partuuids.conf), carries the verity root hash and the hardening the x86
+    # tail has, and its console is not the agent's fieldbus UART (EI-049).
     cmdline="${BIN}/suderra-${slot}.cmdline"
-    grep -q 'console=ttyAMA0' "${cmdline}" || { echo "ERROR: ${slot} ARM console yok" >&2; exit 1; }
+    sl="$(printf '%s' "${slot}" | tr 'A-Z' 'a-z')"
+    grep -q "suderra.verity.root_partuuid=$(python3 -I "${ROOT}/scripts/ci/gpt-partuuids.py" get "rootfs-${sl}") " "${cmdline}" ||
+        { echo "ERROR: ${slot} root_partuuid is not rootfs-${sl}'s" >&2; exit 1; }
+    grep -q "suderra.verity.hash_partuuid=$(python3 -I "${ROOT}/scripts/ci/gpt-partuuids.py" get "rootfs-${sl}-verity") " "${cmdline}" ||
+        { echo "ERROR: ${slot} hash_partuuid is not rootfs-${sl}-verity's" >&2; exit 1; }
+    if grep -q 'partlabel' "${cmdline}"; then echo "ERROR: ${slot} cmdline names a partition by label" >&2; exit 1; fi
     grep -q 'suderra.verity.root_hash=' "${cmdline}" || { echo "ERROR: ${slot} verity roothash yok" >&2; exit 1; }
-    if grep -q 'module.sig_enforce' "${cmdline}"; then
-        echo "ERROR: ${slot} ARM cmdline module.sig_enforce içermemeli (modüller açık)" >&2; exit 1; fi
+    for token in lockdown=confidentiality module.sig_enforce=1 debugfs=off oops=panic panic=10; do
+        grep -qw -- "${token}" "${cmdline}" || { echo "ERROR: ${slot} cmdline lacks ${token}" >&2; exit 1; }
+    done
     grep -q "rauc.slot=${slot}" "${cmdline}" || { echo "ERROR: ${slot} rauc.slot yok" >&2; exit 1; }
+    # The generic Pi 4 / CM4 console is the display, never a UART: the agent's
+    # fieldbus of this board is /dev/ttyAMA0 (suderra-agent.service.d drop-in).
+    grep -qw 'console=tty1' "${cmdline}" || { echo "ERROR: ${slot} ARM console tty1 değil" >&2; exit 1; }
+    for dev in $(grep -o 'console=[A-Za-z0-9]*' "${cmdline}" | sed 's/console=//'); do
+        if grep -qx "DeviceAllow=/dev/${dev} rw" "${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service.d/10-board-rpi4-cm4.conf"; then
+            echo "ERROR: ${slot} console ${dev} is a fieldbus device the agent may open (EI-049)" >&2; exit 1; fi
+    done
 done
 
 # No u-boot.dtb: nothing loads it (U-Boot's control FDT is the firmware's tree).

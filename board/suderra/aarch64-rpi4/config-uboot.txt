@@ -49,10 +49,18 @@ arm_boost=1
 # Konsol & Debug
 # ----------------------------------------------------------------------------
 
-# Mini-UART üzerinden seri konsol (GPIO14/15)
-# Endüstriyel kurulumda debug için ŞART — sahada arıza teşhisi
+# GPIO14/15 carry the agent's fieldbus (the RS485 HAT of a Pi 4 / CM4 is
+# /dev/ttyAMA0, board/suderra/common/rootfs-overlay/etc/systemd/system/
+# suderra-agent.service.d/10-board-rpi4-cm4.conf), so the production image has no
+# kernel console on it (the signed command line names console=tty1, EI-049) and
+# the firmware's second stage does not write there either. U-Boot's own output
+# still uses the console UART enable_uart=1 sets up; it is output only (stdin is the
+# null device, bootdelay is -2), and a Modbus byte on the bus can neither stop the
+# boot nor reach a prompt (ADR-048 DEC-18.3). Whether that output may stay is a
+# hardware check (docs/hardware/): a HAT that must stay silent at power-up needs
+# enable_uart=0 once U-Boot's console is shown to be optional on the board.
 enable_uart=1
-uart_2ndstage=1
+uart_2ndstage=0
 
 # ----------------------------------------------------------------------------
 # GPU / Display

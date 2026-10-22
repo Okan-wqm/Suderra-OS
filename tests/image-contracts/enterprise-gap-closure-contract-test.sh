@@ -204,11 +204,11 @@ for token in \
     'grubenv=/boot/EFI/BOOT/grubenv' \
     'bundle-formats=verity' \
     'statusfile=/data/rauc/status.ini' \
-    'device=/dev/disk/by-partlabel/rootfs-a' \
-    'device=/dev/disk/by-partlabel/rootfs-a-verity' \
+    'device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_A@' \
+    'device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_A_VERITY@' \
     'parent=rootfs.0' \
-    'device=/dev/disk/by-partlabel/rootfs-b' \
-    'device=/dev/disk/by-partlabel/rootfs-b-verity' \
+    'device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_B@' \
+    'device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_B_VERITY@' \
     'parent=rootfs.1'
 do
     grep -q "${token}" "${RAUC_CONFIG}" || {
@@ -221,7 +221,7 @@ for token in \
     'veritysetup format' \
     'veritysetup verify' \
     'build_x86_verity_initramfs' \
-    'suderra.verity.root_partlabel' \
+    'suderra.verity.root_partuuid' \
     '.initrd=' \
     'objcopy' \
     'sbsign' \
@@ -278,7 +278,7 @@ do
 done
 
 for token in \
-    'What=/dev/disk/by-partlabel/efi' \
+    'What=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_EFI@' \
     'Where=/boot' \
     'Before=rauc.service suderra-rauc-mark-good.service'
 do

@@ -412,7 +412,9 @@
         {
           "commands": [
             "cp",
+            "mount",
             "mv",
+            "rm",
             "sync"
           ]
         }

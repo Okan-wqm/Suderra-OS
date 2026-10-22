@@ -50,7 +50,7 @@ declared = re.search(r"^Type=([0-9a-f-]+)$", definition_text, re.M)
 if not declared or declared.group(1) != derived:
     errors.append(f"50-data.conf must have Type={derived}, the UUIDv5 of the data partition type URL")
 if "Label=data" not in definition_text:
-    errors.append("50-data.conf must label the partition data: /dev/disk/by-partlabel/data is how the OS finds it")
+    errors.append("50-data.conf must label the partition data (the GPT name genimage gives it; the OS finds it by the PARTUUID of gpt-partuuids.conf)")
 GENERIC = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 prod_layouts = [
     "board/suderra/aarch64-rpi4/genimage-prod.cfg",

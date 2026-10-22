@@ -188,6 +188,72 @@ the boot partition (the `OF_BOARD` path of `rpi.c`), that the raw environment on
 eMMC/SD card survives a power cut, and the integrity of the boot partition, which is
 the next section (H2).
 
+### Partition identity, the verity policy and the USB policy (ADR-048 DEC-18; EI-049, EI-050)
+
+- **Partitions are named by PARTUUID, never by a label.** `board/suderra/common/
+  gpt-partuuids.conf` lists the GPT PARTUUID of every partition of the production
+  layouts; the genimage-prod configs (and the A/B x86 config) write them, the signed
+  command line carries `suderra.verity.root_partuuid` / `hash_partuuid`, and RAUC's
+  slots, the boot mount and the `/data` device are placeholders `post-build.sh` renders
+  from the same list (`scripts/ci/gpt-partuuids.py`). The verity initramfs resolves
+  the two partitions by PARTUUID and refuses to continue when a second device
+  carries the same one (the old `blkid -t PARTLABEL=... | head -n 1` took whichever
+  disk answered first). The list is public in every image, so this makes confusion
+  by a label impossible, not an attacker with a copy of the image; against that the
+  control is the USB policy below.
+- **The verity table carries `restart_on_corruption`.** A block that fails its hash
+  restarts the machine; the A/B counters turn that into the other slot while the
+  slot is a freshly installed one. A slot RAUC marked good boots without a counter
+  write (DEC-18.5), so a confirmed slot whose root file system corrupts later
+  restarts into the same slot until RAUC's health logic acts on it: that is the
+  trade-off DEC-18.5 chose against writing the environment on every boot.
+- **The ARM command line has `debugfs=off` and `module.sig_enforce=1`** like the x86
+  one. `module.sig_enforce` is a kernel parameter only where the kernel has
+  `CONFIG_MODULE_SIG` (the RevPi production kernel does; the Pi 4 production kernel
+  does not yet, EI-048) and is ignored otherwise. The console of the generic image
+  is `console=tty1`, never the UART of the agent's fieldbus, and the firmware's
+  second stage no longer writes to it (`uart_2ndstage=0`).
+- **USB:** `usbguard` runs in every production image with `etc/usbguard/rules.conf`:
+  storage is blocked, hubs, serial adapters and HID are allowed by `equals` rules
+  (`all-of` would let a keyboard that also carries a network interface in). The
+  rules parse with usbguard's own parser in `tests/image-contracts/
+  usbguard-contract-test.sh`; which descriptors a field adapter really has is the
+  hardware list.
+- **U-Boot environment on the boot disk:** two raw copies in the gap in front of
+  the first partition (user area of the eMMC or SD card, one definition for every
+  board; the eMMC hardware boot partitions the ADR prefers do not exist on an SD
+  card and would be a RevPi-only variant that needs the hardware to validate).
+
+### Hardware checks of the boot chain (what the QEMU test cannot show)
+
+Each is a step of the G4 test on a Pi 4 / CM4 and on a Revolution Pi Connect 4, with
+a production image:
+
+1. `cat /proc/cmdline` holds `suderra.verity.root_hash=`, `lockdown=confidentiality`
+   and `suderra.verity.root_partuuid=` (the Pi firmware hands U-Boot the keyed device
+   tree of the boot partition; a build whose tree lacked the key would never boot,
+   the compiled-in `bootcmd` refuses it).
+2. Replace `suderra-A.fit` on the boot partition (rw remount) with an unsigned FIT
+   and with one signed by another key: the device resets and takes slot B, or
+   resets again; it never starts the kernel.
+3. `fw_printenv` shows the counters U-Boot saved (the raw environment at 0x60000 and
+   0x80000 of `/dev/mmcblk0`); install an update and look at `BOOT_ORDER` and
+   `BOOT_<slot>_LEFT` change; cut the power while `fw_setenv` runs, a thousand times,
+   and the device still boots with a valid environment.
+4. A USB stick inserted while the device runs is blocked (`usbguard list-devices`),
+   a serial adapter of the hardware list is allowed.
+5. A Modbus master flooding the RS485 port during a power cycle does not stop the
+   boot and leaves no console bytes on the line after U-Boot's own output
+   (U-Boot's output uses the `enable_uart` UART of the firmware: whether it may stay
+   on a HAT that must be silent at power-up is decided on the hardware).
+6. Flip one byte of the active root file system on disk, read the file: the device
+   restarts, and after the tries of a freshly installed slot it takes the other one.
+7. A second disk with the same PARTUUIDs attached at boot: the initramfs refuses
+   (`PARTUUID ... is on 2 devices`) instead of choosing one.
+
+Not code: the Raspberry Pi OTP secure boot that authenticates the boot partition
+(H2 below), `bekliyor: operatör`.
+
 ## Remaining hardware/kernel gates before ARM production_ready (audit G4/G5)
 
 The audit's remaining findings are either implemented above or gated below on a

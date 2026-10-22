@@ -400,6 +400,15 @@ for slot in A B; do
     grep -qF 'console=ttyS0,115200' <<<"${args}" || fail "slot ${slot}: the console is the mini-UART (ttyS0)"
     grep -qF 'console=ttyAMA0' <<<"${args}" && fail "slot ${slot}: ttyAMA0 is not the Connect 4's console"
     grep -qF "rauc.slot=${slot}" <<<"${args}" || fail "slot ${slot}: bootargs lack rauc.slot"
+    for token in lockdown=confidentiality module.sig_enforce=1 debugfs=off; do
+        grep -qw -- "${token}" <<<"${args}" || fail "slot ${slot}: bootargs lack ${token}"
+    done
+    grep -qF 'suderra.verity.root_partuuid=' <<<"${args}" || fail "slot ${slot}: bootargs name no root PARTUUID"
+    # The console is the debug UART; no UART the agent's drop-in names is a console.
+    for dev in $(grep -o 'console=[A-Za-z0-9]*' <<<"${args}" | sed 's/console=//'); do
+        if grep -qx "DeviceAllow=/dev/${dev} rw" "${ROOT}/board/suderra/common/rootfs-overlay/etc/systemd/system/suderra-agent.service.d/10-board-revpi-connect4.conf"; then
+            fail "slot ${slot}: console ${dev} is a device the agent's drop-in opens"; fi
+    done
     grep -qF 'suderra.verity.root_hash=' <<<"${args}" || fail "slot ${slot}: bootargs lack the verity root hash"
     if [ ! -s "${fit}.sig" ] || [ ! -s "${fit}.cert" ]; then fail "slot ${slot}: missing detached sidecars"; fi
 done

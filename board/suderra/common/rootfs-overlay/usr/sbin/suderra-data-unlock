@@ -34,7 +34,10 @@
 set -eu
 
 LAYOUT=/usr/lib/suderra/data-layout.tmpfiles.conf
-DATA_DEVICE=/dev/disk/by-partlabel/data
+# The data partition of the boot disk, by the PARTUUID the build gave it
+# (board/suderra/common/gpt-partuuids.conf; post-build.sh renders the placeholder).
+# A partition label is whatever a removable disk says it is (ADR-048 DEC-18.1).
+DATA_DEVICE=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_DATA@
 DATA_MAPPER=suderra-data
 DATA_OPTIONS=nosuid,nodev,noexec
 INSTALLER=/usr/bin/suderra-installer

@@ -4,7 +4,7 @@ Documentation=https://rauc.readthedocs.io/en/latest/integration.html
 Before=rauc.service suderra-rauc-mark-good.service
 
 [Mount]
-What=/dev/disk/by-partlabel/efi
+What=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_EFI@
 Where=/boot
 Type=vfat
 Options=rw,nosuid,nodev,noexec,umask=0077,shortname=winnt

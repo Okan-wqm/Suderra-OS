@@ -102,7 +102,15 @@ Her imzalama, bir variant/signing-mode sözleşmesinden geçer:
 - Bundle format `verity`; kurulum imza kapısı `[keyring] /etc/rauc/keyring.pem`
   (`system.conf:8-9`) — bu keyring dm-verity altındaki rootfs'te olduğundan, RAUC her bundle'ın
   CMS imzasını **kurcalanamaz** bir güven köküne karşı doğrular.
-- A/B slot modeli PARTLABEL ile; slot-hook imzalı UKI/FIT'i `/boot`'a kopyalar.
+- A/B slot modeli GPT PARTUUID ile (`board/suderra/common/gpt-partuuids.conf`; etiket yok: bir USB
+  bellek `rootfs-a` ya da `data` etiketini taşıyabilir, ADR-048 DEC-18.1); slot-hook imzalı UKI/FIT'i
+  `/boot`'a kopyalar. ARM'da `/boot` salt-okunur bağlanır ve hook yalnız o kopya için rw'ye çevirir.
+- **USB:** `usbguard` (`etc/usbguard/rules.conf`): USB depolama engellidir; hub, USB-serial adaptörleri
+  ve HID dar kurallarla (`equals`) izinlidir; provisioning/kurtarma bundle'ı yalnız PROVISIONING veya
+  MAINTENANCE'ta root ingress biriminde okunur (DEC-18.2).
+- **verity initramfs:** root ve hash bölümleri imzalı cmdline'daki `suderra.verity.root_partuuid` /
+  `hash_partuuid` ile bulunur, aynı PARTUUID'i taşıyan ikinci cihaz reddedilir; tablo
+  `restart_on_corruption` taşır (EI-050).
 - **Anti-rollback:** `userspace/suderra-ota` — monotonik `rollback_floor`, `min_current_version`,
   key-epoch floor, expiry (`main.rs:412-461`); prod'da dev override'lar yok sayılır ve trusted
   floor kaynağı `/data` dışında olmalı (`:701-731`).

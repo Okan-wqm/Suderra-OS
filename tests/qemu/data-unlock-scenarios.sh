@@ -4,7 +4,7 @@
 #
 # Scenarios of tests/qemu/data-unlock-vm-test.py, run as root in the guest it
 # builds: the real board/suderra/common/rootfs-overlay/usr/sbin/suderra-data-unlock
-# on a blank virtio disk (/dev/vda, linked as /dev/disk/by-partlabel/data) with
+# on a blank virtio disk (/dev/vda, linked as /dev/disk/by-partuuid/<the data PARTUUID of gpt-partuuids.conf>) with
 # a software TPM, the real cryptsetup, systemd-cryptenroll and mkfs.ext4, and a
 # test double of suderra-installer that records what the script asks of it.
 #

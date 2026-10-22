@@ -251,6 +251,26 @@ if [ -f "${RAUC_SYSTEM_CONF}" ]; then
     echo "==> RAUC compatible ${rauc_compatible}"
 fi
 
+# GPT partition identity (ADR-048 DEC-18.1): RAUC's slots, the boot mount and
+# the /data device are named by the PARTUUID the image build writes on the boot
+# disk (board/suderra/common/gpt-partuuids.conf, the genimage-prod configs and the
+# signed kernel command line use the same list), not by a partition or file-system
+# label, which a removable disk can carry too. The files hold placeholders; the
+# build fails if one is left.
+partuuid_files=()
+for f in "${TARGET_DIR}/etc/rauc/system.conf" \
+         "${TARGET_DIR}/usr/lib/systemd/system/boot.mount" \
+         "${TARGET_DIR}/usr/sbin/suderra-data-unlock"; do
+    if [ -f "${f}" ]; then
+        partuuid_files+=("${f}")
+    fi
+done
+if [ "${#partuuid_files[@]}" -gt 0 ]; then
+    python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/gpt-partuuids.py" render "${partuuid_files[@]}"
+    python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/gpt-partuuids.py" unrendered "${partuuid_files[@]}"
+    echo "==> partitions named by PARTUUID in ${#partuuid_files[@]} file(s)"
+fi
+
 # Kernel config list (statements.json compatibility.kernel_config): one
 # CONFIG_<NAME>=y|m line per enabled symbol of the kernel this image boots.
 if [ -n "${BUILD_DIR:-}" ]; then
@@ -530,6 +550,17 @@ if [ -e "${TARGET_DIR}/usr/lib/systemd/system/suderra-rauc-mark-good.service" ];
     preset_enable boot.mount
     preset_enable rauc.service
     preset_enable suderra-rauc-mark-good.service
+fi
+
+# USB device policy (ADR-048 DEC-18.2): an image with the usbguard package runs
+# its daemon with the policy of the overlay (no USB storage, serial adapters and HID
+# by narrow rules); an image without the package carries none of its files.
+if [ -e "${TARGET_DIR}/usr/lib/systemd/system/usbguard.service" ]; then
+    enable_unit usbguard.service multi-user.target
+    preset_enable usbguard.service
+    chmod 0600 "${TARGET_DIR}/etc/usbguard/rules.conf" "${TARGET_DIR}/etc/usbguard/usbguard-daemon.conf"
+else
+    rm -rf "${TARGET_DIR}/etc/usbguard" "${TARGET_DIR}/etc/systemd/system/usbguard.service.d"
 fi
 
 {

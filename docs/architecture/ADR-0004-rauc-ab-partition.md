@@ -89,12 +89,12 @@ Partition layout:
   path=/etc/rauc/keyring.pem
   
   [slot.rootfs.0]
-  device=/dev/disk/by-partlabel/rootfs-a
+  device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_A@   # rendered at build time
   type=raw
   bootname=A
   
   [slot.rootfs.1]
-  device=/dev/disk/by-partlabel/rootfs-b
+  device=/dev/disk/by-partuuid/@SUDERRA_PARTUUID_ROOTFS_B@   # rendered at build time
   type=raw
   bootname=B
   ```

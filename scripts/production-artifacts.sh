@@ -70,6 +70,15 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# gpt_partuuid <partition name>: the GPT PARTUUID the image build writes for a
+# partition of the production disk (board/suderra/common/gpt-partuuids.conf: the
+# genimage configs, RAUC, the boot mount and /data use the same list).
+gpt_partuuid() {
+    python3 -I "${SCRIPT_DIR}/ci/gpt-partuuids.py" get "$1" || die "no PARTUUID for partition $1"
+}
+
 production_mode() {
     [ "${SUDERRA_SIGNING_MODE:-}" = "prod" ] || [ "${SUDERRA_RELEASE_TIER:-}" = "production" ]
 }
@@ -259,32 +268,32 @@ generate_verity() {
 
 # Arch-agnostic dm-verity bootargs emitter. Writes suderra-<slot>.cmdline as:
 #   <console_and_root> rauc.slot=.. suderra.slot=.. <suderra.verity.* tokens> <hardening_tail>
-# The verity token block is identical across architectures (partlabel-based,
+# The verity token block is identical across architectures (PARTUUID-based,
 # parsed by the shared verity initramfs); the console/root prefix and the
-# hardening tail are arch-specific (x86 enforces module.sig_enforce=1; ARM, with
-# modules enabled pending signed-FIT, must not). ARM (PR-A3) supplies its own
-# prefix/tail and reuses this emitter so the verity contract never diverges.
+# hardening tail are arch-specific. The root and hash partitions are named by
+# the PARTUUID the image build wrote (board/suderra/common/gpt-partuuids.conf),
+# not by a partition label that a removable disk can carry too (EI-050).
 emit_verity_bootargs() {
     local binaries_dir="$1"
     local slot="$2"
     local console_and_root="$3"
     local hardening_tail="$4"
     local slot_lower
-    local root_partlabel
-    local verity_partlabel
+    local root_partuuid
+    local verity_partuuid
     local cmdline="${binaries_dir}/suderra-${slot}.cmdline"
     local data_sectors
 
     slot_lower="$(printf '%s' "${slot}" | tr 'A-Z' 'a-z')"
-    root_partlabel="rootfs-${slot_lower}"
-    verity_partlabel="rootfs-${slot_lower}-verity"
+    root_partuuid="$(gpt_partuuid "rootfs-${slot_lower}")"
+    verity_partuuid="$(gpt_partuuid "rootfs-${slot_lower}-verity")"
 
     # shellcheck disable=SC1091
     . "${binaries_dir}/rootfs.verity.env"
 
     data_sectors=$((DATA_BLOCKS * DATA_BLOCK_SIZE / 512))
     printf '%s\n' \
-        "${console_and_root} rauc.slot=${slot} suderra.slot=${slot} suderra.verity.root_partlabel=${root_partlabel} suderra.verity.hash_partlabel=${verity_partlabel} suderra.verity.data_sectors=${data_sectors} suderra.verity.data_blocks=${DATA_BLOCKS} suderra.verity.data_block_size=${DATA_BLOCK_SIZE} suderra.verity.hash_block_size=${HASH_BLOCK_SIZE} suderra.verity.hash_start_block=${HASH_START_BLOCK} suderra.verity.hash_algorithm=${HASH_ALGORITHM} suderra.verity.root_hash=${ROOT_HASH} suderra.verity.salt=${SALT} ${hardening_tail}" \
+        "${console_and_root} rauc.slot=${slot} suderra.slot=${slot} suderra.verity.root_partuuid=${root_partuuid} suderra.verity.hash_partuuid=${verity_partuuid} suderra.verity.data_sectors=${data_sectors} suderra.verity.data_blocks=${DATA_BLOCKS} suderra.verity.data_block_size=${DATA_BLOCK_SIZE} suderra.verity.hash_block_size=${HASH_BLOCK_SIZE} suderra.verity.hash_start_block=${HASH_START_BLOCK} suderra.verity.hash_algorithm=${HASH_ALGORITHM} suderra.verity.root_hash=${ROOT_HASH} suderra.verity.salt=${SALT} ${hardening_tail}" \
         > "${cmdline}"
 }
 
@@ -334,7 +343,7 @@ copy_target_runtime_libs() {
 
 # Arch-agnostic verity initramfs builder. The generated /init reads the
 # dm-verity parameters from the kernel cmdline (suderra.verity.*) and resolves
-# partitions by PARTLABEL, so it is identical for x86 and arm64 (both ship an
+# partitions by PARTUUID, so it is identical for x86 and arm64 (both ship an
 # ext4 rootfs behind dm-verity). build_x86_verity_initramfs is a thin wrapper
 # kept for the existing x86 callers/contracts; ARM (PR-A3) calls this directly.
 build_verity_initramfs() {
@@ -404,8 +413,8 @@ arg() {
     return 1
 }
 
-root_label="\$(arg suderra.verity.root_partlabel || true)"
-hash_label="\$(arg suderra.verity.hash_partlabel || true)"
+root_uuid="\$(arg suderra.verity.root_partuuid || true)"
+hash_uuid="\$(arg suderra.verity.hash_partuuid || true)"
 data_sectors="\$(arg suderra.verity.data_sectors || true)"
 data_blocks="\$(arg suderra.verity.data_blocks || true)"
 data_block_size="\$(arg suderra.verity.data_block_size || true)"
@@ -415,20 +424,35 @@ hash_algorithm="\$(arg suderra.verity.hash_algorithm || true)"
 root_hash="\$(arg suderra.verity.root_hash || true)"
 salt="\$(arg suderra.verity.salt || true)"
 
-[ -n "\${root_label}" ] || die "missing root partition label"
-[ -n "\${hash_label}" ] || die "missing verity partition label"
+[ -n "\${root_uuid}" ] || die "missing root partition PARTUUID"
+[ -n "\${hash_uuid}" ] || die "missing verity partition PARTUUID"
 [ -n "\${data_sectors}" ] || die "missing data sectors"
 [ -n "\${data_blocks}" ] || die "missing data blocks"
 [ -n "\${root_hash}" ] || die "missing dm-verity root hash"
 
-find_partlabel() {
-    label="\$1"
+# The partition the signed command line names, by its PARTUUID. Exactly one
+# device may carry it: a second disk with the same PARTUUID is refused, never
+# preferred (blkid | head -n 1 took whichever answered first, from any disk).
+find_partuuid() {
+    uuid="\$1"
     i=0
     while [ "\${i}" -lt 100 ]; do
-        device="\$(${blkid_path} -t "PARTLABEL=\${label}" -o device 2>/dev/null | head -n 1 || true)"
-        if [ -n "\${device}" ] && [ -b "\${device}" ]; then
+        found="\$(${blkid_path} -t "PARTUUID=\${uuid}" -o device 2>/dev/null || true)"
+        count=0
+        device=""
+        for candidate in \${found}; do
+            if [ -b "\${candidate}" ]; then
+                count=\$((count + 1))
+                device="\${candidate}"
+            fi
+        done
+        if [ "\${count}" -eq 1 ]; then
             printf '%s\n' "\${device}"
             return 0
+        fi
+        if [ "\${count}" -gt 1 ]; then
+            echo "Suderra initramfs: PARTUUID \${uuid} is on \${count} devices: \${found}" >&2
+            return 2
         fi
         i=\$((i + 1))
         sleep 0.1
@@ -436,10 +460,13 @@ find_partlabel() {
     return 1
 }
 
-rootdev="\$(find_partlabel "\${root_label}")" || die "cannot resolve verified root partition identity \${root_label}"
-hashdev="\$(find_partlabel "\${hash_label}")" || die "cannot resolve verified verity partition identity \${hash_label}"
+rootdev="\$(find_partuuid "\${root_uuid}")" || die "cannot resolve verified root partition \${root_uuid}"
+hashdev="\$(find_partuuid "\${hash_uuid}")" || die "cannot resolve verified verity partition \${hash_uuid}"
 
-table="0 \${data_sectors} verity 1 \${rootdev} \${hashdev} \${data_block_size} \${hash_block_size} \${data_blocks} \${hash_start_block} \${hash_algorithm} \${root_hash} \${salt}"
+# restart_on_corruption: a block that fails its hash restarts the machine, which
+# the A/B counters turn into the other slot, instead of an I/O error the reader
+# may ignore (EI-050).
+table="0 \${data_sectors} verity 1 \${rootdev} \${hashdev} \${data_block_size} \${hash_block_size} \${data_blocks} \${hash_start_block} \${hash_algorithm} \${root_hash} \${salt} 1 restart_on_corruption"
 echo "\${table}" | ${dmsetup_path} create suderra-root --readonly || die "dm-verity mapping create failed"
 mount -o ro -t ext4 /dev/mapper/suderra-root /newroot || die "cannot mount verified root"
 
@@ -589,13 +616,21 @@ sign_image() {
 # ARM signed-FIT producer (ADR-0007, gates G1/G2)
 # ---------------------------------------------------------------------------
 write_arm_verity_cmdline() {
-    # ARM bootargs reuse the shared verity emitter (A1). Arch-specific: serial
-    # console (ttyAMA0 unless the board names its own, $3) and tty1, and NO
-    # module.sig_enforce on the command line (a board that forces module
-    # signatures does it in its kernel config, linux-revpi-suderra-prod.config).
+    # ARM bootargs reuse the shared verity emitter. Arch-specific: the console
+    # (a board names its own, $3; the generic default is tty1, never a UART: the
+    # UART of a Pi 4 / CM4 with an RS485 HAT is the agent's fieldbus, ttyAMA0, and
+    # a console there would put kernel output on the bus, EI-049), and the
+    # hardening tail: lockdown, and module.sig_enforce=1 and debugfs=off as the x86
+    # tail has them. module.sig_enforce is a kernel parameter only where the
+    # kernel is built with CONFIG_MODULE_SIG (the RevPi production kernel is;
+    # for the Pi 4 production kernel that is EI-048), and is ignored otherwise.
+    local console="console=tty1"
+    if [ -n "${3:-}" ]; then
+        console="console=$3 console=tty1"
+    fi
     emit_verity_bootargs "$1" "$2" \
-        "console=${3:-ttyAMA0,115200} console=tty1 root=/dev/mapper/suderra-root ro rootwait" \
-        "lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 oops=panic panic=10 quiet"
+        "${console} root=/dev/mapper/suderra-root ro rootwait" \
+        "lockdown=confidentiality slab_nomerge slub_debug=- page_alloc.shuffle=1 randomize_kstack_offset=on init_on_alloc=1 init_on_free=1 debugfs=off module.sig_enforce=1 oops=panic panic=10 quiet"
 }
 
 resolve_fit_signing_material() {
@@ -1266,6 +1301,12 @@ build_board_slot_fit() {
     sign_fit_sidecars "${fit}" "${key}" "${cert}"
     echo "==> ${slot} slot signed FIT (${BOARD_FINAL_DTB}): ${fit}"
 }
+
+# Sourced by tests/image-contracts/gpt-partuuid-contract-test.sh: define the
+# functions, run nothing.
+if [ "${BASH_SOURCE[0]}" != "${0}" ]; then
+    return 0
+fi
 
 command="${1:-}"
 case "${command}" in

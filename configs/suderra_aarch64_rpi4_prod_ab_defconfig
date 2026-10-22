@@ -232,3 +232,6 @@ BR2_TARGET_GENERIC_ISSUE="Suderra OS appliance"
 # ============================================================================
 BR2_REPRODUCIBLE=y
 BR2_PER_PACKAGE_DIRECTORIES=y
+
+# USB device policy (ADR-048 DEC-18.2): board/suderra/common/rootfs-overlay/etc/usbguard
+BR2_PACKAGE_USBGUARD=y

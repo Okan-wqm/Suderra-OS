@@ -47,6 +47,24 @@ LAYOUT = (
     / "board/suderra/common/rootfs-overlay/usr/lib/suderra/data-layout.tmpfiles.conf"
 )
 SCENARIOS = HERE / "data-unlock-scenarios.sh"
+PARTUUIDS = ROOT / "scripts/ci/gpt-partuuids.py"
+
+
+def gpt_partuuid(name: str) -> str:
+    """The PARTUUID the production disk gives a partition (gpt-partuuids.conf)."""
+    return subprocess.run(
+        [sys.executable, "-I", str(PARTUUIDS), "get", name],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def render_partuuids(script: bytes) -> bytes:
+    """post-build.sh names the partitions in the script by their PARTUUID; so does the guest."""
+    rendered = script
+    for name in ("data",):
+        placeholder = f"@SUDERRA_PARTUUID_{name.upper()}@".encode()
+        rendered = rendered.replace(placeholder, gpt_partuuid(name).encode())
+    return rendered
 RESULT_SCHEMA = ROOT / "contracts/suderra-edge/v1/schemas/result.schema.json"
 DEFAULT_KERNELS = (
     ROOT / "output/suderra_qemu_x86_64_defconfig/images/bzImage",
@@ -253,14 +271,14 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 mount -t tmpfs tmpfs /run
-mkdir -p /run/suderra-os /dev/disk/by-partlabel
+mkdir -p /run/suderra-os /dev/disk/by-partuuid
 i=0
 while [ ! -b /dev/vda ] || [ ! -e /dev/tpmrm0 ]; do
     i=$((i + 1))
     [ "${i}" -gt 100 ] && { echo "T-FAIL boot: /dev/vda or /dev/tpmrm0 missing"; ls /dev; break; }
     sleep 0.2
 done
-ln -sf /dev/vda /dev/disk/by-partlabel/data
+ln -sf /dev/vda /dev/disk/by-partuuid/@DATA_PARTUUID@
 sh /test/scenarios.sh
 echo "T-POWEROFF"
 poweroff -f
@@ -350,7 +368,7 @@ def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
         libraries.update(library_closure(located.resolve()))
     for name, target in sorted(libraries.items()):
         cpio.file(name.lstrip("/"), target.read_bytes(), 0o755)
-    cpio.file("usr/sbin/suderra-data-unlock", unlock.read_bytes(), 0o755)
+    cpio.file("usr/sbin/suderra-data-unlock", render_partuuids(unlock.read_bytes()), 0o755)
     cpio.file("usr/lib/suderra/data-layout.tmpfiles.conf", LAYOUT.read_bytes())
     cpio.file("etc/suderra/recovery-escrow.pub.pem", escrow_public)
     cpio.file("test/escrow.key", escrow_private, 0o600)
@@ -369,7 +387,7 @@ def build_initramfs(work: Path, scenarios: Path, unlock: Path) -> Path:
         0o755,
     )
     cpio.file("test/scenarios.sh", scenarios.read_bytes(), 0o755)
-    cpio.file("init", INIT.encode(), 0o755)
+    cpio.file("init", INIT.replace("@DATA_PARTUUID@", gpt_partuuid("data")).encode(), 0o755)
     path = work / "initramfs.cpio.gz"
     path.write_bytes(gzip.compress(cpio.finish(), compresslevel=3))
     return path
