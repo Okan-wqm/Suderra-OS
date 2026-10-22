@@ -117,6 +117,7 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 | [EI-085](#EI-085) | MEDIUM | P2 | The QEMU semantic evidence collector fails on every boot: ProtectSystem=strict leaves /run read-only and the unit declares no RuntimeDirectory |
 | [EI-086](#EI-086) | LOW | P2 | The QEMU dev image sets BR2_PACKAGE_SYSTEMD_RESOLVED=n while /etc/resolv.conf points at ../run/resolv.conf, which nothing writes, so the image cannot resolve names |
 | [EI-087](#EI-087) | LOW | P2 | OS config and doc hygiene: kernel-hardening.md and ota.md name removed or old symbols, dead BR2 symbols in the QEMU defconfig, an unneeded CONFIG_TCG_VTPM_PROXY in the x86 kernel, and a build-order versus Kconfig inversion for suderra-ota |
+| [EI-088](#EI-088) | MEDIUM | P1b | x86 industrial-PC package set (USB installer image, Windows conversion and Secure Boot ownership runbook, qualification checker, driver set, signed PCR 7+11 policy) is deliberately P1b: it starts only after the operator selects the x86 model, and SG-3 stays closed until it is done |
 
 ## Bulgular
 
@@ -1563,3 +1564,14 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 - **Kanıt (dosya:satır):** `docs/security/kernel-hardening.md:56`, `docs/security/kernel-hardening.md:62`, `docs/security/kernel-hardening.md:63`, `docs/security/kernel-hardening.md:68`, `docs/operations/ota.md:64`, `configs/suderra_qemu_x86_64_defconfig:30`, `configs/suderra_qemu_x86_64_defconfig:31`, `board/suderra/x86_64/linux-x86_64.config:188`, `package/suderra-ota/suderra-ota.mk:11`, `package/suderra-rauc-config/Config.in:5`
 - **Kök neden:** The kernel-hardening table lists CONFIG_PAGE_TABLE_ISOLATION, CONFIG_RETPOLINE, CONFIG_X86_INTEL_MPX and CONFIG_HARDENED_USERCOPY_FALLBACK, which are renamed or removed in kernel 6.12 (OS3 resolved the kernel configs but not the doc), and ota.md still shows compatible=suderra-os-x86_64 instead of the per-board value. BR2_TOOLCHAIN_BUILDROOT_LOCALE and _USE_SSP do not survive Kconfig (SSP still resolves to strong). linux-x86_64.config enables CONFIG_TCG_VTPM_PROXY, a host-side vTPM proxy an appliance does not need. suderra-ota.mk builds suderra-ota after suderra-rauc-config while Kconfig makes suderra-rauc-config depend on suderra-ota; every defconfig has both so nothing breaks. Buildroot per-package directories also keep stale copies of reverse dependencies after a feature change (the systemd -SECCOMP incident), which affects local incremental builds only.
 - **Mimari düzeltme yönü:** Generate the hardening table from the resolved kernel configs (Tier 2) so it cannot name a dead symbol; correct ota.md from boards.json; delete the dead defconfig lines and CONFIG_TCG_VTPM_PROXY; align the .mk dependency with Kconfig; document that release images are built from a clean tree only.
+
+<a id="EI-088"></a>
+
+### EI-088 — x86 industrial-PC package set (USB installer image, Windows conversion and Secure Boot ownership runbook, qualification checker, driver set, signed PCR 7+11 policy) is deliberately P1b: it starts only after the operator selects the x86 model, and SG-3 stays closed until it is done
+
+- **Önem:** Orta · **Faz:** P1b · **Son tarih:** 2026-12-31 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** configs/suderra_x86_64_usb_installer_defconfig (yeni), board/suderra/x86_64, scripts/production-artifacts.sh, docs/operations (x86 dönüşüm runbook'u)
+- **Köken:** ADR-048 P1 kapsam kararı (2026-10-22); platform tarafı kaydı EDGE-MEDIUM-142
+- **Kanıt (dosya:satır):** `docs/architecture/ADR-0008-edge-agent-integration-contract.md:1`
+- **Kök neden:** x86 modeli seçilmedi (ADR-048 Soru 1); sürücü kümesi, qualification kaydı ve Microsoft UEFI CA kararı model olmadan verilemez.
+- **Mimari düzeltme yönü:** Modelden bağımsız parçalar P1'de kalır (x86 çekirdek sürüm ve kaynak-hash sabitlemesi EI-028/EI-051, `/data` kurtarma slotu, TPM kaynak kaydı, EI-078). Model seçilince P1b paketleri ADR-048 P1 x86 maddesine göre yazılır. SG-3: P1b bitmeden sahaya x86 birimi kurulmaz.

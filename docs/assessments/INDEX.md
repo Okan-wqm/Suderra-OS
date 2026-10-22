@@ -14,4 +14,4 @@ means it is retained for history only.
 | [2026-05-21-enterprise-evidence-closure-plan.md](2026-05-21-enterprise-evidence-closure-plan.md) | active | current-tree | Evidence closure implementation plan. |
 | [2026-05-22-payload-build-performance-plan.md](2026-05-22-payload-build-performance-plan.md) | active | current-tree | Payload build performance workstream. |
 | [2026-05-24-enterprise-rc-readiness-plan.md](2026-05-24-enterprise-rc-readiness-plan.md) | active | current-tree | Release-candidate readiness workstream. |
-| [2026-10-19-edge-agent-integration-audit.md](2026-10-19-edge-agent-integration-audit.md) | active | 91722f8 | Edge agent integration audit (EI-001..EI-087); decision of record ADR-0008 → aquaculture_platform ADR-048. |
+| [2026-10-19-edge-agent-integration-audit.md](2026-10-19-edge-agent-integration-audit.md) | active | 91722f8 | Edge agent integration audit (EI-001..EI-088); decision of record ADR-0008 → aquaculture_platform ADR-048. |
