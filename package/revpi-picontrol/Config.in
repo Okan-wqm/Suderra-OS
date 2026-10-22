@@ -1,0 +1,26 @@
+config BR2_PACKAGE_REVPI_PICONTROL
+	bool "revpi-picontrol"
+	depends on BR2_LINUX_KERNEL
+	depends on BR2_aarch64
+	help
+	  KUNBUS piControl, the Revolution Pi PiBridge master and
+	  process-image driver. It creates /dev/piControl0, through which
+	  the edge agent's revpi-io backend reads and writes the process
+	  image of the Revolution Pi Connect 4 and the modules on its
+	  PiBridge (ADR-048 DEC-8.8).
+
+	  piControl is an out-of-tree module and is not part of the KUNBUS
+	  kernel tree: it is built against the pinned KUNBUS kernel of the
+	  same image as a signed module (the build's module signing key
+	  signs it in modules_install, so a kernel that enforces module
+	  signatures loads it) and is loaded at boot by
+	  systemd-modules-load.
+
+	  The package version is the piControl release that KUNBUS builds
+	  for the pinned kernel; it must be bumped together with the kernel
+	  (docs/hardware/revpi-connect4.md).
+
+	  https://gitlab.com/revolutionpi/piControl
+
+comment "revpi-picontrol needs a Linux kernel and an aarch64 target"
+	depends on !BR2_LINUX_KERNEL || !BR2_aarch64

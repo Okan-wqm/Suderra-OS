@@ -1,0 +1,8 @@
+# Locally computed from the GitLab archive of the piControl commit that tag
+# v2.6.2 of https://gitlab.com/revolutionpi/piControl points to.
+sha256  7ea4192156c3a98b4a21df67aa37ffe2dff098088d30c967a81d86da12849349  piControl-7acf6e9110dd558b434b57f50ee5d4b5d54b5d91.tar.gz
+
+# License files, locally computed from that archive.
+sha256  aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3  LICENSES/GPL-2.0-only.txt
+sha256  5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2  LICENSES/LGPL-2.1-only.txt
+sha256  b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0  LICENSES/MIT.txt
