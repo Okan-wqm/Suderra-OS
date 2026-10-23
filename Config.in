@@ -71,6 +71,28 @@ config BR2_PACKAGE_SUDERRA_USB_POLICY
 	select BR2_PACKAGE_USBGUARD
 
 #
+# Authenticated time of every image (ADR-048 DEC-7.1, EI-046, EI-052). The
+# image's time comes from NTS-authenticated sources (etc/chrony.conf), and
+# Buildroot's chrony package builds NTS only when gnutls is present: without
+# it chronyd is configured --without-gnutls and its feature string reads
+# "-NTS -SECHASH", so every `server ... nts` line of the shipped
+# configuration would be refused at start. No defconfig selected gnutls, so
+# the image shipped a chrony that could not do what its configuration says.
+# The overlay's time units and helper ship in every image, so the options
+# are selected here once, by an option nobody can switch off, instead of by
+# each defconfig. scripts/ci/check-chrony-features.py proves at build time
+# that the chronyd binary the image ships reports +NTS.
+#
+config BR2_PACKAGE_SUDERRA_TIME_SYNC
+	bool
+	default y
+	depends on BR2_USE_MMU # chrony
+	depends on BR2_USE_WCHAR # gnutls
+	depends on !BR2_STATIC_LIBS # gnutls
+	select BR2_PACKAGE_CHRONY
+	select BR2_PACKAGE_GNUTLS
+
+#
 # Profil seçimi — hangi varyant build ediliyor
 #
 choice

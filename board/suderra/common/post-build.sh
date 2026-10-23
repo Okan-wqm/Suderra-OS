@@ -681,6 +681,13 @@ if [ -f "${TARGET_DIR}/etc/shadow" ]; then
     esac
 fi
 
+# 10a. Authenticated time (ADR-048 DEC-7.1, EI-052). etc/chrony.conf names only
+# NTS sources, and chrony builds NTS only with gnutls (Config.in selects it).
+# chrony's configure drops the feature silently, so the binary this image ships
+# is the proof: its feature string must say +NTS, or the build fails here
+# instead of the device never synchronizing.
+python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-chrony-features.py" "${TARGET_DIR}"
+
 # 11. Commands of the shipped scripts (EI-078). Every external command a shell
 # script of this image runs is declared in runtime-commands.json, and every
 # command the image's variant, architecture and packages require resolves in
