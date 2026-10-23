@@ -1,0 +1,8 @@
+# The watchdog PID1 owns on the QEMU x86_64 board (ADR-048 DEC-6.6): the q35
+# machine's iTCO watchdog or an explicit i6300esb device, by the identity the
+# driver reports in sysfs (drivers/watchdog/iTCO_wdt.c DRV_NAME,
+# drivers/watchdog/i6300esb.c ESB_MODULE_NAME). A harness gives the machine
+# one of them; the software watchdog (softdog) is in no kernel and would never
+# match.
+SUBSYSTEM=="watchdog", KERNEL=="watchdog[0-9]*", ATTR{identity}=="iTCO_wdt", SYMLINK+="suderra-watchdog"
+SUBSYSTEM=="watchdog", KERNEL=="watchdog[0-9]*", ATTR{identity}=="i6300ESB timer", SYMLINK+="suderra-watchdog"

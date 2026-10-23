@@ -19,7 +19,6 @@ için** gerekli yardımcı binary'leri içerir.
 | `suderra-firstboot` | binary | 2 | İlk boot provisioning (machine-id, /data init, TPM seal) |
 | `suderra-ota` | binary | 4 | RAUC orchestrator (download, verify, install, rollback) |
 | `suderra-telemetry` | binary | 5 | Health metrics + remote ship (CPU, RAM, disk, app metrics) |
-| `suderra-watchdog` | binary | 5 | Hardware watchdog + health monitor |
 | `suderra-factory-reset` | binary | 5 | GPIO/cloud reset trigger handler |
 | `suderra-attestation` | binary | 8+ | TPM PCR remote attestation |
 | `suderra-config` | lib | 2 | Ortak config validation (diğer crate'ler tarafından kullanılır) |

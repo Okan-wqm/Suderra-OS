@@ -32,7 +32,6 @@ userspace/
 ├── suderra-firstboot/      # binary, ilk boot provisioning
 ├── suderra-ota/            # binary, RAUC OTA orchestrator
 ├── suderra-telemetry/      # binary, metrics push
-├── suderra-watchdog/       # binary, hw watchdog + health
 ├── suderra-factory-reset/  # binary, factory reset handler
 └── suderra-attestation/    # binary, TPM PCR attestation (Faz 8+)
 ```
@@ -80,7 +79,6 @@ target/x86_64-unknown-linux-musl/release/
 ├── suderra-firstboot       # ~1-3 MB, static
 ├── suderra-ota             # ~3-5 MB (reqwest + rustls dahil)
 ├── suderra-telemetry       # ~3-5 MB
-├── suderra-watchdog        # ~1-2 MB
 ├── suderra-factory-reset   # ~1-2 MB
 └── suderra-attestation     # ~2-4 MB
 ```
@@ -217,7 +215,6 @@ Sonuç: ~50-80% boyut azalması debug build'e göre.
 | 2 | suderra-config tam tipler | TODO |
 | 4 | suderra-ota impl | TODO |
 | 5 | suderra-telemetry impl | TODO |
-| 5 | suderra-watchdog impl | TODO |
 | 5 | suderra-factory-reset impl | TODO |
 | 8+ | suderra-attestation impl | TODO |
 

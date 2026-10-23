@@ -28,8 +28,7 @@ suderra-os/         (bu repo)              userspace/  (Rust workspace, bu repo 
 ├── board/                                  ├── suderra-firstboot/
 ├── package/   (Buildroot reçeteleri)       ├── suderra-ota/
 ├── docs/                                   ├── suderra-telemetry/
-└── userspace/ ───────────────────────►     ├── suderra-watchdog/
-                                            ├── suderra-factory-reset/
+└── userspace/ ───────────────────────►     ├── suderra-factory-reset/
                                             ├── suderra-attestation/
                                             └── suderra-config/
 
@@ -175,10 +174,9 @@ Buildroot host-rustc kullanır, musl target ile cross-build.
   - CPU, RAM, disk, sıcaklık, uptime
   - Edge Agent metrikleri (Modbus read rate, MQTT publish, errors)
   - JSON structured push (cloud endpoint)
-- [ ] `suderra-watchdog` Rust crate:
-  - Hardware watchdog driver
-  - Kernel panic → otomatik reboot
-  - Edge Agent crash → systemd restart + telemetry alert
+- [x] Donanım watchdog'u: tek sahibi systemd PID1'dir (`board/suderra/watchdog/`,
+  ADR-048 DEC-6.6); ayrı bir `suderra-watchdog` crate'i yoktur. Edge Agent crash →
+  systemd restart + telemetry alert.
 - [ ] Remote syslog: journald → upstream (vector, fluent-bit, veya rsyslog)
 - [ ] Crash dump pipeline (`pstore` → upstream)
 - [ ] `scripts/gen-sbom.sh` tam implementasyon (syft)

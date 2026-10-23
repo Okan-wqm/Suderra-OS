@@ -1,0 +1,5 @@
+# The watchdog PID1 owns on the Raspberry Pi 4 / CM4 (ADR-048 DEC-6.6): the
+# BCM2711 PM watchdog, enabled by default in the device tree
+# (arch/arm/boot/dts/broadcom/bcm2711.dtsi pm: watchdog@7e100000), so the signed
+# FIT's device tree needs no dtparam=watchdog=on.
+SUBSYSTEM=="watchdog", KERNEL=="watchdog[0-9]*", ATTR{identity}=="Broadcom BCM2835 Watchdog timer", SYMLINK+="suderra-watchdog"

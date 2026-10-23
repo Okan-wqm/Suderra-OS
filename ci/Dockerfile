@@ -77,6 +77,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Time contract test: the real chronyd parses etc/chrony.conf
     # (tests/image-contracts/time-sync-contract-test.sh)
     chrony \
+    # Watchdog contract test: udevadm verify parses the udev rules of
+    # board/suderra/watchdog (tests/image-contracts/watchdog-contract-test.sh)
+    udev \
     # PKCS#11 engine for HSM-backed FIT/image/RAUC signing in the gated
     # arm-production-build.yml lane (openssl -engine pkcs11, mkimage -N pkcs11)
     libengine-pkcs11-openssl \

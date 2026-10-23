@@ -1,0 +1,6 @@
+# The watchdog PID1 owns on the RevPi Connect 4 (ADR-048 DEC-6.6): the BCM2711
+# PM watchdog, by the identity its driver reports in sysfs
+# (drivers/watchdog/bcm2835_wdt.c). The PCF2129's driver reports
+# "NXP PCF2127/PCF2129 Watchdog" (drivers/rtc/rtc-pcf2127.c of the KUNBUS
+# kernel) and never matches.
+SUBSYSTEM=="watchdog", KERNEL=="watchdog[0-9]*", ATTR{identity}=="Broadcom BCM2835 Watchdog timer", SYMLINK+="suderra-watchdog"

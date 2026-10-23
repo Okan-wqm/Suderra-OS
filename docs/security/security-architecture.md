@@ -152,13 +152,12 @@ provenance uçtan uca fail-closed ve endüstriyel (IEC 62443 SI / CRA) seviyede.
 
 Burada dikkat: **çoğu bileşen mimarisi kurulmuş ama iskele.** Ne olduğunu net görmek şart.
 
-### B.1 — Rust userspace: 4 gerçek, 4 iskele
+### B.1 — Rust userspace: 3 gerçek, 4 iskele
 
 | Crate | Durum | Ne yapar |
 |---|---|---|
 | `suderra-ota` | **Gerçek** | Ed25519 manifest doğrula + anti-rollback + SHA256 + `rauc install`. `#![forbid(unsafe_code)]`. **İndirmez** (yol argümanı alır). |
 | `suderra-installer` | **Gerçek** | Harici workload bundle'ını HTTPS ile indirir, **cosign keyless (Sigstore)** + SHA256 doğrular. RAUC install motoru henüz yok (LabCopy stub). |
-| `suderra-watchdog` | **Gerçek** | Donanım `/dev/watchdog` besler, health-gate, staged reset. Tek `unsafe` (2 ioctl, belgeli). |
 | `suderra-config` | **Gerçek (minimal)** | `config.yaml` parse; sadece `https://` prefix kontrolü. |
 | `suderra-firstboot` | **İSKELE** | Sadece log + exit. LUKS/TPM seal/cloud enroll = TODO. **Her defconfig'te KAPALI.** |
 | `suderra-telemetry` | **İSKELE** | Sadece log + exit. `reqwest` bağımlı ama kullanılmıyor. |

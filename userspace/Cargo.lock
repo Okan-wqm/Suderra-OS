@@ -1657,18 +1657,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "suderra-watchdog"
-version = "0.1.0-alpha"
-dependencies = [
- "anyhow",
- "libc",
- "sd-notify",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"

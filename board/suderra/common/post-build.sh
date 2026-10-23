@@ -274,6 +274,18 @@ if [ -f "${RAUC_SYSTEM_CONF}" ]; then
     echo "==> RAUC compatible ${rauc_compatible}"
 fi
 
+# Hardware watchdog (ADR-048 DEC-6.6, EI-033): systemd PID1 is its only owner.
+# scripts/ci/board-watchdog.py installs the image's own pair from
+# board/suderra/watchdog/<board_profile or pending family>/: the system.conf.d
+# drop-in that names /dev/suderra-watchdog and its timeouts, and the udev rule
+# that links that name to the board's watchdog by its sysfs identity. An image
+# that is not a board or a pending family (the USB installer) gets none; every
+# other image without a pair fails the build.
+watchdog_key="$(python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/board-watchdog.py" \
+    --root "${SUDERRA_EXTERNAL_DIR}" install \
+    --defconfig "${DEFCONFIG_NAME}_defconfig" --target "${TARGET_DIR}")"
+echo "==> PID1 hardware watchdog: ${watchdog_key}"
+
 # GPT partition identity (ADR-048 DEC-18.1): the partitions are identified by the
 # PARTUUID the image build writes on the boot disk
 # (board/suderra/common/gpt-partuuids.conf, the genimage-prod configs and the

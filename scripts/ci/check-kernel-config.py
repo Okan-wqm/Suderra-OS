@@ -206,6 +206,38 @@ CAPABILITIES: dict[str, tuple[tuple[str, ...], str]] = {
         "Super I/O timers and the ACPI WDAT table; a model's qualification "
         "picks the one it has (DEC-8 matrix)",
     ),
+    "watchdog-sysfs": (
+        ("WATCHDOG", "WATCHDOG_SYSFS"),
+        "the watchdog PID1 owns is named by the identity its driver reports in "
+        "sysfs and judged by the state and nowayout it reports there "
+        "(board/suderra/watchdog/<key>/60-suderra-watchdog.rules, the health "
+        "gate's watchdog probe); drivers/watchdog/watchdog_dev.c builds no "
+        "attribute group without CONFIG_WATCHDOG_SYSFS, so the link would never "
+        "exist and PID1 would run without a hardware watchdog (DEC-6.6, EI-033)",
+    ),
+    "watchdog-bcm2835": (
+        ("WATCHDOG", "BCM2835_WDT"),
+        "the BCM2711 PM watchdog systemd PID1 owns on the Raspberry Pi 4 / CM4 "
+        "and the RevPi Connect 4 (identity 'Broadcom BCM2835 Watchdog timer', "
+        "DEC-6.6)",
+    ),
+    "watchdog-itco": (
+        ("WATCHDOG", "ITCO_WDT", "LPC_ICH", "I2C_I801"),
+        "the chipset iTCO watchdog systemd PID1 owns on an x86 PC and on QEMU's "
+        "q35 machine (identity 'iTCO_wdt'; lpc_ich makes its platform device, "
+        "DEC-6.6, DEC-8.10)",
+    ),
+    "watchdog-i6300esb": (
+        ("WATCHDOG", "I6300ESB_WDT"),
+        "QEMU's explicit -device i6300esb, the other watchdog the qemu-x86_64 "
+        "board's udev rule names (identity 'i6300ESB timer', DEC-8 matrix)",
+    ),
+    "watchdog-nowayout": (
+        ("WATCHDOG_NOWAYOUT",),
+        "once PID1 has armed the hardware watchdog nothing in userspace may stop "
+        "it: a root `systemctl stop`, a crashed daemon or a magic close would "
+        "otherwise switch hang recovery off (DEC-6.6)",
+    ),
     "x86-ipc-smbus-gpio": (
         (
             "I2C",
@@ -346,7 +378,12 @@ CAPABILITY_MINIMUMS: dict[str, dict[str, int]] = {
 
 # Capabilities of a board's field I/O and boot hardware, by board_profile.
 BOARD_IO: dict[str, tuple[str, ...]] = {
-    "qemu-x86_64": ("x86-field-io", "x86-rtc"),
+    "qemu-x86_64": (
+        "x86-field-io",
+        "x86-rtc",
+        "watchdog-itco",
+        "watchdog-i6300esb",
+    ),
     "x86-ipc": (
         "x86-field-io",
         "x86-rtc",
@@ -357,9 +394,25 @@ BOARD_IO: dict[str, tuple[str, ...]] = {
         "x86-ipc-watchdog",
         "x86-ipc-smbus-gpio",
         "x86-ipc-can",
+        "watchdog-itco",
     ),
-    "rpi4-cm4": ("rpi-field-io", "rpi-rtc"),
-    "revpi-connect4": ("revpi-field-io", "revpi-rtc", "revpi-console", "revpi-rt"),
+    "rpi4-cm4": ("rpi-field-io", "rpi-rtc", "watchdog-bcm2835"),
+    "revpi-connect4": (
+        "revpi-field-io",
+        "revpi-rtc",
+        "revpi-console",
+        "revpi-rt",
+        "watchdog-bcm2835",
+    ),
+}
+
+# Symbols a production kernel must not enable (y or m): symbol -> reason.
+FORBIDDEN_IN_PROD: dict[str, str] = {
+    "SOFT_WATCHDOG": (
+        "the software watchdog is a kernel timer: it resets nothing when the "
+        "machine hangs hard, and as /dev/watchdog0 it looks like the protection "
+        "EI-033 found missing (DEC-6.6)"
+    ),
 }
 
 # Boards whose production image enforces module signatures. rpi4-cm4's
@@ -525,11 +578,12 @@ def images(root: Path) -> list[Image]:
 def capabilities_of(image: Image) -> list[str]:
     if image.kind == "excluded":
         return []
-    caps = ["firewall", "luks", "agent-sandbox"]
+    caps = ["firewall", "luks", "agent-sandbox", "watchdog-sysfs"]
     if image.binding == "tpm-ek-sha256":
         caps.append("tpm-x86" if image.arch == "x86_64" else "tpm-spi")
     if image.prod:
         caps.append("verity-initramfs")
+        caps.append("watchdog-nowayout")
     if image.arch == "aarch64":
         caps.append("arm64-hardening")
     if image.prod and image.board in MODULE_SIGNING_BOARDS:
@@ -684,6 +738,15 @@ def check_static(root: Path) -> list[str]:
                     f"{image.defconfig}: CONFIG_{sym} must be at least {minimum} "
                     f"({cap}: {CAPABILITIES[cap][1]}); {where}"
                 )
+        if image.prod and image.kind != "excluded":
+            for sym, reason in FORBIDDEN_IN_PROD.items():
+                line = eff.get(sym)
+                if line is not None and line.value in ("y", "m"):
+                    problems.append(
+                        f"{image.defconfig}: CONFIG_{sym}={line.value} at "
+                        f"{rel(line.path, root)}:{line.lineno} is forbidden in a "
+                        f"production kernel: {reason}"
+                    )
     return problems
 
 
@@ -735,6 +798,13 @@ def check_resolved(
                 f"{defconfig}: resolved CONFIG_{sym}={cfg.get(sym, 'n')}, must be at "
                 f"least {minimum} ({cap}: {CAPABILITIES[cap][1]})"
             )
+    if image.prod and image.kind != "excluded":
+        for sym, reason in FORBIDDEN_IN_PROD.items():
+            if cfg.get(sym) in ("y", "m"):
+                problems.append(
+                    f"{defconfig}: resolved CONFIG_{sym}={cfg[sym]} is forbidden in a "
+                    f"production kernel: {reason}"
+                )
     named: dict[str, Line] = {}
     for path in image.files:
         for line in parse_config_file(path):

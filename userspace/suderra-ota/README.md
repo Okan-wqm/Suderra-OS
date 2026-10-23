@@ -9,7 +9,7 @@ politikasını uygular.
 - Bundle download (resumable, retry, bandwidth limit)
 - İmza doğrulama (RAUC native + cosign attestation)
 - RAUC install + reboot orchestration
-- Boot sonrası health check (suderra-watchdog koordinasyonu)
+- Boot sonrası health check (`suderra-rauc-health-gate`; donanım watchdog'u systemd PID1'indir)
 - Başarısız update otomatik rollback (RAUC fallback)
 
 ## Faz

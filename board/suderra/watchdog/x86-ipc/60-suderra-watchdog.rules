@@ -1,0 +1,5 @@
+# The watchdog PID1 owns on the model-independent x86 base (ADR-048 DEC-6.6):
+# the chipset's iTCO watchdog, by the identity its driver reports in sysfs
+# (drivers/watchdog/iTCO_wdt.c DRV_NAME). CONFIG_SOFT_WATCHDOG is in no
+# production kernel: a software watchdog cannot reset a machine that hangs hard.
+SUBSYSTEM=="watchdog", KERNEL=="watchdog[0-9]*", ATTR{identity}=="iTCO_wdt", SYMLINK+="suderra-watchdog"

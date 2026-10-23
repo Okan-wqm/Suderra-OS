@@ -213,6 +213,61 @@ pin_case "tarball kernel moved to an unpinned commit" "${RPI_DEF}" \
     "suderra_aarch64_rpi4_defconfig: linux-0000000000000000000000000000000000000000.tar.gz has no 'sha256' line"
 echo "  requires every kernel pin to be hash-enforced and series-consistent"
 
+# 2d. The hardware watchdog (ADR-048 DEC-6.6, EI-033): systemd PID1 owns the
+# timer a board's udev rule names by its sysfs identity. The identity and the
+# state the health gate reads exist only with WATCHDOG_SYSFS; a production
+# kernel cannot be told to let go of the timer (NOWAYOUT) and has no software
+# watchdog (SOFT_WATCHDOG resets nothing when the machine hangs hard).
+X86_PROD_FRAG="board/suderra/x86_64/linux-x86_64.config"
+X86_FRAGMENT="board/suderra/common/kernel-fragment.config"
+ARM_HARDENING="board/suderra/aarch64-rpi4/linux-rpi4-hardening.config"
+
+fresh_copy
+sed -i '/^CONFIG_WATCHDOG_NOWAYOUT=y$/d' "${WORK}/tree/${X86_FRAGMENT}"
+expect_fail "x86 production kernels without NOWAYOUT" "suderra_x86_64_defconfig: CONFIG_WATCHDOG_NOWAYOUT must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+out="$(python3 -I "${CHECK}" --root "${WORK}/tree" static 2>&1 || true)"
+grep -q 'suderra_qemu_x86_64_prod_ab_defconfig: CONFIG_WATCHDOG_NOWAYOUT must be =y' <<<"${out}" ||
+    fail "the QEMU production kernel may lose NOWAYOUT unnoticed"
+
+fresh_copy
+sed -i '/^CONFIG_WATCHDOG_NOWAYOUT=y$/d' "${WORK}/tree/${ARM_HARDENING}"
+expect_fail "RevPi production kernel without NOWAYOUT" "suderra_aarch64_revpi4_prod_ab_defconfig: CONFIG_WATCHDOG_NOWAYOUT must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+out="$(python3 -I "${CHECK}" --root "${WORK}/tree" static 2>&1 || true)"
+grep -q 'suderra_aarch64_rpi4_prod_ab_defconfig: CONFIG_WATCHDOG_NOWAYOUT must be =y' <<<"${out}" ||
+    fail "the rpi4 production kernel may lose NOWAYOUT unnoticed"
+# A development kernel is not held to NOWAYOUT.
+if grep -q 'suderra_aarch64_rpi4_defconfig: CONFIG_WATCHDOG_NOWAYOUT' <<<"${out}"; then
+    fail "a development kernel was held to NOWAYOUT"
+fi
+
+fresh_copy
+sed -i 's/^# CONFIG_SOFT_WATCHDOG is not set$/CONFIG_SOFT_WATCHDOG=y/' "${WORK}/tree/${X86_PROD_FRAG}"
+expect_fail "x86 production kernel with the software watchdog" "CONFIG_SOFT_WATCHDOG=y at .*linux-x86_64.config:[0-9]* is forbidden in a production kernel" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_WATCHDOG_SYSFS=y$/d' "${WORK}/tree/${QEMU_FRAG}"
+expect_fail "dev QEMU kernel without WATCHDOG_SYSFS" "suderra_qemu_x86_64_defconfig: CONFIG_WATCHDOG_SYSFS must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_WATCHDOG_SYSFS=y$/d' "${WORK}/tree/${RPI_FRAG}"
+expect_fail "rpi4 kernel without WATCHDOG_SYSFS" "suderra_aarch64_rpi4_prod_ab_defconfig: CONFIG_WATCHDOG_SYSFS must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_BCM2835_WDT=y$/d' "${WORK}/tree/${REVPI_FRAG}"
+expect_fail "RevPi kernel without the BCM2711 watchdog driver" "suderra_aarch64_revpi4_defconfig: CONFIG_BCM2835_WDT must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+
+fresh_copy
+sed -i '/^CONFIG_ITCO_WDT=y$/d' "${WORK}/tree/${QEMU_FRAG}"
+expect_fail "dev QEMU kernel without the iTCO driver its udev rule names" "suderra_qemu_x86_64_defconfig: CONFIG_ITCO_WDT must be =y" \
+    python3 -I "${CHECK}" --root "${WORK}/tree" static
+echo "  requires the PID1 watchdog's drivers, sysfs identity and NOWAYOUT, and no software watchdog in production"
+
 # 3. Resolved mode on a synthetic kernel tree for the dev QEMU defconfig:
 #    a Kconfig defining every symbol its fragment names, and a .config that
 #    honours every line.

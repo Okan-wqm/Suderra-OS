@@ -8,7 +8,6 @@ members = [
     "suderra-firstboot",
     "suderra-ota",
     "suderra-telemetry",
-    "suderra-watchdog",
     "suderra-factory-reset",
     "suderra-attestation",
     "suderra-config",
