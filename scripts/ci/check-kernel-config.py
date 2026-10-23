@@ -281,6 +281,19 @@ CAPABILITIES: dict[str, tuple[tuple[str, ...], str]] = {
         "the clock before the first service, systohc so chrony's rtcsync keeps "
         "it (DEC-7.8; RTC_DRV_DS1307 is the wrong chip)",
     ),
+    "rpi-rtc": (
+        ("RTC_CLASS", "RTC_DRV_PCF85063", "RTC_HCTOSYS", "RTC_SYSTOHC"),
+        "the Compute Module 4 IO Board's PCF85063AT RTC (stock device tree "
+        "bcm2711-rpi-cm4-io.dts, rtc@51 nxp,pcf85063a): built in so hctosys sets "
+        "the clock before the first service, systohc so chrony's rtcsync keeps it "
+        "(DEC-7.8; the DS1307 driver the fragment named before is the wrong chip)",
+    ),
+    "x86-rtc": (
+        ("RTC_CLASS", "RTC_DRV_CMOS"),
+        "the CMOS clock every x86 board has is the RTC of DEC-7.8: the kernel sets "
+        "the system time from it at boot and writes it back every 11 minutes "
+        "while chrony's rtcsync says the clock is synchronized",
+    ),
     "revpi-console": (
         ("SERIAL_8250", "SERIAL_8250_CONSOLE", "SERIAL_8250_BCM2835AUX"),
         "the FIT's bootargs of the revpi-connect4 name console=ttyS0 "
@@ -333,9 +346,10 @@ CAPABILITY_MINIMUMS: dict[str, dict[str, int]] = {
 
 # Capabilities of a board's field I/O and boot hardware, by board_profile.
 BOARD_IO: dict[str, tuple[str, ...]] = {
-    "qemu-x86_64": ("x86-field-io",),
+    "qemu-x86_64": ("x86-field-io", "x86-rtc"),
     "x86-ipc": (
         "x86-field-io",
+        "x86-rtc",
         "x86-ipc-platform",
         "x86-ipc-network",
         "x86-ipc-storage",
@@ -344,7 +358,7 @@ BOARD_IO: dict[str, tuple[str, ...]] = {
         "x86-ipc-smbus-gpio",
         "x86-ipc-can",
     ),
-    "rpi4-cm4": ("rpi-field-io",),
+    "rpi4-cm4": ("rpi-field-io", "rpi-rtc"),
     "revpi-connect4": ("revpi-field-io", "revpi-rtc", "revpi-console", "revpi-rt"),
 }
 

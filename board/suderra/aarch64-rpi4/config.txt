@@ -112,11 +112,19 @@ dtoverlay=disable-bt
 # auto_initramfs=1
 
 # ----------------------------------------------------------------------------
-# RTC (CM4 IO board üzerinde DS3231)
+# RTC (ADR-048 DEC-7.8; EI-046)
 # ----------------------------------------------------------------------------
 
-# CM4 IO board'da RTC otomatik tanımlanır
-# Custom carrier için: dtoverlay=i2c-rtc,ds3231
+# The Compute Module 4 IO Board's RTC is a PCF85063AT (not a DS3231) on the
+# VideoCore I2C bus, address 0x51 (i2c-10), with a CR2032 socket. Its stock
+# device tree describes it; the bus stays off until this parameter turns it on
+# (CM4 IO Board datasheet, section 2.13:
+# https://datasheets.raspberrypi.com/cm4io/cm4io-datasheet.pdf). The kernel
+# fragment builds the driver in (linux-rpi4.config, RTC_DRV_PCF85063).
+# This file boots the kernel with the device tree the firmware builds, so the
+# parameter reaches it; the production image does not (config-uboot.txt).
+# A custom carrier with another RTC: dtoverlay=i2c-rtc,<chip> and its driver.
+dtparam=i2c_vc=on
 
 # ----------------------------------------------------------------------------
 # Boot davranışı

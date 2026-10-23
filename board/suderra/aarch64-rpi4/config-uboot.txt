@@ -127,11 +127,20 @@ dtoverlay=disable-bt
 # auto_initramfs=1
 
 # ----------------------------------------------------------------------------
-# RTC (CM4 IO board üzerinde DS3231)
+# RTC (ADR-048 DEC-7.8; EI-046) — NOT ENABLED BY THIS FILE
 # ----------------------------------------------------------------------------
 
-# CM4 IO board'da RTC otomatik tanımlanır
-# Custom carrier için: dtoverlay=i2c-rtc,ds3231
+# The Compute Module 4 IO Board's RTC is a PCF85063AT (not a DS3231) at 0x51 on
+# the VideoCore I2C bus, behind `dtparam=i2c_vc=on` (CM4 IO Board datasheet,
+# section 2.13). In production U-Boot hands the kernel the device tree of the
+# signed FIT, not the one the firmware builds from this file, so a dtparam or
+# dtoverlay here never reaches the kernel (aarch64-revpi-connect4/board-boot.conf,
+# EI-024, EI-029): the board's RTC works on a production rpi4-cm4 image only
+# when the FIT's own tree has the bus enabled, which an rpi4 board-boot.conf
+# (overlay merged by fdtoverlay, as the Connect 4's) would do and none exists
+# yet. Until then the board's time floor (suderra-time-state) is the only clock
+# it has before the first NTS synchronization. The dev image's config.txt
+# enables the bus.
 
 # ----------------------------------------------------------------------------
 # Boot davranışı
