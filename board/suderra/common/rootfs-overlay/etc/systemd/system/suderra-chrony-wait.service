@@ -1,0 +1,48 @@
+# The synchronization gate of Suderra OS (ADR-048 DEC-7.3, DEC-7.4; EI-046).
+# Buildroot's chrony package installs no chrony-wait, so `After=time-sync.target`
+# in the agent and the provision worker ordered them after a target nothing
+# reached.
+#
+# This unit orders itself before time-sync.target and waits for a synchronized
+# clock, at most 30 checks 2 s apart. The bound is the point: when there is no
+# network, no NTS server or no udp/123 (a site that blocks it, DEC-7.5), boot
+# goes on after a minute and the agent starts with an unsynchronized clock,
+# which it reports and acts on (it holds freshness-dependent actuation, local
+# control runs, DEC-7.5); the wait records a clock-unsynced alarm and its exit
+# status is success either way. TimeoutStartSec= is the hard bound for a
+# wedged chronyc; a unit killed by it fails, and time-sync.target is reached
+# all the same because consumers Wants= it and never Requires= it (DEC-7.4).
+#
+# "Synchronized" is suderra-time-state's definition, the one the document uses,
+# and not `chronyc waitsync`'s: the wait ends when the document would say
+# synced-nts or synced-unauthenticated.
+
+[Unit]
+Description=Wait, at most a minute, for the Suderra OS clock to synchronize
+Documentation=https://github.com/Okan-wqm/suderra-os
+After=chrony.service suderra-timefloor.service
+Wants=chrony.service suderra-timefloor.service time-sync.target
+Before=time-sync.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/suderra-time-state wait --tries 30 --interval 2
+TimeoutStartSec=90s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os
+
+[Install]
+WantedBy=multi-user.target

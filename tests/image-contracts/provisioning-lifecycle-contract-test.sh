@@ -220,9 +220,15 @@ done
 # P0 exit runtime suite and is not automated yet, so this test makes no claim
 # about the target kernels.
 if command -v nft >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+    # `meta skuid "<name>"` is resolved against the loading host's passwd, and
+    # this host has no chrony user: the rules are parsed with uid 0 in its place
+    # (the guest test, tests/qemu/nft-ruleset-smoke-test.py, loads the files as
+    # they are).
+    sed -E 's/meta skuid "[A-Za-z0-9_-]+"/meta skuid 0/' "${APPLIANCE}" > "${WORK}/appliance.nft"
+    sed -E 's/meta skuid "[A-Za-z0-9_-]+"/meta skuid 0/' "${PROVISIONING}" > "${WORK}/provisioning-body.nft"
     nft -c -f "${BASE}" || fail "nft -c rejects the base ruleset"
-    nft -c -f "${APPLIANCE}" || fail "nft -c rejects the appliance ruleset"
-    printf 'define provision_iface = "eth0"\ninclude "%s"\n' "${PROVISIONING}" > "${WORK}/provisioning.nft"
+    nft -c -f "${WORK}/appliance.nft" || fail "nft -c rejects the appliance ruleset"
+    printf 'define provision_iface = "eth0"\ninclude "%s"\n' "${WORK}/provisioning-body.nft" > "${WORK}/provisioning.nft"
     nft -c -f "${WORK}/provisioning.nft" || fail "nft -c rejects the provisioning ruleset"
     echo "nft -c: base, appliance and provisioning rulesets parse"
 fi

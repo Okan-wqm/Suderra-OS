@@ -1,0 +1,28 @@
+# Saves the time floor (ADR-048 DEC-7.2); started hourly by
+# suderra-timefloor.timer. What is saved, and why it can be neither a wrong
+# clock nor less than the floor already there, is in
+# usr/sbin/suderra-time-state.
+
+[Unit]
+Description=Save the Suderra OS time floor
+Documentation=https://github.com/Okan-wqm/suderra-os
+After=suderra-timefloor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/suderra-time-state floor-save
+TimeoutStartSec=30s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os

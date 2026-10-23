@@ -1,0 +1,80 @@
+# Suderra OS time daemon (ADR-048 DEC-7; EI-046, EI-052). It replaces the unit of
+# Buildroot's chrony package, a bare `chronyd -n` that runs as root with no
+# sandbox at all, and follows chrony's own examples/chronyd-restricted.service
+# for a client that needs nothing but the clock:
+#
+# * chronyd never runs as root. It starts as the chrony user with CAP_SYS_TIME
+#   alone (AmbientCapabilities=, which is also all `-U` asks of the
+#   environment), so a compromise of the one daemon that parses what the
+#   network sends can set the clock and nothing else, and the firewall can
+#   match its traffic by user for the whole life of the process (DEC-11.4,
+#   `meta skuid "chrony"`).
+# * What it uses from the configuration (etc/chrony.conf) needs no more:
+#   `rtcsync` is a flag the kernel acts on, `port 0` and `cmdport 0` bind
+#   nothing, and chronyc talks to the Unix socket in RuntimeDirectory= (root
+#   can always open it). A reference clock, a PPS device, the RTC file and
+#   hardware timestamping would need more and are not used.
+# * -4: IPv6 is off by sysctl (etc/sysctl.d/90-suderra-hardening.conf) and the
+#   rulesets are IPv4.
+# * Its state is /var/lib/chrony, the bind of /data/suderra/os/chrony
+#   (DEC-4.2); tmpfiles creates it, chrony:chrony 0750, and nothing else under
+#   /var is writable. RuntimeDirectory= makes /run/chrony for the command
+#   socket and the pid file.
+#
+# Ordering: the clock is raised to the time floor before chronyd looks at it
+# (DEC-7.2), after /data holds the floor, drift and NTS cookies. chronyd does
+# not gate anything itself; suderra-chrony-wait.service orders itself after
+# this unit and before time-sync.target.
+
+[Unit]
+Description=Suderra OS NTS time daemon (chrony)
+Documentation=man:chronyd(8) man:chrony.conf(5)
+After=network.target suderra-data.service suderra-timefloor.service
+Wants=suderra-timefloor.service
+Conflicts=systemd-timesyncd.service
+ConditionCapability=CAP_SYS_TIME
+
+[Service]
+Type=simple
+# Turn off DNSSEC validation for host name look-ups made by this process: they
+# need the correct time, which is what chronyd is here to find out.
+Environment=SYSTEMD_NSS_RESOLVE_VALIDATE=0
+ExecStart=/usr/sbin/chronyd -n -U -4
+Restart=on-failure
+RestartSec=5s
+
+User=chrony
+Group=chrony
+UMask=0077
+RuntimeDirectory=chrony
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=restart
+
+AmbientCapabilities=CAP_SYS_TIME
+CapabilityBoundingSet=CAP_SYS_TIME
+NoNewPrivileges=true
+DevicePolicy=closed
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/chrony
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=~@cpu-emulation @debug @module @mount @obsolete @raw-io
+SystemCallFilter=~@reboot @resources @swap
+
+[Install]
+WantedBy=multi-user.target

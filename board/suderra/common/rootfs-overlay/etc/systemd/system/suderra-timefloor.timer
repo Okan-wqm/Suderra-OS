@@ -1,0 +1,16 @@
+# The time floor is saved hourly (ADR-048 DEC-7.2), and at shutdown and at the
+# first synchronization of a boot by suderra-time-state itself. An hour is also
+# the most a power cut, which a 24 V field device suffers without warning,
+# can set a board without an RTC back from the last good time. The flash it
+# writes is one 11-byte file.
+
+[Unit]
+Description=Save the Suderra OS time floor hourly
+
+[Timer]
+Unit=suderra-timefloor-save.service
+OnBootSec=1h
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

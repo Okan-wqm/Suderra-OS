@@ -1,0 +1,39 @@
+# The clock document of Suderra OS (ADR-048 DEC-7.3; EI-046): rewrites
+# /run/suderra/time-state from chronyd's reports every 15 s. channels.json time
+# requires at least every 30 s and has readers call a document older than 120 s
+# unsynchronized, so a refresh that cannot be made leaves that fail-safe. A
+# daemon, not a timer, because a timer would put three journal lines every 15 s
+# into the volatile journal that has to hold the weeks before a field failure.
+# A failed pass is reported and the loop goes on; the unit is restarted if the
+# loop itself dies.
+#
+# No ProtectClock=: a pass raises a clock that fell below the floor.
+
+[Unit]
+Description=Suderra OS clock state
+Documentation=https://github.com/Okan-wqm/suderra-os
+After=suderra-timefloor.service chrony.service
+Wants=suderra-timefloor.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/suderra-time-state run --interval 15
+Restart=always
+RestartSec=2s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os
+
+[Install]
+WantedBy=multi-user.target

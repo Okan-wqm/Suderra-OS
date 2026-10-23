@@ -96,6 +96,29 @@ IMAGE_ROLE="${DEFCONFIG_NAME}"
 SUDERRA_AGENT_ABI=${SUDERRA_AGENT_ABI_RANGE}
 EOF
 
+# 1a. Build time (ADR-048 DEC-7.2): the lowest the clock may read. A device
+# without a usable RTC starts at epoch, and with no floor every validity window
+# of every signed statement it checks, and every TLS certificate, would be
+# judged against 1970. Buildroot exports SOURCE_DATE_EPOCH (the commit time of
+# the build, which BR2_REPRODUCIBLE keeps stable); suderra-time-state floors the
+# clock with max(this, the last good time saved on /data). A value the build
+# host's clock has not reached yet would floor every device in the future and is
+# refused.
+BUILD_EPOCH="${SOURCE_DATE_EPOCH:-}"
+case "${BUILD_EPOCH}" in
+    "" | *[!0-9]* | 0?*)
+        echo "ERROR: SOURCE_DATE_EPOCH must be a whole number of seconds since epoch (it is the image's time floor), got '${BUILD_EPOCH}'"
+        exit 1
+        ;;
+esac
+if [ "${BUILD_EPOCH}" -gt "$(( $(date +%s) + 86400 ))" ]; then
+    echo "ERROR: SOURCE_DATE_EPOCH ${BUILD_EPOCH} is more than a day ahead of this host's clock; as the image's time floor it would keep every device's clock in the future"
+    exit 1
+fi
+mkdir -p "${TARGET_DIR}/usr/lib/suderra"
+printf '%s\n' "${BUILD_EPOCH}" > "${TARGET_DIR}/usr/lib/suderra/build-epoch"
+chmod 0644 "${TARGET_DIR}/usr/lib/suderra/build-epoch"
+
 # 2. Hostname
 case "${DEFCONFIG_NAME}" in
     *usb_installer*) HOSTNAME="suderra-usb-installer" ;;
@@ -363,7 +386,8 @@ for helper in \
     suderra-provision-worker \
     suderra-lockdown \
     suderra-lockdown-status \
-    suderra-qemu-semantic-collector
+    suderra-qemu-semantic-collector \
+    suderra-time-state
 do
     chmod 0755 "${TARGET_DIR}/usr/sbin/${helper}"
 done
@@ -424,6 +448,21 @@ preset_enable() {
 enable_unit nftables.service sysinit.target
 enable_unit systemd-networkd.service multi-user.target
 enable_unit chrony.service multi-user.target
+
+# The clock (ADR-048 DEC-7): the floor is applied before chronyd looks at the
+# clock and saved at shutdown and hourly, the gate orders before
+# time-sync.target, and the document the agent and the installer read is kept
+# every 15 s. Every image has chrony and so every image has them (Config.in
+# BR2_PACKAGE_SUDERRA_TIME_SYNC).
+enable_unit suderra-timefloor.service sysinit.target
+enable_unit suderra-timefloor.timer timers.target
+enable_unit suderra-time-state.service multi-user.target
+enable_unit suderra-chrony-wait.service multi-user.target
+for unit in suderra-timefloor.service suderra-timefloor.timer \
+    suderra-time-state.service suderra-chrony-wait.service
+do
+    preset_enable "${unit}"
+done
 
 case "${DEFCONFIG_NAME}" in
     *usb_installer*)
@@ -687,6 +726,14 @@ fi
 # is the proof: its feature string must say +NTS, or the build fails here
 # instead of the device never synchronizing.
 python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/check-chrony-features.py" "${TARGET_DIR}"
+# The rulesets let NTP and NTS-KE out for `meta skuid "chrony"` (DEC-11.4), and
+# nft resolves that name in this image's /etc/passwd when the ruleset loads. A
+# name it cannot resolve fails the whole load, which leaves the base drop
+# ruleset: no network at all. chronyd also runs as that user (chrony.service).
+if ! grep -q '^chrony:' "${TARGET_DIR}/etc/passwd"; then
+    echo "ERROR: ${DEFCONFIG_NAME} has no chrony user in /etc/passwd: nftables.conf names it, and chrony.service runs chronyd as it (the chrony package creates it)"
+    exit 1
+fi
 
 # 11. Commands of the shipped scripts (EI-078). Every external command a shell
 # script of this image runs is declared in runtime-commands.json, and every

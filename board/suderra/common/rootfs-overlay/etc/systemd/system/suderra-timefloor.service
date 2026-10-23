@@ -1,0 +1,49 @@
+# Time floor of Suderra OS (ADR-048 DEC-7.2; EI-046): the clock never reads less
+# than max(the image's build time, the last good time on /data), and a board
+# without an RTC, which starts every boot at epoch or at the build time, does not
+# start at the build time of an image that has run for a year.
+#
+# floor-apply raises the clock to the floor once /data holds it, before
+# chronyd looks at the clock and before anything that judges validity windows
+# runs (time-sync.target); floor-save persists the floor again when the unit
+# stops at shutdown. The hourly save is suderra-timefloor.timer, and the
+# document /run/suderra/time-state is kept by suderra-time-state.service.
+# Ordering after suderra-data.service means this unit is stopped before /data is,
+# so the shutdown save can still write it.
+#
+# No ProtectClock=: setting the clock is the unit's job. No board condition: a
+# boardless image also runs chrony and needs the floor.
+
+[Unit]
+Description=Suderra OS time floor
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+After=suderra-data.service systemd-tmpfiles-setup.service
+Before=chrony.service time-sync.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/suderra-time-state floor-apply
+ExecStop=/usr/sbin/suderra-time-state floor-save
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=-/data/suderra/os /run/suderra /run/suderra-os
+
+[Install]
+WantedBy=sysinit.target

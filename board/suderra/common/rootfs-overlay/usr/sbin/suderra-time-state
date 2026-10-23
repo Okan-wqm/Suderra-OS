@@ -1,0 +1,548 @@
+#!/bin/sh
+# Suderra OS clock trust (ADR-048 DEC-7; EI-046, EDGE-MEDIUM-077): the time
+# floor and the document /run/suderra/time-state.
+#
+#   suderra-time-state floor-apply   boot, before chronyd: raise the clock to the floor
+#   suderra-time-state run           the service: tick every --interval seconds
+#   suderra-time-state tick          one pass: write the document, keep the floor
+#   suderra-time-state floor-save    hourly and at shutdown: persist the floor
+#   suderra-time-state wait          bounded wait for a synchronized clock (never fails)
+#
+# The document (contracts/suderra-edge/v1/schemas/time-state.schema.json) is the
+# agent's only clock authority: it cannot read adjtimex under ProtectClock, and
+# root's installer takes the same document as its own (channels.json time). Its
+# state is one of
+#   synced-nts              chronyd is synchronized, within the bounds below,
+#                           and every source it combines is NTS-authenticated;
+#   synced-unauthenticated  synchronized, and a source it combines is not (only
+#                           a signed site policy can add one, DEC-7.1);
+#   unsynced                everything else, a clock that passed the floor only
+#                           included.
+# "Synchronized" is decided here and nowhere else (the wait uses it too): the
+# leap status is not "Not synchronised", the reference is a real source (not
+# refid 0 nor chrony's LOCAL 7F7F0101), it has a reference time, the root
+# distance (root dispersion plus half the root delay, which chrony grows with
+# the time since the last update) is at most MAX_ROOT_DISTANCE_MS, and the
+# clock is within MAX_CLOCK_ERROR_MS of what chrony would correct it to and of
+# its selected source. The first is chrony's own `maxdistance` (etc/chrony.conf,
+# compared by the contract test), the second its `makestep` threshold: a clock
+# chrony's maxchange refuses to correct is never reported as trusted.
+# offset_ms is chrony's "Last offset" in milliseconds, positive when the system
+# clock is ahead of its source.
+#
+# The time floor (DEC-7.2) is max(the image's build time, the last good time on
+# /data/suderra/os/time/floor). floor-apply raises the clock to it before
+# chronyd starts; the clock then never reads less. What is persisted is only
+# time that cannot have come from a wrong clock: the authenticated clock
+# itself when synchronized, and otherwise the floor advanced by the uptime
+# since it was applied (what fake-hwclock saves on a board without an RTC, but
+# never the wall clock of an RTC that may have been reset). It is saved by
+# floor-save (suderra-timefloor.timer hourly, suderra-timefloor.service at
+# shutdown) and by the pass that first sees the clock synchronized in a boot,
+# and a save only ever raises it; an authenticated clock found below it lowers
+# it (the floor was ahead of the real time, which is the only way a wrong floor
+# heals) and records an alarm.
+#
+# Results (suderra-installer result write, kind time-state): an alarm
+# clock-unsynced when the wait ends unsynchronized, an alarm clock-below-floor
+# when a board with an RTC boots with the clock behind the floor (a reset RTC)
+# or an authenticated clock is below it, an ok when the clock synchronizes after
+# a clock-unsynced alarm. Each once per boot.
+#
+# Commands run by name (chronyc, date, sleep, suderra-installer) so a test can
+# put its own in PATH; only the data paths below move with --root. Nothing here
+# reads the environment.
+set -eu
+LC_ALL=C
+export LC_ALL
+
+# Limits (see above and etc/chrony.conf).
+MAX_ROOT_DISTANCE_MS=3000
+MAX_CLOCK_ERROR_MS=1000
+EVIDENCE_MAX_AGE=120
+# The kernel copies the system time to the RTC every 11 minutes; an RTC may
+# lag the floor by that, plus margin, without having been reset.
+RTC_TOLERANCE=900
+# A persisted floor beyond 2100-01-01 is corruption, not a time.
+FLOOR_MAX=4102444800
+CHRONY_SOCKET=/run/chrony/chronyd.sock
+DOC_GROUP=suderra
+
+ROOT=""
+# Defaults depend on the command: wait makes 30 checks 2 s apart, run passes
+# every 15 s forever (--tries 0).
+TRIES=""
+INTERVAL=""
+COMMAND=""
+# A broken floor source is reported where it is rare (boot, shutdown), not
+# every 20 s.
+WARN_FLOOR=0
+
+usage() {
+    echo "Usage: suderra-time-state floor-apply|run|tick|floor-save|wait [--root DIR] [--tries N] [--interval SECONDS]" >&2
+    exit 2
+}
+
+number() {
+    case "$2" in
+        '' | *[!0-9]*)
+            echo "ERROR: $1 needs a number, got '$2'" >&2
+            exit 2
+            ;;
+    esac
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --root)
+            [ "$#" -ge 2 ] || usage
+            ROOT="$2"
+            shift 2
+            ;;
+        --tries)
+            [ "$#" -ge 2 ] || usage
+            number --tries "$2"
+            TRIES="$2"
+            shift 2
+            ;;
+        --interval)
+            [ "$#" -ge 2 ] || usage
+            number --interval "$2"
+            INTERVAL="$2"
+            shift 2
+            ;;
+        -*) usage ;;
+        *)
+            [ -z "${COMMAND}" ] || usage
+            COMMAND="$1"
+            shift
+            ;;
+    esac
+done
+[ -n "${COMMAND}" ] || usage
+
+RUN_DIR="${ROOT}/run/suderra"
+DOC="${RUN_DIR}/time-state"
+STATE_DIR="${ROOT}/run/suderra-os/time"
+OS_DIR="${ROOT}/data/suderra/os"
+FLOOR_DIR="${OS_DIR}/time"
+FLOOR_FILE="${FLOOR_DIR}/floor"
+BUILD_EPOCH_FILE="${ROOT}/usr/lib/suderra/build-epoch"
+UPTIME_FILE="${ROOT}/proc/uptime"
+RTC_CLASS="${ROOT}/sys/class/rtc"
+
+warn() {
+    echo "WARNING: $*" >&2
+}
+
+now_epoch() {
+    date +%s
+}
+
+# Whole seconds since boot.
+uptime_secs() {
+    up=0
+    { read -r up _; } 2> /dev/null < "${UPTIME_FILE}" || up=0
+    echo "${up%%.*}"
+}
+
+rfc3339() {
+    date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# valid_epoch VALUE: decimal digits, no leading zero, 11 digits at most, not
+# beyond FLOOR_MAX.
+valid_epoch() {
+    case "$1" in
+        '' | *[!0-9]* | 0?*) return 1 ;;
+    esac
+    [ "${#1}" -le 11 ] && [ "$1" -le "${FLOOR_MAX}" ]
+}
+
+# first_line FILE: the first line, or nothing.
+first_line() {
+    line=""
+    { IFS= read -r line || [ -n "${line}" ]; } 2> /dev/null < "$1" || line=""
+    echo "${line}"
+}
+
+max() {
+    if [ "$1" -ge "$2" ]; then
+        echo "$1"
+    else
+        echo "$2"
+    fi
+}
+
+build_epoch() {
+    value=""
+    [ ! -r "${BUILD_EPOCH_FILE}" ] || value="$(first_line "${BUILD_EPOCH_FILE}")"
+    if valid_epoch "${value}" && [ "${value}" -gt 0 ]; then
+        echo "${value}"
+    else
+        [ "${WARN_FLOOR}" = 0 ] || warn "${BUILD_EPOCH_FILE} is missing or not a time: the image has no build time to floor the clock with"
+        echo 0
+    fi
+}
+
+persisted_floor() {
+    value=""
+    [ ! -r "${FLOOR_FILE}" ] || value="$(first_line "${FLOOR_FILE}")"
+    if valid_epoch "${value}"; then
+        echo "${value}"
+    else
+        { [ ! -e "${FLOOR_FILE}" ] || [ "${WARN_FLOOR}" = 0 ]; } || warn "${FLOOR_FILE} does not hold a time and is ignored"
+        echo 0
+    fi
+}
+
+floor_value() {
+    max "$(build_epoch)" "$(persisted_floor)"
+}
+
+save_floor() {
+    if [ ! -d "${OS_DIR}" ]; then
+        warn "${OS_DIR} does not exist (/data is not mounted): the time floor cannot be saved"
+        return 1
+    fi
+    umask 077
+    mkdir -p "${FLOOR_DIR}"
+    floor_tmp="${FLOOR_FILE}.new.$$"
+    printf '%s\n' "$1" > "${floor_tmp}"
+    sync
+    mv -f "${floor_tmp}" "${FLOOR_FILE}"
+    sync
+}
+
+# set_clock EPOCH: only ever called with a time later than the clock's.
+set_clock() {
+    if date -s "@$1" > /dev/null 2>&1; then
+        echo "the clock was raised to the time floor $(rfc3339 "$1")" >&2
+    else
+        warn "the clock could not be set to the time floor $1"
+    fi
+}
+
+record_result() {
+    # record_result OUTCOME REASON DETAIL
+    if ! command -v suderra-installer > /dev/null 2>&1; then
+        return 0
+    fi
+    if [ -n "$2" ]; then
+        suderra-installer result write --kind time-state --outcome "$1" --reason "$2" --detail "$3" > /dev/null ||
+            warn "the time-state result could not be recorded"
+    else
+        suderra-installer result write --kind time-state --outcome "$1" --detail "$3" > /dev/null ||
+            warn "the time-state result could not be recorded"
+    fi
+}
+
+# alarm_once REASON DETAIL: an alarm result, once per boot.
+alarm_once() {
+    mkdir -p "${STATE_DIR}"
+    [ ! -e "${STATE_DIR}/alarm-$1" ] || return 0
+    : > "${STATE_DIR}/alarm-$1"
+    record_result alarm "$1" "$2"
+}
+
+chrony_csv() {
+    chronyc -h "${CHRONY_SOCKET}" -c "$@" 2> /dev/null
+}
+
+# The verdict on chrony's three reports. Input: one line "T,<tracking>", the
+# sources as "S,<source>" lines, the authentication data as "A,<source>"
+# lines; output: "<state>|<offset_ms>|<last sync epoch>|<detail>". Fields of
+# chronyc -c (chrony 4.6 client.c print_report):
+#   tracking: refid, reference, stratum, ref time, system time, last offset,
+#             rms offset, frequency, residual, skew, root delay, root
+#             dispersion, update interval, leap status;
+#   sources -n: mode, state (* selected, + combined), address, stratum, poll,
+#             reach, last rx, adjusted offset, measured offset, error;
+#   authdata -n: address, mode (NTS, SK, -), key id, type, key length, ...
+# shellcheck disable=SC2016 # an awk program: its $1 and $2 are awk's
+CLASSIFY_AWK='
+function absv(x) { return x < 0 ? -x : x }
+function ms(x) { return int(x * 1000 + (x < 0 ? -0.5 : 0.5)) }
+$1 == "T" && NF >= 15 {
+    have = 1; refid = $2; refname = $3; stratum = $4 + 0; reftime = $5 + 0
+    syscorr = $6 + 0; lastoff = $7 + 0; rdelay = $12 + 0; rdisp = $13 + 0; leap = $15
+    next
+}
+$1 == "S" && NF >= 11 {
+    if ($3 == "*" || $3 == "+") { combined[$4] = 1 }
+    if ($3 == "*") { selected = 1; seloff = $9 + 0 }
+    next
+}
+$1 == "A" && NF >= 3 { if ($3 == "NTS") { nts[$2] = 1 } next }
+END {
+    if (!have) { print "unsynced|||no tracking report"; exit }
+    lastsync = (reftime > 0) ? sprintf("%.0f", int(reftime)) : ""
+    detail = ""
+    if (leap == "Not synchronised") detail = "chronyd reports it is not synchronised"
+    else if (leap != "Normal" && leap != "Insert second" && leap != "Delete second") detail = "unknown leap status " leap
+    else if (refid == "00000000" || refid == "7F7F0101" || stratum == 0) detail = "chronyd has no source it follows"
+    else if (reftime <= 0) detail = "chronyd has no reference time"
+    else {
+        dist = (rdelay / 2 + rdisp) * 1000
+        if (dist > max_distance) detail = sprintf("the root distance is %d ms, above %d ms", dist, max_distance)
+        else if (absv(syscorr) * 1000 > max_error) detail = sprintf("the clock is %d ms from what chronyd would correct it to, above %d ms", ms(syscorr), max_error)
+        else if (selected && absv(seloff) * 1000 > max_error) detail = sprintf("the clock is %d ms from its selected source, above %d ms", ms(seloff), max_error)
+    }
+    if (detail != "") { printf "unsynced||%s|%s\n", lastsync, detail; exit }
+    used[refname] = 1
+    for (address in combined) used[address] = 1
+    authenticated = 1
+    for (address in used) if (!(address in nts)) authenticated = 0
+    printf "%s|%d|%s|%s\n", (authenticated ? "synced-nts" : "synced-unauthenticated"), ms(lastoff), lastsync, \
+        (authenticated ? "every source in use is NTS" : "a source in use is not NTS-authenticated")
+}
+'
+
+# classify: sets STATE, OFFSET_MS, LAST_SYNC (an epoch or empty) and DETAIL.
+classify() {
+    STATE=unsynced
+    OFFSET_MS=""
+    LAST_SYNC=""
+    DETAIL="chronyd does not answer on ${CHRONY_SOCKET}"
+    tracking="$(chrony_csv tracking)" || return 0
+    sources="$(chrony_csv -n sources -a)" || sources=""
+    authdata="$(chrony_csv -n authdata)" || authdata=""
+    if ! verdict="$(
+        {
+            printf 'T,%s\n' "${tracking}"
+            printf '%s\n' "${sources}" | while IFS= read -r row; do
+                [ -z "${row}" ] || printf 'S,%s\n' "${row}"
+            done
+            printf '%s\n' "${authdata}" | while IFS= read -r row; do
+                [ -z "${row}" ] || printf 'A,%s\n' "${row}"
+            done
+        } | awk -F, -v max_distance="${MAX_ROOT_DISTANCE_MS}" -v max_error="${MAX_CLOCK_ERROR_MS}" "${CLASSIFY_AWK}"
+    )"; then
+        DETAIL="the chrony reports could not be read"
+        return 0
+    fi
+    IFS='|' read -r STATE OFFSET_MS LAST_SYNC DETAIL << EOF
+${verdict}
+EOF
+}
+
+is_synced() {
+    case "${STATE}" in
+        synced-nts | synced-unauthenticated) return 0 ;;
+    esac
+    return 1
+}
+
+# The document, atomically, root:suderra 0640, for the state classify found.
+write_document() {
+    document_floor="$(floor_value)"
+    document_now="$(now_epoch)"
+    if is_synced; then
+        document_offset="${OFFSET_MS}"
+    else
+        document_offset=null
+    fi
+    if [ -n "${LAST_SYNC}" ]; then
+        document_sync="\"$(rfc3339 "${LAST_SYNC}")\""
+    else
+        document_sync=null
+    fi
+    umask 027
+    document_tmp="${DOC}.new.$$"
+    printf '{"_type":"suderra.time-state.v1","state":"%s","floor_at":"%s","last_sync_at":%s,"offset_ms":%s,"updated_at":"%s"}\n' \
+        "${STATE}" "$(rfc3339 "${document_floor}")" "${document_sync}" "${document_offset}" "$(rfc3339 "${document_now}")" \
+        > "${document_tmp}"
+    chgrp "${DOC_GROUP}" "${document_tmp}"
+    chmod 0640 "${document_tmp}"
+    mv -f "${document_tmp}" "${DOC}"
+}
+
+# pair FILE: "<number> <number>" of a state file, or nothing.
+pair() {
+    first=""
+    second=""
+    { read -r first second || [ -n "${first}" ]; } 2> /dev/null < "${STATE_DIR}/$1" || return 1
+    case "${first}${second}" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    [ -n "${first}" ] && [ -n "${second}" ]
+}
+
+# What the floor can be advanced to without trusting the wall clock: the floor
+# applied at boot plus the uptime since.
+extrapolated_floor() {
+    if pair applied; then
+        extrapolated_base="${first}"
+        extrapolated_up="${second}"
+        extrapolated_now_up="$(uptime_secs)"
+        if [ "${extrapolated_now_up}" -ge "${extrapolated_up}" ]; then
+            echo $((extrapolated_base + extrapolated_now_up - extrapolated_up))
+            return 0
+        fi
+    fi
+    persisted_floor
+}
+
+# True when the authenticated clock was seen moments ago, which is all a
+# shutdown can know once chronyd has stopped.
+evidence_fresh() {
+    evidence_state=""
+    evidence_up=""
+    { read -r evidence_state evidence_up || [ -n "${evidence_state}" ]; } 2> /dev/null < "${STATE_DIR}/evidence" || return 1
+    case "${evidence_state}" in
+        synced-nts | synced-unauthenticated) ;;
+        *) return 1 ;;
+    esac
+    case "${evidence_up}" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    evidence_now_up="$(uptime_secs)"
+    [ "${evidence_now_up}" -ge "${evidence_up}" ] &&
+        [ $((evidence_now_up - evidence_up)) -le "${EVIDENCE_MAX_AGE}" ]
+}
+
+# persist_floor: raise the persisted floor, never lower it.
+persist_floor() {
+    if is_synced || evidence_fresh; then
+        persist_candidate="$(now_epoch)"
+    else
+        persist_candidate="$(extrapolated_floor)"
+    fi
+    persist_candidate="$(max "${persist_candidate}" "$(build_epoch)")"
+    if ! valid_epoch "${persist_candidate}"; then
+        warn "the time floor ${persist_candidate} is not a plausible time and is not saved"
+        return 0
+    fi
+    if [ "${persist_candidate}" -gt "$(persisted_floor)" ]; then
+        # Without /data the save is reported and retried by the next one.
+        save_floor "${persist_candidate}" || true
+    fi
+}
+
+# The clock never reads less than the floor.
+reconcile_floor() {
+    reconcile_now="$(now_epoch)"
+    reconcile_floor_at="$(floor_value)"
+    [ "${reconcile_now}" -lt "${reconcile_floor_at}" ] || return 0
+    reconcile_behind=$((reconcile_floor_at - reconcile_now))
+    if is_synced; then
+        # The authenticated clock is the root of trust: a floor above it was
+        # wrong (a clock that had been set ahead, then saved).
+        warn "the authenticated clock is ${reconcile_behind} s below the time floor ${reconcile_floor_at}: the floor was ahead of the real time"
+        if [ "$(persisted_floor)" -gt "${reconcile_now}" ]; then
+            save_floor "${reconcile_now}" || true
+        fi
+        alarm_once clock-below-floor "the authenticated clock is ${reconcile_behind} s below the time floor"
+    else
+        warn "the clock is ${reconcile_behind} s below the time floor ${reconcile_floor_at}"
+        set_clock "${reconcile_floor_at}"
+    fi
+}
+
+require_run_dir() {
+    [ -d "${RUN_DIR}" ] || {
+        echo "ERROR: ${RUN_DIR} does not exist (systemd-tmpfiles creates it)" >&2
+        exit 1
+    }
+    mkdir -p "${STATE_DIR}"
+}
+
+cmd_floor_apply() {
+    require_run_dir
+    apply_floor="$(floor_value)"
+    apply_now="$(now_epoch)"
+    if [ "${apply_now}" -lt "${apply_floor}" ]; then
+        apply_behind=$((apply_floor - apply_now))
+        warn "the clock is ${apply_behind} s below the time floor ${apply_floor}"
+        if [ -e "${RTC_CLASS}/rtc0" ] && [ "${apply_behind}" -gt "${RTC_TOLERANCE}" ]; then
+            alarm_once clock-below-floor "the RTC reads ${apply_behind} s below the time floor: its time was lost"
+        fi
+        set_clock "${apply_floor}"
+    fi
+    printf '%s %s\n' "${apply_floor}" "$(uptime_secs)" > "${STATE_DIR}/applied"
+    classify
+    write_document
+}
+
+cmd_tick() {
+    require_run_dir
+    classify
+    reconcile_floor
+    write_document
+    if is_synced; then
+        printf '%s %s\n' "${STATE}" "$(uptime_secs)" > "${STATE_DIR}/evidence"
+        if [ -e "${STATE_DIR}/alarm-clock-unsynced" ]; then
+            rm -f "${STATE_DIR}/alarm-clock-unsynced"
+            record_result ok "" "the clock synchronized (${STATE})"
+        fi
+        # The first synchronization of a boot is the first moment the floor can
+        # be raised to a time nothing but an authenticated source vouches for;
+        # a power cut within the hour must not lose it.
+        if [ ! -e "${STATE_DIR}/synced-once" ]; then
+            : > "${STATE_DIR}/synced-once"
+            persist_floor
+        fi
+    fi
+}
+
+cmd_floor_save() {
+    require_run_dir
+    classify
+    persist_floor
+}
+
+cmd_wait() {
+    require_run_dir
+    wait_tries="${TRIES:-30}"
+    wait_interval="${INTERVAL:-2}"
+    wait_try=1
+    while :; do
+        classify
+        if is_synced; then
+            echo "the clock is ${STATE} after ${wait_try} check(s)" >&2
+            break
+        fi
+        if [ "${wait_try}" -ge "${wait_tries}" ]; then
+            warn "the clock is not synchronized after $((wait_try * wait_interval)) s (${DETAIL}); boot continues"
+            alarm_once clock-unsynced "not synchronized after the bounded wait: ${DETAIL}"
+            break
+        fi
+        wait_try=$((wait_try + 1))
+        sleep "${wait_interval}"
+    done
+    cmd_tick
+}
+
+# The service: a pass every interval. A pass that fails is reported and the loop
+# goes on, so one bad report does not stop the document (a document older than
+# channels.json time.max_age_seconds is read as unsynchronized, which is the
+# safe reading, and the next pass can fix it). --tries bounds the passes for
+# tests; the service has none.
+cmd_run() {
+    run_tries="${TRIES:-0}"
+    run_interval="${INTERVAL:-15}"
+    run_pass=0
+    while :; do
+        run_pass=$((run_pass + 1))
+        (cmd_tick) || warn "the clock state could not be refreshed"
+        if [ "${run_tries}" -ne 0 ] && [ "${run_pass}" -ge "${run_tries}" ]; then
+            break
+        fi
+        sleep "${run_interval}"
+    done
+}
+
+case "${COMMAND}" in
+    floor-apply)
+        WARN_FLOOR=1
+        cmd_floor_apply
+        ;;
+    run) cmd_run ;;
+    tick) cmd_tick ;;
+    floor-save)
+        WARN_FLOOR=1
+        cmd_floor_save
+        ;;
+    wait) cmd_wait ;;
+    *) usage ;;
+esac

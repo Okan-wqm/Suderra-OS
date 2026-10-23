@@ -458,6 +458,31 @@
           ]
         }
       ]
+    },
+    "usr/sbin/suderra-time-state": {
+      "source": "board/suderra/common/rootfs-overlay/usr/sbin/suderra-time-state",
+      "groups": [
+        {
+          "commands": [
+            "awk",
+            "chgrp",
+            "chmod",
+            "chronyc",
+            "date",
+            "mkdir",
+            "mv",
+            "rm",
+            "sleep",
+            "sync"
+          ]
+        },
+        {
+          "commands": [
+            "suderra-installer"
+          ],
+          "optional": true
+        }
+      ]
     }
   }
 }

@@ -14,7 +14,13 @@ Documentation=https://github.com/Okan-wqm/suderra-os
 ConditionPathExists=/etc/suderra/board
 ConditionPathExists=/run/suderra-os/provisioning-open
 BindsTo=suderra-provision-mode.service
-After=suderra-provision-mode.service suderra-data.service nftables.service
+After=suderra-provision-mode.service suderra-data.service nftables.service time-sync.target
+# The signed statements it verifies have validity windows, so it runs after
+# time-sync.target (DEC-5.13, DEC-7.4): Wants=, never Requires=, because the
+# target is reached after a bounded wait whether the clock synchronized or not
+# and an unsynchronized clock is a result the technician reads (clock-unsynced),
+# not a reason for the worker not to run.
+Wants=time-sync.target
 
 [Service]
 Type=oneshot
