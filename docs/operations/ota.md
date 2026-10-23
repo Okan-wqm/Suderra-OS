@@ -59,9 +59,20 @@ python3 scripts/create-os-update-manifest.py create \
 
 ## Bundle Manifest
 
+`scripts/create-rauc-bundle.sh <x86|arm> <BINARIES_DIR> <VERSION> <OUT> <COMPATIBLE>`
+yazar; `COMPATIBLE`, `ci/evidence-contract.yml`'deki OTA hedefinin RAUC
+compatible'ıdır (kart başına ayrı: `suderra-os-revpi-connect4`,
+`suderra-os-rpi4-cm4`, `suderra-os-qemu-x86_64`, kartsız x86 tabanı için
+`suderra-os-x86_64`; kaynak `contracts/suderra-edge/v1/boards.json`, ADR-048 DEC-8.3).
+Aynı değer imajın `/etc/rauc/system.conf`'una `post-build.sh` ile yazılır, bu yüzden
+bir kartın paketi başka kartta RAUC'un "Compatible mismatch" hatasıyla reddedilir
+(`tests/image-contracts/rauc-compatible-refusal-test.sh` gerçek RAUC ile her kart
+çiftini dener); `suderra-ota` ise farklı hedefin manifest'ini daha önce reddeder
+(`manifest target ... does not match device target ...`).
+
 ```
 [update]
-compatible=suderra-os-x86_64
+compatible=suderra-os-revpi-connect4
 version=v0.2.0
 description=Security patches CVE-2026-XXXX
 
@@ -70,12 +81,15 @@ format=verity
 
 [image.rootfs]
 filename=rootfs.img
-size=...
-sha256=...
 
 [hooks]
 filename=hook
 ```
+
+Girdi manifest'i imajları yalnız `filename` ile adlandırır: `size` ve `sha256` RAUC
+tarafından `rauc bundle` sırasında üretilir ve RAUC 1.14 (Buildroot pin'i) bunları
+girdi manifest'inde görünce `Unexpected digest for image ... in input manifest`
+diye reddeder. İmzalı manifest'teki özetleri `rauc info` gösterir.
 
 ## Cihazda Update
 

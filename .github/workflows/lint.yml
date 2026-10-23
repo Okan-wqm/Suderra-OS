@@ -41,7 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends u-boot-tools device-tree-compiler cryptsetup-bin \
             swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0 busybox-static \
-            genimage mtools dosfstools fdisk bison flex swig libssl-dev patch curl xxd usbguard chrony
+            genimage mtools dosfstools fdisk bison flex swig libssl-dev patch curl xxd usbguard chrony rauc
       - name: Run matrix contract tests
         env:
           SUDERRA_FAIL_ON_SKIP: "1"

@@ -77,6 +77,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Time contract test: the real chronyd parses etc/chrony.conf
     # (tests/image-contracts/time-sync-contract-test.sh)
     chrony \
+    # RAUC compatible test: the real rauc builds a bundle per board and refuses
+    # the other boards' bundles on a private D-Bus session bus
+    # (tests/image-contracts/rauc-compatible-refusal-test.sh)
+    rauc \
+    dbus \
     # Watchdog contract test: udevadm verify parses the udev rules of
     # board/suderra/watchdog (tests/image-contracts/watchdog-contract-test.sh)
     udev \

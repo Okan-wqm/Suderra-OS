@@ -614,15 +614,19 @@ fn decode_fixed_hex<const N: usize>(value: &str, field: &str) -> Result<[u8; N]>
     Ok(out)
 }
 
-fn verify_manifest_policy(manifest: &SignedManifest, state: &OtaState) -> Result<()> {
-    let device_target = device_target()?;
-    if manifest.target != device_target {
-        bail!(
-            "manifest target {} does not match device target {}",
-            manifest.target,
-            device_target
-        );
+/// A manifest is for this device only when its target is the device's own.
+/// Every board has its own target (one per production A/B image,
+/// `OTA_TARGETS`), so one board's manifest never installs on another (ADR-048
+/// DEC-8.3); RAUC refuses the bundle's compatible as the second line.
+fn check_manifest_target(manifest_target: &str, device_target: &str) -> Result<()> {
+    if manifest_target != device_target {
+        bail!("manifest target {manifest_target} does not match device target {device_target}");
     }
+    Ok(())
+}
+
+fn verify_manifest_policy(manifest: &SignedManifest, state: &OtaState) -> Result<()> {
+    check_manifest_target(&manifest.target, &device_target()?)?;
     // Anahtar epoch tabanı 1'dir; yalnız dev imajında override edilebilir
     // (DEC-19: prod'da env yok sayılır).
     let minimum_epoch = image()
@@ -1414,6 +1418,53 @@ mod tests {
         assert!(device_target_in(&prod_image("suderra_aarch64_revpi4")).is_err());
         assert!(device_target_in(&Image::from_os_release(Some("VARIANT=prod\n"))).is_err());
         assert!(device_target_in(&Image::from_os_release(None)).is_err());
+    }
+
+    #[test]
+    fn a_manifest_is_for_the_device_of_its_own_target_only() {
+        for (_, device) in OTA_TARGETS {
+            for (_, manifest) in OTA_TARGETS {
+                let verdict = check_manifest_target(manifest, device);
+                if manifest == device {
+                    assert!(verdict.is_ok(), "{device} refused its own manifest");
+                } else {
+                    let message = format!("{:#}", verdict.unwrap_err());
+                    assert_eq!(
+                        message,
+                        format!("manifest target {manifest} does not match device target {device}")
+                    );
+                }
+            }
+        }
+    }
+
+    /// The second line: each OTA target of this table is an OTA-capable target
+    /// of the evidence contract with a RAUC compatible no other target has, so
+    /// RAUC refuses the bundle of another board even when a manifest got past
+    /// the target check (tests/image-contracts/rauc-compatible-refusal-test.sh
+    /// runs RAUC itself).
+    #[test]
+    fn every_ota_target_has_a_rauc_compatible_of_its_own() {
+        let contract: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ci/evidence-contract.yml"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let targets = &contract["ota"]["targets"];
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, target) in OTA_TARGETS {
+            let entry = &targets[target];
+            assert_eq!(entry["ota_capable"], true, "{target}");
+            let compatible = entry["compatible"].as_str().unwrap();
+            assert!(
+                compatible.starts_with("suderra-os-"),
+                "{target}: {compatible}"
+            );
+            assert!(seen.insert(compatible), "{compatible} is shared");
+        }
+        assert_eq!(seen.len(), OTA_TARGETS.len());
     }
 
     #[test]
