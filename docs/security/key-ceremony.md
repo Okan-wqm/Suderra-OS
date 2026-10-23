@@ -97,6 +97,115 @@ end to end, that:
 No drill "passes" on JSON inspection alone — the restore is only valid when the
 replayed signatures match the originals from the immutable store.
 
+## Edge contract keys (ADR-048 DEC-3.9)
+
+The same ceremony produces the signing keys of the edge contract: the statements Suderra OS and the edge
+agent exchange with the cloud (`contracts/suderra-edge/v1/statements.json` `purposes`; ADR-048 DEC-3). They
+are not OS image roles, so `ci/evidence-contract.yml` does not list them: their evidence is the ceremony
+transcript and the row each one gets in the inventory table of [key-management.md](key-management.md)
+§Edge sözleşmesi anahtar envanteri, which is also the only list of keyids a production image may pin. The dev/CI
+keys (`scripts/gen-dev-keys.sh`, `scripts/ci/prepare-ci-keyring.sh`) and the contract's TEST-ONLY keys take no part
+and are never recorded. **Status: not executed. The ceremony is an operator action (ADR-048 question 9); until
+it has run no production image pins an edge key, and the production release statements cannot be signed.**
+
+### Key classes
+
+| Purpose | Class | Private key | Signs | Device anchor |
+|---|---|---|---|---|
+| `edge-release` | offline | allowlisted HSM, non-exportable, one object | the release statement of every production agent release, offline per release | OS image pin |
+| `fleet-root` | offline | allowlisted HSM, non-exportable, one object | `trust-anchors` bundles; `key-epoch-advance` (P2) | OS image pin |
+| `edge-provisioning` | online until the P2 KMS | generated at the ceremony, then a sensor-service secret (`SUDERRA_EDGE_PROVISIONING_SIGNING_KEY`) | provisioning manifests, update statements, activation receipts | OS image pin and bundle |
+| `device-lifecycle` | online until the P2 KMS | generated at the ceremony, then the signer's secret (`SUDERRA_EDGE_DEVICE_LIFECYCLE_SIGNING_KEY`) | device lifecycle statements | OS image pin |
+| `config-integrity` | online until the P2 KMS | secret `SUDERRA_EDGE_CONFIG_INTEGRITY_SIGNING_KEY` | site config and site network policy | bundle |
+| `rbac-manifest` | online until the P2 KMS | secret `SUDERRA_EDGE_RBAC_MANIFEST_SIGNING_KEY` | the RBAC manifest | bundle |
+| `command` | online until the P2 KMS | secret `SUDERRA_EDGE_COMMAND_SIGNING_KEY` | command envelopes of the platform actor | bundle |
+| `edge-image` | P2 | KMS | the verity root hash of a release image | kernel keyring |
+
+An online key outside a KMS is a tracked, accepted risk for monitoring-only pilots (ADR-048 EDGE-HIGH-119, owner
+@Okan-wqm, deadline 2026-12-31): a leaked one can sign false manifests, site configs or commands. `edge-release`
+and `fleet-root` stay offline, so a leak of any online key cannot sign a release or a trust anchor.
+`mqtt-ca` is no ceremony key in P1 (the production bundle names the public CA roots).
+
+### Procedure
+
+The Ceremony section's preconditions and steps 1, 2, 5 and 6 apply unchanged (ticket with three approvers, token
+identity, transcript, witnessed validation, retained evidence). The key generation of step 3 differs by class:
+
+1. **Ticket.** Lists every row of the inventory table to be produced (purpose, epoch, class), the HSM serial, token
+   label and connector, and the custodians of the two offline keys.
+2. **Offline keys** (`edge-release`, `fleet-root`). One object each, never the same object or password for both,
+   generated inside the HSM with the Ed25519 signing capability only and no export capability; the witness reads the
+   object's capabilities from the token before the object is used. On a YubiHSM 2 (the approved provider of
+   `ci/evidence-contract.yml`), with the action and options of the `yubihsm-shell` manual
+   (<https://dokk.org/manpages/debian/13/yubihsm-shell/yubihsm-shell.1.en>; confirm each against `--help` of the
+   installed version):
+   ```bash
+   yubihsm-shell --connector <connector of the ticket> --authkey <auth key id> -a generate-asymmetric-key \
+       -i <object id> -l edge-release-1 -d <domain> -c sign-eddsa --algorithm=ed25519
+   yubihsm-shell --connector <connector of the ticket> --authkey <auth key id> -a get-object-info \
+       -i <object id> -t asymmetric-key
+   yubihsm-shell --connector <connector of the ticket> --authkey <auth key id> -a get-public-key \
+       -i <object id> --outformat PEM > edge-release-1.pub
+   ```
+3. **Online keys** (`edge-provisioning`, `device-lifecycle`, `config-integrity`, `rbac-manifest`, `command`). Generated on
+   the offline ceremony machine with OpenSSL 3 (`openssl genpkey -algorithm ED25519`). This is the one place where
+   an edge private key exists outside an HSM, and the transcript records the exception: it applies to online keys only,
+   never to `edge-release` or `fleet-root`. Each private key goes straight into its secret store under the two-person
+   rule (the signing operator enters it, the witness confirms it is stored), then the file is shredded and the
+   machine's volatile storage wiped before the ceremony closes. The public half is exported.
+4. **Public keys.** Every exported file must be an Ed25519 SubjectPublicKeyInfo PEM; the tool of step 5 refuses
+   anything else.
+5. **Inventory.** For each public key:
+   `python3 -I package/suderra-keys/edge_key_inventory.py row --purpose <p> --epoch 1 --public-key <file> --origin <origin>`
+   prints the row (the keyid is computed, never typed). The rows replace the `bekliyor: operatör` rows,
+   `edge_key_inventory.py check` and `rust` follow, and the `rust` output replaces `PRODUCTION_KEYIDS` in
+   `userspace/suderra-installer/src/trust_anchors.rs`, all in one reviewed commit that the witness confirms against
+   the transcript. `tests/image-contracts/edge-key-inventory-contract-test.sh` keeps table and constant equal.
+6. **Cloud secrets.** The five online private keys become `SUDERRA_EDGE_*_SIGNING_KEY` in the sensor-service secret
+   store; the fleet-root public key becomes an `<epoch>:<base64 raw key>` entry of `SUDERRA_EDGE_FLEET_ROOT_KEYS`.
+7. **First trust-anchors bundle.** Signed by the offline `fleet-root` key and carried in `SUDERRA_EDGE_TRUST_ANCHORS`.
+   No tool does this with an HSM key yet (INFRA-MEDIUM-257, deadline 2026-11-30): until it exists this step is blocked
+   and the ceremony is not complete.
+8. **Release signing path.** Set up the offline release flow of aquaculture_platform
+   `docs/runbooks/edge-release-offline-signing.md`: the repository variable `EDGE_RELEASE_SIGNING_MODE=offline`, the
+   environment `edge-release-publish` with `EDGE_RELEASE_KEYID` (the `edge-release` row's keyid), the deleted CI signing
+   secret, the tag rules. Rehearse with a throwaway key before the first production tag, then sign the first production
+   release statement with the HSM.
+9. **Production images.** The trust-root set of a production hardware image carries only the four OS-pinned public keys
+   (`edge/<purpose>/<epoch>.pub`); `package/suderra-keys` pins a key only when the table records its keyid for that
+   purpose and epoch, and the installer's allowlist refuses any other at run time.
+
+### Checklist
+
+- [ ] Ticket approved by release owner, security owner and signing operator; rows, serial, token and connector recorded
+- [ ] Transcript started before the token was unlocked; HSM serial, label and connector confirmed against the ticket
+- [ ] `edge-release` and `fleet-root` generated in the HSM, capabilities read back by the witness, no export capability
+- [ ] Public keys exported as Ed25519 SubjectPublicKeyInfo PEM and checked by `edge_key_inventory.py row`
+- [ ] Five online keys generated, stored in their secrets under the two-person rule, files shredded, machine wiped
+- [ ] Inventory rows and `PRODUCTION_KEYIDS` recorded in one commit; `edge-key-inventory-contract-test.sh` green
+- [ ] Cloud secrets set; `SUDERRA_EDGE_FLEET_ROOT_KEYS` carries the fleet-root public key
+- [ ] First production trust-anchors bundle signed by fleet-root (blocked by INFRA-MEDIUM-257)
+- [ ] Offline release flow set up and rehearsed; the CI signing secret deleted; first production release signed
+- [ ] Backups of both offline keys under the Backup And Recovery rules; recovery drill date set
+- [ ] Transcript signed by both participants; evidence retained under the SSOT policy
+
+### Custody
+
+| Key | Holders | Where | Backup |
+|---|---|---|---|
+| `edge-release` | signing operator and security witness (two-person) | allowlisted HSM, offline | the Backup And Recovery rules |
+| `fleet-root` | signing operator and security witness (two-person) | allowlisted HSM, offline | the Backup And Recovery rules |
+| online keys | the secret store's administrators; no one holds a copy | sensor-service and signer secrets | none: a lost key is replaced by a new epoch |
+
+## Rotation and compromise of edge keys
+
+Per-key rotation, revocation and compromise procedures are one section each in aquaculture_platform
+`docs/runbooks/edge-key-compromise.md` (ADR-048 DEC-15; a skeleton in P1: the fleet-root-signed `key-epoch-advance`
+statement that revokes a key is P2). What a P1 ceremony fixes already: every key has its own epoch directory, an OS
+image can pin epochs N and N+1 together (DEC-3.4), a bundle-anchored key is replaced by a new bundle, and a
+`fleet-root` compromise is answered with an image that pins a new `fleet-root`, delivered over the separate RAUC
+chain. The annual fleet-wide re-keying drill runs on the QEMU fleet.
+
 ## Rotation And Revocation
 
 Rotate keys on scheduled lifecycle, operator change, suspected exposure, or HSM

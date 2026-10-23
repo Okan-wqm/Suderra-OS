@@ -90,12 +90,14 @@ define SUDERRA_KEYS_INSTALL_TARGET_CMDS
 	# Edge keys pinned per purpose and epoch (ADR-048 DEC-3.4, DEC-3.9):
 	# dev/CI keys (and the dev provisioning-API CA) on dev images and on every
 	# image of a ci-role board, only ceremony-inventoried keyids on
-	# production images of hardware boards (none before P1).
+	# production images of hardware boards (the table of
+	# docs/security/key-management.md records them; none before the ceremony).
 	python3 -B $(@D)/suderra-edge-pins.py \
 		--trust-roots "$(SUDERRA_TRUST_ROOTS_DIR)" --target "$(TARGET_DIR)" \
 		--variant $(if $(BR2_PACKAGE_SUDERRA_VARIANT_PROD),prod,dev) \
 		--defconfig "$(firstword $(call qstrip,$(BR2_ROOTFS_POST_SCRIPT_ARGS)))_defconfig" \
-		--boards "$(BR2_EXTERNAL_SUDERRA_PATH)/contracts/suderra-edge/v1/boards.json"
+		--boards "$(BR2_EXTERNAL_SUDERRA_PATH)/contracts/suderra-edge/v1/boards.json" \
+		--inventory "$(BR2_EXTERNAL_SUDERRA_PATH)/docs/security/key-management.md"
 endef
 
 $(eval $(generic-package))

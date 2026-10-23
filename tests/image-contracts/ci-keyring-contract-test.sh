@@ -260,10 +260,12 @@ expect_fail "a prod trust-root set validated on a host without openssl" "openssl
 # (the QEMU targets, production variant included: the installer's PinPolicy
 # board-role rule), and nothing on production images of hardware boards.
 BOARDS="${ROOT}/contracts/suderra-edge/v1/boards.json"
+INVENTORY="${ROOT}/docs/security/key-management.md"
 pins() {
-    local trust_roots="$1" variant="$2" defconfig="$3"
+    local trust_roots="$1" variant="$2" defconfig="$3" inventory="${4:-${INVENTORY}}"
     python3 -I "${PINS}" --trust-roots "${trust_roots}" --target "${TARGET}" \
-        --variant "${variant}" --defconfig "${defconfig}" --boards "${BOARDS}"
+        --variant "${variant}" --defconfig "${defconfig}" --boards "${BOARDS}" \
+        --inventory "${inventory}"
 }
 expect_dev_ci_pins() {
     [ "$(cd "${TARGET}/etc/suderra/keys" && find . -type f | sort | tr '\n' ' ')" = \
@@ -291,6 +293,80 @@ pins "${T}" prod suderra_aarch64_rpi4_prod_ab_defconfig >/dev/null
     echo "a production hardware image must pin no edge key and carry no cloud CA" >&2
     exit 1
 }
+# A production hardware image pins exactly the keyids the inventory records, and
+# no other key, whatever its origin: the stand-in ceremony below records the
+# keyids of the set under test, as a ceremony would record its own.
+inventory_with() {
+    # inventory_with <out> <trust-roots> [<purpose>...]: the real table, with
+    # the keyid of <trust-roots>/edge/<purpose>/1.pub recorded for each purpose.
+    local out="$1" trust_roots="$2"
+    shift 2
+    cp "${INVENTORY}" "${out}"
+    local purpose row
+    for purpose in "$@"; do
+        local origin=ceremony-service-secret
+        case "${purpose}" in edge-release | fleet-root) origin=ceremony-hsm-offline ;; esac
+        row="$(python3 -I "${ROOT}/package/suderra-keys/edge_key_inventory.py" row \
+            --purpose "${purpose}" --epoch 1 \
+            --public-key "${trust_roots}/edge/${purpose}/1.pub" --origin "${origin}")"
+        python3 -I - "${out}" "${purpose}" "${row}" <<'PY'
+import sys
+path, purpose, row = sys.argv[1:]
+lines = open(path, encoding="utf-8").read().split("\n")
+for i, line in enumerate(lines):
+    if line.startswith(f"| {purpose} | 1 |"):
+        lines[i] = row
+        break
+else:
+    sys.exit(f"no inventory row for {purpose}")
+open(path, "w", encoding="utf-8").write("\n".join(lines))
+PY
+    done
+}
+rm -rf "${TARGET}"
+inventory_with "${TMPDIR}/inventory-all.md" "${KEYS_DIR}" \
+    edge-release edge-provisioning fleet-root device-lifecycle
+pins "${KEYS_DIR}" prod suderra_aarch64_revpi4_prod_ab_defconfig "${TMPDIR}/inventory-all.md" >/dev/null
+[ "$(cd "${TARGET}/etc/suderra/keys" && find . -type f | sort | tr '\n' ' ')" = \
+    "./device-lifecycle/1.pub ./edge-provisioning/1.pub ./edge-release/1.pub ./fleet-root/1.pub " ] || {
+    echo "a production hardware image must pin exactly the inventoried os-image keys" >&2
+    exit 1
+}
+[ ! -e "${TARGET}/etc/suderra/cloud-ca.pem" ] || {
+    echo "a production hardware image must carry no dev cloud CA" >&2
+    exit 1
+}
+rm -rf "${TARGET}"
+pins "${KEYS_DIR}" prod suderra_x86_64_defconfig "${TMPDIR}/inventory-all.md" >/dev/null
+test -s "${TARGET}/etc/suderra/keys/edge-release/1.pub"
+# A key the inventory does not record for its purpose is refused (the dev/CI
+# keys of a production build), also when the other three are recorded.
+inventory_with "${TMPDIR}/inventory-three.md" "${KEYS_DIR}" edge-release edge-provisioning fleet-root
+rm -rf "${TARGET}"
+expect_fail "a production image with a key the inventory does not record" \
+    "is not the keyid the inventory records for device-lifecycle/1 (none)" \
+    pins "${KEYS_DIR}" prod suderra_aarch64_revpi4_prod_ab_defconfig "${TMPDIR}/inventory-three.md"
+T="${TMPDIR}/other-key"
+cp -a "${KEYS_DIR}" "${T}"
+openssl genpkey -algorithm ED25519 2>/dev/null |
+    openssl pkey -pubout -out "${T}/edge/edge-release/1.pub" 2>/dev/null
+expect_fail "a production image with another key than the inventoried one" \
+    "is not the keyid the inventory records for edge-release/1" \
+    pins "${T}" prod suderra_aarch64_revpi4_prod_ab_defconfig "${TMPDIR}/inventory-all.md"
+T="${TMPDIR}/two-purposes-one-key"
+cp -a "${KEYS_DIR}" "${T}"
+cp "${KEYS_DIR}/edge/edge-release/1.pub" "${T}/edge/fleet-root/1.pub"
+expect_fail "a production image where two purposes share a key" "every purpose has its own key" \
+    pins "${T}" prod suderra_aarch64_revpi4_prod_ab_defconfig "${TMPDIR}/inventory-all.md"
+T="${TMPDIR}/prod-missing-purpose"
+cp -a "${KEYS_DIR}" "${T}"
+rm -rf "${T}/edge/fleet-root"
+expect_fail "a production image without a fleet-root key" "fleet-root: no <epoch>.pub" \
+    pins "${T}" prod suderra_aarch64_revpi4_prod_ab_defconfig "${TMPDIR}/inventory-all.md"
+# The dev images never read the inventory's records: the same dev set pins on a dev image.
+rm -rf "${TARGET}"
+pins "${KEYS_DIR}" dev suderra_aarch64_revpi4_defconfig "${TMPDIR}/inventory-three.md" >/dev/null
+expect_dev_ci_pins
 expect_fail "an unclassified defconfig" "classified 0 times" \
     pins "${KEYS_DIR}" dev suderra_unknown_defconfig
 T="${TMPDIR}/missing-purpose"

@@ -28,6 +28,58 @@
 | **Compromise response** | Yeni anahtar yayınla → fleet OTA ile yeni keyring → eski anahtar revoke |
 | **Destruction** | Eski anahtar HSM'den silinir, audit log |
 
+## Edge sözleşmesi anahtar envanteri (ADR-048 DEC-3.9)
+
+Suderra OS ile edge agent arasındaki imzalı ifadelerin anahtarları (ADR-048 DEC-3; kümesi
+`contracts/suderra-edge/v1/statements.json` `purposes`). Amaç başına ayrı anahtar ve ayrı epoch vardır;
+iki amaç bir anahtarı paylaşamaz. Üretim anahtarlarının tek kayıt yeri aşağıdaki tablodur: üretim imajı
+yalnız burada kayıtlı keyid'leri pinler, kök kurucu `PRODUCTION_KEYIDS` sabitini bu tablodan alır ve
+kayıt edilmemiş her keyid (dev/CI anahtarları ve sözleşmenin TEST-ONLY anahtarları dahil) build'i
+başarısız eder. Dev/CI anahtarları (`scripts/gen-dev-keys.sh`, `scripts/ci/prepare-ci-keyring.sh`) bu
+tabloya **hiçbir zaman** girmez: yalnız dev imajları ve QEMU hedefleri onları pinler.
+
+`Keyid`: ham 32 bayt Ed25519 public key'in SHA-256'sı (küçük harf hex). `bekliyor: operatör`: anahtar
+henüz seremonide üretilmemiştir (üretim anahtar seremonisi operatör eylemidir, ADR-048 Soru 9); bu durumda
+`Köken` hedeflenen kökeni söyler. `Köken` değerleri: `ceremony-hsm-offline` (özel anahtar HSM'den
+çıkmaz, imza offline), `ceremony-service-secret` (seremonide üretilir, P2'deki KMS'e kadar servis
+secret'ında; EDGE-HIGH-119), `kms` (P2). `Çapa`: cihazın anahtarı nereden aldığı (`os-image`: verity
+rootfs `/etc/suderra/keys/<amaç>/<epoch>.pub`; `trust-anchors`: fleet-root imzalı bundle; `kernel-keyring`).
+
+| Amaç | Epoch | Keyid | Köken | Saklama | Çapa |
+|---|---|---|---|---|---|
+| edge-release | 1 | bekliyor: operatör | ceremony-hsm-offline | Offline HSM, iki emanetçi; üretim release statement'ı offline imzalanır | os-image |
+| edge-provisioning | 1 | bekliyor: operatör | ceremony-service-secret | Seremonide üretilir, sensor-service secret'ı (KMS'e kadar, EDGE-HIGH-119) | os-image |
+| fleet-root | 1 | bekliyor: operatör | ceremony-hsm-offline | Offline HSM, iki emanetçi; yalnız trust-anchors ve key-epoch-advance imzalar | os-image |
+| device-lifecycle | 1 | bekliyor: operatör | ceremony-service-secret | Seremonide üretilir, ayrı signer secret'ı (KMS'e kadar, EDGE-HIGH-119) | os-image |
+| config-integrity | 1 | bekliyor: operatör | ceremony-service-secret | Seremonide üretilir, sensor-service secret'ı (KMS'e kadar, EDGE-HIGH-119) | trust-anchors |
+| rbac-manifest | 1 | bekliyor: operatör | ceremony-service-secret | Seremonide üretilir, sensor-service secret'ı (KMS'e kadar, EDGE-HIGH-119) | trust-anchors |
+| command | 1 | bekliyor: operatör | ceremony-service-secret | Seremonide üretilir, sensor-service secret'ı (KMS'e kadar, EDGE-HIGH-119) | trust-anchors |
+| edge-image | 1 | bekliyor: operatör | kms | KMS (P2); X.509, kernel keyring'ine gömülü sertifika | kernel-keyring |
+
+`mqtt-ca` bu tabloda yoktur: P1'de bir seremoni anahtarı değil, broker'ın kamu CA kök kümesidir (üretim
+bundle'ı, yalnız sunucu kimlik doğrulaması, DEC-10.6); P2'de özel cihaz PKI'sinin offline kökü
+buraya ve seremoniye girer. `edge-image` P2 anahtarıdır (DEC-1.6): satırı vardır, keyid'i P1'de yazılmaz.
+
+**Kayıt kuralı.** Seremoni her anahtarın public key'ini (SubjectPublicKeyInfo PEM) dışa aktarır; satır
+elle yazılmaz, hesaplanır, çünkü keyid yanlış yazılırsa üretim imajı yanlış anahtarı pinler:
+
+```bash
+python3 -I package/suderra-keys/edge_key_inventory.py row --purpose edge-release --epoch 1 \
+    --public-key edge-release-1.pub --origin ceremony-hsm-offline     # tablo satırını yazar
+python3 -I package/suderra-keys/edge_key_inventory.py check           # tablonun kuralları
+python3 -I package/suderra-keys/edge_key_inventory.py rust            # PRODUCTION_KEYIDS sabiti
+```
+
+Satır `bekliyor: operatör` satırının yerine geçer, `rust` çıktısı
+`userspace/suderra-installer/src/trust_anchors.rs` `PRODUCTION_KEYIDS` sabitinin yerine yazılır, aynı
+commit'te. `tests/image-contracts/edge-key-inventory-contract-test.sh` tablonun kurallarını (her amaç
+için satır, tekil keyid, amaca uygun köken, sözleşmeye uygun çapa, TEST-ONLY anahtar yok) ve sabitin tabloya
+eşitliğini denetler; `package/suderra-keys/suderra-edge-pins.py` üretim imajında yalnız bu tabloda
+kayıtlı keyid'leri pinler. Seremoninin adımları, emanet ve kontrol listesi:
+[key-ceremony.md](key-ceremony.md) §Edge contract keys. Rotasyon, iptal ve ihlal: aynı bölümün §Rotation
+and compromise ve aquaculture_platform `docs/runbooks/edge-key-compromise.md` (ADR-048 DEC-15, anahtar
+başına bir bölüm; `key-epoch-advance` ile iptal P2'dir).
+
 ## Geliştirme Anahtarları
 
 `board/keys/README.md`:
@@ -92,6 +144,9 @@ Seçenekler:
 - [x] CI'da kısa-ömürlü key delegation — [key-ceremony.md](key-ceremony.md) §Delegation (time-boxed PKCS#11 credential)
 - [x] Anahtar yedekleme + kurtarma planı — [key-ceremony.md](key-ceremony.md) §Backup And Recovery (replay-doğrulamalı drill)
 - [x] Compromise drill testi — [key-ceremony.md](key-ceremony.md) §Compromise Drill (7 adımlı, replay-doğrulamalı)
+- [ ] Edge sözleşmesi üretim anahtar seremonisi (ADR-048 DEC-3.9): fleet-root ve edge-release offline HSM'de,
+      online anahtarlar servis secret'larında; envanter tablosu ve `PRODUCTION_KEYIDS` kayıtla dolar
+      — **bekliyor: operatör** ([key-ceremony.md](key-ceremony.md) §Edge contract keys)
 - [x] Approved production HSM provider/model allowlist — `ci/evidence-contract.yml` `signing.replay_requirements.approved_provider_allowlist`, `validate-hsm-signing-evidence.py --require-production` ile zorlanıyor
 
 ## Referanslar
