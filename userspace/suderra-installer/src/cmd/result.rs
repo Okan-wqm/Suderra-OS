@@ -3,12 +3,14 @@
 
 //! `suderra-installer result write`: typed results for the root helper
 //! scripts (suderra-lockdown, suderra-data-unlock, suderra-time-state),
-//! validated against the result schema like every other result (DEC-27).
+//! validated against the result schema like every other result (DEC-27); and
+//! `result mirror`, which restores the agent's view of the persistent results
+//! after a boot.
 
 use crate::cli::{ResultArgs, ResultCommand};
 use crate::contracts::registry::{Outcome, Reason, ResultKind};
 use crate::paths::Paths;
-use crate::results::{record, Report};
+use crate::results::{mirror, record, Report};
 use crate::variant::ImageFacts;
 use anyhow::{Context, Result};
 
@@ -54,12 +56,31 @@ pub(crate) fn run(args: ResultArgs) -> Result<()> {
             println!("{}", doc.seq);
             Ok(())
         }
+        ResultCommand::Mirror => {
+            let mirrored = mirror(&Paths::system()?)?;
+            println!("restored {}", mirrored.restored);
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_units_command_lines_parse() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+        // suderra-results-mirror.service runs this exact command line.
+        let cli = Cli::try_parse_from(["suderra-installer", "result", "mirror"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Result(ResultArgs {
+                command: ResultCommand::Mirror
+            })
+        ));
+    }
 
     #[test]
     fn helper_reports_are_typed() {

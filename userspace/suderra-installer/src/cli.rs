@@ -185,6 +185,10 @@ pub struct ResultArgs {
 pub enum ResultCommand {
     /// Write one typed result (lockdown, data-unlock, time-state helpers).
     Write(ResultWriteArgs),
+    /// Restore /run/suderra/results from the persistent results after a boot,
+    /// so the agent publishes what the broker had not acknowledged
+    /// (suderra-results-mirror.service).
+    Mirror,
 }
 
 /// `result write`

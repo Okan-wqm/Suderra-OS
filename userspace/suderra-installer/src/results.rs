@@ -32,6 +32,10 @@ use std::os::unix::fs::OpenOptionsExt;
 pub(crate) const RESULT_TYPE: &str = "suderra.result.v1";
 /// Results kept under /data/suderra/os/results.
 const RETAINED: usize = 256;
+/// A result document is a few hundred bytes (`detail` is at most 512); the
+/// agent's reader takes no more than this from a file (sens-api-gateway
+/// src/results.rs `MAX_RESULT_BYTES`).
+const MAX_RESULT_BYTES: u64 = 16 * 1024;
 
 /// result.schema.json `subject`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +244,13 @@ impl ResultDocument {
         Ok(())
     }
 
+    /// Parses and validates a document root's own writer stored.
+    fn from_stored(bytes: &[u8]) -> Result<Self, String> {
+        let doc: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        doc.validate()?;
+        Ok(doc)
+    }
+
     /// Parses a result document (golden documents).
     #[cfg(test)]
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, Reason> {
@@ -327,16 +338,7 @@ pub(crate) fn record(paths: &Paths, facts: &ImageFacts, report: Report) -> Resul
         paths.run_os().join("results")
     };
     ensure_dir(&counter_dir, 0o700)?;
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .custom_flags(crate::fsutil::libc_flags::O_NOFOLLOW)
-        .open(counter_dir.join(".lock"))
-        .context("cannot open the results lock")?;
-    let _lock = Flock::lock(lock_file, FlockArg::LockExclusive)
-        .map_err(|(_, errno)| anyhow::anyhow!("cannot lock results: {errno}"))?;
+    let _lock = lock_results(&counter_dir)?;
 
     let seq_path = counter_dir.join("seq");
     let last = match read_root_file(&seq_path, 32)? {
@@ -375,6 +377,30 @@ pub(crate) fn record(paths: &Paths, facts: &ImageFacts, report: Report) -> Resul
         prune(&counter_dir)?;
     }
 
+    let run = ensure_run_results(paths)?;
+    write_atomic(&run.join(&name), &bytes, 0o640, paths.agent_group())?;
+    prune(&run)?;
+    Ok(doc)
+}
+
+/// Takes the exclusive lock that orders every writer of one result directory
+/// (the counter, the files and the pruning).
+fn lock_results(counter_dir: &std::path::Path) -> Result<Flock<std::fs::File>> {
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(crate::fsutil::libc_flags::O_NOFOLLOW)
+        .open(counter_dir.join(".lock"))
+        .context("cannot open the results lock")?;
+    Flock::lock(lock_file, FlockArg::LockExclusive)
+        .map_err(|(_, errno)| anyhow::anyhow!("cannot lock results: {errno}"))
+}
+
+/// `/run/suderra/results`, root:suderra 0750 as systemd-tmpfiles declares it
+/// (usr/lib/tmpfiles.d/suderra.conf), created when it is missing.
+fn ensure_run_results(paths: &Paths) -> Result<std::path::PathBuf> {
     let run = paths.run_results();
     ensure_dir(&paths.run_suderra(), 0o750)?;
     ensure_dir(&run, 0o750)?;
@@ -384,9 +410,99 @@ pub(crate) fn record(paths: &Paths, facts: &ImageFacts, report: Report) -> Resul
         std::os::unix::fs::chown(&run, None, Some(gid.as_raw()))
             .context("cannot chgrp /run/suderra/results")?;
     }
-    write_atomic(&run.join(&name), &bytes, 0o640, paths.agent_group())?;
+    Ok(run)
+}
+
+/// A persistent result's file name, `<seq, 16 digits>-<kind>.json`
+/// (channels.json result_telemetry `file_name_pattern` without the `volatile-`
+/// form, which exists only under /run).
+fn is_result_file_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".json") else {
+        return false;
+    };
+    let Some((digits, kind)) = stem.split_at_checked(16) else {
+        return false;
+    };
+    let Some(kind) = kind.strip_prefix('-') else {
+        return false;
+    };
+    digits.bytes().all(|b| b.is_ascii_digit())
+        && !kind.is_empty()
+        && kind.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+/// What [`mirror`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Mirrored {
+    /// Results written to /run/suderra/results (new, or different from the
+    /// persistent copy).
+    pub restored: usize,
+    /// Persistent files named like a result that are not one (unreadable, not a
+    /// valid document, or a document whose seq or kind disagrees with its name).
+    pub skipped: Vec<String>,
+}
+
+/// Restores the agent's view of the persistent results after a boot.
+///
+/// /run/suderra/results is a tmpfs: a reboot empties it while the results stay
+/// in /data/suderra/os/results. The agent republishes what is in the directory
+/// until the broker acknowledged it and keeps only the highest acknowledged seq,
+/// so a result written just before a reboot (a lockdown, a rollback, an alarm)
+/// that the broker had not acknowledged would otherwise never reach the cloud,
+/// and a newer result published first would move the cursor past it for good. The
+/// persistent copy is the truth: a mirrored file that differs is replaced. Only
+/// the newest [`RETAINED`] results are mirrored, as `record` keeps them.
+///
+/// Without /data (unmounted, or its layout not applied) there is nothing
+/// persistent to restore, and the volatile results already in /run stay.
+pub(crate) fn mirror(paths: &Paths) -> Result<Mirrored> {
+    let store = paths.results_store();
+    let mut done = Mirrored::default();
+    if !paths.os_state_available() || !store.is_dir() {
+        return Ok(done);
+    }
+    let _lock = lock_results(&store)?;
+    let mut names: Vec<String> = std::fs::read_dir(&store)
+        .with_context(|| format!("cannot read {}", store.display()))?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| is_result_file_name(n))
+        .collect();
+    names.sort();
+    let newest = names.split_off(names.len().saturating_sub(RETAINED));
+    let run = ensure_run_results(paths)?;
+    for name in newest {
+        let stored = read_root_file(&store.join(&name), MAX_RESULT_BYTES)
+            .ok()
+            .flatten()
+            .filter(|bytes| {
+                ResultDocument::from_stored(bytes)
+                    .is_ok_and(|doc| format!("{:016}-{}.json", doc.seq, doc.kind) == name)
+            });
+        let Some(bytes) = stored else {
+            tracing::error!(
+                "{name} in {} is not a result: not mirrored",
+                store.display()
+            );
+            done.skipped.push(name);
+            continue;
+        };
+        if read_root_file(&run.join(&name), MAX_RESULT_BYTES)
+            .ok()
+            .flatten()
+            .as_deref()
+            != Some(bytes.as_slice())
+        {
+            write_atomic(&run.join(&name), &bytes, 0o640, paths.agent_group())?;
+            done.restored += 1;
+        }
+    }
     prune(&run)?;
-    Ok(doc)
+    Ok(done)
 }
 
 /// Keeps the newest [`RETAINED`] result files of `dir` (names sort by seq;
@@ -466,6 +582,200 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ResultDocument::parse(&mirrored).unwrap(), doc);
+    }
+
+    /// What a reboot does to the agent's view: /run is a tmpfs, so every mirrored
+    /// file is gone while the persistent store is untouched.
+    fn reboot(paths: &Paths) {
+        for entry in std::fs::read_dir(paths.run_results()).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+    }
+
+    fn run_names(paths: &Paths) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(paths.run_results())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_reboot_does_not_hide_results_the_agent_has_not_published() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        for kind in [
+            ResultKind::EdgeInstall,
+            ResultKind::Lockdown,
+            ResultKind::HealthGate,
+        ] {
+            record(&paths, &facts, Report::ok(kind, None)).unwrap();
+        }
+        let before = run_names(&paths);
+        assert_eq!(before.len(), 3);
+        reboot(&paths);
+        assert!(run_names(&paths).is_empty());
+
+        let first = mirror(&paths).unwrap();
+        assert_eq!((first.restored, first.skipped.len()), (3, 0));
+        assert_eq!(run_names(&paths), before);
+        for name in &before {
+            assert_eq!(
+                std::fs::read(paths.run_results().join(name)).unwrap(),
+                std::fs::read(paths.results_store().join(name)).unwrap(),
+                "{name} is the bytes root wrote"
+            );
+            let mode = std::fs::metadata(paths.run_results().join(name))
+                .unwrap()
+                .permissions();
+            assert_eq!(
+                std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
+                0o640
+            );
+        }
+
+        // Idempotent: nothing left to restore, and the next result continues the sequence.
+        assert_eq!(mirror(&paths).unwrap().restored, 0);
+        let next = record(&paths, &facts, Report::ok(ResultKind::VerifyCurrent, None)).unwrap();
+        assert_eq!(next.seq, 4);
+    }
+
+    #[test]
+    fn the_persistent_copy_replaces_a_mirror_that_differs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        let doc = record(&paths, &facts, Report::ok(ResultKind::Lockdown, None)).unwrap();
+        let name = format!("{:016}-lockdown.json", doc.seq);
+        std::fs::write(paths.run_results().join(&name), b"{}").unwrap();
+        assert_eq!(mirror(&paths).unwrap().restored, 1);
+        assert_eq!(
+            std::fs::read(paths.run_results().join(&name)).unwrap(),
+            std::fs::read(paths.results_store().join(&name)).unwrap()
+        );
+    }
+
+    #[test]
+    fn without_data_there_is_nothing_to_restore_and_volatile_results_stay() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        std::fs::remove_dir(paths.os_state()).unwrap();
+        record(
+            &paths,
+            &facts,
+            Report::not_ok(
+                ResultKind::DataUnlock,
+                Outcome::Alarm,
+                Reason::DataUnmountable,
+            ),
+        )
+        .unwrap();
+        let before = run_names(&paths);
+        assert_eq!(before, ["volatile-0000000000000001-data-unlock.json"]);
+        let report = mirror(&paths).unwrap();
+        assert_eq!((report.restored, report.skipped.len()), (0, 0));
+        assert_eq!(run_names(&paths), before);
+        assert!(!paths.os_state().exists(), "nothing is created under /data");
+    }
+
+    #[test]
+    fn a_store_with_no_results_yet_is_nothing_to_restore() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, _facts) = image(tmp.path());
+        let report = mirror(&paths).unwrap();
+        assert_eq!((report.restored, report.skipped.len()), (0, 0));
+        assert!(
+            !paths.results_store().exists(),
+            "restoring creates no store"
+        );
+    }
+
+    /// The persistent store as a larger past left it: `count` valid results.
+    fn store_of(paths: &Paths, facts: &ImageFacts, count: u64) {
+        let template = record(paths, facts, Report::ok(ResultKind::VerifyCurrent, None)).unwrap();
+        for seq in 2..=count {
+            let mut doc = template.clone();
+            doc.seq = seq;
+            std::fs::write(
+                paths
+                    .results_store()
+                    .join(format!("{seq:016}-verify-current.json")),
+                serde_json::to_vec(&doc).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn only_the_newest_retained_results_are_restored() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        let total = RETAINED as u64 + 4;
+        store_of(&paths, &facts, total);
+        reboot(&paths);
+        assert_eq!(mirror(&paths).unwrap().restored, RETAINED);
+        let kept = run_names(&paths);
+        assert_eq!(kept.len(), RETAINED, "the newest {RETAINED}, no older one");
+        assert_eq!(kept[0], "0000000000000005-verify-current.json");
+        assert_eq!(
+            kept[RETAINED - 1],
+            format!("{total:016}-verify-current.json")
+        );
+    }
+
+    #[test]
+    fn results_older_than_the_retained_ones_leave_the_mirror() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        let total = RETAINED as u64 + 4;
+        store_of(&paths, &facts, total);
+        // The mirror still holds the four oldest (a boot in which the store had
+        // grown since: they are not retained any more).
+        for seq in 1..=4 {
+            std::fs::copy(
+                paths
+                    .results_store()
+                    .join(format!("{seq:016}-verify-current.json")),
+                paths
+                    .run_results()
+                    .join(format!("{seq:016}-verify-current.json")),
+            )
+            .unwrap();
+        }
+        mirror(&paths).unwrap();
+        let kept = run_names(&paths);
+        assert_eq!(kept.len(), RETAINED);
+        assert_eq!(kept[0], "0000000000000005-verify-current.json");
+    }
+
+    #[test]
+    fn a_result_file_that_is_not_a_result_is_skipped_and_named() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (paths, facts) = image(tmp.path());
+        let good = record(&paths, &facts, Report::ok(ResultKind::Lockdown, None)).unwrap();
+        let store = paths.results_store();
+        // Garbage under a result's name, a document whose seq disagrees with its
+        // name, and files that are not results at all.
+        std::fs::write(store.join("0000000000000009-lockdown.json"), b"not json").unwrap();
+        std::fs::copy(
+            store.join(format!("{:016}-lockdown.json", good.seq)),
+            store.join("0000000000000010-lockdown.json"),
+        )
+        .unwrap();
+        std::fs::write(store.join("notes.txt"), b"x").unwrap();
+        std::fs::write(store.join(".hidden.json"), b"x").unwrap();
+        reboot(&paths);
+
+        let report = mirror(&paths).unwrap();
+        assert_eq!(report.restored, 1);
+        assert_eq!(
+            report.skipped,
+            [
+                "0000000000000009-lockdown.json",
+                "0000000000000010-lockdown.json"
+            ]
+        );
+        assert_eq!(run_names(&paths), ["0000000000000001-lockdown.json"]);
     }
 
     #[test]

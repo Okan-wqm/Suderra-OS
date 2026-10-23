@@ -1,0 +1,36 @@
+# Restores the agent's view of root's persistent results every boot
+# (ADR-048 DEC-27; contracts/suderra-edge/v1/channels.json result_telemetry).
+#
+# Root writes every result to /data/suderra/os/results and mirrors it to
+# /run/suderra/results, the one directory the agent publishes from. /run is a
+# tmpfs, so a reboot empties the mirror while the results stay: a lockdown, a
+# rollback or an alarm written just before a reboot, which the broker had not
+# acknowledged, would never reach the cloud. The agent keeps only the highest
+# acknowledged sequence number, so this has to run before the agent's first
+# pass over the directory: a newer result published first would move the cursor
+# past the older ones for good. Before= orders it; nothing requires it, so a
+# failure here never keeps the agent (and the control loop it runs) down.
+
+[Unit]
+Description=Suderra OS result mirror for the agent
+Documentation=https://github.com/Okan-wqm/suderra-os
+DefaultDependencies=no
+ConditionPathExists=/etc/suderra/board
+After=suderra-data.service systemd-tmpfiles-setup.service
+Before=suderra-agent.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/suderra-installer result mirror
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+ReadWritePaths=-/data/suderra/os /run/suderra
+
+[Install]
+WantedBy=multi-user.target

@@ -569,9 +569,12 @@ if [ -n "${SUDERRA_BOARD_PROFILE}" ]; then
     enable_unit suderra-activation.service multi-user.target
     enable_unit suderra-provision-mode.service multi-user.target
     enable_unit suderra-agent.service multi-user.target
+    # The agent publishes root's results from /run (DEC-27); this restores the
+    # persistent ones into it before the agent's first pass.
+    enable_unit suderra-results-mirror.service multi-user.target
     for unit in suderra-identity.service suderra-lifecycle.service suderra-lifecycle.timer \
         suderra-lifecycle.path suderra-activation.path suderra-activation.service \
-        suderra-provision-mode.service suderra-agent.service
+        suderra-provision-mode.service suderra-agent.service suderra-results-mirror.service
     do
         preset_enable "${unit}"
     done
@@ -607,7 +610,7 @@ EOF
         suderra-lifecycle.path suderra-lifecycle-request.service suderra-activation.path \
         suderra-activation.service suderra-provision-mode.service \
         suderra-provision-guard.service suderra-provision-worker.path \
-        suderra-provision-worker.service
+        suderra-provision-worker.service suderra-results-mirror.service
     do
         rm -f "${TARGET_DIR}/etc/systemd/system/${unit}"
     done

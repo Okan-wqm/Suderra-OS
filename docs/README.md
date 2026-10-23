@@ -54,6 +54,7 @@ docs/
 - [time-sync.md](operations/time-sync.md) — NTS zamanı, zaman tabanı (time floor), `/run/suderra/time-state` ve kart başına RTC
 - [health-gate.md](operations/health-gate.md) — sağlık kapısı: ne kontrol edilir, hangi imaj neyi beyan eder, mark-good ve geri alma
 - [watchdog.md](operations/watchdog.md) — donanım watchdog'unun tek sahibi systemd PID1, kart başına watchdog, NOWAYOUT ve donanımda doğrulanacaklar
+- [results.md](operations/results.md) — kök işçilerin tipli sonuçları: yazım, `/run` aynası, her boot'ta geri yükleme, agent yayını ve hangi script hangi sebebi yazabilir
 - [revpi-connect4.md](hardware/revpi-connect4.md) — Revolution Pi Connect 4: KUNBUS kernel + piControl pin'leri, device tree, kernel yükseltme ve donanım kontrol listesi
 - [kernel-pins.md](hardware/kernel-pins.md) — tek 6.12 kernel hattı: kaynak ve hash pin'leri, seri denetimi ve Raspberry Pi 4 / CM4'ün 6.12'ye geçiş adımları (EI-089)
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
