@@ -51,11 +51,16 @@ fi
 
 systemctl stop suderra-provision-mode.service ||
     failed io-error "cannot stop suderra-provision-mode.service"
+# The reasons below are the ones the result schema allows for a lockdown result
+# (contracts/suderra-edge/v1/schemas/result.schema.json): `result write` refuses
+# any other, and a refused result records nothing, so the technician path would
+# stay open without a record. scripts/ci/check-result-reasons.py holds every
+# call of failed() to that list (EI-084).
 if systemctl is-active --quiet dropbear.service; then
-    failed state-corrupt "dropbear is still running after provisioning mode stopped"
+    failed provisioning-mode-active "dropbear is still running after provisioning mode stopped"
 fi
 if is_mounted /etc/shadow; then
-    failed state-corrupt "the one-time-password shadow is still bound over /etc/shadow"
+    failed provisioning-mode-active "the one-time-password shadow is still bound over /etc/shadow"
 fi
 
 loaded="$("${INSTALLER}" policy apply)" ||
