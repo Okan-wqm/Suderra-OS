@@ -26,8 +26,8 @@
 #
 # Not covered here, because they need wiring or a person at the board: the RS485
 # loopback, the LEDs' look, the board reset by each watchdog, which Ethernet driver
-# eth1 needs, U-Boot rejecting a tampered FIT (docs/hardware/revpi-connect4.md
-# section 6).
+# eth1 needs, U-Boot rejecting a tampered FIT, and which board a watchdog reset
+# resets (docs/hardware/revpi-connect4.md section 6).
 #
 # Output: DIR/<check>.txt per check and DIR/checks.json. Exit status 0 when every
 # check passed, 1 otherwise, 2 for a usage error. POSIX sh: the image has busybox.
@@ -335,20 +335,54 @@ check_leds() {
         "status LEDs found=${found}; power=${power}; missing=${missing:-none}"
 }
 
-# --- watchdog: a hardware watchdog is registered ----------------------------
+# --- watchdog: systemd PID1 holds the board's watchdog armed ------------------
+# ADR-048 DEC-6.6: the image's udev rule links /dev/suderra-watchdog to the
+# BCM2711 PM watchdog by its sysfs identity, and PID1 opens that link with the
+# RuntimeWatchdogSec of /etc/systemd/system.conf.d/10-suderra-watchdog.conf.
+# Passed when the link names a watchdogN of that identity, its state is active,
+# PID1 has it open, the kernel's programmed timeout is the drop-in's, and (on a
+# production kernel) nowayout is 1.
 check_watchdog() {
     idents=""
-    bcm=no
     for w in "${ROOT}"/sys/class/watchdog/watchdog*; do
         [ -e "${w}" ] || continue
-        id="$(read_first "${w}/identity")"
-        idents="${idents}${idents:+; }$(basename "${w}")=${id:-unknown}"
-        case "${id}" in *[Bb][Cc][Mm]2835*) bcm=yes ;; esac
+        idents="${idents}${idents:+; }$(basename "${w}")=$(read_first "${w}/identity")"
     done
+    target=""
+    if [ -L "${ROOT}/dev/suderra-watchdog" ]; then target="$(readlink "${ROOT}/dev/suderra-watchdog")"; fi
+    name="${target##*/}"
+    case "${name}" in
+        watchdog | watchdog*[!0-9]*) name="" ;;
+        watchdog[0-9]*) ;;
+        *) name="" ;;
+    esac
+    ident=""
+    state=""
+    nowayout=""
+    timeout=""
+    held=no
+    if [ -n "${name}" ]; then
+        class="${ROOT}/sys/class/watchdog/${name}"
+        ident="$(read_first "${class}/identity")"
+        state="$(read_first "${class}/state")"
+        nowayout="$(read_first "${class}/nowayout")"
+        timeout="$(read_first "${class}/timeout")"
+        for fd in "${ROOT}"/proc/1/fd/*; do
+            [ -L "${fd}" ] || continue
+            case "$(readlink "${fd}")" in */"${name}") held=yes ;; esac
+        done
+    fi
+    configured="$(sed -n 's/^RuntimeWatchdogSec=\([0-9][0-9]*\)s$/\1/p' \
+        "${ROOT}/etc/systemd/system.conf.d/10-suderra-watchdog.conf" 2>/dev/null | head -n 1)"
     status=failed
-    if [ "${bcm}" = yes ]; then status=passed; fi
-    record watchdog "${status}" "cat /sys/class/watchdog/watchdog*/identity" \
-        "the BCM2835 watchdog is registered (the PCF2129's may be too)" "${idents:-none}"
+    if [ "${ident}" = "Broadcom BCM2835 Watchdog timer" ] && [ "${state}" = active ] &&
+        [ "${held}" = yes ] && [ -n "${configured}" ] && [ "${timeout}" = "${configured}" ]; then
+        status=passed
+        if [ "${VARIANT}" = prod ] && [ "${nowayout}" != 1 ]; then status=failed; fi
+    fi
+    record watchdog "${status}" "ls -l /dev/suderra-watchdog /proc/1/fd; cat /sys/class/watchdog/watchdog*/{identity,state,nowayout,timeout}" \
+        "/dev/suderra-watchdog is the BCM2711 watchdog, active, open in PID1, programmed to RuntimeWatchdogSec, nowayout 1 on production" \
+        "link=${target:-none}; identity=${ident:-none}; state=${state:-none}; nowayout=${nowayout:-none}; timeout=${timeout:-none}; configured=${configured:-none}; pid1-holds=${held}; all: ${idents:-none}"
 }
 
 # --- module-signing: production refuses unsigned modules and is locked down ---

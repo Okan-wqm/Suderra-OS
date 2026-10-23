@@ -256,7 +256,7 @@ Covered by the collector:
   never-set RTC reads `0`: set it (`hwclock --systohc` once the clock is right) and reboot.
 - `rs485`: `/dev/ttyAMA5` exists.
 - `leds`: the 15 status LEDs and `power:1:fault`.
-- `watchdog`: the BCM2835 watchdog is registered.
+- `watchdog`: PID1 holds the board's watchdog armed (docs/operations/watchdog.md): `/dev/suderra-watchdog` links a `watchdogN` of identity `Broadcom BCM2835 Watchdog timer`, its `state` is `active`, PID1 has it open, the kernel's programmed `timeout` is the `RuntimeWatchdogSec` of `/etc/systemd/system.conf.d/10-suderra-watchdog.conf`, and on a production kernel `nowayout` is `1`.
 - `module-signing`: `sig_enforce=Y` and lockdown at integrity or confidentiality (production).
 - `boot-chain`: the FIT's bootargs carry `suderra.verity.root_hash=` and `console=ttyS0,115200`
   (production), or the dev root `root=PARTUUID=5d3e0a11-02`.
@@ -268,7 +268,7 @@ Hardware-only, by hand:
 - Boots; the console shows the boot; `dmesg` shows the PiBridge master probing.
 - `KB_GET_DEVICE_INFO_LIST` lists the DIO/AIO modules on the PiBridge.
 - RS485 loopback on `/dev/ttyAMA5`; the status LEDs follow piControl's triggers.
-- Which watchdog resets the board and what it resets (BCM2711 PM watchdog or the PCF2129).
+- Which watchdog resets the board and what it resets (BCM2711 PM watchdog or the PCF2129): the rule names the BCM2711 one; a deliberate hang (`echo c > /proc/sysrq-trigger` with `kernel.panic=0`) must reset the board within `RuntimeWatchdogSec` plus granularity, and whether the carrier's I/O (PiBridge, RS485, LEDs) is reset too decides whether the PCF2129's watchdog is the better owner (docs/operations/watchdog.md).
 - The kernel `Image` is below the FIT load window; rootfs headroom with the real module set.
 - The second Ethernet port (a PCIe device behind `pcie0`; KUNBUS's defconfig carries `igb`,
   `lan743x` and `r8169` as modules) enumerates and brings up its driver.

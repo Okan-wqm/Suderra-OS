@@ -113,8 +113,27 @@ No board was available. These are written down, not assumed:
    500 ms; `drivers/rtc/rtc-pcf2127.c` of the KUNBUS `v6.12.91-revpi0` kernel) plus
    its driver capability. The decision is the operator's after the lab result.
 2. **`/dev/suderra-watchdog` appears and `state` is `active`** on each board, with
-   `nowayout` 1 on a production image, and a deliberate PID1 or kernel hang
-   resets the board within `RuntimeWatchdogSec` plus the hardware granularity.
+   `nowayout` 1 on a production image, and a deliberate hang resets the board within
+   `RuntimeWatchdogSec` plus the hardware granularity. On a RevPi Connect 4
+   `scripts/evidence/revpi-connect4-board-checks.sh` checks the first half (the link,
+   the identity, `state`, PID1 holding the device, the programmed `timeout`,
+   `nowayout`); on the other boards read the same files by hand (below). The hang is
+   a crash of the kernel with nothing to reboot it, which stops PID1 and everything
+   else at once. A production image has `kernel.sysrq = 0`
+   (`etc/sysctl.d/90-suderra-hardening.conf`), so a lab console switches it on for the
+   test only, with the console log of the board on a host that timestamps it:
+
+   ```sh
+   cat /sys/class/watchdog/$(basename "$(readlink /dev/suderra-watchdog)")/timeout
+   sysctl -w kernel.sysrq=1 kernel.panic=0 kernel.panic_on_oops=1
+   echo c > /proc/sysrq-trigger
+   ```
+
+   The console shows the panic and then nothing; the board must come back (the boot
+   banner of the bootloader) between `RuntimeWatchdogSec` and `RuntimeWatchdogSec` plus
+   a second or two later, counted from the panic line, and the second boot must have a
+   new `/proc/sys/kernel/random/boot_id`. A board that stays dead has no hang recovery.
+   `bootstatus` is no evidence: the BCM2835 and iTCO drivers do not report a card reset.
 3. **A planned reboot and a poweroff** with NOWAYOUT and `RebootWatchdogSec=2min`:
    that the watchdog never resets a board that is shutting down cleanly, that a
    poweroff on the Raspberry Pi 4 family (which halts instead of cutting power)

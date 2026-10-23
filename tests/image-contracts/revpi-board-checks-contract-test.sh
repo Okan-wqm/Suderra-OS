@@ -85,12 +85,22 @@ mkroot() { # <dir> <variant>
         for c in red green blue; do mkdir -p "${d}/sys/class/leds/${a}:${c}:status"; done
     done
     mkdir -p "${d}/sys/class/leds/power:1:fault"
+    # PID1 holds the BCM2711 watchdog the image's udev rule linked, armed with
+    # the drop-in's RuntimeWatchdogSec (board/suderra/watchdog/revpi-connect4).
     printf 'Broadcom BCM2835 Watchdog timer\n' > "${d}/sys/class/watchdog/watchdog0/identity"
+    printf 'active\n' > "${d}/sys/class/watchdog/watchdog0/state"
+    printf '10\n' > "${d}/sys/class/watchdog/watchdog0/timeout"
+    mkdir -p "${d}/proc/1/fd" "${d}/etc/systemd/system.conf.d"
+    ln -s /dev/watchdog0 "${d}/dev/suderra-watchdog"
+    ln -s /dev/watchdog0 "${d}/proc/1/fd/7"
+    cp "${ROOT}/board/suderra/watchdog/revpi-connect4/10-suderra-watchdog.conf" "${d}/etc/systemd/system.conf.d/"
     if [ "${variant}" = prod ]; then
+        printf '1\n' > "${d}/sys/class/watchdog/watchdog0/nowayout"
         printf 'Y\n' > "${d}/sys/module/module/parameters/sig_enforce"
         printf 'none [integrity] confidentiality\n' > "${d}/sys/kernel/security/lockdown"
         printf 'console=ttyS0,115200 console=tty1 root=/dev/mapper/suderra-root ro rootwait rauc.slot=A suderra.verity.root_hash=00ff lockdown=confidentiality\n' > "${d}/proc/cmdline"
     else
+        printf '0\n' > "${d}/sys/class/watchdog/watchdog0/nowayout"
         printf 'N\n' > "${d}/sys/module/module/parameters/sig_enforce"
         printf '[none] integrity confidentiality\n' > "${d}/sys/kernel/security/lockdown"
         printf 'console=serial0,115200 console=tty1 root=PARTUUID=5d3e0a11-02 rootfstype=ext4 rootwait ro\n' > "${d}/proc/cmdline"
@@ -185,6 +195,14 @@ damage "a missing status LED" leds prod 'rmdir sys/class/leds/a3:blue:status'
 damage "a missing power LED" leds prod 'rmdir sys/class/leds/power:1:fault'
 damage "no hardware watchdog" watchdog prod 'rm -r sys/class/watchdog/watchdog0'
 damage "a watchdog that is not the BCM2835's" watchdog prod 'printf "Some Other Watchdog\n" > sys/class/watchdog/watchdog0/identity'
+damage "the PCF2129's watchdog linked instead" watchdog prod 'printf "NXP PCF2127/PCF2129 Watchdog\n" > sys/class/watchdog/watchdog0/identity'
+damage "no /dev/suderra-watchdog link (the udev rule never matched)" watchdog prod 'rm dev/suderra-watchdog'
+damage "a link that is not a watchdogN" watchdog prod 'rm dev/suderra-watchdog; ln -s ../tmp/watchdog0x dev/suderra-watchdog'
+damage "a watchdog PID1 never started" watchdog prod 'printf "inactive\n" > sys/class/watchdog/watchdog0/state'
+damage "a watchdog PID1 does not hold open" watchdog prod 'rm proc/1/fd/7'
+damage "a timeout other than RuntimeWatchdogSec" watchdog prod 'printf "15\n" > sys/class/watchdog/watchdog0/timeout'
+damage "no system.conf.d drop-in" watchdog prod 'rm etc/systemd/system.conf.d/10-suderra-watchdog.conf'
+damage "a production watchdog userspace can stop (nowayout 0)" watchdog prod 'printf "0\n" > sys/class/watchdog/watchdog0/nowayout'
 damage "a production kernel that accepts unsigned modules" module-signing prod 'printf "N\n" > sys/module/module/parameters/sig_enforce'
 damage "a production kernel that is not locked down" module-signing prod 'printf "[none] integrity confidentiality\n" > sys/kernel/security/lockdown'
 damage "a production command line without the verity root hash" boot-chain prod 'printf "console=ttyS0,115200 ro\n" > proc/cmdline'
@@ -298,7 +316,7 @@ expect_fail "no TPM behind the TCTI" tpm-seal "${WORK}/prod" "${WORK}/out-t" --v
 for missing in tpm2_pcrread tpm2_unseal tpm2_pcrreset; do
     rm -rf "${WORK:?}/bin"
     mkdir -p "${WORK}/bin"
-    for t in head tail tr sed wc od cat cmp grep mkdir rm basename \
+    for t in head tail tr sed wc od cat cmp grep mkdir rm basename readlink \
         tpm2_createprimary tpm2_pcrread tpm2_createpolicy tpm2_create tpm2_load tpm2_unseal \
         tpm2_pcrextend tpm2_pcrreset tpm2_flushcontext; do
         [ "${t}" = "${missing}" ] || ln -s "$(command -v "${t}")" "${WORK}/bin/${t}"
