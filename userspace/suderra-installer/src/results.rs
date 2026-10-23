@@ -302,15 +302,11 @@ impl Report {
     }
 }
 
-/// Clock trust published by the time-state helper (DEC-7.3); a missing or
-/// unknown value is `unsynced`.
+/// Clock trust published by the time-state helper (DEC-7.3): the state of a
+/// conforming, fresh document, and `unsynced` for anything else
+/// (`time_state.rs`).
 fn time_state(paths: &Paths) -> TimeState {
-    read_root_file(&paths.run_suderra().join("time-state"), 64)
-        .ok()
-        .flatten()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .and_then(|text| TimeState::parse(text.trim()))
-        .unwrap_or(TimeState::Unsynced)
+    crate::time_state::read(paths, chrono::Utc::now())
 }
 
 /// Writes one result and returns the document.

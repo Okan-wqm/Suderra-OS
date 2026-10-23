@@ -26,6 +26,7 @@ mod paths;
 mod results;
 mod state;
 mod system;
+mod time_state;
 mod trust_anchors;
 mod usb_payload;
 mod variant;
