@@ -118,6 +118,7 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 | [EI-086](#EI-086) | LOW | P2 | The QEMU dev image sets BR2_PACKAGE_SYSTEMD_RESOLVED=n while /etc/resolv.conf points at ../run/resolv.conf, which nothing writes, so the image cannot resolve names |
 | [EI-087](#EI-087) | LOW | P2 | OS config and doc hygiene: kernel-hardening.md and ota.md name removed or old symbols, dead BR2 symbols in the QEMU defconfig, an unneeded CONFIG_TCG_VTPM_PROXY in the x86 kernel, and a build-order versus Kconfig inversion for suderra-ota |
 | [EI-088](#EI-088) | MEDIUM | P1b | x86 industrial-PC package set (USB installer image, Windows conversion and Secure Boot ownership runbook, qualification checker, driver set, signed PCR 7+11 policy) is deliberately P1b: it starts only after the operator selects the x86 model, and SG-3 stays closed until it is done |
+| [EI-089](#EI-089) | MEDIUM | P1 | The Raspberry Pi 4 / CM4 images build the raspberrypi/linux 6.6.28 kernel with 6.12 toolchain headers; the move to rpi-6.12.y (DEC-8.12) needs the sha256 of an archive that could not be downloaded where it was prepared |
 
 ## Bulgular
 
@@ -1575,3 +1576,14 @@ P3 2027-03-31. Yan bulgular, uygulama paketine alınana kadar önemine göre P1 
 - **Kanıt (dosya:satır):** `docs/architecture/ADR-0008-edge-agent-integration-contract.md:1`
 - **Kök neden:** x86 modeli seçilmedi (ADR-048 Soru 1); sürücü kümesi, qualification kaydı ve Microsoft UEFI CA kararı model olmadan verilemez.
 - **Mimari düzeltme yönü:** Modelden bağımsız parçalar P1'de kalır (x86 çekirdek sürüm ve kaynak-hash sabitlemesi EI-028/EI-051, `/data` kurtarma slotu, TPM kaynak kaydı, EI-078). Model seçilince P1b paketleri ADR-048 P1 x86 maddesine göre yazılır. SG-3: P1b bitmeden sahaya x86 birimi kurulmaz.
+
+<a id="EI-089"></a>
+
+### EI-089 — The Raspberry Pi 4 / CM4 images build the raspberrypi/linux 6.6.28 kernel with 6.12 toolchain headers; the move to rpi-6.12.y (DEC-8.12) needs the sha256 of an archive that could not be downloaded where it was prepared
+
+- **Önem:** Orta · **Faz:** P1 · **Son tarih:** 2026-11-30 · **Sahip:** @Okan-wqm · **Durum:** OPEN
+- **Bileşen:** configs/suderra_aarch64_rpi4_defconfig, configs/suderra_aarch64_rpi4_prod_ab_defconfig, configs/suderra_aarch64_rpi4_usb_installer_defconfig, board/suderra/buildroot-hashes/linux/linux.hash
+- **Köken:** ADR-048 DEC-8.12 (tek 6.12 kernel hattı); EI-028'in ARM yarısı
+- **Kanıt (dosya:satır):** `configs/suderra_aarch64_rpi4_prod_ab_defconfig:52`, `configs/suderra_aarch64_rpi4_prod_ab_defconfig:63`, `board/suderra/buildroot-hashes/linux/linux.hash:2`
+- **Kök neden:** The pin is the commit `576cc10e1ed50a9eacffc7a05c796051d7343ea4` of `raspberrypi/linux`, Linux 6.6.28 by its Makefile, while the defconfigs select `BR2_KERNEL_HEADERS_6_12`. Nothing compared the two, because a commit says nothing about its series. The 6.12 target is `rpi-6.12.y` at `5bd564aaa8dc4b1b8ed11733c19ec8ece63a72cc` (Linux 6.12.114): `bcm2711_defconfig` and the three device trees the defconfigs name exist there, and both rpi4 fragments resolve on it line for line (checked on a blobless sparse fetch of that commit, docs/hardware/kernel-pins.md). What is missing is the sha256 of the GitHub archive of that commit, which Buildroot's forced hash check needs: the egress proxy of the environment it was prepared in denies `github.com/*/archive` and `codeload.github.com` (HTTP 403), and an archive's bytes cannot be derived from the git objects.
+- **Mimari düzeltme yönü:** Made detectable (done): every tarball kernel pin declares its series (`# kernel-series: X.Y` in `linux.hash`) and `scripts/ci/check-kernel-config.py` holds it to the defconfig's headers, with the rpi4 images as a tracked gap (`KNOWN_SERIES_GAPS`) that fails the day the pin and the headers agree. Left: download the archive twice, compare, compute the sha256, change the pin in `linux.hash` and the three defconfigs, delete the three `KNOWN_SERIES_GAPS` entries (docs/hardware/kernel-pins.md, "Moving the Raspberry Pi 4 / CM4 to the 6.12 line"), build both images, hardware check. A freshness check for tarball kernels (the forge branch head) is the natural follow-up.

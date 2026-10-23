@@ -632,30 +632,57 @@ def rel(path: Path, root: Path) -> str:
 
 HASH_FILE = Path("board/suderra/buildroot-hashes/linux/linux.hash")
 HASH_LINE = re.compile(r"^sha256\s+([0-9a-f]{64})\s+(\S+)\s*$")
+# A tarball kernel is named by a commit, which says nothing about its series, so
+# its pin declares it: a `# kernel-series: X.Y` comment line right before its
+# sha256 line (Buildroot ignores comments; the line is read from the commit's
+# Makefile when the pin is made, docs/hardware/kernel-pins.md).
+SERIES_LINE = re.compile(r"^#\s*kernel-series:\s*([0-9]+\.[0-9]+)\s*$")
 CUSTOM_TARBALL_NAME = re.compile(r"/(linux-[0-9a-f]{40}\.tar\.gz)$")
 HEADERS_SERIES = re.compile(r"^BR2_KERNEL_HEADERS_([0-9]+)_([0-9]+)$")
 
 
-def pinned_archives(root: Path) -> set[str]:
+def pinned_archives(root: Path) -> dict[str, str | None]:
+    """Archive name -> the series its pin declares (None when it declares none)."""
     path = root / HASH_FILE
     if not path.is_file():
         raise ContractError(f"kernel hash file missing: {HASH_FILE}")
-    names: set[str] = set()
+    pins: dict[str, str | None] = {}
+    series: str | None = None
     for raw in path.read_text(encoding="utf-8").splitlines():
         text = raw.strip()
-        if not text or text.startswith("#"):
+        if not text:
+            series = None  # a declaration belongs to the pin right below it
+            continue
+        if text.startswith("#"):
+            m = SERIES_LINE.match(text)
+            if m:
+                series = m.group(1)
             continue
         m = HASH_LINE.match(text)
         if not m:
             raise ContractError(f"{HASH_FILE}: not a 'sha256  <64 hex>  <file>' line: {raw!r}")
-        names.add(m.group(2))
-    return names
+        pins[m.group(2)] = series
+        series = None
+    return pins
+
+
+# Tarball kernels whose pinned series is not their toolchain headers' series,
+# and the finding that tracks each: defconfig -> finding. The exception holds
+# only while the series differ; the day a pin and its headers agree the entry
+# must go (check_kernel_pins fails on a stale one), so a bump cannot leave it.
+KNOWN_SERIES_GAPS: dict[str, str] = {
+    "suderra_aarch64_rpi4_defconfig": "EI-089",
+    "suderra_aarch64_rpi4_prod_ab_defconfig": "EI-089",
+    "suderra_aarch64_rpi4_usb_installer_defconfig": "EI-089",
+}
 
 
 def check_kernel_pins(root: Path) -> list[str]:
     """Every kernel a defconfig builds is a hash-enforced, series-consistent pin."""
     problems: list[str] = []
-    archives = pinned_archives(root)
+    pins = pinned_archives(root)
+    archives = set(pins)
+    gaps_seen: set[str] = set()
     for path in sorted((root / "configs").glob("*_defconfig")):
         values = read_defconfig(path)
         name = path.name
@@ -697,6 +724,27 @@ def check_kernel_pins(root: Path) -> list[str]:
                 )
                 continue
             archive = m.group(1)
+            headers = [".".join(m2.groups()) for k in values if (m2 := HEADERS_SERIES.match(k)) and values[k] == "y"]
+            declared = pins.get(archive)
+            if archive in archives and declared is None:
+                problems.append(
+                    f"{name}: the pin of {archive} declares no '# kernel-series: X.Y' line in "
+                    f"{HASH_FILE}, so its series cannot be held to its toolchain headers (DEC-8.12)"
+                )
+            elif len(headers) != 1:
+                problems.append(f"{name}: exactly one BR2_KERNEL_HEADERS_<major>_<minor>=y is required")
+            elif declared is not None and name in KNOWN_SERIES_GAPS:
+                gaps_seen.add(name)
+                if declared == headers[0]:
+                    problems.append(
+                        f"{name}: the kernel pin and the toolchain headers are both {declared}: the "
+                        f"tracked gap {KNOWN_SERIES_GAPS[name]} is closed; remove it from KNOWN_SERIES_GAPS"
+                    )
+            elif declared is not None and declared != headers[0]:
+                problems.append(
+                    f"{name}: kernel {archive} is series {declared} and is built with {headers[0]} "
+                    f"toolchain headers; the kernel and its headers are one series (DEC-8.12, EI-028)"
+                )
         else:
             problems.append(f"{name}: the kernel must be a pinned custom version or a pinned tarball")
             continue
@@ -704,6 +752,12 @@ def check_kernel_pins(root: Path) -> list[str]:
             problems.append(
                 f"{name}: {archive} has no 'sha256' line in {HASH_FILE}; the pin must be "
                 f"computed from the downloaded archive (EI-051)"
+            )
+    for name, finding in KNOWN_SERIES_GAPS.items():
+        if name not in gaps_seen and (root / "configs" / name).is_file():
+            problems.append(
+                f"{name}: KNOWN_SERIES_GAPS ({finding}) names a defconfig that is not a tarball kernel "
+                f"with a declared series; remove it"
             )
     return problems
 

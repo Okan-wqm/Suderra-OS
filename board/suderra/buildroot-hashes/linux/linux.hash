@@ -1,5 +1,10 @@
 # Locally computed from GitHub codeload archive for raspberrypi/linux commit
-# 576cc10e1ed50a9eacffc7a05c796051d7343ea4.
+# 576cc10e1ed50a9eacffc7a05c796051d7343ea4, the Raspberry Pi 4 / CM4 kernel
+# (Linux 6.6.28). It is built with 6.12 toolchain headers, a gap EI-089 tracks
+# (scripts/ci/check-kernel-config.py KNOWN_SERIES_GAPS): the pin moves to
+# raspberrypi/linux rpi-6.12.y (DEC-8.12) with its archive hash, docs/hardware/
+# kernel-pins.md.
+# kernel-series: 6.6
 sha256  dab3052783c68c46a5bc645b1c38d9705da995ab42823566518b62eb1fa1ef97  linux-576cc10e1ed50a9eacffc7a05c796051d7343ea4.tar.gz
 
 # Locally computed from the GitLab archive of the KUNBUS RevolutionPi/linux
@@ -8,6 +13,7 @@ sha256  dab3052783c68c46a5bc645b1c38d9705da995ab42823566518b62eb1fa1ef97  linux-
 # (the github.com/RevolutionPi/linux mirror has the same tag at the same commit).
 # The archive of that commit is the pin; a new KUNBUS release is a new commit,
 # a new line here and a new piControl pairing (docs/hardware/revpi-connect4.md).
+# kernel-series: 6.12
 sha256  ecf80afe33a1bc4067aaf69265285284a57b44730b1832115252bade426ca55a  linux-756591ec4845ec0114ee7a3a99768f69bcd8bed3.tar.gz
 
 # Linux 6.12.114, the x86_64 and generic-aarch64-template kernels

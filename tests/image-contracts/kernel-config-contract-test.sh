@@ -211,6 +211,18 @@ pin_case "malformed kernel hash line" "${HASHES}" 's/^sha256  7a85/sha256  7a8/'
 pin_case "tarball kernel moved to an unpinned commit" "${RPI_DEF}" \
     's/576cc10e1ed50a9eacffc7a05c796051d7343ea4/0000000000000000000000000000000000000000/g' \
     "suderra_aarch64_rpi4_defconfig: linux-0000000000000000000000000000000000000000.tar.gz has no 'sha256' line"
+pin_case "tarball kernel whose pin declares no series" "${HASHES}" '/^# kernel-series: 6.12$/d' \
+    "suderra_aarch64_revpi4_defconfig: the pin of linux-756591ec4845ec0114ee7a3a99768f69bcd8bed3.tar.gz declares no '# kernel-series: X.Y' line"
+pin_case "RevPi kernel of another series than its headers" "${HASHES}" 's/^# kernel-series: 6.12$/# kernel-series: 6.6/' \
+    "suderra_aarch64_revpi4_prod_ab_defconfig: kernel linux-756591ec4845ec0114ee7a3a99768f69bcd8bed3.tar.gz is series 6.6 and is built with 6.12 toolchain headers"
+pin_case "RevPi kernel with headers of another series" "configs/suderra_aarch64_revpi4_prod_ab_defconfig" \
+    's/^BR2_KERNEL_HEADERS_6_12=y$/BR2_KERNEL_HEADERS_6_6=y/' \
+    "suderra_aarch64_revpi4_prod_ab_defconfig: kernel linux-756591ec4845ec0114ee7a3a99768f69bcd8bed3.tar.gz is series 6.12 and is built with 6.6 toolchain headers"
+# The rpi4 images are a tracked gap (EI-089): 6.6.28 under 6.12 headers. The day
+# the pin is the 6.12 line the exception must go, not outlive the bump.
+pin_case "rpi4 kernel bumped to 6.12 with its tracked gap left behind" "${HASHES}" \
+    's/^# kernel-series: 6.6$/# kernel-series: 6.12/' \
+    "suderra_aarch64_rpi4_prod_ab_defconfig: the kernel pin and the toolchain headers are both 6.12: the tracked gap EI-089 is closed; remove it from KNOWN_SERIES_GAPS"
 echo "  requires every kernel pin to be hash-enforced and series-consistent"
 
 # 2d. The hardware watchdog (ADR-048 DEC-6.6, EI-033): systemd PID1 owns the

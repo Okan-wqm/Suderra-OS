@@ -55,6 +55,7 @@ docs/
 - [health-gate.md](operations/health-gate.md) — sağlık kapısı: ne kontrol edilir, hangi imaj neyi beyan eder, mark-good ve geri alma
 - [watchdog.md](operations/watchdog.md) — donanım watchdog'unun tek sahibi systemd PID1, kart başına watchdog, NOWAYOUT ve donanımda doğrulanacaklar
 - [revpi-connect4.md](hardware/revpi-connect4.md) — Revolution Pi Connect 4: KUNBUS kernel + piControl pin'leri, device tree, kernel yükseltme ve donanım kontrol listesi
+- [kernel-pins.md](hardware/kernel-pins.md) — tek 6.12 kernel hattı: kaynak ve hash pin'leri, seri denetimi ve Raspberry Pi 4 / CM4'ün 6.12'ye geçiş adımları (EI-089)
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı
 - [x86-hardware-lab.md](operations/x86-hardware-lab.md) — industrial-x86_64 donanım lab station registry + kontroller + kanıt akışı
 - [operator-lifecycle.md](operations/operator-lifecycle.md) — freeze, ingress, preflight, signing, publish, abort ve retention RACI
