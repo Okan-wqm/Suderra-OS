@@ -742,6 +742,70 @@ for shell in "${shells[@]}"; do
     must_run "${shell}" run --tries 1 --interval 0
     check "the next pass repairs the document" 'd["state"] == "synced-nts"'
 
+    # --- the health gate's reading of the floor ----------------------------------------------------
+    # floor-check changes nothing: no document, no clock, no floor, no result.
+    # untouched <the floor file's content before, or none>
+    untouched() {
+        [ ! -e "${R}/run/suderra/time-state" ] || fail "floor-check wrote a document"
+        [ ! -e "${F}/date-set.log" ] || fail "floor-check set the clock: $(cat "${F}/date-set.log")"
+        [ "$(floor_file)" = "$1" ] || fail "floor-check changed the floor: $(floor_file)"
+        [ "$(find "${R}/data" -type f | wc -l)" -eq "$([ "$1" = none ] && echo 0 || echo 1)" ] || fail "floor-check left a file on /data"
+        [ ! -s "${F}/installer.log" ] || fail "floor-check wrote a result: $(installer_log)"
+        [ ! -d "${R}/run/suderra-os/time" ] || fail "floor-check made a state directory"
+    }
+
+    scenario floor-check-above-the-floor
+    AUTH="${UNSYNCED_AUTH}"
+    fixture "${UNSYNCED_TRACKING}" "${UNSYNCED_SOURCE}"
+    must_run "${shell}" floor-check
+    [ ! -s "${R}.err" ] || fail "a clock above the floor is silent: $(cat "${R}.err")"
+    [ ! -e "${F}/chronyc.log" ] || fail "a clock above the floor needs no chrony: $(cat "${F}/chronyc.log")"
+    untouched none
+
+    scenario floor-check-at-the-floor
+    set_floor "${NOW}"
+    must_run "${shell}" floor-check
+    untouched "${NOW}"
+
+    scenario floor-check-below-the-build-time
+    AUTH="${UNSYNCED_AUTH}"
+    fixture "${UNSYNCED_TRACKING}" "${UNSYNCED_SOURCE}"
+    set_clock $((BUILD - 5))
+    run "${shell}" floor-check
+    [ "${RC}" -eq 1 ] || fail "a clock below the build time and unsynchronized must fail (got ${RC})"
+    grep -q 'is 5 s below the time floor 1760000000 and is not synchronized' "${R}.err" || fail "the failure names the gap: $(cat "${R}.err")"
+    untouched none
+
+    scenario floor-check-below-the-persisted-floor
+    AUTH="${UNSYNCED_AUTH}"
+    fixture "${UNSYNCED_TRACKING}" "${UNSYNCED_SOURCE}"
+    set_floor $((NOW + 3600))
+    run "${shell}" floor-check
+    [ "${RC}" -eq 1 ] || fail "a clock below the persisted floor and unsynchronized must fail (got ${RC})"
+    grep -q 'is 3600 s below the time floor' "${R}.err" || fail "the failure names the gap: $(cat "${R}.err")"
+    untouched "$((NOW + 3600))"
+
+    scenario floor-check-below-the-floor-but-chronyd-down
+    set_floor $((NOW + 60))
+    : > "${F}/chronyd-down"
+    run "${shell}" floor-check
+    [ "${RC}" -eq 1 ] || fail "with chronyd down nothing corrected the clock (got ${RC})"
+    untouched "$((NOW + 60))"
+
+    scenario floor-check-below-the-floor-but-synchronized
+    # The authenticated clock is right and the floor is wrong: the pass that
+    # follows lowers the floor (reconcile_floor); the health gate does not fail on it.
+    AUTH="${NTS_AUTH}"
+    fixture "${NTS_TRACKING}" "${NTS_SOURCE}"
+    set_floor $((NOW + 3600))
+    must_run "${shell}" floor-check
+    untouched "$((NOW + 3600))"
+
+    scenario floor-check-ignores-a-corrupt-floor-file
+    set_floor 99999999999999
+    must_run "${shell}" floor-check
+    untouched 99999999999999
+
     # --- the command line -----------------------------------------------------------------------
     scenario cli
     for args in "" "bogus" "--tries" "--tries x tick" "--interval -1 tick" "--root" "--nope tick" "tick tick"; do

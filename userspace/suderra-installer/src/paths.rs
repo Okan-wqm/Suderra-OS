@@ -220,4 +220,43 @@ impl Paths {
     pub(crate) fn dev_mapper(&self) -> PathBuf {
         self.at("/dev/mapper")
     }
+    /// The TPM 2.0 resource manager node (the health gate's TPM probe).
+    pub(crate) fn tpm_resource_manager(&self) -> PathBuf {
+        self.at("/dev/tpmrm0")
+    }
+    /// The kernel's view of the TPM.
+    pub(crate) fn sys_tpm(&self) -> PathBuf {
+        self.at("/sys/class/tpm/tpm0")
+    }
+    /// The system RTC node: hctosys reads it, chrony's rtcsync writes it.
+    pub(crate) fn rtc_device(&self) -> PathBuf {
+        self.at("/dev/rtc0")
+    }
+    /// The kernel's view of the system RTC.
+    pub(crate) fn sys_rtc(&self) -> PathBuf {
+        self.at("/sys/class/rtc/rtc0")
+    }
+    /// The link udev makes to the board's own hardware watchdog, the device
+    /// systemd PID1 opens (`WatchdogDevice=` of the board's system.conf.d
+    /// drop-in, ADR-048 DEC-6.6).
+    pub(crate) fn watchdog_link(&self) -> PathBuf {
+        self.at("/dev/suderra-watchdog")
+    }
+    /// The kernel's watchdog class: one directory per `/dev/watchdogN`.
+    pub(crate) fn sys_watchdog_class(&self) -> PathBuf {
+        self.at("/sys/class/watchdog")
+    }
+    /// The RevPi PiBridge process image device piControl creates.
+    pub(crate) fn picontrol_device(&self) -> PathBuf {
+        self.at("/dev/piControl0")
+    }
+    /// The EFI `SecureBoot` variable as efivarfs exposes it (four attribute
+    /// bytes, then the one-byte value).
+    pub(crate) fn secure_boot_variable(&self) -> PathBuf {
+        self.at("/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c")
+    }
+    /// The kernel's mount table.
+    pub(crate) fn proc_mountinfo(&self) -> PathBuf {
+        self.at("/proc/self/mountinfo")
+    }
 }

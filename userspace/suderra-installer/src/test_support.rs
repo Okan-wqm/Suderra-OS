@@ -40,6 +40,12 @@ pub(crate) fn image(root: &Path) -> (Paths, ImageFacts) {
     )
     .unwrap();
     std::fs::write(paths.features_file(), "FEATURES=\"tpm\"\n").unwrap();
+    // The TPM the image declares: the resource manager's node and the
+    // kernel's word that it is a TPM 2.0 (crate::bsp).
+    std::fs::create_dir_all(paths.tpm_resource_manager().parent().unwrap()).unwrap();
+    std::fs::write(paths.tpm_resource_manager(), "").unwrap();
+    std::fs::create_dir_all(paths.sys_tpm()).unwrap();
+    std::fs::write(paths.sys_tpm().join("tpm_version_major"), "2\n").unwrap();
     std::fs::write(
         paths.kernel_config(),
         "CONFIG_SECCOMP_FILTER=y\nCONFIG_TCG_TPM=y\n",
@@ -421,6 +427,11 @@ pub(crate) struct FakeRunner {
     pub fail_check_containing: Option<String>,
     /// Output of `systemctl is-active suderra-agent.service`.
     pub agent_state: String,
+    /// Output of `systemctl is-active` for every other unit (the provisioning
+    /// mode and its SSH server).
+    pub other_units_state: String,
+    /// `suderra-time-state floor-check` fails: the clock is below the floor.
+    pub clock_below_floor: bool,
     /// Output of `nft list ruleset`.
     pub ruleset: Vec<u8>,
     /// Every call.
@@ -432,6 +443,8 @@ impl Default for FakeRunner {
         Self {
             fail_check_containing: None,
             agent_state: "active".into(),
+            other_units_state: "inactive".into(),
+            clock_below_floor: false,
             ruleset: b"table inet suderra {}\n".to_vec(),
             calls: RefCell::new(Vec::new()),
         }
@@ -462,7 +475,16 @@ impl Runner for FakeRunner {
                 }
             }
             ("nft", ["-f", _]) => Ok(Vec::new()),
-            ("systemctl", ["is-active", _]) => Ok(format!("{}\n", self.agent_state).into_bytes()),
+            ("systemctl", ["is-active", "suderra-agent.service"]) => {
+                Ok(format!("{}\n", self.agent_state).into_bytes())
+            }
+            ("systemctl", ["is-active", _]) => {
+                Ok(format!("{}\n", self.other_units_state).into_bytes())
+            }
+            ("suderra-time-state", ["floor-check"]) if self.clock_below_floor => {
+                anyhow::bail!("the clock is below the time floor")
+            }
+            ("suderra-time-state", ["floor-check"]) => Ok(Vec::new()),
             _ => anyhow::bail!("unexpected call {program} {args:?}"),
         }
     }

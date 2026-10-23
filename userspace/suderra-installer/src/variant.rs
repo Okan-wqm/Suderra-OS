@@ -100,8 +100,19 @@ pub(crate) struct BoardFile {
     pub arch: Arch,
 }
 
-/// Feature names /etc/suderra/features may declare.
-pub(crate) const IMAGE_FEATURES: [&str; 5] = ["verity", "secure-boot", "rauc", "tpm", "luks"];
+/// Feature names /etc/suderra/features may declare. `tpm`, `rtc`, `watchdog`,
+/// `picontrol` and `secure-boot` are board support the health predicate probes
+/// (`crate::bsp`); `verity`, `luks` and `rauc` are checked by their own means.
+pub(crate) const IMAGE_FEATURES: [&str; 8] = [
+    "verity",
+    "secure-boot",
+    "rauc",
+    "tpm",
+    "luks",
+    "rtc",
+    "watchdog",
+    "picontrol",
+];
 
 impl BoardFile {
     /// Parses `BOARD_PROFILE=`, `ARCH=` and optional `RAUC_COMPATIBLE=`; the

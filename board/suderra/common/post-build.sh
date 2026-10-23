@@ -205,11 +205,33 @@ if [ -n "${SUDERRA_BOARD_PROFILE}" ] && [ "${image_arch}" != "${SUDERRA_BOARD_AR
     echo "ERROR: ${DEFCONFIG_NAME} builds ${image_arch:-an unknown arch}, boards.json says ${SUDERRA_BOARD_ARCH}"
     exit 1
 fi
+# Hardware watchdog (ADR-048 DEC-6.6, EI-033): systemd PID1 is its only owner.
+# scripts/ci/board-watchdog.py installs the image's own pair from
+# board/suderra/watchdog/<board_profile or pending family>/: the system.conf.d
+# drop-in that names /dev/suderra-watchdog and its timeouts, and the udev rule
+# that links that name to the board's watchdog by its sysfs identity. An image
+# that is not a board or a pending family (the USB installer) gets none; every
+# other image without a pair fails the build.
+watchdog_key="$(python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/board-watchdog.py" \
+    --root "${SUDERRA_EXTERNAL_DIR}" install \
+    --defconfig "${DEFCONFIG_NAME}_defconfig" --target "${TARGET_DIR}")"
+echo "==> PID1 hardware watchdog: ${watchdog_key}"
+
 features=""
 if [ "${SUDERRA_OS_VARIANT}" = "prod" ]; then
     features="verity luks"
     case "${image_arch}" in
-        x86_64) features="${features} secure-boot" ;;
+        x86_64) features="${features} secure-boot rtc" ;;
+    esac
+    # Board support the production image declares, and the health predicate
+    # probes (crate::bsp): the PID1 hardware watchdog of every image that has
+    # one, the system RTC of x86 (the CMOS clock) and of the RevPi Connect 4
+    # (the PCF2129), and the RevPi's PiBridge device. The rpi4-cm4 declares no
+    # RTC: its signed FIT device tree has no RTC overlay yet (EI-046). A dev
+    # image declares none of them.
+    [ "${watchdog_key}" = "-" ] || features="${features} watchdog"
+    case "${SUDERRA_BOARD_PROFILE}" in
+        revpi-connect4) features="${features} rtc picontrol" ;;
     esac
 fi
 if config_enabled BR2_PACKAGE_RAUC; then
@@ -273,18 +295,6 @@ if [ -f "${RAUC_SYSTEM_CONF}" ]; then
     fi
     echo "==> RAUC compatible ${rauc_compatible}"
 fi
-
-# Hardware watchdog (ADR-048 DEC-6.6, EI-033): systemd PID1 is its only owner.
-# scripts/ci/board-watchdog.py installs the image's own pair from
-# board/suderra/watchdog/<board_profile or pending family>/: the system.conf.d
-# drop-in that names /dev/suderra-watchdog and its timeouts, and the udev rule
-# that links that name to the board's watchdog by its sysfs identity. An image
-# that is not a board or a pending family (the USB installer) gets none; every
-# other image without a pair fails the build.
-watchdog_key="$(python3 -I "${SUDERRA_EXTERNAL_DIR}/scripts/ci/board-watchdog.py" \
-    --root "${SUDERRA_EXTERNAL_DIR}" install \
-    --defconfig "${DEFCONFIG_NAME}_defconfig" --target "${TARGET_DIR}")"
-echo "==> PID1 hardware watchdog: ${watchdog_key}"
 
 # GPT partition identity (ADR-048 DEC-18.1): the partitions are identified by the
 # PARTUUID the image build writes on the boot disk

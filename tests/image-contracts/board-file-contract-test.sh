@@ -38,6 +38,9 @@ trap 'rm -rf "${WORK}"' EXIT
 # The section locates the external tree from its own path (../../..).
 mkdir -p "${WORK}/ext/board/suderra/common"
 ln -s "${ROOT}/contracts" "${WORK}/ext/contracts"
+# The section installs the image's watchdog pair and declares it.
+ln -s "${ROOT}/scripts" "${WORK}/ext/scripts"
+ln -s "${ROOT}/board/suderra/watchdog" "${WORK}/ext/board/suderra/watchdog"
 SECTION="${WORK}/ext/board/suderra/common/image-facts.sh"
 sed -n '/^# 6\. Image facts/,/^# RAUC compatible (ADR-048 DEC-8\.3)/p' "${POST_BUILD}" > "${SECTION}"
 
@@ -82,7 +85,7 @@ declared = env_file(features_file)
 if set(declared) != {"FEATURES"}:
     sys.exit(f"{defconfig}: /etc/suderra/features holds only FEATURES, got {sorted(declared)}")
 features = set(declared["FEATURES"].split())
-allowed = {"verity", "secure-boot", "rauc", "tpm", "luks"}
+allowed = {"verity", "secure-boot", "rauc", "tpm", "luks", "rtc", "watchdog", "picontrol"}
 if not features <= allowed:
     sys.exit(f"{defconfig}: undeclared features {sorted(features - allowed)}")
 selected = set(re.findall(r"^(BR2_[A-Za-z0-9_]+)=y(?:\s|$)", Path(defconfig_path).read_text(), re.M))
@@ -92,10 +95,24 @@ if variant == "prod" and not {"verity", "luks"} <= features:
     sys.exit(f"{defconfig}: a production image declares verity and luks")
 if variant == "prod" and ("secure-boot" in features) != ("BR2_x86_64" in selected):
     sys.exit(f"{defconfig}: a production x86_64 image, and only one, declares secure-boot")
-if variant == "dev" and features & {"verity", "luks", "secure-boot"}:
-    sys.exit(f"{defconfig}: a dev image declares no verity, luks or secure-boot")
+if variant == "dev" and features & {"verity", "luks", "secure-boot", "rtc", "watchdog", "picontrol"}:
+    sys.exit(f"{defconfig}: a dev image declares no verity, luks, secure-boot, rtc, watchdog or picontrol")
 
 rows = [b for b in boards["boards"] if any(i["defconfig"] == defconfig for i in b["os_images"])]
+# Board support (crate::bsp, docs/operations/watchdog.md): a production image
+# declares the watchdog PID1 owns when it has one, the CMOS RTC on x86 and the
+# PCF2129 on the RevPi Connect 4, and piControl on the RevPi; nothing else.
+installed_watchdog = (Path(target) / "etc/systemd/system.conf.d/10-suderra-watchdog.conf").is_file()
+if installed_watchdog != (Path(target) / "usr/lib/udev/rules.d/60-suderra-watchdog.rules").is_file():
+    sys.exit(f"{defconfig}: the watchdog drop-in and its udev rule come as a pair")
+if ("watchdog" in features) != (variant == "prod" and installed_watchdog):
+    sys.exit(f"{defconfig}: FEATURES watchdog must follow a production image with the board's watchdog pair")
+is_x86 = "BR2_x86_64" in selected
+profile = rows[0]["board_profile"] if rows else ""
+if ("rtc" in features) != (variant == "prod" and (is_x86 or profile == "revpi-connect4")):
+    sys.exit(f"{defconfig}: FEATURES rtc is declared by production x86 images and the RevPi Connect 4 only")
+if ("picontrol" in features) != (variant == "prod" and profile == "revpi-connect4"):
+    sys.exit(f"{defconfig}: FEATURES picontrol is declared by the production RevPi Connect 4 only")
 if not rows:
     if board_file.exists():
         sys.exit(f"{defconfig} declares no board in boards.json but got {board_file}")

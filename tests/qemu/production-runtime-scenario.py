@@ -445,6 +445,14 @@ def run_scenario(args: argparse.Namespace) -> int:
             "driver=cfi.pflash01,property=secure,value=on",
             "-global",
             "ICH9-LPC.disable_s3=1",
+            # The iTCO watchdog of the q35 machine is the board's hardware
+            # watchdog (board/suderra/watchdog/qemu-x86_64, DEC-6.6): the
+            # driver refuses to bind while the NO_REBOOT bit is set, and the
+            # image declares the watchdog, so the health gate would fail.
+            "-global",
+            "ICH9-LPC.noreboot=false",
+            "-action",
+            "watchdog=reset",
             "-m",
             str(args.memory),
             "-smp",

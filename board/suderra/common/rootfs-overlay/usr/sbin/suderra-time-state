@@ -7,6 +7,7 @@
 #   suderra-time-state tick          one pass: write the document, keep the floor
 #   suderra-time-state floor-save    hourly and at shutdown: persist the floor
 #   suderra-time-state wait          bounded wait for a synchronized clock (never fails)
+#   suderra-time-state floor-check   read only: fail when the clock is below the floor (health gate)
 #
 # The document (contracts/suderra-edge/v1/schemas/time-state.schema.json) is the
 # agent's only clock authority: it cannot read adjtimex under ProtectClock, and
@@ -42,6 +43,12 @@
 # and a save only ever raises it; an authenticated clock found below it lowers
 # it (the floor was ahead of the real time, which is the only way a wrong floor
 # heals) and records an alarm.
+#
+# floor-check is the health gate's reading of the floor (DEC-6.8): it exits 1
+# when the clock reads less than the floor and chrony has not corrected it, and
+# writes nothing. A clock that reads less than the floor *and* is synchronized
+# is the one the floor-heals case above: the authenticated clock is right, the
+# floor is wrong, and the next pass lowers it, so it is not a failure.
 #
 # Results (suderra-installer result write, kind time-state): an alarm
 # clock-unsynced when the wait ends unsynchronized, an alarm clock-below-floor
@@ -79,7 +86,7 @@ COMMAND=""
 WARN_FLOOR=0
 
 usage() {
-    echo "Usage: suderra-time-state floor-apply|run|tick|floor-save|wait [--root DIR] [--tries N] [--interval SECONDS]" >&2
+    echo "Usage: suderra-time-state floor-apply|run|tick|floor-save|floor-check|wait [--root DIR] [--tries N] [--interval SECONDS]" >&2
     exit 2
 }
 
@@ -491,6 +498,19 @@ cmd_floor_save() {
     persist_floor
 }
 
+# Read only: no run directory, no document, no clock, no floor is touched.
+cmd_floor_check() {
+    check_now="$(now_epoch)"
+    check_floor="$(floor_value)"
+    [ "${check_now}" -lt "${check_floor}" ] || return 0
+    classify
+    if is_synced; then
+        return 0
+    fi
+    echo "ERROR: the clock ${check_now} is $((check_floor - check_now)) s below the time floor ${check_floor} and is not synchronized" >&2
+    return 1
+}
+
 cmd_wait() {
     require_run_dir
     wait_tries="${TRIES:-30}"
@@ -543,6 +563,7 @@ case "${COMMAND}" in
         WARN_FLOOR=1
         cmd_floor_save
         ;;
+    floor-check) cmd_floor_check ;;
     wait) cmd_wait ;;
     *) usage ;;
 esac

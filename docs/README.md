@@ -52,6 +52,7 @@ docs/
 - [build.md](operations/build.md) — imaj nasıl build edilir (host + Docker)
 - [flash.md](operations/flash.md) — USB stick ve gerçek cihaza yazma
 - [time-sync.md](operations/time-sync.md) — NTS zamanı, zaman tabanı (time floor), `/run/suderra/time-state` ve kart başına RTC
+- [health-gate.md](operations/health-gate.md) — sağlık kapısı: ne kontrol edilir, hangi imaj neyi beyan eder, mark-good ve geri alma
 - [watchdog.md](operations/watchdog.md) — donanım watchdog'unun tek sahibi systemd PID1, kart başına watchdog, NOWAYOUT ve donanımda doğrulanacaklar
 - [revpi-connect4.md](hardware/revpi-connect4.md) — Revolution Pi Connect 4: KUNBUS kernel + piControl pin'leri, device tree, kernel yükseltme ve donanım kontrol listesi
 - [usb-installer-alpha-validation.md](operations/usb-installer-alpha-validation.md) — Pi/CM4/RevPi USB installer lab kanıt akışı

@@ -541,6 +541,11 @@ def launch_qemu(
         "qemu-system-x86_64",
         "-machine",
         "q35",
+        # The production image declares the iTCO watchdog as its board's
+        # hardware watchdog (board/suderra/watchdog/qemu-x86_64); the driver
+        # binds only when the NO_REBOOT bit is clear.
+        "-global",
+        "ICH9-LPC.noreboot=false",
         "-m",
         args.memory,
         "-smp",

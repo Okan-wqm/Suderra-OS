@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod bsp;
 mod cli;
 mod cmd;
 mod contracts;

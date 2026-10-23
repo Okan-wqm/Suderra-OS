@@ -92,16 +92,25 @@ suderra-ota install suderra-os-v0.2.0.manifest.json suderra-os-v0.2.0.raucb
 
 ## Health Check ve Rollback
 
-`suderra-rauc-mark-good.service` slot boot ettikten sonra:
+`suderra-rauc-mark-good.service` slot boot ettikten sonra, her boot'ta bir kez
+(ADR-048 DEC-6.8; ayrıntı ve kontrol listesi: [health-gate.md](health-gate.md)):
 
-1. RAUC boot-state JSON üretilir; active slot ve GRUB A/B counters kaydedilir.
+1. RAUC boot-state JSON üretilir; active slot ve bootloader A/B sayaçları kaydedilir.
 2. `/data` ve `/boot` mount'ları hazır mı kontrol edilir.
-3. RAUC status alınır; agent varsa `systemctl is-active` sonucu kontrol edilir.
+3. `suderra-installer health check` (OS ve agent yüklemi) çalışır: verity ve `/data`
+   LUKS eşlemesi, yüklü nft ruleset'inin hash'i, saatin zaman tabanının altına
+   düşmemesi, imajın beyan ettiği TPM, RTC, PID1 donanım watchdog'u,
+   `/dev/piControl0` ve Secure Boot, tutarlı yaşam döngüsü ve agent (yalnız
+   root-doğrulanmış activation receipt'i ve OS güncellemesinden önceki sağlıklı
+   durum varsa; `activating → active` için sınırlı bekleme).
 4. **Hepsi OK** → `suderra-ota mark-good`; bu komut RAUC mark-good,
    rollback-floor persistence ve OTA state güncellemesini tek transaction olarak
    yürütür.
-5. **Fail** → `suderra-ota rollback --reason health-gate` ve reboot
-   isteği; bootloader eski slot'a döner.
+5. **Fail** → `suderra-ota gate-failed`: yalnız bekleyen bir OTA'nın deneme
+   boot'unu geri alır (`mark-bad` ve reboot; bootloader eski slot'a döner). OTA'nın
+   beklemediği bir boot'ta başarısızlık bir alarmdır (`health-gate` sonucu), slot iyi
+   kalır: hiçbir güncellemenin dokunmadığı bir slot'u kötü işaretlemek ve diğer
+   slot'ta aynı koşulla geri alma fırtınası başlatmak istenmez.
 
 `suderra-ota install`, RAUC install sonrası pending boot slot'u env veya RAUC
 status JSON üzerinden kanıtlayamazsa update'i fail-closed sonlandırır.
